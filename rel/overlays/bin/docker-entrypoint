@@ -1,0 +1,67 @@
+#!/bin/sh
+# Container entrypoint for the hub image: joins the tailnet when configured,
+# then runs the hub as the unprivileged `photon` user.
+#
+#   TS_AUTHKEY           join the tailnet (needed once; state lives on the volume)
+#   TS_HOSTNAME          tailnet machine name (default: photon-hub)
+#   TS_EXTRA_ARGS        extra `tailscale up` flags, e.g. --advertise-tags=tag:photon
+#   PHOTON_TRUST_TAILNET skip the GUI password for tailnet peers (default: true
+#                        when the kernel TUN device is available, as on Fly)
+set -eu
+
+server="$(cd -P -- "$(dirname -- "$0")" && pwd)/server"
+data="${PHOTON_DATA_DIR:-/data}"
+mkdir -p "$data/home"
+export HOME="$data/home"
+
+if [ -n "${TS_AUTHKEY:-}" ] || [ -f "$data/tailscale/tailscaled.state" ]; then
+  mkdir -p "$data/tailscale" /var/run/tailscale
+
+  # Kernel mode (Fly machines have a TUN device) lets the hub see each tailnet
+  # peer's own address, which PHOTON_TRUST_TAILNET checks. Elsewhere, userspace
+  # networking needs no privileges, but connections then arrive from
+  # localhost, so tailnet trust can't apply and the password is always asked.
+  if [ "$(id -u)" = 0 ] && [ -c /dev/net/tun ]; then
+    mode=kernel
+    tun=tailscale0
+  else
+    mode=userspace
+    tun=userspace-networking
+  fi
+
+  tailscaled \
+    --state="$data/tailscale/tailscaled.state" \
+    --socket=/var/run/tailscale/tailscaled.sock \
+    --tun="$tun" >/tmp/tailscaled.log 2>&1 &
+
+  i=0
+  until [ -S /var/run/tailscale/tailscaled.sock ] || [ "$i" -ge 50 ]; do
+    i=$((i + 1))
+    sleep 0.2
+  done
+
+  # shellcheck disable=SC2086 # TS_EXTRA_ARGS is a list of flags
+  # netfilter-mode=off: the image has no iptables, and needs no firewall rules.
+  if tailscale up ${TS_AUTHKEY:+--authkey="$TS_AUTHKEY"} \
+    --hostname="${TS_HOSTNAME:-photon-hub}" --operator=photon \
+    --netfilter-mode=off ${TS_EXTRA_ARGS:-}; then
+    echo "photon: joined the tailnet at $(tailscale ip -4 2>/dev/null | head -n 1) ($mode networking)"
+    # SSH to machines being set up goes through tailscaled, which resolves
+    # tailnet names itself and works in either mode.
+    export PHOTON_SSH_PROXY="tailscale nc %h %p"
+    if [ "$mode" = kernel ]; then
+      export PHOTON_TRUST_TAILNET="${PHOTON_TRUST_TAILNET:-true}"
+    fi
+  else
+    echo "photon: warning: couldn't join the tailnet (see /tmp/tailscaled.log); continuing without it" >&2
+  fi
+fi
+
+if [ "$(id -u)" = 0 ]; then
+  # Volumes mount root-owned; Tailscale's state stays root's.
+  chown photon:photon "$data" "$data/home"
+  find "$data" -mindepth 1 -maxdepth 1 ! -name tailscale -exec chown -R photon:photon {} +
+  exec setpriv --reuid=photon --regid=photon --init-groups "$server"
+fi
+
+exec "$server"

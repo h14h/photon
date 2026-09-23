@@ -1,0 +1,56 @@
+# The Photon hub on Fly.io. From a fresh clone:
+#
+#   fly launch --copy-config
+#
+# Everything else is optional; see "Deploying the hub to Fly.io" in the README.
+# The app name is a default: `fly launch` adds a suffix if it's taken, and
+# rewrites this file with the name it picked.
+
+app = "photon-hub"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+# Having [build] here makes `fly launch` use this Dockerfile as-is, rather than
+# scanning the source and generating its own.
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  # Agents run on nodes, not on the hub's small VM. Set to "true" to also run
+  # a node inside the hub.
+  PHOTON_LOCAL_NODE = "false"
+
+# Sessions, settings, generated secrets and Tailscale state.
+[[mounts]]
+  source = "photon_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Nodes hold websockets to the hub, so it stays up.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  # Each node and browser tab holds a connection.
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 1000
+    hard_limit = 1000
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

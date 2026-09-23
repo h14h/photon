@@ -1,0 +1,5 @@
+#!/bin/sh
+# Starts the hub. Used directly, or by bin/docker-entrypoint in the image.
+set -eu
+cd -P -- "$(dirname -- "$0")"
+PHX_SERVER=true exec ./photon start

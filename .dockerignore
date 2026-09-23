@@ -1,0 +1,15 @@
+# Build output and local state never go into the image build context.
+.git
+_build
+deps
+.photon
+tmp
+priv/static/assets
+priv/static/cache_manifest.json
+node/_build
+node/deps
+node/dist
+node/burrito_out
+node/priv/bin
+*.ez
+erl_crash.dump
