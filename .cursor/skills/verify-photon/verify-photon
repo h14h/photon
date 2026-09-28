@@ -1,0 +1,360 @@
+#!/usr/bin/env bash
+# Launch, check, drive, and stop an isolated Photon hub for verification.
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO=$(cd "$SCRIPT_DIR/../../.." && pwd)
+export PHOTON_VERIFY_ROOT="${PHOTON_VERIFY_ROOT:-/tmp/verify-photon}"
+VERIFY_ROOT="$PHOTON_VERIFY_ROOT"
+RUN="$VERIFY_ROOT/run"
+EVIDENCE="$VERIFY_ROOT/evidence"
+PORT="${PHOTON_VERIFY_PORT:-4010}"
+
+if [[ "$VERIFY_ROOT" != /* || "$VERIFY_ROOT" == "/" ]]; then
+  echo "PHOTON_VERIFY_ROOT must be an absolute path other than /" >&2
+  exit 1
+fi
+
+usage() {
+  cat <<EOF
+Usage: verify-photon <command>
+
+  launch                 Start mix phx.server on 127.0.0.1:\$PHOTON_VERIFY_PORT (default $PORT)
+                         with PHOTON_DATA_DIR=\$PHOTON_VERIFY_ROOT/run/data.
+  doctor                 Read-only check that this run's hub is the one to drive.
+  drive send-message     Send "help" through the composer and write evidence.
+  browser start|stop     Start or stop the headless Chrome daemon.
+  browser <command>      Drive the open page. See SKILL.md for selectors.
+  cleanup                Stop the hub and browser this run started. Evidence stays.
+
+State:   \$PHOTON_VERIFY_ROOT/run        (default /tmp/verify-photon/run)
+Evidence: \$PHOTON_VERIFY_ROOT/evidence   (default /tmp/verify-photon/evidence)
+EOF
+}
+
+ensure_repo() {
+  if [[ ! -f "$REPO/mix.exs" ]] || ! grep -q 'app: :photon' "$REPO/mix.exs"; then
+    echo "refusing to run: $REPO is not the Photon repo" >&2
+    exit 1
+  fi
+}
+
+ensure_deps() {
+  if [[ ! -d "$SCRIPT_DIR/node_modules/playwright-core" ]]; then
+    if ! command -v npm >/dev/null 2>&1; then
+      echo "npm is required to install playwright-core for the browser harness" >&2
+      exit 1
+    fi
+    npm install --prefix "$SCRIPT_DIR" --omit=dev --no-fund --no-audit
+  fi
+  if ! command -v node >/dev/null 2>&1; then
+    echo "node is required for the browser harness" >&2
+    exit 1
+  fi
+}
+
+pid_alive() {
+  local pidfile="$1"
+  [[ -f "$pidfile" ]] || return 1
+  local pid
+  pid=$(cat "$pidfile")
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+cmd_doctor() {
+  ensure_repo
+  ensure_deps
+  local pidfile="$RUN/pid"
+  if ! pid_alive "$pidfile"; then
+    echo "doctor: no verify-photon server is running (missing or dead $pidfile)" >&2
+    echo "doctor: run verify-photon launch, and do not drive a hub you did not start" >&2
+    return 1
+  fi
+  local pid data_dir port code listen health
+  pid=$(cat "$pidfile")
+  data_dir=$(cat "$RUN/data-dir")
+  port=$(cat "$RUN/port")
+  if [[ "$data_dir" != "$RUN/data" ]]; then
+    echo "doctor: data dir $data_dir is not the isolated run dir $RUN/data" >&2
+    return 1
+  fi
+  if [[ "$data_dir" == "$REPO/.photon" || "$data_dir" == */.photon ]]; then
+    echo "doctor: data dir points at a .photon directory; refusing to drive it" >&2
+    return 1
+  fi
+  code=$(curl -sS -o "$RUN/home.html" -w '%{http_code}' "http://127.0.0.1:${port}/" || true)
+  if [[ "$code" != "200" ]]; then
+    echo "doctor: GET / returned HTTP ${code:-none} (401 means PHOTON_PASSWORD leaked into the server)" >&2
+    return 1
+  fi
+  health=$(curl -fsS "http://127.0.0.1:${port}/healthz" || true)
+  if [[ "$health" != "ok" ]]; then
+    echo "doctor: GET /healthz returned $(printf '%q' "$health"), expected ok" >&2
+    return 1
+  fi
+  if ! listen=$(node "$SCRIPT_DIR/browser.mjs" listen-pid "$port" "$pid"); then
+    return 1
+  fi
+  if ! node "$SCRIPT_DIR/browser.mjs" check-home "$RUN/home.html" "$data_dir"; then
+    return 1
+  fi
+  printf 'ok\nurl=http://127.0.0.1:%s\npid=%s\nlisten_pid=%s\ndata_dir=%s\nauth=open\nnode=local\nprovider=mock\n' \
+    "$port" "$pid" "$listen" "$data_dir"
+}
+
+wait_until_healthy() {
+  local pid="$1"
+  local i
+  for i in $(seq 1 90); do
+    if cmd_doctor >"$RUN/doctor-wait.txt" 2>"$RUN/doctor-wait.err"; then
+      cat "$RUN/doctor-wait.txt"
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "launch: mix phx.server exited before it was healthy" >&2
+      tail -n 60 "$RUN/server.log" >&2 || true
+      return 1
+    fi
+    sleep 1
+  done
+  echo "launch: hub did not become drivable within 90s" >&2
+  cat "$RUN/doctor-wait.err" >&2 || true
+  tail -n 60 "$RUN/server.log" >&2 || true
+  return 1
+}
+
+cmd_launch() {
+  ensure_repo
+  ensure_deps
+  if ! command -v mix >/dev/null 2>&1; then
+    echo "launch: mix is not on PATH. Install Elixir 1.17+ (mix.exs requires ~> 1.17; README asks for 1.20+) and Erlang/OTP." >&2
+    exit 1
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "launch: curl is required" >&2
+    exit 1
+  fi
+  mkdir -p "$RUN"
+  if pid_alive "$RUN/pid"; then
+    if cmd_doctor; then
+      echo "launch: already running"
+      return 0
+    fi
+    echo "launch: a verify-photon server is already running but doctor failed. Run verify-photon cleanup." >&2
+    exit 1
+  fi
+  if node "$SCRIPT_DIR/browser.mjs" listen-pid "$PORT" >/dev/null 2>"$RUN/port-check.err"; then
+    echo "launch: 127.0.0.1:$PORT is already in use. Set PHOTON_VERIFY_PORT or stop that process yourself." >&2
+    cat "$RUN/port-check.err" >&2 || true
+    exit 1
+  fi
+  # listen-pid exits 1 when nothing is listening, which is what we want.
+  # A non-loopback listener throws and also exits 1; surface that message.
+  if [[ -s "$RUN/port-check.err" ]] && grep -q 'will not drive' "$RUN/port-check.err"; then
+    cat "$RUN/port-check.err" >&2
+    exit 1
+  fi
+
+  local data="$RUN/data"
+  rm -rf "$data"
+  mkdir -p "$data"
+  printf '%s\n' "$PORT" >"$RUN/port"
+  printf '%s\n' "$data" >"$RUN/data-dir"
+  printf '%s\n' "$REPO" >"$RUN/repo"
+  : >"$RUN/server.log"
+
+  pushd "$REPO" >/dev/null
+  nohup env \
+    -u PHOTON_PASSWORD \
+    -u PHOTON_BIND \
+    -u PHOTON_PUBLIC_URL \
+    -u PHOTON_TRUST_TAILNET \
+    PHOTON_DATA_DIR="$data" \
+    PORT="$PORT" \
+    mix phx.server >>"$RUN/server.log" 2>&1 &
+  echo $! >"$RUN/pid"
+  popd >/dev/null
+  if ! pid_alive "$RUN/pid"; then
+    echo "launch: failed to start mix phx.server" >&2
+    tail -n 60 "$RUN/server.log" >&2 || true
+    exit 1
+  fi
+  if ! wait_until_healthy "$(cat "$RUN/pid")"; then
+    cmd_cleanup || true
+    exit 1
+  fi
+}
+
+browser_start() {
+  ensure_deps
+  if [[ ! -f "$RUN/port" ]]; then
+    echo "browser: launch the hub before starting Chrome" >&2
+    exit 1
+  fi
+  if pid_alive "$RUN/browser.pid" && [[ -S "$RUN/browser.sock" && -f "$RUN/browser.ready" ]]; then
+    return 0
+  fi
+  rm -f "$RUN/browser.sock" "$RUN/browser.ready"
+  nohup node "$SCRIPT_DIR/browser.mjs" daemon >>"$RUN/browser.log" 2>&1 &
+  echo $! >"$RUN/browser.pid"
+  local i pid
+  pid=$(cat "$RUN/browser.pid")
+  for i in $(seq 1 80); do
+    if [[ -f "$RUN/browser.ready" ]]; then
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "browser: Chrome daemon exited" >&2
+      tail -n 40 "$RUN/browser.log" >&2 || true
+      exit 1
+    fi
+    sleep 0.25
+  done
+  echo "browser: Chrome daemon did not become ready" >&2
+  tail -n 40 "$RUN/browser.log" >&2 || true
+  exit 1
+}
+
+stop_pidfile() {
+  local pidfile="$1"
+  [[ -f "$pidfile" ]] || return 0
+  local pid
+  pid=$(cat "$pidfile")
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    local i
+    for i in $(seq 1 40); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null || true
+      sleep 0.2
+    fi
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "cleanup: pid $pid did not exit" >&2
+      return 1
+    fi
+  fi
+  rm -f "$pidfile"
+}
+
+browser_stop() {
+  stop_pidfile "$RUN/browser.pid"
+  rm -f "$RUN/browser.sock" "$RUN/browser.ready"
+}
+
+cmd_cleanup() {
+  browser_stop
+  stop_pidfile "$RUN/pid"
+  if pid_alive "$RUN/pid" || pid_alive "$RUN/browser.pid"; then
+    echo "cleanup: a recorded process is still alive; left $RUN in place" >&2
+    exit 1
+  fi
+  rm -rf "$RUN"
+  echo "removed $RUN"
+  echo "evidence kept at $EVIDENCE"
+}
+
+cmd_drive_send_message() {
+  local ev="$EVIDENCE/send-message"
+  mkdir -p "$ev"
+  "$SCRIPT_DIR/verify-photon" doctor | tee "$ev/doctor.txt"
+  "$SCRIPT_DIR/verify-photon" browser start
+  "$SCRIPT_DIR/verify-photon" browser wait-selector --selector '#composer:not([disabled])'
+  "$SCRIPT_DIR/verify-photon" browser wait-text --text 'Try the Unreal Agent harness'
+  "$SCRIPT_DIR/verify-photon" browser fill --selector '#composer' --value 'help'
+  "$SCRIPT_DIR/verify-photon" browser screenshot --path "$ev/action.png"
+  "$SCRIPT_DIR/verify-photon" browser click --selector '#composer-form button[title="Send"]'
+  "$SCRIPT_DIR/verify-photon" browser wait-url --includes '/s/'
+  "$SCRIPT_DIR/verify-photon" browser wait-text --within '#transcript' --text "I'm the built-in mock model"
+  "$SCRIPT_DIR/verify-photon" browser wait-text --within '#transcript' --text 'run finished'
+  "$SCRIPT_DIR/verify-photon" browser text --selector '#transcript' >"$ev/transcript.txt"
+  "$SCRIPT_DIR/verify-photon" browser text --selector 'h1' >"$ev/heading.txt"
+  "$SCRIPT_DIR/verify-photon" browser url >"$ev/url.txt"
+  "$SCRIPT_DIR/verify-photon" browser title >"$ev/title.txt"
+  "$SCRIPT_DIR/verify-photon" browser screenshot --path "$ev/result.png"
+
+  local url id data heading
+  url=$(tr -d '\n' <"$ev/url.txt")
+  heading=$(tr -d '[:space:]' <"$ev/heading.txt")
+  id=$(printf '%s\n' "$url" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -n 1)
+  data=$(cat "$RUN/data-dir")
+  if [[ -z "$id" || ! -f "$data/sessions/$id/meta.json" ]]; then
+    echo "drive: no session meta for url $url" >&2
+    exit 1
+  fi
+  if [[ "$heading" != "help" ]]; then
+    echo "drive: heading is $(printf '%q' "$heading"), expected help" >&2
+    exit 1
+  fi
+  cp "$data/sessions/$id/meta.json" "$ev/meta.json"
+  cp "$data/sessions/$id/events.jsonl" "$ev/events.jsonl"
+  node "$SCRIPT_DIR/browser.mjs" check-session \
+    --meta "$ev/meta.json" \
+    --events "$ev/events.jsonl" \
+    --id "$id" \
+    --title help \
+    --node local \
+    --includes "I'm the built-in mock model"
+  if ! grep -q "I'm the built-in mock model" "$ev/transcript.txt"; then
+    echo "drive: transcript text is missing the mock reply" >&2
+    exit 1
+  fi
+  if ! grep -q 'help' "$ev/transcript.txt"; then
+    echo "drive: transcript text is missing the sent prompt" >&2
+    exit 1
+  fi
+  if ! grep -qi 'run finished' "$ev/transcript.txt"; then
+    echo "drive: transcript text is missing the run-finished line" >&2
+    exit 1
+  fi
+  cat >"$ev/summary.txt" <<EOF
+feature=send-message
+entry=composer
+url=$url
+session_id=$id
+node=local
+title=help
+data_dir=$data
+action=$ev/action.png
+result=$ev/result.png
+side_effect=$ev/meta.json
+side_effect_events=$ev/events.jsonl
+EOF
+  echo "evidence $ev"
+}
+
+ensure_repo
+
+case "${1:-}" in
+  launch) cmd_launch ;;
+  doctor) cmd_doctor ;;
+  drive)
+    case "${2:-}" in
+      send-message) cmd_drive_send_message ;;
+      *)
+        echo "drive: only send-message is bundled. Other features use browser commands in features/." >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  browser)
+    shift
+    case "${1:-}" in
+      start) browser_start ;;
+      stop) browser_stop ;;
+      "")
+        echo "browser: missing command" >&2
+        exit 2
+        ;;
+      *) node "$SCRIPT_DIR/browser.mjs" "$@" ;;
+    esac
+    ;;
+  cleanup) cmd_cleanup ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
