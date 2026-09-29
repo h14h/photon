@@ -114,6 +114,7 @@ Stable handles, from `playground_live.ex` and the LiveView tests:
 | Transcript | `#transcript` |
 | Page heading | `h1` |
 | New session | `aside a[href="/"]` |
+| Session sidebar | `aside:has(a[href="/"])` |
 | A session | `aside a[href="/s/<uuid>"]` |
 | Delete session | `a[href="/s/<uuid>"] + button[title="Delete session"]` |
 | Settings toggle | `button[title="Settings"]` |
