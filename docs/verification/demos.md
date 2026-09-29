@@ -1,82 +1,131 @@
 # Demo recordings
 
-Four short screen recordings, one per layer of the [pyramid](README.md).
-None of them are recorded yet. Drop the files at the paths below when they
-exist. `demos/.gitkeep` is only there so the directory stays in git.
+Four recordings, one per layer of the [pyramid](README.md). Play a `.cast`
+with [asciinema](https://asciinema.org/):
 
-Keep node tokens out of every frame. The Add a node panel's install command
-contains `PHOTON_NODE_TOKEN`. Crop before that disclosure, or do not expand
-**Any other machine**.
+```sh
+asciinema play docs/verification/demos/01-mix-test.cast
+```
+
+Nothing here is git LFS. The repo does not use it. The casts are a few
+kilobytes. The verify-photon mp4 is a short H.264 capture of the desktop.
+Stills are the PNGs the drives themselves wrote, or screenshots of the
+podman hub. No frame contains `PHOTON_NODE_TOKEN`.
+
+These were produced on a Linux desktop with Elixir 1.20.4 / OTP 27.3.4,
+Go 1.27.1 (only to build `unreal-agent-runner` before the clips), Chrome,
+and asciinema 2.4. The casts start after `mix setup` and the runner build,
+so they show the check, not the download.
 
 ## (a) Layer 1 — `mix test`
 
-`docs/verification/demos/01-mix-test.mp4`
+`docs/verification/demos/01-mix-test.cast`
 
-A terminal in the repo. Run `mix test`, then `(cd node && mix test)`. The
-interesting moment is a channel test name from
-`test/photon_web/channels/node_channel_test.exs` scrolling past (join, sync
-map, resync, reconnect replaces the old channel), and a green summary. No
-browser. This is the fake-node layer, so the recording should not show
-`mix phx.server`.
+```sh
+asciinema play docs/verification/demos/01-mix-test.cast
+```
+
+What it is: `mix test --trace` in the hub project, then the same in `node/`.
+No `mix phx.server`. The hub suite is the fake-node layer: LiveView tests
+plus `PhotonWeb.NodeChannelTest`, which joins `node:box`, checks the sync
+map, a gap that pushes `resync`, and a reconnect that replaces the old
+channel. The node suite checks `EventLog` offsets and one real
+`unreal-agent-runner` start. The cast ends at `60 passed` and `7 passed`.
+
+Produced with `asciinema rec -c` after the test env was already compiled,
+so the clip is the run (about three seconds), not Hex downloads.
 
 ## (b) Layer 2 — verify-photon send-message
 
-`docs/verification/demos/02-verify-photon-send-message.mp4`
-
-Requires [`.cursor/skills/verify-photon/`](../../.cursor/skills/verify-photon/SKILL.md),
-which is not on `main` (draft PR #1).
-
-Show, in order:
-
-1. `.cursor/skills/verify-photon/verify-photon doctor` printing `ok`,
-   `node=local`, `provider=mock`, and a data dir under `/tmp/verify-photon`.
-2. The drive: `.cursor/skills/verify-photon/verify-photon drive send-message`.
-3. The page itself, or the evidence screenshots the drive writes
-   (`action.png` with `help` in the composer, `result.png` with the mock
-   reply and the sidebar still showing `local`).
-4. `events.jsonl` in the evidence directory containing the prompt and
-   `model_response`. That file is the copy of the hub session log, not a
-   file the recording author wrote by hand.
-
-Cleanup can be a last frame (`verify-photon cleanup`) with the evidence
-directory still present.
-
-## (c) Layer 3 — TLC on one spec
-
-`docs/verification/demos/03-tlc-install-clean-machine.mp4`
-
-A terminal on `docs/verification/tla`. Show the header comment of
-`install_clean_machine.tla` (the state names and `FailedStaysOffline`) only
-long enough to see what is being checked, then:
+| File | What |
+| --- | --- |
+| `02-verify-photon-send-message.cast` | The CLI: `launch`, `doctor`, `drive send-message`, `cleanup` |
+| `02-verify-photon-send-message.mp4` | Headed Chrome during that drive (about 11s) |
+| `02-action.png` | Evidence still, composer filled with `help`, before Send |
+| `02-result.png` | Evidence still, mock reply, `RUN FINISHED`, sidebar `local` |
 
 ```sh
-java -cp /tmp/tla2tools.jar tlc2.TLC -workers 2 install_clean_machine.tla
+asciinema play docs/verification/demos/02-verify-photon-send-message.cast
 ```
 
-The last frame is TLC reporting that the invariants held, with the
-distinct-state count visible. If you would rather show Spec B, name the
-file `03-tlc-hub-restart-catchup.mp4` and say so in the PR; one spec is
-enough for this clip. Do not edit the spec on camera to force a pass.
+The skill on this branch is `.cursor/skills/verify-photon/`. Doctor in the
+cast prints `ok`, `node=local`, `provider=mock`, and a data dir under
+`/tmp/verify-photon`. The drive writes `/tmp/verify-photon/evidence/send-message/`.
+Cleanup removes the server and keeps that evidence. The two PNGs are copies
+of `action.png` and `result.png` from that directory.
+
+The skill launches Chrome headless (`browser.mjs` sets `headless: true`).
+For the mp4 only, `CHROME_PATH` pointed at a wrapper outside the repo that
+drops `--headless` and execs the system Chrome. The skill files were not
+edited. ffmpeg grabbed the X display (`x11grab`, 1920×1200, 12 fps) from
+the moment the drive was about to open the browser through the result and
+cleanup. The clip shows the empty playground, `help` in the composer, Send,
+the mock sentence, and `RUN FINISHED`, with `local` in the sidebar.
+
+## (c) Layer 3 — TLC
+
+`docs/verification/demos/03-tlc.cast`
+
+```sh
+asciinema play docs/verification/demos/03-tlc.cast
+```
+
+Both specs, back to back, from `docs/verification/tla`. The cast prints the
+invariant names, then:
+
+```sh
+java -cp /tmp/tla2tools.jar tlc2.TLC -workers 2 -cleanup \
+  -metadir /tmp/tlc-rec-a install_clean_machine.tla
+java -cp /tmp/tla2tools.jar tlc2.TLC -workers 2 -cleanup \
+  -metadir /tmp/tlc-rec-b hub_restart_catchup.tla
+```
+
+`-metadir` and `-cleanup` keep TLC's state directory out of the repo. Each
+run ends with `Model checking completed. No error has been found.` Spec A
+is 10 distinct states. Spec B (`MaxLen = 3`) is 159. No counterexample:
+both models satisfy the safety invariants. A failing invariant would print
+a state trace instead of that sentence. Liveness stays a comment in the
+modules and is not in this clip.
 
 ## (d) Layer 4 — podman catch-up
 
-`docs/verification/demos/04-podman-hub-restart-catchup.mp4`
+| File | What |
+| --- | --- |
+| `04-podman-hub-restart-catchup.cast` | `podman kill` / `podman start` and the jsonl oracle |
+| `04-sidebar-before.png` | Hub page before the run, node `box` with a green dot |
+| `04-sidebar-after.png` | Same hub after restart, `box` back, this session `RUN FINISHED` |
 
-The `hub-restart-catchup` scenario in [`distributed.md`](distributed.md).
-Until that scaffolding is automated, the recording is a person following
-the manual steps.
+```sh
+asciinema play docs/verification/demos/04-podman-hub-restart-catchup.cast
+```
 
-Show:
+This one did run. Podman 4.9.3, rootless, image `photon-demo-base` (Ubuntu
+24.04 plus `git`, `libncurses6`, and `libssl3`, so the host's Elixir/OTP
+install can boot). Two containers on network `photon-demo`:
 
-1. Sidebar with the remote node id on a green dot (not only `local`).
-2. `podman kill` on the hub container, volume not removed.
-3. The node's `node-events/<id>.jsonl` gaining or already holding a
-   `"type":"exit"` line while the hub is down.
-4. Hub started again on the same volume. Sidebar green dot returns, one row.
-5. The two jsonl files side by side: same line count, one exit line on the
-   hub. That is the oracle, and it should be readable without pausing on a
-   token or a password. Blur `/data/password` and `node-token` if either
-   would otherwise be on screen.
+- `photon-hub`: `mix phx.server` with `PHOTON_BIND=0.0.0.0`,
+  `PHOTON_PUBLIC_URL=http://photon-hub:4000`, `PHOTON_LOCAL_NODE=false`,
+  `PHOTON_DATA_DIR` on a bind mount, port `127.0.0.1:4000`.
+- `photon-node`: `cd node && mix run --no-halt` with
+  `PHOTON_SERVER=ws://photon-hub:4000/node/websocket`,
+  `PHOTON_NODE_ID=box`, `PHOTON_NODE_DATA` on its own bind mount, and
+  `PHOTON_NODE_TOKEN` taken from the hub data dir. The cast does not print
+  the token.
 
-A still of `podman ps` is not this demo. The kill and the jsonl comparison
-are the point.
+The clip sends `sleep 12` on `box`, kills the hub while the node log has 6
+lines and no exit, waits until the node commits `{"type":"exit"}` (hub file
+still 6 lines, 0 exits), starts the same hub container on the same data
+mount, and waits until the files match: `hub_lines=10 node_lines=10
+equal=True`, one exit on each side, and the sidebar lists `box` again.
+
+That is Spec B's safety oracle (the exit line showed up once after
+reconnect). It is not a claim about the in-memory "N running" chip. That
+chip follows the `status` / `run_finished` channel frames, which
+`PhotonNode.Connection` does not queue across a disconnect. The TLA model
+says this in its header: the durable stand-in is the exit event. The cast's
+numbers are that event.
+
+The compose file in [`distributed.md`](distributed.md) is still not a CI
+job. This recording is one manual pass of the `hub-restart-catchup`
+scenario, with the hub and node built from the checkout instead of
+`docker build -t photon .`.

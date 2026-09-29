@@ -121,8 +121,9 @@ next person does not have to rediscover the ports and the volume.
 
 ## Demos
 
-[`demos.md`](demos.md) lists four screen recordings, one per layer. The files
-are not recorded yet. `demos/.gitkeep` holds the directory.
+[`demos.md`](demos.md) lists four recordings, one per layer, and how each
+one was produced. Play the `.cast` files with `asciinema play`. The
+verify-photon clip is also an mp4 of headed Chrome.
 
 ## What you change
 
