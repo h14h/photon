@@ -6,7 +6,7 @@ Sending a message runs `unreal-agent-runner` on the selected node through the bu
 
 - `send-composer` types a prompt and clicks Send.
 - `send-enter` submits the same form with Enter.
-- `send-example` fills the prompt from an empty-state example button.
+- `send-example` sends an empty-state example immediately. The prompt shows up in the transcript, not in the composer.
 - `send-shell` runs a `$` command and shows the Bash tool card.
 - `send-sleep` starts `sleep 5` and shows the run as still going, then finished.
 - `send-raw` opens Raw events for the same session.
@@ -16,7 +16,7 @@ Sending a message runs `unreal-agent-runner` on the selected node through the bu
 
 - Open the hub root. The heading is **New session** and the empty state says **Try the Unreal Agent harness**.
 - Type in the composer (`Message the agent`) and click the arrow button (tooltip **Send**), or press Enter.
-- On an empty transcript, click an example: **What can the mock do?**, **Run a command**, **Watch an async tool**, or **Look around**.
+- On an empty transcript, click an example: **What can the mock do?**, **Run a command**, **Watch an async tool**, or **Look around**. That click sends the prompt. It does not type it into the composer first.
 - After a reply, click **Raw events** in the top bar.
 - Attach an image with the photo button, paste, or drop it on the composer.
 
@@ -37,7 +37,7 @@ Preconditions:
 - **Confirm the stored session.** Copy `<data>/sessions/<id>/meta.json` and `events.jsonl` from the doctor data dir, using the uuid in the URL. `title` is `help`, `node` is `local`, and `events.jsonl` contains `"Payload":"help"` and `"Kind":"model_response"`.
 - **Bundled proof.** Run `.cursor/skills/verify-photon/verify-photon drive send-message`. It performs the steps above and writes `$PHOTON_VERIFY_ROOT/evidence/send-message/`.
 - **Enter key.** On a fresh launch, fill `#composer` with `help` and run `.cursor/skills/verify-photon/verify-photon browser press --selector '#composer' --key Enter`. The same session URL and mock reply appear. Shift+Enter must not be used; it inserts a newline.
-- **Example button.** On an empty transcript, run `.cursor/skills/verify-photon/verify-photon browser click --selector 'button:has-text("What can the mock do?")'`. That button is `phx-click="example"` with prompt `help`. The result matches the composer path.
+- **Example button.** On an empty transcript, run `.cursor/skills/verify-photon/verify-photon browser click --selector 'button:has-text("What can the mock do?")'`. That button is `phx-click="example"` with prompt `help`, and the click sends. `#composer` stays empty. The session URL, heading, and mock reply match the composer path.
 - **Shell command.** On an empty transcript, run `.cursor/skills/verify-photon/verify-photon browser click --selector 'button:has-text("Run a command")'`. The user text is `$ uname -a && date`. After `run finished`, `#transcript` shows a Bash tool card whose command text contains `uname -a`. `events.jsonl` contains `"Kind":"model_response"` more than once (the tool call, then the report).
 - **Async sleep.** On an empty transcript, run `.cursor/skills/verify-photon/verify-photon browser click --selector 'button:has-text("Watch an async tool")'`. The prompt is `sleep 5`. While it runs, the top bar says `Running` and the transcript says `Agent is working`. Do not click Stop. After about five seconds the transcript contains `tick` and `run finished`.
 - **Raw events.** After any finished run, run `.cursor/skills/verify-photon/verify-photon browser click --selector 'button[phx-click="tab"][phx-value-tab="raw"]'`. The panel says `Newest first` and shows `model_response`. Return with `button[phx-click="tab"][phx-value-tab="chat"]`.
@@ -54,7 +54,7 @@ Preconditions:
 ## Gotchas
 
 - Example buttons render only while the transcript has no entries. After the first message they are gone; use the composer.
-- `help`, `?`, and `/help` are the only mock prompts that skip tools. Any other text runs `pwd && ls -la`. A leading `$` runs that shell command. `sleep 5` really sleeps for about five seconds.
+- `help`, `?`, and `/help` skip tools. A leading `$` runs that shell command. `view`, `image`, or `show` plus a path opens it with ViewImage, and attaching an image does the same. `sleep 5` really sleeps for about five seconds (`sleep` with no number sleeps about three). Any other text runs `pwd && ls -la`.
 - The session title is the first line of the prompt, trimmed, cut at 60 characters with a unicode ellipsis `…` when longer.
 - DOM text for a successful exit is `run finished`. CSS uppercases it. `wait-text` is case-insensitive; a screenshot shows `RUN FINISHED`.
 - An empty composer click does nothing unless an image is attached.
