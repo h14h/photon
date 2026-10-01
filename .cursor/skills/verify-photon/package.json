@@ -1,0 +1,9 @@
+{
+  "name": "verify-photon",
+  "private": true,
+  "type": "module",
+  "description": "Headless Chrome harness for the Photon hub verification skill.",
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  }
+}
