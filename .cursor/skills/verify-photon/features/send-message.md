@@ -55,7 +55,7 @@ Preconditions:
 
 - Example buttons render only while the transcript has no entries. After the first message they are gone; use the composer.
 - `help`, `?`, and `/help` skip tools. A leading `$` runs that shell command. `view`, `image`, or `show` plus a path opens it with ViewImage, and attaching an image does the same. `sleep 5` really sleeps for about five seconds (`sleep` with no number sleeps about three). Any other text runs `pwd && ls -la`.
-- The session title is the first line of the prompt, trimmed, cut at 60 characters with a unicode ellipsis `…` when longer.
+- The session title is the first line of the prompt, trimmed. A line of 60 characters or fewer is kept whole. A longer line becomes the first 57 characters plus a unicode ellipsis `…` (a 61-character prompt is a 58-character heading).
 - DOM text for a successful exit is `run finished`. CSS uppercases it. `wait-text` is case-insensitive; a screenshot shows `RUN FINISHED`.
 - An empty composer click does nothing unless an image is attached.
 - `#composer` is disabled when `local` is offline or the runner binary is missing. Doctor fails closed on that page; do not send anyway.

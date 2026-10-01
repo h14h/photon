@@ -26,7 +26,7 @@ Preconditions:
 - Start from a fresh launch so the sidebar is empty. Create the session this recipe deletes by driving `send-message` first (`help` is enough).
 
 - **Empty list.** After launch, run `.cursor/skills/verify-photon/verify-photon browser start` and `.cursor/skills/verify-photon/verify-photon browser wait-text --text 'No sessions yet'`. The sidebar contains that sentence and no `a[href^="/s/"]` link.
-- **Create by sending.** Run the composer steps in `send-message.md` (or `verify-photon drive send-message`). The sidebar link `aside a[href="/s/<id>"]` text is `help`, matching `meta.json` `"title": "help"`.
+- **Create by sending.** Run the composer steps in `send-message.md` (or `verify-photon drive send-message`). The sidebar link `aside a[href="/s/<id>"]` shows the title `help` on its first line, matching `meta.json` `"title": "help"`. `browser text` on that link also includes the relative-time subtitle (`just now` on a fresh row). With only the `local` node connected, that subtitle does not include `local`.
 - **Reopen.** Run `.cursor/skills/verify-photon/verify-photon browser click --selector 'aside a[href="/"]'`, wait until the URL has no `/s/`, then `.cursor/skills/verify-photon/verify-photon browser click --selector 'aside a[href="/s/<id>"]'` with that same id. The heading is `help` and the transcript still contains `I'm the built-in mock model`.
 - **New session.** From that open session, run `.cursor/skills/verify-photon/verify-photon browser click --selector 'aside a[href="/"]'`. The URL is the hub root, the heading is `New session`, and `aside a[href="/s/<id>"]` is still present. `<data>/sessions/<id>/meta.json` still exists.
 - **Delete.** Hover the row, then click the trash button and accept the confirm:
