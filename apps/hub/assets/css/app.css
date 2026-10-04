@@ -252,43 +252,102 @@
   color: var(--color-accent-strong);
 }
 
-/* Blip stretched into a pill (Material's extended FAB): one line, coming out
-   from behind Blip to its left. The hook adds .is-extended for a few
-   seconds; hovering keeps it, scrolling sends it back. */
-.blip-pill {
+/* What Blip says while the panel is closed: speech bubbles stacked above
+   it, the newest at the bottom with its tail pointing down at Blip. A new
+   bubble grows in from nothing (its row opens from 0fr), which pushes the
+   one before it up, and that one fades out on its way (.is-leaving) until
+   the server drops it. Each holds a whole paragraph; a very long one
+   scrolls inside its bubble rather than covering the page. */
+.blip-bubbles {
   position: fixed;
   z-index: 45;
-  right: calc(var(--blip-m) + var(--blip-fab) / 2);
-  bottom: calc(var(--blip-m) + var(--blip-fab) / 2 - 22px);
-  height: 44px;
-  max-width: min(380px, calc(100vw - 2 * var(--blip-m) - var(--blip-fab) / 2));
+  right: var(--blip-m);
+  bottom: calc(var(--blip-m) + var(--blip-fab) - 18px);
+  width: min(360px, calc(100vw - 2 * var(--blip-m)));
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 calc(var(--blip-fab) / 2 + 8px) 0 16px;
-  border: 1px solid var(--color-line);
-  border-radius: 9999px;
-  background: var(--color-surface);
-  box-shadow: 0 12px 32px -10px rgb(0 0 0 / 0.25), 0 1px 3px rgb(0 0 0 / 0.06);
-  color: var(--color-ink);
-  font-size: 13.5px;
-  text-align: left;
-  white-space: nowrap;
-  cursor: pointer;
-  clip-path: inset(0 0 0 100% round 9999px);
+  flex-direction: column;
+  align-items: flex-end;
+  pointer-events: none;
+}
+.blip-dock:not([data-panel="closed"]) .blip-bubbles { display: none; }
+
+.blip-bubble {
+  display: grid;
+  grid-template-rows: 1fr;
+  max-width: 100%;
+  transform-origin: bottom right;
+  transition:
+    grid-template-rows 380ms var(--blip-ease),
+    opacity 320ms ease-out,
+    transform 380ms var(--blip-ease);
+  pointer-events: auto;
+}
+@starting-style {
+  .blip-bubble { grid-template-rows: 0fr; opacity: 0; transform: translateY(10px) scale(0.96); }
+}
+.blip-bubble.is-leaving {
   opacity: 0;
-  visibility: hidden;
-  transition: clip-path 260ms var(--blip-ease), opacity 160ms, visibility 0s 260ms;
+  transform: translateY(-14px) scale(0.98);
+  pointer-events: none;
 }
-.blip-pill.is-extended {
-  clip-path: inset(0 0 0 0 round 9999px);
-  opacity: 1;
-  visibility: visible;
-  transition: clip-path 420ms var(--blip-ease), opacity 120ms;
+
+/* Room around the card for its shadow and its tail, inside the row that
+   opens; the row clips while it does. */
+.blip-bubble-clip {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  padding: 6px 6px 16px;
 }
-.blip-pill:hover { border-color: color-mix(in oklch, var(--color-accent) 45%, var(--color-line)); }
-.blip-pill.is-failed { border-color: color-mix(in oklch, var(--color-bad) 35%, var(--color-line)); }
-.blip-dock:not([data-panel="closed"]) .blip-pill { display: none; }
+.blip-bubble-card {
+  position: relative;
+  max-height: min(45vh, 420px);
+  overflow-y: auto;
+  padding: 11px 38px 12px 15px;
+  border: 1px solid var(--color-line);
+  border-radius: 18px;
+  background: var(--color-surface);
+  box-shadow: 0 14px 34px -14px rgb(0 0 0 / 0.3), 0 1px 3px rgb(0 0 0 / 0.06);
+  color: var(--color-ink);
+  cursor: pointer;
+  transition: border-color 150ms;
+}
+.blip-bubble-card:hover { border-color: color-mix(in oklch, var(--color-accent) 40%, var(--color-line)); }
+.blip-bubble.is-failed .blip-bubble-card {
+  border-color: color-mix(in oklch, var(--color-bad) 35%, var(--color-line));
+  cursor: default;
+}
+.blip-bubble-text { font-size: 14px; line-height: 1.55; }
+
+/* The tail: a corner of the card turned toward Blip, under its middle. */
+.blip-bubble-tail {
+  position: absolute;
+  bottom: 10px;
+  right: calc(var(--blip-fab) / 2 - 7px);
+  width: 14px;
+  height: 14px;
+  border-right: 1px solid var(--color-line);
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-surface);
+  transform: rotate(45deg);
+}
+.blip-bubble.is-failed .blip-bubble-tail {
+  border-color: color-mix(in oklch, var(--color-bad) 35%, var(--color-line));
+}
+
+.blip-bubble-close {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  color: var(--color-ink-faint);
+  transition: background-color 150ms, color 150ms;
+}
+.blip-bubble-close:hover { background: var(--color-sunken); color: var(--color-ink); }
 
 /* The transition itself: the panel and Blip move on Material's emphasized
    curve, the panel's contents fade in once it has some size. */
@@ -308,7 +367,7 @@
   /* Nothing moves: the panel and Blip fade where they end up. */
   ::view-transition-group(blip-panel),
   ::view-transition-group(blip-face) { animation: none; }
-  .blip-pill, .blip-pill.is-extended { transition: opacity 120ms, visibility 0s; clip-path: none; }
+  .blip-bubble, .blip-bubble.is-leaving { transform: none; }
 }
 
 /* Room for Blip in the corner: at the end of a page that scrolls (y), or

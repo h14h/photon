@@ -1,8 +1,8 @@
 defmodule Photon.Assistant.Notice do
   @moduledoc """
   What Blip says without being asked, as pure functions. When the chat is
-  closed, Blip stretches into a pill with one line of it; `PhotonWeb.BlipLive`
-  drives these.
+  closed, it shows in a speech bubble above Blip: the first paragraph of an
+  answer, whole, as Markdown. `PhotonWeb.BlipLive` drives these.
 
   Blip speaks up only about work it was asked to do and about real
   problems, never with tips:
@@ -29,14 +29,12 @@ defmodule Photon.Assistant.Notice do
   @typedoc "Where each node session stands, by ID, as far as `failures/2` cares."
   @type statuses :: %{String.t() => :active | :failed | :other}
 
-  @gist_length 110
-
   @doc "What a batch of newly committed conversation entries is worth saying, in order."
   @spec from_entries([Entry.t()]) :: [t()]
   def from_entries(entries), do: entries |> Enum.map(&of_entry/1) |> Enum.reject(&is_nil/1)
 
   defp of_entry(%{kind: "assistant", data: data}) do
-    case data["message"] |> Message.text_of() |> gist() do
+    case data["message"] |> Message.text_of() |> paragraph() do
       "" -> nil
       text -> %{kind: :reply, text: text, session_id: nil}
     end
@@ -45,7 +43,7 @@ defmodule Photon.Assistant.Notice do
   defp of_entry(%{kind: "error", data: data}) do
     if Transcript.quiet?(data),
       do: nil,
-      else: %{kind: :error, text: gist(data["message"] || ""), session_id: nil}
+      else: %{kind: :error, text: paragraph(data["message"] || ""), session_id: nil}
   end
 
   defp of_entry(_entry), do: nil
@@ -79,27 +77,26 @@ defmodule Photon.Assistant.Notice do
   end
 
   @doc """
-  One line of `text` for the pill: its first line that has words, without
-  Markdown marks, cut short with "..." if it runs long.
+  What of `text` goes in the bubble: its first paragraph (or list, or other
+  block) with words in it, whole, as Markdown. Headings are left out: the
+  bubble is Blip talking, not a document, and Blip's answers lead with the
+  result.
   """
-  @spec gist(String.t()) :: String.t()
-  def gist(text) do
-    line =
-      text
-      |> String.split("\n")
-      |> Enum.map(&plain/1)
-      |> Enum.find("", &(&1 != ""))
-
-    if String.length(line) > @gist_length,
-      do: String.slice(line, 0, @gist_length - 3) <> "...",
-      else: line
+  @spec paragraph(String.t()) :: String.t()
+  def paragraph(text) do
+    text
+    |> String.split(~r/\n[ \t]*\n/)
+    |> Enum.map(&without_headings/1)
+    |> Enum.find("", &(&1 != ""))
   end
 
-  # A line without its block marks (heading, quote, list) or inline ones.
-  defp plain(line) do
-    line
-    |> String.replace(~r/\A\s*(?:#+|>|[-*+]|\d+[.)])\s+/, "")
-    |> String.replace(~r/\*\*|__|`/, "")
+  # A block without its heading lines (a heading can sit right on top of a
+  # paragraph, with no blank line between).
+  defp without_headings(block) do
+    block
+    |> String.split("\n")
+    |> Enum.reject(&Regex.match?(~r/\A {0,3}\#{1,6}(?:[ \t]|\z)/, &1))
+    |> Enum.join("\n")
     |> String.trim()
   end
 end

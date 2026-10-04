@@ -27,7 +27,7 @@ defmodule Photon.Assistant.NoticeTest do
       ]
 
       assert Notice.from_entries(entries) == [
-               %{kind: :reply, text: "Disks", session_id: nil},
+               %{kind: :reply, text: "**kepler** has 40 GB free.", session_id: nil},
                %{kind: :error, text: "HTTP 401", session_id: nil}
              ]
     end
@@ -74,17 +74,25 @@ defmodule Photon.Assistant.NoticeTest do
     end
   end
 
-  describe "a gist" do
-    test "is the first line with words, without Markdown" do
-      assert Notice.gist("\n\n- `kepler` is **up**\nmore") == "kepler is up"
-      assert Notice.gist("> 1. quoted") == "1. quoted"
-      assert Notice.gist("   ") == ""
+  describe "the paragraph in the bubble" do
+    test "is the first block with words, whole, as Markdown" do
+      text = "Checked kepler. The disk is **82%** full,\nmostly `/var/log`.\n\n- one\n- two"
+
+      assert Notice.paragraph(text) ==
+               "Checked kepler. The disk is **82%** full,\nmostly `/var/log`."
+
+      assert Notice.paragraph(String.duplicate("word ", 200)) =~ String.duplicate("word ", 199)
     end
 
-    test "is cut short when it runs long" do
-      gist = Notice.gist(String.duplicate("word ", 40))
-      assert String.length(gist) == 110
-      assert String.ends_with?(gist, "...")
+    test "leaves out headings, even with no blank line under them" do
+      assert Notice.paragraph("## Disks\n\nAll fine.") == "All fine."
+      assert Notice.paragraph("# Disks\nAll fine.\n\nMore.") == "All fine."
+      assert Notice.paragraph("#hashtag is text") == "#hashtag is text"
+    end
+
+    test "is nothing when there are no words" do
+      assert Notice.paragraph("  \n\n   ") == ""
+      assert Notice.paragraph("## Only a title") == ""
     end
   end
 end

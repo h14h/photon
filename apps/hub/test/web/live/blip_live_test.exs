@@ -198,22 +198,61 @@ defmodule PhotonWeb.BlipLiveTest do
   describe "while the panel is closed" do
     setup :page
 
-    test "Blip says its answer in the pill and counts it unread", %{blip: blip, conversation: c} do
-      refute has_element?(blip, "#blip-pill")
+    test "Blip says its answer's first paragraph, whole, in a bubble, and counts it unread", %{
+      blip: blip,
+      conversation: c
+    } do
+      refute has_element?(blip, "[data-bubble]")
       Assistant.send("help")
       await_entry(c, &(&1.kind == "assistant"))
 
-      assert has_element?(blip, "#blip-pill", "I'm Blip, on the scripted model")
+      assert has_element?(
+               blip,
+               "#blip-bubbles [data-bubble]",
+               "I'm Blip, on the scripted model, so I only follow a few fixed phrasings:"
+             )
+
+      refute has_element?(blip, "#blip-bubbles", "lists your machines")
       assert has_element?(blip, "#blip-unread", "1")
-      assert has_element?(blip, "#blip-dock[data-notice]")
+    end
+
+    test "a new bubble pushes the last one up and out", %{blip: blip, conversation: c} do
+      Durable.commit(&Durable.Tx.append(&1, c, "error", %{"message" => "HTTP 401"}))
+      [first] = bubbles(blip)
+
+      Durable.commit(&Durable.Tx.append(&1, c, "error", %{"message" => "HTTP 500"}))
+      assert has_element?(blip, "#bubble-#{first}.is-leaving", "HTTP 401")
+      assert has_element?(blip, "[data-bubble]:not(.is-leaving)", "HTTP 500")
+      assert has_element?(blip, "#blip-unread", "2")
+
+      # Once it has faded, it goes.
+      send(blip.pid, {:bubble_gone, first})
+      refute has_element?(blip, "#bubble-#{first}")
+    end
+
+    test "a bubble can be dismissed, or all of them", %{blip: blip, conversation: c} do
+      Durable.commit(&Durable.Tx.append(&1, c, "error", %{"message" => "HTTP 401"}))
+      [id] = bubbles(blip)
+
+      # The × (and a bubble's time running out) sends this from the hook.
+      assert has_element?(blip, "#bubble-#{id} [data-bubble-dismiss='#{id}']")
+      render_hook(blip, "dismiss_bubble", %{"id" => id})
+
+      assert has_element?(blip, "#bubble-#{id}.is-leaving")
+
+      Durable.commit(&Durable.Tx.append(&1, c, "error", %{"message" => "HTTP 500"}))
+      render_hook(blip, "dismiss_bubbles", %{})
+      refute has_element?(blip, "[data-bubble]:not(.is-leaving)")
+      # Dismissed isn't read: the count waits for the chat.
+      assert has_element?(blip, "#blip-unread", "2")
     end
 
     test "opening the panel reads what was unread", %{blip: blip, conversation: c} do
       Durable.commit(&Durable.Tx.append(&1, c, "error", %{"message" => "HTTP 401"}))
-      assert has_element?(blip, "#blip-pill.is-failed", "HTTP 401")
+      assert has_element?(blip, "[data-bubble].is-failed", "HTTP 401")
 
       render_hook(blip, "panel", %{"to" => "open"})
-      refute has_element?(blip, "#blip-pill")
+      refute has_element?(blip, "[data-bubble]")
       refute has_element?(blip, "#blip-unread")
     end
 
@@ -222,7 +261,7 @@ defmodule PhotonWeb.BlipLiveTest do
         &Durable.Tx.append(&1, c, "error", %{"message" => "Stopped.", "stopped" => true})
       )
 
-      refute has_element?(blip, "#blip-pill")
+      refute has_element?(blip, "[data-bubble]")
     end
 
     test "work you started yourself is mentioned only when it fails", %{blip: blip} do
@@ -237,7 +276,7 @@ defmodule PhotonWeb.BlipLiveTest do
       :ok =
         NodeSessions.ingest(fine.id, "box", 1, state_record("idle", %{"answer" => "up 3 days"}))
 
-      refute has_element?(blip, "#blip-pill")
+      refute has_element?(blip, "[data-bubble]")
 
       :ok =
         NodeSessions.ingest(
@@ -247,7 +286,13 @@ defmodule PhotonWeb.BlipLiveTest do
           state_record("idle", %{"failure" => "disk full"})
         )
 
-      assert has_element?(blip, ~s(#blip-pill[href="/sessions/#{broken.id}"]), "couldn't finish")
+      assert has_element?(blip, "[data-bubble].is-failed", ~s(box couldn't finish "Backup".))
+
+      assert has_element?(
+               blip,
+               ~s([data-bubble] a[href="/sessions/#{broken.id}"]),
+               "Open session"
+             )
 
       # Opened, the failure stays at the top of the panel until dismissed.
       render_hook(blip, "panel", %{"to" => "open"})
@@ -381,6 +426,15 @@ defmodule PhotonWeb.BlipLiveTest do
       assert has_element?(blip, "#live-work-#{s.id}", "Check disks")
       assert has_element?(blip, "#blip-status", "box is working on it")
     end
+  end
+
+  # The IDs of the bubbles Blip is showing, oldest first.
+  defp bubbles(blip) do
+    blip
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query("[data-bubble]")
+    |> LazyHTML.attribute("data-bubble")
   end
 
   # How many Blips the whole page draws.

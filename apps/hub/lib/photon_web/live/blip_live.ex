@@ -15,8 +15,11 @@ defmodule PhotonWeb.BlipLive do
 
   While the panel is closed, Blip speaks up about its answers, failures in
   the conversation, and node work the user started that failed
-  (`Photon.Assistant.Notice`): it stretches into a pill with one line, and
-  counts what's unread until the panel opens.
+  (`Photon.Assistant.Notice`), in a speech bubble above it holding the whole
+  first paragraph (`@bubbles`, newest first). A new bubble pushes the one before it up and
+  out. Each can be dismissed (×, or Esc for all), and goes by itself once
+  there's been time to read it. Blip counts what's unread until the panel
+  opens.
 
   It knows which page is under it (`Photon.Assistant.Page`): on a node
   session's page, the message box offers that session as context for the
@@ -44,6 +47,9 @@ defmodule PhotonWeb.BlipLive do
   # Closed in the corner; open, floating; pinned to the right; filling the window.
   @panels ~w(closed open pinned full)
 
+  # How long a bubble on its way out takes to fade (see .blip-bubble in app.css).
+  @fade_ms 450
+
   @impl true
   def mount(_params, _session, socket) do
     conversation = Assistant.conversation_id()
@@ -69,7 +75,8 @@ defmodule PhotonWeb.BlipLive do
         mode: "follow_up",
         form: to_form(%{"text" => ""}, as: :message),
         panel: "closed",
-        notice: nil,
+        bubbles: [],
+        bar: nil,
         unread: 0,
         page: nil,
         page_dismissed: false,
@@ -115,14 +122,21 @@ defmodule PhotonWeb.BlipLive do
   end
 
   # The hook has already changed the panel in the browser. Opening it reads
-  # everything unread; only a failure of the user's own work stays, as a bar
-  # at the top, since the conversation doesn't show it.
-  def handle_event("panel", %{"to" => to}, socket) when to in @panels do
-    socket = assign(socket, panel: to)
+  # everything unread and the bubbles go; only a failure of the user's own
+  # work stays, as a bar at the top, since the conversation doesn't show it.
+  def handle_event("panel", %{"to" => "closed"}, socket),
+    do: {:noreply, assign(socket, panel: "closed")}
 
-    if to == "closed",
-      do: {:noreply, socket},
-      else: {:noreply, assign(socket, unread: 0, notice: kept_open(socket.assigns.notice))}
+  def handle_event("panel", %{"to" => to}, socket) when to in @panels do
+    failed = Enum.find(socket.assigns.bubbles, &(&1.kind == :failed))
+
+    {:noreply,
+     assign(socket,
+       panel: to,
+       unread: 0,
+       bubbles: [],
+       bar: failed || socket.assigns.bar
+     )}
   end
 
   # The page under Blip changed (the hook reports each navigation).
@@ -133,11 +147,15 @@ defmodule PhotonWeb.BlipLive do
   def handle_event("dismiss_page", _params, socket),
     do: {:noreply, assign(socket, page_dismissed: true)}
 
-  def handle_event("dismiss_notice", _params, socket),
-    do: {:noreply, assign(socket, notice: nil)}
+  # The × on a bubble, or its time to read it running out.
+  def handle_event("dismiss_bubble", %{"id" => id}, socket),
+    do: {:noreply, leave(socket, &(&1.id == id))}
 
-  defp kept_open(%{kind: :failed} = notice), do: notice
-  defp kept_open(_notice), do: nil
+  # Esc, with the panel closed.
+  def handle_event("dismiss_bubbles", _params, socket),
+    do: {:noreply, leave(socket, fn _bubble -> true end)}
+
+  def handle_event("dismiss_bar", _params, socket), do: {:noreply, assign(socket, bar: nil)}
 
   defp page_at(path) do
     with id when is_binary(id) <- Page.session_id(path),
@@ -191,6 +209,10 @@ defmodule PhotonWeb.BlipLive do
      |> assign(statuses: Notice.statuses(sessions))}
   end
 
+  def handle_info({:bubble_gone, id}, socket),
+    do:
+      {:noreply, update(socket, :bubbles, fn bubbles -> Enum.reject(bubbles, &(&1.id == id)) end)}
+
   # A timer for an outcome a later one replaced finds a different ref, and
   # falls through to the last clause.
   def handle_info({:blip_rest, ref}, %{assigns: %{outcome_ref: ref}} = socket),
@@ -215,26 +237,47 @@ defmodule PhotonWeb.BlipLive do
     assign(socket, outcome: outcome, outcome_ref: ref)
   end
 
-  # Closed, Blip says the latest thing and counts them all. Open, the
-  # conversation shows its own answers and failures, so only a failure of
-  # the user's own work is said. Each notice gets a new ID, so the hook
-  # stretches Blip into the pill again even when the words repeat.
+  # Closed, Blip says the latest thing in a bubble, pushing the one before it
+  # up and out, and counts them all. Open, the conversation shows its own
+  # answers and failures, so only a failure of the user's own work is said,
+  # in the bar at the top.
   defp notify(socket, []), do: socket
 
   defp notify(%{assigns: %{panel: "closed"}} = socket, notices) do
     socket
     |> update(:unread, &(&1 + length(notices)))
-    |> assign(notice: identify(List.last(notices)))
+    |> leave(fn _bubble -> true end)
+    |> update(:bubbles, &[as_bubble(List.last(notices)) | &1])
   end
 
   defp notify(socket, notices) do
     case Enum.filter(notices, &(&1.kind == :failed)) do
       [] -> socket
-      failed -> assign(socket, notice: identify(List.last(failed)))
+      failed -> assign(socket, bar: as_bubble(List.last(failed)))
     end
   end
 
-  defp identify(notice), do: Map.put(notice, :id, System.unique_integer([:positive]))
+  defp as_bubble(notice),
+    do:
+      Map.merge(notice, %{
+        id: Integer.to_string(System.unique_integer([:positive])),
+        leaving: false
+      })
+
+  # The bubbles `which` picks fade out, and go once they have.
+  defp leave(socket, which),
+    do: update(socket, :bubbles, fn bubbles -> Enum.map(bubbles, &fade(&1, which)) end)
+
+  defp fade(%{leaving: true} = bubble, _which), do: bubble
+
+  defp fade(bubble, which) do
+    if which.(bubble) do
+      Process.send_after(self(), {:bubble_gone, bubble.id}, @fade_ms)
+      %{bubble | leaving: true}
+    else
+      bubble
+    end
+  end
 
   # A tool result re-renders the assistant entry whose call it answers.
   defp add_entry(socket, %{kind: "tool_result"} = entry) do
@@ -294,7 +337,6 @@ defmodule PhotonWeb.BlipLive do
       id="blip-dock"
       phx-hook=".BlipDock"
       data-panel={@panel}
-      data-notice={@notice && @notice.id}
       class="blip-dock group/dock"
     >
       <section id="blip-panel" class="blip-panel" aria-label="Blip">
@@ -334,10 +376,7 @@ defmodule PhotonWeb.BlipLive do
           </button>
         </header>
 
-        <.notice_bar
-          :if={@notice && @notice.kind == :failed && @panel != "closed"}
-          notice={@notice}
-        />
+        <.notice_bar :if={@bar && @panel != "closed"} notice={@bar} />
 
         <div id="conversation" phx-hook="PinToBottom" class="min-h-0 flex-1 overflow-y-auto">
           <div class="mx-auto w-full max-w-3xl px-4 pt-5 pb-4 sm:px-5">
@@ -376,7 +415,10 @@ defmodule PhotonWeb.BlipLive do
         <.sign_in_to_talk :if={!@shell.model_ready} chatgpt={@shell.chatgpt} />
       </section>
 
-      <.pill :if={@notice} notice={@notice} />
+      <div id="blip-bubbles" class="blip-bubbles" aria-live="polite">
+        <%!-- Newest last, nearest Blip. --%>
+        <.bubble :for={bubble <- Enum.reverse(@bubbles)} bubble={bubble} />
+      </div>
 
       <button
         type="button"
@@ -402,15 +444,22 @@ defmodule PhotonWeb.BlipLive do
       // later, so the hook keeps the state itself (this.state) rather than
       // reading it back from the page. The attribute is set as a JS command,
       // so patches from the server keep it.
-      const KEEP_MS = 6000, AGAIN_MS = 2500
+      //
+      // It also times the speech bubbles: each stays long enough to read
+      // (about 240 words a minute, after a moment to look up), then asks the
+      // server to let it go. Hovering a bubble, or Blip, holds them all.
+      const READ_MIN_MS = 6000, READ_MAX_MS = 20000, MS_PER_WORD = 250, AGAIN_MS = 2000
 
       export default {
         mounted() {
           this.state = this.el.dataset.panel
-          this.notice = this.el.dataset.notice
+          this.timers = new Map()
+          this.held = false
           this.mark(this.state)
 
           this.el.addEventListener("click", e => {
+            const dismiss = e.target.closest("[data-bubble-dismiss]")
+            if (dismiss) return this.dismiss(dismiss.dataset.bubbleDismiss)
             const action = e.target.closest("[data-blip-action]")?.dataset.blipAction
             if (action) return this.act(action)
             if (e.target.closest("#blip-face") && this.panel() === "closed") this.go("open")
@@ -422,6 +471,8 @@ defmodule PhotonWeb.BlipLive do
               this.go(this.panel() === "closed" ? "open" : "closed")
             } else if (e.key === "Escape" && ["open", "full"].includes(this.panel())) {
               this.go("closed")
+            } else if (e.key === "Escape" && this.panel() === "closed" && this.timers.size > 0) {
+              this.dismissAll()
             }
           }
           document.addEventListener("keydown", this.onKey)
@@ -436,45 +487,27 @@ defmodule PhotonWeb.BlipLive do
           }
           document.addEventListener("pointerdown", this.onOutside, true)
 
-          // Blip shrinks back from the pill when you scroll or swipe, but not
-          // when a page scrolls itself to follow new output.
-          this.onWheel = () => { if (this.extended && Date.now() - this.extended > 800) this.collapse() }
-          document.addEventListener("wheel", this.onWheel, {passive: true, capture: true})
-          document.addEventListener("touchmove", this.onWheel, {passive: true, capture: true})
-
-          // Looking at Blip, or at what it's saying, keeps the pill open.
-          const face = this.el.querySelector("#blip-face")
-          face.addEventListener("pointerenter", () => this.hold())
-          face.addEventListener("pointerleave", () => this.release())
+          for (const el of [this.el.querySelector("#blip-face"), this.el.querySelector("#blip-bubbles")]) {
+            el.addEventListener("pointerenter", () => this.hold())
+            el.addEventListener("pointerleave", () => this.release())
+          }
+          this.schedule()
 
           this.reportPage()
           this.onNavigate = () => this.reportPage()
           window.addEventListener("phx:page-loading-stop", this.onNavigate)
         },
 
-        updated() {
-          const notice = this.el.dataset.notice
-          if (notice && notice !== this.notice && this.panel() === "closed") this.extend()
-          this.notice = notice
-          const pill = this.pill()
-          if (pill && !pill.dataset.blipWatched) {
-            pill.dataset.blipWatched = "1"
-            pill.addEventListener("pointerenter", () => this.hold())
-            pill.addEventListener("pointerleave", () => this.release())
-          }
-        },
+        updated() { this.schedule() },
 
         destroyed() {
           document.removeEventListener("keydown", this.onKey)
           document.removeEventListener("pointerdown", this.onOutside, true)
-          document.removeEventListener("wheel", this.onWheel, {capture: true})
-          document.removeEventListener("touchmove", this.onWheel, {capture: true})
           window.removeEventListener("phx:page-loading-stop", this.onNavigate)
-          clearTimeout(this.timer)
+          for (const timer of this.timers.values()) clearTimeout(timer.handle)
         },
 
         panel() { return this.state },
-        pill() { return this.el.querySelector("#blip-pill") },
 
         act(action) {
           const now = this.panel()
@@ -494,7 +527,6 @@ defmodule PhotonWeb.BlipLive do
             const now = this.state
             this.js().setAttribute(this.el, "data-panel", now)
             this.mark(now)
-            if (now !== "closed") this.collapse()
           }
           // With reduced motion, app.css keeps the transition to a fade. A
           // transition waits for the page to draw a frame, and while it runs
@@ -524,26 +556,60 @@ defmodule PhotonWeb.BlipLive do
           this.pushEvent("page", {path: this.path})
         },
 
-        extend() {
-          const pill = this.pill()
-          if (!pill) return
-          this.js().addClass(pill, "is-extended")
-          this.extended = Date.now()
-          this.release(KEEP_MS)
+        // A timer for each bubble on screen, from when it first shows.
+        schedule() {
+          const shown = new Set()
+          for (const el of this.el.querySelectorAll("[data-bubble]:not(.is-leaving)")) {
+            const id = el.dataset.bubble
+            shown.add(id)
+            if (this.timers.has(id)) continue
+            const words = el.textContent.trim().split(/\s+/).length
+            const left = Math.min(READ_MAX_MS, Math.max(READ_MIN_MS, 3000 + words * MS_PER_WORD))
+            this.timers.set(id, {left})
+            if (!this.held) this.run(id)
+          }
+          for (const [id, timer] of this.timers) {
+            if (shown.has(id)) continue
+            clearTimeout(timer.handle)
+            this.timers.delete(id)
+          }
         },
 
-        collapse() {
-          clearTimeout(this.timer)
-          this.extended = null
-          const pill = this.pill()
-          if (pill) this.js().removeClass(pill, "is-extended")
+        run(id) {
+          const timer = this.timers.get(id)
+          timer.since = performance.now()
+          timer.handle = setTimeout(() => this.dismiss(id), timer.left)
         },
 
-        hold() { clearTimeout(this.timer) },
+        hold() {
+          if (this.held) return
+          this.held = true
+          for (const timer of this.timers.values()) {
+            clearTimeout(timer.handle)
+            timer.left -= performance.now() - timer.since
+          }
+        },
 
-        release(ms = AGAIN_MS) {
-          clearTimeout(this.timer)
-          if (this.extended) this.timer = setTimeout(() => this.collapse(), ms)
+        // Looking away gives at least a moment more before a bubble goes.
+        release() {
+          if (!this.held) return
+          this.held = false
+          for (const [id, timer] of this.timers) {
+            timer.left = Math.max(timer.left, AGAIN_MS)
+            this.run(id)
+          }
+        },
+
+        dismiss(id) {
+          clearTimeout(this.timers.get(id)?.handle)
+          this.timers.delete(id)
+          this.pushEvent("dismiss_bubble", {id})
+        },
+
+        dismissAll() {
+          for (const timer of this.timers.values()) clearTimeout(timer.handle)
+          this.timers.clear()
+          this.pushEvent("dismiss_bubbles", {})
         }
       }
     </script>
@@ -560,34 +626,45 @@ defmodule PhotonWeb.BlipLive do
   defp status_line(:working, %{working: working}), do: "#{length(working)} jobs running"
   defp status_line(_mood, %{model: model}), do: "On #{model}"
 
-  attr :notice, :map, required: true
+  attr :bubble, :map, required: true
 
-  # Blip stretched into a pill, saying one thing. A failed session links to
-  # it; anything else opens the chat.
-  defp pill(%{notice: %{kind: :failed}} = assigns) do
+  # Blip saying something, in a speech bubble above it: the whole first
+  # paragraph. Clicking it opens the chat; a failed session links to it
+  # instead. The × dismisses it. The tail points down at Blip.
+  defp bubble(assigns) do
     ~H"""
-    <.link id="blip-pill" navigate={~p"/sessions/#{@notice.session_id}"} class="blip-pill is-failed">
-      <.icon name="hero-exclamation-circle-micro" class="size-4 shrink-0 text-bad" />
-      <span class="truncate">{@notice.text}</span>
-    </.link>
-    """
-  end
-
-  defp pill(assigns) do
-    ~H"""
-    <button
-      type="button"
-      id="blip-pill"
-      data-blip-action="open"
-      class={["blip-pill", @notice.kind == :error && "is-failed"]}
+    <div
+      id={"bubble-#{@bubble.id}"}
+      data-bubble={@bubble.id}
+      class={[
+        "blip-bubble",
+        @bubble.leaving && "is-leaving",
+        @bubble.kind != :reply && "is-failed"
+      ]}
     >
-      <.icon
-        :if={@notice.kind == :error}
-        name="hero-exclamation-circle-micro"
-        class="size-4 shrink-0 text-bad"
-      />
-      <span class="truncate">{@notice.text}</span>
-    </button>
+      <div class="blip-bubble-clip">
+        <div class="blip-bubble-card" data-blip-action={@bubble.kind != :failed && "open"}>
+          <div class="markdown-body blip-bubble-text">{raw(Markdown.to_html(@bubble.text))}</div>
+          <.link
+            :if={@bubble.kind == :failed}
+            navigate={~p"/sessions/#{@bubble.session_id}"}
+            class="mt-1 inline-flex items-center gap-1 text-[13px] font-medium text-accent-strong hover:underline"
+          >
+            Open session <.icon name="hero-arrow-right-micro" class="size-3.5" />
+          </.link>
+          <button
+            type="button"
+            class="blip-bubble-close"
+            data-bubble-dismiss={@bubble.id}
+            aria-label="Dismiss"
+            title="Dismiss (Esc)"
+          >
+            <.icon name="hero-x-mark-micro" class="size-4" />
+          </button>
+        </div>
+        <span class="blip-bubble-tail" aria-hidden="true" />
+      </div>
+    </div>
     """
   end
 
@@ -600,7 +677,7 @@ defmodule PhotonWeb.BlipLive do
       class="flex shrink-0 items-center gap-2 border-b border-line bg-bad-soft px-4 py-2 text-[13px]"
     >
       <.icon name="hero-exclamation-circle-micro" class="size-4 shrink-0 text-bad" />
-      <span class="min-w-0 flex-1 truncate">{@notice.text}</span>
+      <span class="min-w-0 flex-1">{@notice.text}</span>
       <.link
         navigate={~p"/sessions/#{@notice.session_id}"}
         class="shrink-0 rounded px-1.5 py-0.5 font-medium text-accent-strong hover:bg-surface/60"
@@ -609,7 +686,7 @@ defmodule PhotonWeb.BlipLive do
       </.link>
       <button
         type="button"
-        phx-click="dismiss_notice"
+        phx-click="dismiss_bar"
         class="shrink-0 rounded p-0.5 text-ink-faint hover:text-ink"
         title="Dismiss"
       >
