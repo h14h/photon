@@ -7,7 +7,7 @@ defmodule PhotonCore.Case do
 
   Tests are laid out by layer: `test/core` for the pure modules (no
   processes, no HTTP), `test/boundary` for `PhotonCore.LLM.stream/3` called
-  as its users call it, against a stub provider, and `test/property` for the
+  as its users call it, against a stub API, and `test/property` for the
   StreamData properties of both.
   """
 
@@ -19,8 +19,9 @@ defmodule PhotonCore.Case do
   using do
     quote do
       alias PhotonCore.{ID, LLM, Message}
-      alias PhotonCore.LLM.{ChatCompletions, Error, Mock, MockAgent, Retry, SSE}
-      alias PhotonCore.LLM.ChatCompletions.{Request, Response}
+      alias PhotonCore.LLM.{Error, HTTPError, Mock, MockAgent, Relay, Responses, Retry, SSE}
+      alias PhotonCore.LLM.Relay.Wire
+      alias PhotonCore.LLM.Responses.{Request, Response}
 
       import PhotonCore.Fixtures
     end

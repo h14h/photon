@@ -10,17 +10,23 @@ defmodule PhotonCore.LLM do
     * `:messages` - a `PhotonCore.Message` conversation
     * `:tools` - `[%{"name", "description", "parameters" (JSON Schema)}]`
     * `:reasoning` - thinking level, sent only when the config allows it
-    * `:max_tokens` - optional output cap
+    * `:max_tokens` - optional output cap (ChatGPT doesn't accept one)
+    * `:cache_key` - what the request continues (a conversation or session
+      ID), so the provider can cache its history between turns
 
   A config says where to send it:
 
-    * `:provider` - a key of `providers/0`, `"custom"`, or `"mock"`
-    * `:base_url`, `:api_key` - default to the provider's
+    * `:provider` - `"chatgpt"` (the Responses API with a Sign in with
+      ChatGPT token; the hub), `"relay"` (the hub's model relay; nodes) or
+      `"mock"` (a scripted model; tests)
+    * `:base_url` - where the provider is
+    * `:api_key` - the bearer token: the ChatGPT access token, or the
+      node's token for the relay
+    * `:headers` - extra request headers
     * `:script` - for `"mock"`, the module that answers (see `PhotonCore.LLM.Mock`)
     * `:max_attempts` - attempts for retryable failures (default 6)
     * `:retry_base_ms` - the first retry's backoff (default 1000)
     * `:receive_timeout` - milliseconds to wait for data (default 180000)
-    * `:send_reasoning_effort` - send `:reasoning` as `reasoning_effort`
     * `:extra_body` - fields merged into the request body
     * `:req_options` - extra `Req` options, e.g. a test plug
 
@@ -43,14 +49,14 @@ defmodule PhotonCore.LLM do
   processes of its own.
   """
 
-  # The model client: this API in front of the HTTP adapter and the mock.
+  # The model client: this API in front of the HTTP adapters and the mock.
   use Boundary,
     top_level?: true,
     type: :strict,
     deps: [PhotonCore, PhotonCore.LLM.Error, Jason, Req],
-    exports: [ChatCompletions, Mock, MockAgent]
+    exports: [Mock, MockAgent, Relay, Responses]
 
-  alias PhotonCore.LLM.{ChatCompletions, Error, Mock, Retry}
+  alias PhotonCore.LLM.{Error, Mock, Relay, Responses, Retry}
   alias PhotonCore.Message
 
   @typedoc "A model request; see the moduledoc."
@@ -60,7 +66,8 @@ defmodule PhotonCore.LLM do
           optional(:messages) => [Message.t()],
           optional(:tools) => [map()],
           optional(:reasoning) => String.t() | nil,
-          optional(:max_tokens) => pos_integer() | nil
+          optional(:max_tokens) => pos_integer() | nil,
+          optional(:cache_key) => String.t() | nil
         }
 
   @typedoc "Where and how to send a request; see the moduledoc."
@@ -68,11 +75,11 @@ defmodule PhotonCore.LLM do
           optional(:provider) => String.t() | nil,
           optional(:base_url) => String.t() | nil,
           optional(:api_key) => String.t() | nil,
+          optional(:headers) => [{String.t(), String.t()}],
           optional(:script) => module() | nil,
           optional(:max_attempts) => pos_integer(),
           optional(:retry_base_ms) => non_neg_integer(),
           optional(:receive_timeout) => timeout(),
-          optional(:send_reasoning_effort) => boolean(),
           optional(:extra_body) => map(),
           optional(:req_options) => keyword(),
           optional(atom()) => term()
@@ -90,115 +97,49 @@ defmodule PhotonCore.LLM do
   @typedoc ~s(`"message"`, `"stop"`, `"usage"` and `"model"`; see the moduledoc.)
   @type response :: %{optional(String.t()) => term()}
 
-  @type provider :: %{
-          name: String.t(),
-          base_url: String.t(),
-          key_env: String.t() | nil,
-          default_model: String.t() | nil
-        }
-
-  @providers %{
-    "fireworks" => %{
-      name: "Fireworks",
-      base_url: "https://api.fireworks.ai/inference/v1",
-      key_env: "FIREWORKS_API_KEY",
-      default_model: "accounts/fireworks/models/deepseek-v4p1-flash"
-    },
-    "openai" => %{
-      name: "OpenAI",
-      base_url: "https://api.openai.com/v1",
-      key_env: "OPENAI_API_KEY",
-      default_model: nil
-    },
-    "openrouter" => %{
-      name: "OpenRouter",
-      base_url: "https://openrouter.ai/api/v1",
-      key_env: "OPENROUTER_API_KEY",
-      default_model: "deepseek/deepseek-v4.1-flash"
-    },
-    "ollama" => %{
-      name: "Ollama",
-      base_url: "http://127.0.0.1:11434/v1",
-      key_env: nil,
-      default_model: nil
-    }
-  }
-
-  @doc "Known providers: id to `%{name, base_url, key_env, default_model}`."
-  @spec providers() :: %{String.t() => provider()}
-  def providers, do: @providers
-
-  @spec provider(String.t() | nil) :: provider() | nil
-  def provider(id), do: Map.get(@providers, id)
-
-  @doc """
-  Fills in a config's base URL and key from its provider, falling back to the
-  provider's environment variable for the key.
-  """
-  @spec resolve(config()) :: config()
-  def resolve(config), do: resolve(config, &System.get_env/1)
-
-  @doc """
-  `resolve/1` with the environment passed in: `get_env` takes a variable's
-  name and returns its value or `nil`. Pure when `get_env` is.
-  """
-  @spec resolve(config(), (String.t() -> String.t() | nil)) :: config()
-  def resolve(%{provider: "mock"} = config, _get_env), do: config
-
-  def resolve(config, get_env) do
-    defaults = provider(config[:provider]) || %{}
-
-    Map.merge(config, %{
-      api_key: api_key(config[:api_key], defaults[:key_env], get_env),
-      base_url: base_url(config[:base_url], defaults[:base_url])
-    })
-  end
-
-  defp api_key(key, key_env, get_env) when key in [nil, ""], do: key_env && get_env.(key_env)
-  defp api_key(key, _key_env, _get_env), do: key
-
-  defp base_url(url, default) when url in [nil, ""], do: default
-  defp base_url(url, _default), do: url
-
   @doc "Runs `request` against `config`'s provider. See the moduledoc."
   @spec stream(request(), config(), on_event()) :: {:ok, response()} | {:error, Error.t()}
-  def stream(request, config, on_event \\ fn _event -> :ok end) do
-    run(request, resolve(config), on_event)
-  end
+  def stream(request, config, on_event \\ fn _event -> :ok end)
 
-  defp run(request, %{provider: "mock"} = config, on_event),
+  def stream(request, %{provider: "mock"} = config, on_event),
     do: Mock.stream(request, config, on_event)
 
-  defp run(request, config, on_event) do
-    with :ok <-
-           require_present(config[:base_url], "no base URL for provider #{config[:provider]}"),
+  def stream(request, %{provider: "chatgpt"} = config, on_event) do
+    with :ok <- require_present(config[:api_key], "not signed in with ChatGPT"),
          :ok <- require_present(request[:model], "no model selected") do
-      attempt(request, config, on_event, 1)
+      attempt(Responses, request, config, on_event, 1)
     end
   end
+
+  def stream(request, %{provider: "relay"} = config, on_event) do
+    with :ok <- require_present(config[:base_url], "no hub to relay through") do
+      attempt(Relay, request, config, on_event, 1)
+    end
+  end
+
+  def stream(_request, config, _on_event),
+    do: {:error, Error.new(:config, "unknown model provider #{inspect(config[:provider])}")}
 
   defp require_present(value, message) when value in [nil, ""],
     do: {:error, Error.new(:config, message)}
 
   defp require_present(_value, _message), do: :ok
 
-  defp attempt(request, config, on_event, attempt) do
-    request
-    |> ChatCompletions.stream(config, on_event)
-    |> after_attempt(request, config, on_event, attempt)
-  end
+  defp attempt(adapter, request, config, on_event, attempt) do
+    case adapter.stream(request, config, on_event) do
+      {:error, %Error{} = error} = failed ->
+        case Retry.decide(error, attempt, config, &:rand.uniform/1) do
+          {:retry, delay} ->
+            on_event.({:retry, attempt, delay, error})
+            Process.sleep(delay)
+            attempt(adapter, request, config, on_event, attempt + 1)
 
-  defp after_attempt({:error, %Error{} = error} = failed, request, config, on_event, attempt) do
-    case Retry.decide(error, attempt, config, &:rand.uniform/1) do
-      {:retry, delay} ->
-        on_event.({:retry, attempt, delay, error})
-        Process.sleep(delay)
-        attempt(request, config, on_event, attempt + 1)
+          :give_up ->
+            failed
+        end
 
-      :give_up ->
-        failed
+      result ->
+        result
     end
   end
-
-  defp after_attempt(result, _request, _config, _on_event, _attempt), do: result
 end

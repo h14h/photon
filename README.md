@@ -20,8 +20,9 @@ browser ──▶ hub: assistant + web UI ◀──websocket── node ──�
   tool calls, an append-only session log, crash recovery, and each command in
   its own process group. Nodes dial the hub, so they work behind NAT, keep
   working while the hub is away, and catch up when it's back.
-- **Models** are configured once, on the hub. Nodes reach the model through
-  the hub, so they never hold an API key.
+- **The model** is your ChatGPT plan: you sign in with ChatGPT once, on the
+  hub. Nodes reach the model through the hub, so they never hold the
+  sign-in.
 
 > [!WARNING]
 > Node agents run shell commands **without a sandbox**, as the node's user.
@@ -31,7 +32,7 @@ browser ──▶ hub: assistant + web UI ◀──websocket── node ──�
 
 | Path | What |
 | --- | --- |
-| `apps/core` | Shared: the streaming model client (any OpenAI-compatible API), the message format, the mock models |
+| `apps/core` | Shared: the streaming model client (ChatGPT through the Responses API, and the hub's relay that nodes use), the message format, the scripted models tests use |
 | `apps/node` | The node: the agent harness (`PhotonNode.Harness`) and the hub connection, packaged as one self-contained binary |
 | `apps/hub` | The hub: the durable harness (`Photon.Durable`), the assistant (`Photon.Assistant`), node sessions, installer, web UI |
 | `docs/unreal-agent-port-spec.md` | What the node harness ports from unreal-agent, and where it differs |
@@ -46,13 +47,36 @@ mix setup
 mix phx.server
 ```
 
-Open http://localhost:4000. The hub starts a built-in node called `local`, and
-uses the **mock model** until you add an API key, so you can try everything
-right away: type `help`, or `on local: $ uname -a`.
+Open http://localhost:4000, then Settings, and sign in with ChatGPT (see
+below). The hub starts a built-in node called `local`, so you can try
+`on local, what's my uptime?` right away.
 
-To use a real model, open Settings and pick a provider. The default is
-Fireworks with DeepSeek V4.1 Flash (`accounts/fireworks/models/deepseek-v4p1-flash`);
-OpenAI, OpenRouter, Ollama and any OpenAI-compatible endpoint work too.
+To work on the hub without signing in, start it with
+`PHOTON_MOCK_MODEL=1 mix phx.server`: Blip and nodes then answer with scripted
+models (type `help`, or `on local: $ uname -a`). That's for development only.
+
+## Sign in with ChatGPT
+
+Photon runs on your ChatGPT plan, through OpenAI's
+[Sign in with ChatGPT](https://developers.openai.com/siwc/quickstart) for
+open-source apps. It's the only way to give it a model.
+
+1. In the hub, open Settings and choose **Sign in with ChatGPT**, then
+   **Open ChatGPT**, and approve Photon.
+2. ChatGPT sends your browser to a `http://127.0.0.1:…/auth/callback` page
+   that won't load. That's expected: OpenAI only lets open-source apps
+   return to the computer you're on, and the hub isn't it. Copy that page's
+   whole address and paste it into Settings.
+
+The hub keeps the tokens in its data directory (`chatgpt.json`, readable by
+the hub only) and refreshes them itself. Nodes never see them: their
+requests go through the hub. Usage counts against your plan and Photon's
+share of it, which you can see and limit at
+[chatgpt.com/settings/usage](https://chatgpt.com/settings/usage).
+Schedules run while you're away, so they only use your plan once you allow
+it in Settings.
+
+Sign in with ChatGPT is for your own use: one hub, run by you, for you.
 
 ## Deploy the hub to Fly.io
 
@@ -135,7 +159,7 @@ Hub:
 | `PHOTON_BIND` | Address the hub listens on |
 | `PHOTON_LOCAL_NODE` | Run the built-in node (default on in development, off in the image) |
 | `PHOTON_DATA_DIR` | Where data lives (`.photon/`, or `/data` in the image) |
-| `FIREWORKS_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | Model keys, if not set in Settings |
+| `PHOTON_MOCK_MODEL` | `1` answers with scripted models instead of ChatGPT (development only) |
 
 Node (set by the installer in `~/.config/photon-node/env`):
 

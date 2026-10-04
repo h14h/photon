@@ -49,7 +49,8 @@ defmodule Photon.Durable.Turn do
       system: system,
       messages: Context.messages(entries),
       tools: Enum.map(tools, &Tool.spec/1),
-      reasoning: llm[:reasoning]
+      reasoning: llm[:reasoning],
+      cache_key: llm[:cache_key]
     }
   end
 

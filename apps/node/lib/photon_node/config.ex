@@ -82,12 +82,12 @@ defmodule PhotonNode.Config do
   @spec sessions_dir(t()) :: String.t()
   def sessions_dir(config), do: Path.join(config.data_dir, "sessions")
 
-  @doc "The hub's model proxy, reached through the same host as the websocket."
+  @doc "The hub's model relay, reached through the same host as the websocket."
   @spec llm_base_url(t()) :: String.t()
   def llm_base_url(config) do
     uri = URI.parse(config.server)
     scheme = if uri.scheme == "wss", do: "https", else: "http"
-    URI.to_string(%URI{scheme: scheme, host: uri.host, port: uri.port, path: "/node/llm/v1"})
+    URI.to_string(%URI{scheme: scheme, host: uri.host, port: uri.port, path: "/node/llm"})
   end
 
   @doc "This machine's hostname."

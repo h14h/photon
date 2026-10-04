@@ -181,9 +181,9 @@ defmodule Photon.Fixtures do
 
   ## Settings
 
-  @doc "A complete settings map, as `Photon.Settings.load/0` returns it, with no key in the environment."
+  @doc "A complete settings map, as `Photon.Settings.load/0` returns it."
   def settings(overrides \\ %{}) do
-    Photon.Settings.normalize(Map.new(overrides), Photon.Settings.defaults(fn _ -> nil end))
+    Photon.Settings.normalize(Map.new(overrides), Photon.Settings.defaults())
   end
 
   @doc "An environment lookup over a fixed map."

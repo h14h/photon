@@ -4,8 +4,9 @@ defmodule PhotonCore do
 
     * `PhotonCore.Message`: the provider-neutral conversation format both
       harnesses persist.
-    * `PhotonCore.LLM`: one streamed model request, with retries, against any
-      OpenAI-compatible Chat Completions API, or the scripted mock model.
+    * `PhotonCore.LLM`: one streamed model request, with retries: to the
+      OpenAI Responses API with a Sign in with ChatGPT token (the hub), to
+      the hub's model relay (nodes), or to the scripted mock (tests).
     * `PhotonCore.ID`: time-sortable identifiers.
 
   It's a library: no application, no processes. Requests run in the caller's
@@ -14,14 +15,13 @@ defmodule PhotonCore do
     * data: `Message` (string-keyed maps that round-trip through JSON),
       `LLM.Error`, and the request, config and response maps typed in
       `PhotonCore.LLM`
-    * functional core, pure: `LLM.SSE`, `LLM.Retry`,
-      `LLM.ChatCompletions.Request`, `LLM.ChatCompletions.Response`,
+    * functional core, pure: `LLM.SSE`, `LLM.Retry`, `LLM.HTTPError`,
+      `LLM.Responses.Request`, `LLM.Responses.Response`, `LLM.Relay.Wire`,
       `Message`, `ID.encode/3`, and the mock script `LLM.MockAgent`
-    * boundary: `PhotonCore.LLM` is the API. Behind it,
-      `LLM.ChatCompletions` does the HTTP and `LLM.Mock` answers with a
-      script; both report events through the caller's `on_event`.
-      `ID.new/1` reads the clock and RNG; `LLM.resolve/1` reads the OS
-      environment.
+    * boundary: `PhotonCore.LLM` is the API. Behind it, `LLM.Responses`
+      and `LLM.Relay` do the HTTP and `LLM.Mock` answers with a script; all
+      report events through the caller's `on_event`. `ID.new/1` reads the
+      clock and RNG.
   """
 
   # The shared data and utilities: the message format and IDs. Pure, so its

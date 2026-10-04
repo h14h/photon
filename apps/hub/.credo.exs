@@ -60,6 +60,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Durable.Submission",
                    "Photon.Durable.TaskRecord",
                    "Photon.Assistant.Prompt",
+                   "Photon.ChatGPT.OAuth",
                    "Photon.Assistant.Memory",
                    "Photon.Assistant.Report",
                    "Photon.Assistant.Transcript",
@@ -139,6 +140,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                  files: lib_only,
                  api_modules: [
                    "Photon.Assistant",
+                   "Photon.ChatGPT",
                    "Photon.Durable",
                    "Photon.NodeSessions",
                    "Photon.Nodes",
@@ -165,7 +167,9 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    {"Photon.Nodes",
                     "command/3: callers must not wait on a node's connection; inputs stay queued in the NodeSessions outbox and are resent on the next join. register/2 tells a replaced connection to stop, and waits for its exit (see its moduledoc)"},
                    {"Photon.Provision",
-                    "progress from its own job tasks, a line at a time; a job that dies without reporting its end is failed by its monitor"}
+                    "progress from its own job tasks, a line at a time; a job that dies without reporting its end is failed by its monitor"},
+                   {"PhotonWeb.ModelRelayController",
+                    "the request's own task streams each model event to the connection process, which writes it out at once; one request's output bounds them, and the task dies with the connection"}
                  ]
                ]},
               # 80, 91, 16: processes start under supervisors.

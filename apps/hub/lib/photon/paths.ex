@@ -8,6 +8,10 @@ defmodule Photon.Paths do
 
   @spec settings_file() :: Path.t()
   def settings_file, do: Path.join(data_dir(), "settings.json")
+  @doc "The ChatGPT account: the hub's host ID, its client ID and the tokens (mode 0600)."
+  @spec chatgpt_file() :: Path.t()
+  def chatgpt_file, do: Path.join(data_dir(), "chatgpt.json")
+
   @spec node_token_file() :: Path.t()
   def node_token_file, do: Path.join(data_dir(), "node-token")
 

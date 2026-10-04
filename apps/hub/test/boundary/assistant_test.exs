@@ -71,6 +71,27 @@ defmodule Photon.AssistantTest do
       entry = await_entry(c, &(&1.data["source"]["kind"] == "routine"), 10_000)
       assert PhotonCore.Message.text_of(entry.data["message"]) == "[Scheduled] nodes"
     end
+
+    test "without consent to use the plan while away, a schedule leaves a note instead", %{
+      conversation: c
+    } do
+      Application.put_env(:photon, :mock_model, false)
+      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+
+      Durable.create_task(%{
+        kind: "routine",
+        conversation_id: c,
+        background: true,
+        phase: "fire",
+        input: %{"prompt" => "check disks", "first_at" => 0, "every_ms" => nil},
+        waiting: %{"until" => 0}
+      })
+
+      note = await_entry(c, &(&1.kind == "error"), 10_000)
+      assert note.data["notice"]
+      assert note.data["message"] =~ ~s{Skipped "check disks"}
+      refute Enum.any?(Durable.entries(c), &(&1.data["source"]["kind"] == "routine"))
+    end
   end
 
   describe "node work" do

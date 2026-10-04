@@ -32,12 +32,13 @@ defmodule Photon do
   # their APIs (and the data they return) to the web layer. They never call
   # the node app; only `Photon.Application` starts an embedded node.
   use Boundary,
-    deps: [PhotonCore, PhotonCore.LLM, PhotonCore.LLM.Error, Ecto, EEx, Jason, MDEx],
+    deps: [PhotonCore, PhotonCore.LLM, PhotonCore.LLM.Error, Ecto, EEx, Jason, MDEx, Req],
     check: [apps: [:photon_node]],
     exports: [
       Assistant,
       Assistant.Transcript,
       Auth,
+      ChatGPT,
       Durable,
       Events,
       Hub,

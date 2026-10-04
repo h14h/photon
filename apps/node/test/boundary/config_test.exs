@@ -27,9 +27,9 @@ defmodule PhotonNode.ConfigTest do
 
   test "model requests go to the hub that serves the websocket" do
     secure = config(server: "wss://hub.example:4443/node/websocket")
-    assert Config.llm_base_url(secure) == "https://hub.example:4443/node/llm/v1"
+    assert Config.llm_base_url(secure) == "https://hub.example:4443/node/llm"
 
     plain = config(server: "ws://127.0.0.1:4000/node/websocket")
-    assert Config.llm_base_url(plain) == "http://127.0.0.1:4000/node/llm/v1"
+    assert Config.llm_base_url(plain) == "http://127.0.0.1:4000/node/llm"
   end
 end

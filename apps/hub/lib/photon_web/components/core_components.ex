@@ -76,7 +76,7 @@ defmodule PhotonWeb.CoreComponents do
       <.button navigate={~p"/"} variant="ghost">Back</.button>
   """
   attr :rest, :global,
-    include: ~w(href navigate patch method download name value disabled type form)
+    include: ~w(href navigate patch method download name value disabled type form target rel)
 
   attr :class, :any, default: nil
   attr :variant, :string, default: "secondary", values: ~w(primary secondary ghost danger)

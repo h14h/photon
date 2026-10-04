@@ -52,6 +52,12 @@ config :photon, PhotonWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
 if config_env() == :dev do
+  # PHOTON_MOCK_MODEL=1 answers with the scripted models instead of ChatGPT,
+  # for working on the hub without a sign-in. Development only.
+  if System.get_env("PHOTON_MOCK_MODEL") in ~w(1 true) do
+    config :photon, :mock_model, true
+  end
+
   # Reload browser tabs when matching files change.
   config :photon, PhotonWeb.Endpoint,
     live_reload: [

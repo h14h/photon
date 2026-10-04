@@ -75,6 +75,8 @@ defmodule PhotonNode.Harness.SessionTest do
       assert [%{"role" => "user", "content" => [%{"text" => "hi"}]}] = request.messages
       assert request.system =~ "Machine: testhost (x86_64-test). Workspace: /work."
       assert Enum.map(request.tools, & &1["name"]) == ["Bash", "ViewImage"]
+      # The session's ID keys the model's cache of its history.
+      assert request.cache_key == driver.session.id
     end
 
     test "with an ID seen before is answered but not persisted again", %{driver: driver} do

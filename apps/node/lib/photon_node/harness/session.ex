@@ -701,7 +701,9 @@ defmodule PhotonNode.Harness.Session do
       system: session.ctx.system,
       messages: Context.build(session.ctx),
       tools: Tools.definitions(session.enabled),
-      reasoning: session.config["reasoning"]
+      reasoning: session.config["reasoning"],
+      # The session's history grows turn by turn; its ID keys the cache.
+      cache_key: session.id
     }
 
     %{session | llm: turn["id"], call_model: false}

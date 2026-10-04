@@ -67,13 +67,15 @@ and took the I/O out of `render/1`; see the refactor log.)
 | `PhotonCore.ID` | functional core (utility) | `encode/3` pure; `new/1` pure* (clock, `:crypto` RNG) | `:crypto` |
 | `PhotonCore.LLM.SSE` | functional core | pure | none |
 | `PhotonCore.LLM.Retry` | functional core (retry policy: retry or give up, backoff, jitter) | pure (randomness passed in) | `LLM.Error` |
-| `PhotonCore.LLM.ChatCompletions.Request` | functional core (request body; message encoding and decoding) | pure | `ChatCompletions.Wire`, `Message` |
-| `PhotonCore.LLM.ChatCompletions.Response` | data (the `%Response{}` stream token) and functional core (`feed/2` returns events, `finish/2`, `http_error/3`, `to_sse/1`, `usage/1`) | pure (missing call IDs come from a function passed in) | `ChatCompletions.Wire`, `SSE`, `LLM.Error`, `Message`, Jason |
-| `PhotonCore.LLM.ChatCompletions.Wire` | functional core (internal: lenient readers for provider JSON) | pure | Jason |
+| `PhotonCore.LLM.HTTPError` | functional core (a failed request's status and body as an `LLM.Error`; Sign in with ChatGPT's own codes said plainly) | pure | `LLM.Error`, Jason |
+| `PhotonCore.LLM.Responses.Request` | functional core (Responses API body; messages as input items, tools in a namespace, reasoning items handed back) | pure | `Message`, Jason |
+| `PhotonCore.LLM.Responses.Response` | data (the `%Response{}` stream token) and functional core (`feed/2` returns events, `finish/2`, `usage/1`) | pure (missing call IDs come from a function passed in) | `SSE`, `HTTPError`, `LLM.Error`, `Message`, Jason |
+| `PhotonCore.LLM.Relay.Wire` | functional core (the relay's stream format: the hub renders it, a node folds it) | pure | `SSE`, `LLM.Error`, Jason |
 | `PhotonCore.LLM.MockAgent` | functional core (scripted node model) | pure* (call IDs) | `LLM.Mock`, `Message`, Jason |
 | `PhotonCore.LLM.Mock` | boundary (fake provider adapter and script behaviour) | pure*; calls the caller's `on_event` | `Message`, `LLM.Error`, `ID`, Jason |
-| `PhotonCore.LLM.ChatCompletions` | boundary (HTTP adapter); delegates `encode_messages/1`, `decode_messages/1`, `to_sse/1` to the pure modules | `stream/3` does I/O (HTTP), feeds `Response`, calls `on_event`, mints missing call IDs | Req, `Request`, `Response`, `LLM.Error` |
-| `PhotonCore.LLM` | boundary (API: types, provider table, config resolution, retries) | does I/O (`resolve/1` reads the environment; `resolve/2` takes it as a function; `Process.sleep` between attempts) | `ChatCompletions`, `Mock`, `Retry`, `LLM.Error` |
+| `PhotonCore.LLM.Responses` | boundary (HTTP adapter for the Responses API, with a Sign in with ChatGPT token) | `stream/3` does I/O (HTTP), feeds `Response`, calls `on_event`, mints missing call IDs | Req, `Request`, `Response`, `HTTPError`, `LLM.Error` |
+| `PhotonCore.LLM.Relay` | boundary (the client nodes use for the hub's model relay; delegates the hub's rendering to `Relay.Wire`) | `stream/3` does I/O (HTTP), feeds `Relay.Wire`, calls `on_event` | Req, `Relay.Wire`, `LLM.Error` |
+| `PhotonCore.LLM` | boundary (API: types, dispatch to `"chatgpt"`, `"relay"` or `"mock"`, retries) | does I/O (`Process.sleep` between attempts) | `Responses`, `Relay`, `Mock`, `Retry`, `LLM.Error` |
 
 ### apps/node (`:photon_node`)
 
@@ -184,7 +186,9 @@ hotspots still refer to the original snapshot.
 | `Photon.Provision.Lines` | functional core (Collectable line splitter, now in `provision/lines.ex`) | pure apart from the `log` callback it calls | none |
 | `Photon.Tailnet` | boundary (`tailscale` CLI, ETS cache) and the cache table's owner (a GenServer that creates it in `init/1`) | does I/O; `parse/1`, `names/1`, `fresh?/2` pure | ETS |
 | **Settings and auth** | | | |
-| `Photon.Settings` | boundary (`load/0`, `save/1`, `defaults/0`) and pure functions of a settings map | `load/0`, `save/1` do I/O; `defaults/1`, `key?/2` and `env_key?/2` take the environment as a function; `normalize/2`, `model/1`, `model_label/1`, `llm_config/2` (resolves through `LLM.resolve/1`), `node_config/1`, `keep_key/2` take settings | `Paths`, `PhotonCore.LLM`, Phoenix.PubSub |
+| `Photon.Settings` | boundary (`load/0`, `save/1`) and pure functions of a settings map (`normalize/2`, `model/1`, `model_label/1`, `scheduled_work?/1`, `node_config/1`) | `load/0`, `save/1` do I/O | `Paths`, `Events` |
+| `Photon.ChatGPT` | boundary (API and server: the ChatGPT account; sign-in, tokens, serialized refresh, models) | is a process; HTTP to OpenAI, the account file, PubSub | `ChatGPT.OAuth`, `Paths`, `Events`, Req |
+| `Photon.ChatGPT.OAuth` | functional core (Sign in with ChatGPT's rules: the link, the pasted address, the token forms and claims, when to refresh) | pure (secrets and time passed in) | Jason |
 | `Photon.Auth` | boundary (GUI password) | does I/O (file, `:persistent_term`) | `Paths` |
 | `Photon.NodeAuth` | boundary (node token) | does I/O (env, file, `:persistent_term`) | `Paths` |
 | `Photon.Markdown` | functional core (rendering through a NIF) | pure | MDEx |
@@ -199,29 +203,29 @@ hotspots still refer to the original snapshot.
 | `PhotonWeb.Telemetry` | lifecycle | is a process (Supervisor) | telemetry_poller |
 | `PhotonWeb.Auth` | boundary (plug and `on_mount`) | does I/O (session; `Tailnet.peer?/1` shells out) | `Photon.Auth`, `Tailnet` |
 | `PhotonWeb.Origin` | boundary (`check_origin`) | does I/O (app env, `Tailnet.own_names/0`) | `Tailnet` |
-| `PhotonWeb.Shell` | boundary (LiveView hook for the app shell) | does I/O on mount and on the messages it rebuilds on; the derivations are `Nodes.roster/2` and `Settings.model_label/1` | `Assistant`, `NodeSessions`, `Nodes`, `Settings` |
+| `PhotonWeb.Shell` | boundary (LiveView hook for the app shell) | does I/O on mount and on the messages it rebuilds on; the derivations are `Nodes.roster/2`, `Settings.model_label/1` and `ChatGPT.ready?/1` | `Assistant`, `ChatGPT`, `NodeSessions`, `Nodes`, `Settings` |
 | `PhotonWeb.HealthPlug` | boundary | does I/O (response only) | Plug |
 | `PhotonWeb.NodeSocket` | boundary (node socket auth) | does I/O (token) | `NodeAuth`, `NodeChannel` |
 | `PhotonWeb.NodeChannel` | boundary and worker (one per connected node; the server layer for a node, rule 11) | is a process; DB through `NodeSessions`, Registry | `NodeSessions`, `Nodes`, `Photon.NodeRegistry` |
-| `PhotonWeb.ModelProxyController` | boundary (model proxy for nodes) | does I/O (settings file, streaming HTTP) | `Settings`, `NodeAuth`, `PhotonCore.LLM`, `ChatCompletions`, `MockAgent`, Req |
+| `PhotonWeb.ModelRelayController` | boundary (the model relay for nodes: runs a node's request on the hub's ChatGPT sign-in and streams it back) | does I/O (settings file, streaming HTTP); the request runs in a linked task | `Settings`, `ChatGPT`, `NodeAuth`, `PhotonCore.LLM`, `Relay`, `MockAgent` |
 | `PhotonWeb.NodeInstallController` | boundary | does I/O (files) | `NodeDist` |
 | `PhotonWeb.ErrorHTML` | boundary (rendering) | pure | Phoenix |
 | `PhotonWeb.ErrorJSON` | boundary (rendering) | pure | Phoenix |
 | `PhotonWeb.CoreComponents` | boundary (UI components) | pure | Phoenix.Component |
 | `PhotonWeb.Layouts` | boundary (UI layout) | pure | `CoreComponents` |
-| `PhotonWeb.AssistantLive` | boundary (UI process) | is a process; talks only to `Photon.Assistant` (and `Settings` for the mock flag); folds with `Assistant.Transcript` | `Assistant`, `Assistant.Transcript`, `Markdown`, `Settings`, `Message` |
+| `PhotonWeb.AssistantLive` | boundary (UI process) | is a process; talks only to `Photon.Assistant`; folds with `Assistant.Transcript` | `Assistant`, `Assistant.Transcript`, `Markdown`, `Message` |
 | `PhotonWeb.SessionLive` | boundary (UI process) | is a process; DB, Registry in mount and on `:nodes_changed`, none in `render/1` | `NodeSessions`, `NodeTranscript`, `Nodes`, `Markdown` |
 | `PhotonWeb.NodesLive` | boundary (UI process) | is a process; node data read on mount and on change messages, `tailscale` in a `start_async` task; `render/1` only derives from assigns | `NodeDist`, `NodeSessions`, `Nodes`, `Provision`, `Tailnet`, `Hub`, `NodeAuth` |
-| `PhotonWeb.SettingsLive` | boundary (UI process) | is a process; settings file; the environment is read in event handlers, not `render/1` | `Settings` |
+| `PhotonWeb.SettingsLive` | boundary (UI process) | is a process; settings file, the ChatGPT account (sign-in steps; models in a `start_async` task) | `Settings`, `ChatGPT` |
 
 ### Test support
 
 | Module | Layer | Notes |
 | --- | --- | --- |
 | `PhotonCore.Case` | tests | Case template for every core test: aliases the core modules, imports `PhotonCore.Fixtures` |
-| `PhotonCore.Fixtures` | tests (builders) | Requests, stub configs, stream chunks and SSE bodies with overrides; `read_stream/1` folds bytes through `Response`; `capture_events/1` |
-| `PhotonCore.StubProvider` | tests (boundary) | `Req.Test` stubs that play a provider: a streamed body, HTTP chunks, a sequence of failures; forwards each request to the test process |
-| `PhotonCore.Generators` | tests (StreamData) | Shared generators: cut points, arbitrary JSON, a provider's streamed answer with the message it folds into |
+| `PhotonCore.Fixtures` | tests (builders) | Requests, stub configs, Responses stream events and SSE bodies with overrides; `read_stream/1` folds bytes through `Responses.Response`; `capture_events/1` |
+| `PhotonCore.StubProvider` | tests (boundary) | `Req.Test` stubs that play a streaming model API (Responses or the relay): a streamed body, HTTP chunks, a sequence of failures; forwards each request to the test process |
+| `PhotonCore.Generators` | tests (StreamData) | Shared generators: cut points, arbitrary JSON, a streamed Responses answer with the message it folds into |
 | `PhotonCore.EchoScript` | tests (mock script) | pure |
 | `PhotonNode.Case` | tests | Case template for the node's core tests: aliases the pure modules, imports `PhotonNode.Fixtures` |
 | `PhotonNode.Fixtures` | tests (builders) | Sessions, envs, inputs, model answers, tool calls, operations, log records, all with overrides; `names/1` and `persisted/1` reduce effects for comparison |
@@ -229,6 +233,7 @@ hotspots still refer to the original snapshot.
 | `PhotonNode.HarnessCase` | tests | Boundary case: starts a whole `PhotonNode` without a hub, registers the test process under the name `PhotonNode.Connection`, imports the fixtures |
 | `Photon.Case` | tests | Case template for the hub's core tests: aliases the pure modules, imports `Photon.Fixtures`; its moduledoc describes the test layout |
 | `Photon.Fixtures` | tests (builders) | Task records, entries, calls, submissions, responses, signals, node work and answers, node sessions, inputs, log records, settings and environments, all with overrides; data only |
+| `Photon.ChatGPTStub` | tests (boundary) | Plays OpenAI's side of Sign in with ChatGPT (token, revoke, models) through a `Req.Test` stub; `reset!/0` and `sign_in!/1` |
 | `Photon.Eventually` | tests | A bounded "eventually" for things `assert_receive` can't see (OS processes): calls a check until it is truthy or a deadline passes, no sleeping |
 | `Photon.DataCase` | tests | Deletes every table, writes the real settings file, starts `Photon.Durable.Supervisor.children/0` for `@tag :durable` |
 | `PhotonWeb.ConnCase` | tests | Phoenix conn case on top of `DataCase` |
@@ -293,6 +298,7 @@ Photon.Supervisor  one_for_one                      (Photon.Application)
 ├── Photon.NodeRegistry                             Registry (unique): node id -> NodeChannel pid, value = node info
 ├── Photon.ProvisionTasks                           Task.Supervisor: SSH install/uninstall jobs (async_nolink, monitored by Provision)
 ├── Photon.Provision                                GenServer: job table, broadcasts progress, fails a job whose task dies
+├── Photon.ChatGPT                                  GenServer: the ChatGPT account; sign-in, tokens, one refresh at a time
 ├── Photon.Durable.Supervisor  one_for_one          only when start_durable (off in tests, which start its children/0)
 │   ├── Photon.Durable.TaskSupervisor               Task.Supervisor: one task per durable step (async_nolink)
 │   ├── Photon.Durable.Store                        GenServer: the commit line (no state; a lock)
@@ -300,7 +306,7 @@ Photon.Supervisor  one_for_one                      (Photon.Application)
 ├── PhotonWeb.Endpoint                              Bandit
 │   ├── /node/websocket -> NodeSocket -> NodeChannel        one process per connected node
 │   ├── /live -> AssistantLive | SessionLive | NodesLive | SettingsLive
-│   └── HTTP -> Router -> ModelProxyController | NodeInstallController | HealthPlug
+│   └── HTTP -> Router -> ModelRelayController | NodeInstallController | HealthPlug
 └── PhotonNode  rest_for_one                        only with :local_node; the node tree above, dialing this Endpoint
 ```
 

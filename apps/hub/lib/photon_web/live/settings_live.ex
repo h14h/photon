@@ -1,76 +1,125 @@
 defmodule PhotonWeb.SettingsLive do
   @moduledoc """
-  The model Blip (the assistant) and nodes use, and what Blip should know
-  about you: your name, your time zone, and your standing instructions. The form changes nothing until it is saved
-  (`Photon.Settings.save/1`).
+  Sign in with ChatGPT, the model and effort Blip and the nodes use on the
+  user's plan, and what Blip should know about the user. Signing in is
+  `Photon.ChatGPT`'s (the page shows its steps); the rest is a form that
+  changes nothing until it is saved (`Photon.Settings.save/1`).
   """
 
   use PhotonWeb, :live_view
 
-  alias Photon.Settings
-  alias PhotonCore.LLM
+  alias Photon.{ChatGPT, Settings}
 
   @impl true
   def mount(_params, _session, socket) do
+    if connected?(socket), do: ChatGPT.subscribe()
     settings = Settings.load()
+    status = ChatGPT.status()
 
     {:ok,
      socket
-     |> assign(page_title: "Settings", settings: settings, form: settings_form(settings))
-     |> assign_provider()}
+     |> assign(
+       page_title: "Settings",
+       settings: settings,
+       form: to_form(settings, as: :settings),
+       chatgpt: status,
+       sign_in_url: nil,
+       sign_in_form: to_form(%{"address" => ""}, as: :sign_in),
+       sign_in_error: nil,
+       models: [],
+       models_error: nil
+     )
+     |> load_models(status)}
   end
 
-  defp settings_form(settings), do: to_form(Map.put(settings, "api_key", ""), as: :settings)
-
-  # What the form says about the provider it shows: its defaults and
-  # whether a key is saved or set in the hub's environment.
-  defp assign_provider(socket) do
-    provider = socket.assigns.form[:provider].value || socket.assigns.settings["provider"]
-    info = LLM.provider(provider) || %{}
-
-    assign(socket,
-      provider: provider,
-      default_model: info[:default_model],
-      default_base_url: info[:base_url],
-      key_env: info[:key_env],
-      env_key?: Settings.env_key?(provider),
-      saved_key?:
-        socket.assigns.settings["api_key"] != "" and
-          socket.assigns.settings["provider"] == provider
-    )
+  # The model list needs the account's token, so it loads after sign-in, in
+  # the background.
+  defp load_models(socket, %{state: :signed_in}) do
+    if connected?(socket), do: start_async(socket, :models, &ChatGPT.models/0), else: socket
   end
+
+  defp load_models(socket, _status), do: assign(socket, models: [], models_error: nil)
 
   @impl true
-  def handle_event("change", %{"settings" => params}, socket) do
-    {:noreply, socket |> assign(form: to_form(params, as: :settings)) |> assign_provider()}
+  def handle_async(:models, {:ok, {:ok, models}}, socket),
+    do: {:noreply, assign(socket, models: models, models_error: nil)}
+
+  def handle_async(:models, {:ok, {:error, reason}}, socket),
+    do: {:noreply, assign(socket, models_error: reason)}
+
+  def handle_async(:models, {:exit, reason}, socket),
+    do: {:noreply, assign(socket, models_error: Exception.format_exit(reason))}
+
+  ## Signing in
+
+  @impl true
+  def handle_event("begin_sign_in", _params, socket) do
+    {:ok, url} = ChatGPT.begin_sign_in()
+    {:noreply, assign(socket, sign_in_url: url, sign_in_error: nil)}
   end
+
+  def handle_event("finish_sign_in", %{"sign_in" => %{"address" => address}}, socket) do
+    case ChatGPT.finish_sign_in(address) do
+      :ok ->
+        {:noreply,
+         socket
+         |> assign(sign_in_url: nil, sign_in_form: to_form(%{"address" => ""}, as: :sign_in))
+         |> put_flash(:info, "Signed in with ChatGPT. Blip is awake.")}
+
+      {:error, reason} ->
+        {:noreply,
+         assign(socket,
+           sign_in_error: reason,
+           sign_in_form: to_form(%{"address" => address}, as: :sign_in)
+         )}
+    end
+  end
+
+  def handle_event("cancel_sign_in", _params, socket) do
+    :ok = ChatGPT.cancel_sign_in()
+    {:noreply, assign(socket, sign_in_url: nil, sign_in_error: nil)}
+  end
+
+  def handle_event("sign_out", _params, socket) do
+    :ok = ChatGPT.sign_out()
+    {:noreply, put_flash(socket, :info, "Signed out of ChatGPT.")}
+  end
+
+  ## The settings form
+
+  def handle_event("change", %{"settings" => params}, socket),
+    do: {:noreply, assign(socket, form: to_form(params, as: :settings))}
 
   def handle_event("save", %{"settings" => params}, socket) do
     settings = Settings.save(params)
 
     {:noreply,
      socket
-     |> assign(settings: settings, form: settings_form(settings))
-     |> assign_provider()
+     |> assign(settings: settings, form: to_form(settings, as: :settings))
      |> put_flash(:info, "Saved. The next message uses these settings.")}
   end
 
-  def handle_event("clear_key", _params, socket) do
-    settings =
-      Settings.save(Map.merge(socket.assigns.settings, %{"api_key" => "", "clear_key" => true}))
+  @impl true
+  def handle_info({:chatgpt_changed, status}, socket) do
+    {:noreply, socket |> assign(chatgpt: status) |> load_models(status)}
+  end
 
-    {:noreply,
-     socket
-     |> assign(settings: settings, form: settings_form(settings))
-     |> assign_provider()
-     |> put_flash(:info, "Removed the saved key.")}
+  def handle_info(_message, socket), do: {:noreply, socket}
+
+  # The account's models, with the one in use kept even if it isn't listed.
+  defp model_options(models, current) do
+    options = Enum.map(models, &{&1.name, &1.id})
+    ids = Enum.map(models, & &1.id)
+
+    if current in ids,
+      do: options,
+      else: [{Settings.model_label(current), current} | options]
   end
 
   @impl true
-  def handle_info(_message, socket), do: {:noreply, socket}
-
-  @impl true
   def render(assigns) do
+    assigns = assign(assigns, model: Settings.model(assigns.settings))
+
     ~H"""
     <Layouts.app flash={@flash} shell={@shell} active={:settings}>
       <div class="h-full overflow-y-auto">
@@ -78,9 +127,35 @@ defmodule PhotonWeb.SettingsLive do
           <.header>
             Settings
             <:subtitle>
-              One model serves Blip and the agents on your nodes. Nodes reach it through this hub, so they never see the key.
+              Blip and the agents on your machines run on your ChatGPT plan, through this hub. Your machines never see the sign-in.
             </:subtitle>
           </.header>
+
+          <section
+            id="chatgpt"
+            class="mt-8 space-y-4 rounded-2xl border border-line bg-surface p-5 shadow-xs"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <h2 class="text-[13px] font-semibold text-ink">ChatGPT</h2>
+              <span
+                :if={@chatgpt.state == :signed_in}
+                class="flex items-center gap-1.5 text-[12px] text-ok"
+              >
+                <.icon name="hero-check-circle-micro" class="size-4" /> Signed in
+              </span>
+            </div>
+
+            <%= if @chatgpt.state == :signed_in do %>
+              <.signed_in chatgpt={@chatgpt} />
+            <% else %>
+              <.sign_in
+                chatgpt={@chatgpt}
+                url={@sign_in_url}
+                form={@sign_in_form}
+                error={@sign_in_error}
+              />
+            <% end %>
+          </section>
 
           <.form
             for={@form}
@@ -89,71 +164,42 @@ defmodule PhotonWeb.SettingsLive do
             phx-submit="save"
             class="mt-8 space-y-8"
           >
-            <section class="space-y-5 rounded-2xl border border-line bg-surface p-5 shadow-xs">
+            <section
+              :if={@chatgpt.state == :signed_in}
+              class="space-y-5 rounded-2xl border border-line bg-surface p-5 shadow-xs"
+            >
               <h2 class="text-[13px] font-semibold text-ink">Model</h2>
               <.input
-                field={@form[:provider]}
+                field={@form[:model]}
                 type="select"
-                label="Provider"
-                options={Enum.map(Settings.providers(), fn {id, name} -> {name, id} end)}
+                label="Model"
+                value={@model}
+                options={model_options(@models, @model)}
+                hint={@models_error && "Couldn't load your plan's models: #{@models_error}"}
               />
-
-              <div :if={@provider != "mock"} class="space-y-5">
+              <.input
+                field={@form[:reasoning]}
+                type="select"
+                label="Reasoning effort"
+                options={[
+                  {"Model default", ""},
+                  {"Low", "low"},
+                  {"Medium", "medium"},
+                  {"High", "high"},
+                  {"Extra high", "xhigh"}
+                ]}
+                hint="More effort is slower and uses more of your plan."
+              />
+              <div>
                 <.input
-                  field={@form[:model]}
-                  label="Model"
-                  placeholder={@default_model || "Model ID"}
-                  hint={
-                    if(@default_model, do: "Leave blank for #{@default_model}.", else: "Required.")
-                  }
-                  autocomplete="off"
+                  field={@form[:scheduled_work]}
+                  type="checkbox"
+                  label="Let Blip use my plan for schedules while I'm away"
                 />
-                <.input
-                  :if={@provider not in ["ollama"]}
-                  field={@form[:api_key]}
-                  type="password"
-                  label="API key"
-                  autocomplete="off"
-                  placeholder={
-                    cond do
-                      @saved_key? -> "Saved. Type a new key to replace it."
-                      @env_key? -> "Using #{@key_env} from the hub's environment"
-                      true -> "Paste your key"
-                    end
-                  }
-                />
-                <div :if={@saved_key?} class="-mt-3 flex justify-end">
-                  <button
-                    type="button"
-                    phx-click="clear_key"
-                    class="text-[12px] text-ink-faint hover:text-bad"
-                  >Remove saved key</button>
-                </div>
-                <.input
-                  :if={@provider in ["custom", "ollama"]}
-                  field={@form[:base_url]}
-                  label="Base URL"
-                  placeholder={@default_base_url || "https://example.com/v1"}
-                  hint="An OpenAI-compatible endpoint, ending before /chat/completions."
-                />
-                <.input
-                  field={@form[:reasoning]}
-                  type="select"
-                  label="Reasoning effort"
-                  options={[
-                    {"Model default", ""},
-                    {"Low", "low"},
-                    {"Medium", "medium"},
-                    {"High", "high"}
-                  ]}
-                  hint="Only sent if the model supports it."
-                />
+                <p class="mt-1 pl-6.5 text-[12px] leading-relaxed text-ink-faint">
+                  Schedules you set up (like a morning check) run on your plan without you there. Off, Blip skips them and says so.
+                </p>
               </div>
-              <p :if={@provider == "mock"} class="text-[13px] leading-relaxed text-ink-soft">
-                The mock model follows fixed phrasings, so you can try everything without a key. Type
-                <code class="rounded bg-sunken px-1 font-mono">help</code>
-                in the chat to see them.
-              </p>
             </section>
 
             <section class="space-y-5 rounded-2xl border border-line bg-surface p-5 shadow-xs">
@@ -187,6 +233,109 @@ defmodule PhotonWeb.SettingsLive do
         </div>
       </div>
     </Layouts.app>
+    """
+  end
+
+  attr :chatgpt, :map, required: true
+
+  defp signed_in(assigns) do
+    ~H"""
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <p class="text-[14px] text-ink-soft">
+        Signed in as <span id="chatgpt-account" class="font-medium text-ink">{@chatgpt.email || @chatgpt.name}</span>.
+      </p>
+      <.button
+        type="button"
+        size="sm"
+        variant="ghost"
+        id="sign-out"
+        phx-click="sign_out"
+        data-confirm="Sign out of ChatGPT? Blip stops until you sign in again."
+      >
+        Sign out
+      </.button>
+    </div>
+    <p
+      :if={!@chatgpt.plan_use}
+      id="no-plan-use"
+      class="rounded-lg bg-warn-soft px-3 py-2 text-[13px] leading-relaxed text-ink"
+    >
+      Photon wasn't allowed to use your plan, so Blip can't think yet. Sign out, sign in again, and allow it.
+    </p>
+    """
+  end
+
+  attr :chatgpt, :map, required: true
+  attr :url, :string, default: nil
+  attr :form, :any, required: true
+  attr :error, :string, default: nil
+
+  defp sign_in(assigns) do
+    ~H"""
+    <p :if={@chatgpt.state == :sign_in_again} class="text-[14px] leading-relaxed text-ink">
+      Your ChatGPT sign-in lapsed. Sign in again to wake Blip up.
+    </p>
+    <p :if={@chatgpt.state == :signed_out} class="text-[14px] leading-relaxed text-ink-soft">
+      Blip needs a model to think with. Sign in with ChatGPT and Photon uses your ChatGPT plan, nothing billed here.
+    </p>
+
+    <.button
+      :if={is_nil(@url)}
+      type="button"
+      variant="primary"
+      id="begin-sign-in"
+      phx-click="begin_sign_in"
+    >
+      Sign in with ChatGPT
+    </.button>
+
+    <ol :if={@url} id="sign-in-steps" class="space-y-4">
+      <li class="flex gap-3">
+        <span class="grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-[12px] font-semibold text-accent-strong">
+          1
+        </span>
+        <div class="min-w-0 space-y-2 pt-0.5">
+          <p class="text-[14px] text-ink">Approve Photon in ChatGPT.</p>
+          <.button
+            href={@url}
+            target="_blank"
+            rel="noopener"
+            variant="primary"
+            size="sm"
+            id="open-sign-in"
+          >
+            Open ChatGPT <.icon name="hero-arrow-top-right-on-square-micro" class="size-4" />
+          </.button>
+        </div>
+      </li>
+      <li class="flex gap-3">
+        <span class="grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-[12px] font-semibold text-accent-strong">
+          2
+        </span>
+        <div class="min-w-0 flex-1 space-y-2 pt-0.5">
+          <p class="text-[14px] leading-relaxed text-ink">
+            ChatGPT then sends you to a page that won't load. That's expected. Copy its whole address (it starts with <code class="rounded bg-sunken px-1 font-mono text-[12.5px]">http://127.0.0.1</code>)
+            and paste it here.
+          </p>
+          <.form for={@form} id="finish-sign-in" phx-submit="finish_sign_in" class="space-y-2">
+            <.input
+              field={@form[:address]}
+              placeholder="http://127.0.0.1:…/auth/callback?code=…"
+              autocomplete="off"
+            />
+            <p :if={@error} id="sign-in-error" class="text-[13px] text-bad">{@error}</p>
+            <div class="flex items-center gap-2">
+              <.button type="submit" variant="primary" size="sm" id="finish-sign-in-button">
+                Finish signing in
+              </.button>
+              <.button type="button" variant="ghost" size="sm" phx-click="cancel_sign_in">
+                Cancel
+              </.button>
+            </div>
+          </.form>
+        </div>
+      </li>
+    </ol>
     """
   end
 end

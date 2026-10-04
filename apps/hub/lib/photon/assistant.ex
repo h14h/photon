@@ -26,6 +26,7 @@ defmodule Photon.Assistant do
 
   use Boundary,
     deps: [
+      Photon.ChatGPT,
       Photon.Durable,
       Photon.NodeSessions,
       Photon.Nodes,
@@ -166,13 +167,14 @@ defmodule Photon.Assistant do
   ## Profile
 
   @impl true
-  def llm(_conversation) do
+  def llm(conversation) do
     settings = Settings.load()
 
     %{
-      config: Settings.llm_config(settings, Photon.Assistant.MockScript),
+      config: Photon.ChatGPT.llm_config(Photon.Assistant.MockScript),
       model: Settings.model(settings),
-      reasoning: Prompt.reasoning(settings)
+      reasoning: Prompt.reasoning(settings),
+      cache_key: conversation.id
     }
   end
 

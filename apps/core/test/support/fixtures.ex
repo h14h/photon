@@ -1,14 +1,14 @@
 defmodule PhotonCore.Fixtures do
   @moduledoc """
   Test data builders. Each takes overrides for any field, so a test names
-  only what it cares about. Stream chunks are the decoded JSON a provider
-  sends; `sse_body/2` turns them into the bytes on the wire.
+  only what it cares about. Stream events are the decoded JSON the
+  Responses API sends; `sse_body/2` turns them into the bytes on the wire.
   """
 
   # Test support sits outside the layering (compiled only for tests).
   use Boundary, top_level?: true, check: [in: false, out: false]
 
-  alias PhotonCore.LLM.ChatCompletions.Response
+  alias PhotonCore.LLM.Responses.Response
   alias PhotonCore.LLM.SSE
   alias PhotonCore.Message
 
@@ -22,11 +22,11 @@ defmodule PhotonCore.Fixtures do
     )
   end
 
-  @doc "A config for a custom provider played by the `Req.Test` stub `stub`."
+  @doc "A ChatGPT config whose API is played by the `Req.Test` stub `stub`."
   def stub_config(stub, overrides \\ []) do
     Map.merge(
       %{
-        provider: "custom",
+        provider: "chatgpt",
         base_url: "http://model.test/v1",
         api_key: "k",
         retry_base_ms: 1,
@@ -36,50 +36,83 @@ defmodule PhotonCore.Fixtures do
     )
   end
 
-  ## Stream chunks
+  ## Stream events
 
-  @doc "A chunk whose one choice carries `delta`."
-  def delta_chunk(delta, overrides \\ []) do
-    Map.merge(%{"choices" => [%{"index" => 0, "delta" => delta}]}, Map.new(overrides))
-  end
+  def text_delta(text), do: %{"type" => "response.output_text.delta", "delta" => text}
 
-  def text_chunk(text), do: delta_chunk(%{"content" => text})
+  def reasoning_delta(text),
+    do: %{"type" => "response.reasoning_summary_text.delta", "delta" => text}
 
-  def reasoning_chunk(text), do: delta_chunk(%{"reasoning_content" => text})
+  def summary_part_added, do: %{"type" => "response.reasoning_summary_part.added"}
 
-  @doc """
-  A chunk with one tool-call delta. The first delta of a call usually has
-  `"id"` and `"function" => %{"name" => ..., "arguments" => ...}`; later
-  ones only add arguments.
-  """
-  def tool_call_chunk(fields), do: delta_chunk(%{"tool_calls" => [Map.new(fields)]})
-
-  @doc "The last chunk of an answer: an empty delta with `reason`."
-  def finish_chunk(reason, overrides \\ []) do
-    Map.merge(
-      %{"choices" => [%{"index" => 0, "delta" => %{}, "finish_reason" => reason}]},
-      Map.new(overrides)
-    )
-  end
-
-  def usage_chunk(prompt_tokens, completion_tokens) do
+  @doc "A tool call starting at `output_index`."
+  def call_added(output_index, call_id, name, arguments \\ "") do
     %{
-      "choices" => [],
-      "usage" => %{"prompt_tokens" => prompt_tokens, "completion_tokens" => completion_tokens}
+      "type" => "response.output_item.added",
+      "output_index" => output_index,
+      "item" => %{
+        "type" => "function_call",
+        "call_id" => call_id,
+        "name" => name,
+        "arguments" => arguments
+      }
     }
   end
 
-  @doc """
-  An SSE body: each chunk as one `data` event, `:done` as `[DONE]`.
-  `crlf: true` ends lines with CRLF.
-  """
-  def sse_body(chunks, opts \\ []) do
-    separator = if opts[:crlf], do: "\r\n\r\n", else: "\n\n"
+  def arguments_delta(output_index, delta) do
+    %{
+      "type" => "response.function_call_arguments.delta",
+      "output_index" => output_index,
+      "delta" => delta
+    }
+  end
 
-    Enum.map_join(chunks, "", fn
-      :done -> "data: [DONE]" <> separator
-      chunk -> "data: " <> Jason.encode!(chunk) <> separator
-    end)
+  @doc "A finished output item at `output_index`."
+  def item_done(output_index, item),
+    do: %{"type" => "response.output_item.done", "output_index" => output_index, "item" => item}
+
+  @doc "The end of an answer, with `usage` counts and the model."
+  def completed(fields \\ []) do
+    fields = Map.new(fields)
+
+    %{
+      "type" => "response.completed",
+      "response" => %{
+        "status" => "completed",
+        "model" => Map.get(fields, :model, "m"),
+        "usage" => Map.get(fields, :usage)
+      }
+    }
+  end
+
+  @doc "An answer cut short for `reason` (`max_output_tokens`, `content_filter`)."
+  def incomplete(reason) do
+    %{
+      "type" => "response.incomplete",
+      "response" => %{"status" => "incomplete", "incomplete_details" => %{"reason" => reason}}
+    }
+  end
+
+  def failed(code, message) do
+    %{
+      "type" => "response.failed",
+      "response" => %{"status" => "failed", "error" => %{"code" => code, "message" => message}}
+    }
+  end
+
+  def usage(input, output, cached \\ 0, reasoning \\ 0) do
+    %{
+      "input_tokens" => input,
+      "input_tokens_details" => %{"cached_tokens" => cached},
+      "output_tokens" => output,
+      "output_tokens_details" => %{"reasoning_tokens" => reasoning}
+    }
+  end
+
+  @doc "An SSE body: each event as one `data` event. `crlf: true` ends lines with CRLF."
+  def sse_body(events, opts \\ []) do
+    separator = if opts[:crlf], do: "\r\n\r\n", else: "\n\n"
+    Enum.map_join(events, "", &("data: " <> Jason.encode!(&1) <> separator))
   end
 
   @doc "Cuts `text` at the given byte offsets (taken modulo its size + 1)."
@@ -109,18 +142,18 @@ defmodule PhotonCore.Fixtures do
   end
 
   @doc """
-  Folds body pieces through `Response` the way the adapter does and returns
-  `{result, events}`: the finished result and every event in order. A call
-  the provider left unnamed gets `"call_<index>"`.
+  Folds body pieces through `Responses.Response` the way the adapter does and
+  returns `{result, events}`: the finished result and every event in order.
+  A call the model left unnamed gets `"call_<index>"`.
   """
   def read_stream(pieces) do
-    {response, events} =
-      Enum.reduce(pieces, {Response.new(), []}, fn piece, {response, events} ->
-        {response, more} = Response.feed(response, piece)
-        {response, [more | events]}
+    {stream, events} =
+      Enum.reduce(pieces, {Response.new(), []}, fn piece, {stream, events} ->
+        {stream, more} = Response.feed(stream, piece)
+        {stream, [more | events]}
       end)
 
-    {Response.finish(response, &"call_#{&1}"), events |> Enum.reverse() |> Enum.concat()}
+    {Response.finish(stream, &"call_#{&1}"), events |> Enum.reverse() |> Enum.concat()}
   end
 
   @doc """

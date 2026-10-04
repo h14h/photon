@@ -5,7 +5,9 @@ defmodule Photon.Durable.Entry do
     * `"user"` - `%{"message" => user message, "submission_id", "source"}`
     * `"assistant"` - `%{"message" => assistant message, "usage", "model", "stop"}`
     * `"tool_result"` - `%{"message" => tool message, "name", "status", "details"}`
-    * `"error"` - `%{"message" => text}`, shown but never sent to the model
+    * `"error"` - `%{"message" => text}`, shown but never sent to the model;
+      `"stopped"` marks a run the user stopped and `"notice"` a note that
+      isn't a failure (a skipped schedule), both shown quietly
     * `"reset"` - `%{"handoff" => text | nil}`; the model sees entries from
       the newest reset onward
 

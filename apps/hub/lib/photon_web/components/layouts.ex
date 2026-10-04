@@ -168,11 +168,16 @@ defmodule PhotonWeb.Layouts do
 
     <div class="shrink-0 border-t border-line p-2.5">
       <.link
-        :if={@shell.needs_key}
+        :if={@shell.chatgpt.state != :signed_in}
         navigate={~p"/settings"}
+        id="sign-in-banner"
         class="mb-2 flex items-center gap-2 rounded-lg bg-warn-soft px-3 py-2 text-[12.5px] text-ink transition hover:brightness-95"
       >
-        <.icon name="hero-key" class="size-4 text-warn" /> Add your model API key
+        <.icon name="hero-key" class="size-4 text-warn" />
+        {if(@shell.chatgpt.state == :sign_in_again,
+          do: "Sign in to ChatGPT again",
+          else: "Sign in with ChatGPT"
+        )}
       </.link>
       <.nav_item
         navigate={~p"/settings"}

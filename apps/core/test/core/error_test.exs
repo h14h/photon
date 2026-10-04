@@ -1,6 +1,12 @@
 defmodule PhotonCore.LLM.ErrorTest do
   use PhotonCore.Case, async: true
 
+  test "can be raised like any exception" do
+    assert_raise Error, "HTTP 503: down", fn ->
+      raise Error, kind: :http, status: 503, message: "down"
+    end
+  end
+
   describe "new/3" do
     test "takes a kind and a message, and defaults to not retryable" do
       assert %Error{kind: :config, message: "no model", retryable: false, status: nil} =

@@ -12,9 +12,10 @@ defmodule Photon.Durable.Profile do
   alias Photon.Durable.Conversation
 
   @callback llm(Conversation.t()) :: %{
-              config: map(),
-              model: String.t(),
-              reasoning: String.t() | nil
+              required(:config) => map(),
+              required(:model) => String.t(),
+              required(:reasoning) => String.t() | nil,
+              optional(:cache_key) => String.t()
             }
   @callback system_prompt(Conversation.t()) :: String.t()
   @callback tools(Conversation.t()) :: [module()]

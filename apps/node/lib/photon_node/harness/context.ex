@@ -13,7 +13,7 @@ defmodule PhotonNode.Harness.Context do
   Its real result is appended later. If the placeholder was never sent it is
   replaced in place; otherwise both stay, as upstream does.
 
-  `build/1` writes the Chat Completions shape, where a tool call's result
+  `build/1` writes the shape model APIs expect, where a tool call's result
   must directly follow the assistant message that made it: each call's first
   result is placed there, and a later real result for an already-answered
   call goes in as a user message that says which call it belongs to.

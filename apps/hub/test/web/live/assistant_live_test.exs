@@ -202,6 +202,19 @@ defmodule PhotonWeb.AssistantLiveTest do
     end
   end
 
+  describe "without a model" do
+    test "asks for a ChatGPT sign-in instead of offering a composer", %{conn: conn} do
+      Photon.ChatGPTStub.reset!()
+      Application.put_env(:photon, :mock_model, false)
+      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      assert has_element?(view, "#sign-in-to-talk")
+      refute has_element?(view, "#composer")
+      assert has_element?(view, "#empty-state", "Sign in with ChatGPT")
+    end
+  end
+
   describe "Blip" do
     setup :page
 
