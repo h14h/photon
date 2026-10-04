@@ -7,7 +7,7 @@ defmodule PhotonNode.Property.InboxTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias PhotonCore.LLM.ChatCompletions
+  alias PhotonCore.LLM.Responses.Request
   alias PhotonNode.Harness.{Context, Inbox}
 
   defp json_value do
@@ -169,7 +169,7 @@ defmodule PhotonNode.Property.InboxTest do
 
       if Inbox.validate(input) == :ok do
         messages = "sys" |> Context.new() |> Context.add_user(content) |> Context.build()
-        assert is_list(ChatCompletions.encode_messages(messages))
+        assert is_list(Request.encode_messages(messages))
       end
     end
   end

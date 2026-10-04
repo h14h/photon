@@ -14,7 +14,8 @@ defmodule Photon do
     * `Photon.Settings`: the model and the assistant's instructions
     * `Photon.Provision`, `Photon.NodeDist`, `Photon.Hub`,
       `Photon.Tailnet`: putting nodes on machines, and how they reach the hub
-    * `Photon.Auth`, `Photon.NodeAuth`: the GUI password and the node token
+    * `Photon.Auth`, `Photon.NodeKeys`: who may open the GUI (your devices
+      on the tailnet, or a password), and each node's own key
 
   Layers, after *Designing Elixir Systems with OTP*: each context's
   moduledoc names its pure core and its processes. The pure modules are
@@ -32,19 +33,20 @@ defmodule Photon do
   # their APIs (and the data they return) to the web layer. They never call
   # the node app; only `Photon.Application` starts an embedded node.
   use Boundary,
-    deps: [PhotonCore, PhotonCore.LLM, PhotonCore.LLM.Error, Ecto, EEx, Jason, MDEx],
+    deps: [PhotonCore, PhotonCore.LLM, PhotonCore.LLM.Error, Ecto, EEx, Jason, MDEx, Req],
     check: [apps: [:photon_node]],
     exports: [
       Assistant,
       Assistant.Transcript,
       Auth,
+      ChatGPT,
       Durable,
       Events,
       Hub,
       InstallScript,
       Markdown,
-      NodeAuth,
       NodeDist,
+      NodeKeys,
       NodeSessions,
       NodeSessions.Session,
       NodeTranscript,

@@ -30,29 +30,32 @@ defmodule PhotonCore.Generators do
   end
 
   @doc """
-  A provider's streamed answer: `{chunks, message, model}`, the decoded
-  chunks in order and the message and model they should fold into.
-  Reasoning comes first, then text, then each tool call's deltas, then a
-  last chunk with the finish reason and maybe usage.
+  A streamed answer, as the Responses API sends it: `{events, message,
+  model}`, the decoded events in order and the message and model they
+  should fold into. Reasoning summary deltas come first, then text, then
+  each tool call (added, argument deltas, done), then the end.
   """
   def streamed_answer do
     gen all(
-          model <- member_of(["m", "accounts/x/models/y", nil]),
+          model <- member_of(["m", "gpt-6.1-sol", nil]),
           reasoning <- list_of(string(:utf8, min_length: 1, max_length: 6), max_length: 3),
           text <- list_of(string(:utf8, min_length: 1, max_length: 6), max_length: 4),
           ncalls <- integer(0..3),
           calls <- fixed_list(for(i <- 0..(ncalls - 1)//1, do: streamed_call(i))),
-          finish <- member_of(["stop", "tool_calls", "length", nil]),
           usage <- one_of([constant(nil), usage()])
         ) do
-      chunks =
-        Enum.map(reasoning, &delta_chunk(%{"reasoning_content" => &1})) ++
-          Enum.map(text, &delta_chunk(%{"content" => &1})) ++
-          Enum.flat_map(calls, &call_chunks/1) ++
-          [last_chunk(finish, usage)]
+      events =
+        Enum.map(reasoning, &delta("response.reasoning_summary_text.delta", &1)) ++
+          Enum.map(text, &delta("response.output_text.delta", &1)) ++
+          Enum.flat_map(calls, &call_events/1) ++
+          [
+            %{
+              "type" => "response.completed",
+              "response" => %{"status" => "completed", "model" => model, "usage" => usage}
+            }
+          ]
 
-      chunks = if model, do: [Map.put(hd(chunks), "model", model) | tl(chunks)], else: chunks
-      {chunks, folded_message(reasoning, text, calls), model}
+      {events, folded_message(reasoning, text, calls), model}
     end
   end
 
@@ -67,32 +70,34 @@ defmodule PhotonCore.Generators do
 
   defp usage do
     fixed_map(%{
-      "prompt_tokens" => non_negative_integer(),
-      "completion_tokens" => non_negative_integer()
+      "input_tokens" => non_negative_integer(),
+      "output_tokens" => non_negative_integer()
     })
   end
 
-  defp delta_chunk(delta), do: %{"choices" => [%{"index" => 0, "delta" => delta}]}
+  defp delta(type, text), do: %{"type" => type, "delta" => text}
 
-  # The first delta names the call; the rest add argument fragments.
-  defp call_chunks({index, id, name, fragments}) do
-    [first | rest] = if fragments == [], do: [""], else: fragments
+  # The message is output item 0; each call takes the next.
+  defp call_events({index, id, name, fragments}) do
+    item = %{"type" => "function_call", "call_id" => id, "name" => name, "arguments" => ""}
 
-    head = %{
-      "index" => index,
-      "id" => id,
-      "type" => "function",
-      "function" => %{"name" => name, "arguments" => first}
-    }
-
-    tail = for fragment <- rest, do: %{"index" => index, "function" => %{"arguments" => fragment}}
-    for delta <- [head | tail], do: delta_chunk(%{"tool_calls" => [delta]})
+    [%{"type" => "response.output_item.added", "output_index" => index + 1, "item" => item}] ++
+      for(
+        fragment <- fragments,
+        do: %{
+          "type" => "response.function_call_arguments.delta",
+          "output_index" => index + 1,
+          "delta" => fragment
+        }
+      ) ++
+      [
+        %{
+          "type" => "response.output_item.done",
+          "output_index" => index + 1,
+          "item" => %{item | "arguments" => Enum.join(fragments)}
+        }
+      ]
   end
-
-  defp last_chunk(finish, nil),
-    do: %{"choices" => [%{"index" => 0, "delta" => %{}, "finish_reason" => finish}]}
-
-  defp last_chunk(finish, usage), do: Map.put(last_chunk(finish, nil), "usage", usage)
 
   defp folded_message(reasoning, text, calls) do
     reasoning = Enum.join(reasoning)
@@ -104,7 +109,8 @@ defmodule PhotonCore.Generators do
       "tool_calls" =>
         for {_index, id, name, fragments} <- calls do
           %{"id" => id, "name" => name, "arguments" => Enum.join(fragments)}
-        end
+        end,
+      "reasoning_items" => []
     }
   end
 end

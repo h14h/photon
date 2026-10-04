@@ -51,9 +51,10 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "PhotonCore.LLM.Error",
                    "PhotonCore.LLM.SSE",
                    "PhotonCore.LLM.Retry",
-                   "PhotonCore.LLM.ChatCompletions.Request",
-                   "PhotonCore.LLM.ChatCompletions.Response",
-                   "PhotonCore.LLM.ChatCompletions.Wire",
+                   "PhotonCore.LLM.HTTPError",
+                   "PhotonCore.LLM.Responses.Request",
+                   "PhotonCore.LLM.Responses.Response",
+                   "PhotonCore.LLM.Relay.Wire",
                    "PhotonCore.LLM.MockAgent"
                  ],
                  nondeterministic_extra: ["PhotonCore.ID.new"],

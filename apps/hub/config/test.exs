@@ -14,6 +14,15 @@ config :photon, Photon.Repo,
 
 config :photon_node, llm: %{provider: "mock", script: PhotonCore.LLM.MockAgent}
 
+# Blip and the node relay answer with the scripted models, not ChatGPT; the
+# account's requests to OpenAI go to a stub (Photon.ChatGPTStub).
+config :photon, :mock_model, true
+
+# Tests never run the machine's own tailscale; they name a stand-in with
+# PHOTON_TAILSCALE when they need one.
+config :photon, :find_tailscale, false
+config :photon, Photon.ChatGPT, req_options: [plug: {Req.Test, Photon.ChatGPT}]
+
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
 config :photon, PhotonWeb.Endpoint,

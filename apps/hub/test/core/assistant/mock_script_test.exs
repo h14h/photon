@@ -67,7 +67,9 @@ defmodule Photon.Assistant.MockScriptTest do
     do: Message.text_of(MockScript.respond(%{messages: [Message.tool_result("c1", text)]}))
 
   test "answers anything else with its help" do
-    assert Message.text_of(ask("hello")) =~ "I'm Blip, on the mock model"
-    assert Message.text_of(MockScript.respond(%{messages: []})) =~ "I'm Blip, on the mock model"
+    assert Message.text_of(ask("hello")) =~ "I'm Blip, on the scripted model"
+
+    assert Message.text_of(MockScript.respond(%{messages: []})) =~
+             "I'm Blip, on the scripted model"
   end
 end

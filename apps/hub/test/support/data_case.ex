@@ -25,7 +25,7 @@ defmodule Photon.DataCase do
     :ok
   end
 
-  @tables ~w(conversations entries docs tasks submissions signals node_sessions node_events node_inputs)
+  @tables ~w(conversations entries docs tasks submissions signals node_sessions node_events node_inputs node_keys)
 
   def setup_sandbox(tags) do
     for table <- @tables, do: Photon.Repo.query!("DELETE FROM #{table}")

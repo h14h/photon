@@ -20,8 +20,9 @@ browser ──▶ hub: assistant + web UI ◀──websocket── node ──�
   tool calls, an append-only session log, crash recovery, and each command in
   its own process group. Nodes dial the hub, so they work behind NAT, keep
   working while the hub is away, and catch up when it's back.
-- **Models** are configured once, on the hub. Nodes reach the model through
-  the hub, so they never hold an API key.
+- **The model** is your ChatGPT plan: you sign in with ChatGPT once, on the
+  hub. Nodes reach the model through the hub, so they never hold the
+  sign-in.
 
 > [!WARNING]
 > Node agents run shell commands **without a sandbox**, as the node's user.
@@ -31,7 +32,7 @@ browser ──▶ hub: assistant + web UI ◀──websocket── node ──�
 
 | Path | What |
 | --- | --- |
-| `apps/core` | Shared: the streaming model client (any OpenAI-compatible API), the message format, the mock models |
+| `apps/core` | Shared: the streaming model client (ChatGPT through the Responses API, and the hub's relay that nodes use), the message format, the scripted models tests use |
 | `apps/node` | The node: the agent harness (`PhotonNode.Harness`) and the hub connection, packaged as one self-contained binary |
 | `apps/hub` | The hub: the durable harness (`Photon.Durable`), the assistant (`Photon.Assistant`), node sessions, installer, web UI |
 | `docs/unreal-agent-port-spec.md` | What the node harness ports from unreal-agent, and where it differs |
@@ -46,13 +47,36 @@ mix setup
 mix phx.server
 ```
 
-Open http://localhost:4000. The hub starts a built-in node called `local`, and
-uses the **mock model** until you add an API key, so you can try everything
-right away: type `help`, or `on local: $ uname -a`.
+Open http://localhost:4000, then Settings, and sign in with ChatGPT (see
+below). The hub starts a built-in node called `local`, so you can try
+`on local, what's my uptime?` right away.
 
-To use a real model, open Settings and pick a provider. The default is
-Fireworks with DeepSeek V4.1 Flash (`accounts/fireworks/models/deepseek-v4p1-flash`);
-OpenAI, OpenRouter, Ollama and any OpenAI-compatible endpoint work too.
+To work on the hub without signing in, start it with
+`PHOTON_MOCK_MODEL=1 mix phx.server`: Blip and nodes then answer with scripted
+models (type `help`, or `on local: $ uname -a`). That's for development only.
+
+## Sign in with ChatGPT
+
+Photon runs on your ChatGPT plan, through OpenAI's
+[Sign in with ChatGPT](https://developers.openai.com/siwc/quickstart) for
+open-source apps. It's the only way to give it a model.
+
+1. In the hub, open Settings and choose **Sign in with ChatGPT**, then
+   **Open ChatGPT**, and approve Photon.
+2. ChatGPT sends your browser to a `http://127.0.0.1:…/auth/callback` page
+   that won't load. That's expected: OpenAI only lets open-source apps
+   return to the computer you're on, and the hub isn't it. Copy that page's
+   whole address and paste it into Settings.
+
+The hub keeps the tokens in its data directory (`chatgpt.json`, readable by
+the hub only) and refreshes them itself. Nodes never see them: their
+requests go through the hub. Usage counts against your plan and Photon's
+share of it, which you can see and limit at
+[chatgpt.com/settings/usage](https://chatgpt.com/settings/usage).
+Schedules run while you're away, so they only use your plan once you allow
+it in Settings.
+
+Sign in with ChatGPT is for your own use: one hub, run by you, for you.
 
 ## Deploy the hub to Fly.io
 
@@ -72,21 +96,33 @@ every platform. You get one always-on machine with a volume for your data.
 - **Optional: join your tailnet** with a Tailscale
   [auth key](https://login.tailscale.com/admin/settings/keys):
   `fly secrets set TS_AUTHKEY=tskey-auth-... PHOTON_SSH_USER=<you>`. The hub
-  then lists your machines for one-click installs and lets tailnet devices in
-  without the password.
+  then lists your machines for one-click installs, and your own devices on
+  the tailnet skip the password (`PHOTON_AUTH=tailscale,password`).
+
+To keep a Fly hub off the internet entirely, deploy it with
+`--no-public-ips`, set `PHOTON_AUTH=tailscale` and `PHOTON_TAILSCALE_SERVE=1`,
+and `PHOTON_PUBLIC_URL` to `https://<TS_HOSTNAME>.<tailnet>.ts.net`: it then
+answers only on your tailnet, over HTTPS, to your own devices.
 
 The image runs anywhere Docker does, for example on a VM that's already on
-your tailnet, behind Tailscale Serve:
+your tailnet, where it can open for your devices on the tailnet and nobody
+else, behind Tailscale Serve (or another TLS proxy on the same machine):
 
 ```sh
 docker build -t photon .
 docker run -d --name photon --restart unless-stopped --network host \
   -v "$HOME/photon-data:/data" -v /var/run/tailscale:/var/run/tailscale \
-  -e PORT=8000 -e PHOTON_BIND=127.0.0.1 -e PHOTON_AUTH=off \
+  -e PORT=8000 -e PHOTON_BIND=127.0.0.1 -e PHOTON_AUTH=tailscale \
   -e PHOTON_PUBLIC_URL=https://<hub>.<tailnet>.ts.net -e PHX_HOST=<hub>.<tailnet>.ts.net \
   photon
 sudo tailscale serve --bg 8000
 ```
+
+With `PHOTON_AUTH=tailscale` the hub asks Tailscale which device each
+request comes from (the address the proxy forwards) and lets in only your
+own devices: ones that belong to you (or to `PHOTON_TAILSCALE_USERS`),
+aren't tagged, and don't run a node, so an agent on a node can't drive the
+hub as you.
 
 ## Add nodes
 
@@ -97,14 +133,18 @@ Open **Nodes**:
   user service, and waits for the node to connect. Your tailnet's SSH policy
   must let the hub log in to the machine. **Update** and **Uninstall** live
   there too.
-- **Anywhere else:** run the one-liner the page shows, which includes your hub's
-  URL and node token:
+- **Anywhere else:** name the node, and the page makes its one-liner, with
+  your hub's URL and a key for that node alone:
 
   ```sh
-  curl -fsSL https://<hub>/node/install.sh | PHOTON_NODE_TOKEN=<token> sh
+  curl -fsSL https://<hub>/node/install.sh | PHOTON_NODE_ID=<name> PHOTON_NODE_TOKEN=<key> sh
   ```
 
-Nodes need no root and nothing else installed.
+Nodes need no root and nothing else installed. Each node has its own key: the
+hub keeps only its hash, ties it to the tailnet device that first connects
+with it (so a copied key works nowhere else), and makes a fresh one with
+every install or update. **Update all** updates every node running an older
+build at once.
 
 ## Using the assistant
 
@@ -126,23 +166,23 @@ Hub:
 
 | Variable | Purpose |
 | --- | --- |
-| `PHOTON_PASSWORD` | GUI password (production; generated if unset) |
-| `PHOTON_AUTH` | `off` drops the password, for a hub only reachable through the tailnet |
+| `PHOTON_AUTH` | Who may open the GUI: `password` (production default), `tailscale` (only your devices on the tailnet), `tailscale,password` (those, else the password), or `off` |
+| `PHOTON_PASSWORD` | GUI password (generated if unset) |
+| `PHOTON_TAILSCALE_USERS` | Tailscale logins let in (default: whoever owns the hub machine) |
 | `TS_AUTHKEY`, `TS_HOSTNAME`, `TS_EXTRA_ARGS` | Put the hub's container on a tailnet |
-| `PHOTON_TRUST_TAILNET` | Let tailnet peers skip the password (default on, on a tailnet) |
 | `PHOTON_SSH_USER` | Remote user for installing nodes over SSH |
 | `PHOTON_PUBLIC_URL` | URL nodes use to reach the hub, if not detected |
 | `PHOTON_BIND` | Address the hub listens on |
 | `PHOTON_LOCAL_NODE` | Run the built-in node (default on in development, off in the image) |
 | `PHOTON_DATA_DIR` | Where data lives (`.photon/`, or `/data` in the image) |
-| `FIREWORKS_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | Model keys, if not set in Settings |
+| `PHOTON_MOCK_MODEL` | `1` answers with scripted models instead of ChatGPT (development only) |
 
 Node (set by the installer in `~/.config/photon-node/env`):
 
 | Variable | Purpose |
 | --- | --- |
 | `PHOTON_SERVER` | The hub's websocket, e.g. `wss://hub.example.ts.net/node/websocket` |
-| `PHOTON_NODE_TOKEN` | The hub's node token (required) |
+| `PHOTON_NODE_TOKEN` | The node's own key, made by the hub (required) |
 | `PHOTON_NODE_ID` | Node name (default: hostname) |
 | `PHOTON_NODE_WORKSPACE` | Where agents work (default: `~/.photon-node/workspace`) |
 
@@ -162,7 +202,8 @@ and `docs/otp-design-guide.md` the design rules they enforce.
 Packaging uses [Burrito](https://github.com/burrito-elixir/burrito) and needs
 `xz`, Zig 0.16.0 and an Erlang/OTP release Burrito publishes runtimes for, e.g.
 `mise exec erlang@29.1 zig@0.16.0 -- mix photon.package`. Nodes can also run
-from source: `cd apps/node && PHOTON_SERVER=... PHOTON_NODE_TOKEN=... mix run --no-halt`.
+from source with a key from the Nodes page:
+`cd apps/node && PHOTON_SERVER=... PHOTON_NODE_ID=... PHOTON_NODE_TOKEN=... mix run --no-halt`.
 
 The hub–node protocol, including how sessions survive reconnects, is documented
 in `apps/node/lib/photon_node.ex`; the durable harness in

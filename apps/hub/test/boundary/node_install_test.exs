@@ -123,6 +123,48 @@ defmodule Photon.NodeInstallTest do
     assert eventually(fn -> gone?(String.trim(child)) end)
   end
 
+  test "clears out a damaged copy of the node libc in /tmp, and keeps a good one", ctx do
+    good_bytes = "a complete libc #{System.unique_integer([:positive])}"
+    good = "/tmp/libc-musl-#{Base.encode16(:crypto.hash(:sha256, good_bytes), case: :lower)}.so"
+
+    damaged =
+      "/tmp/libc-musl-#{Base.encode16(:crypto.hash(:sha256, "the rest"), case: :lower)}.so"
+
+    File.write!(good, good_bytes)
+    File.write!(damaged, "cut short")
+    on_exit(fn -> Enum.each([good, damaged], &File.rm/1) end)
+
+    {out, 0} = install(ctx, [{"PHOTON_SERVICE", "none"}])
+
+    assert out =~ "removed a damaged #{damaged}"
+    refute File.exists?(damaged)
+    assert File.read!(good) == good_bytes
+  end
+
+  test "won't say it uninstalled a node it couldn't stop", ctx do
+    {_out, 0} = install(ctx, [{"PHOTON_SERVICE", "none"}])
+    base = Path.join(ctx.home, ".local/share/photon-node")
+    pid = String.trim(File.read!(Path.join(base, "node.pid")))
+    bin = Path.join(base, "bin/photon-node")
+    on_exit(fn -> System.cmd("pkill", ["-f", bin]) end)
+
+    # Nothing left to stop it by, as when systemctl can't reach the user's
+    # systemd over an SSH session.
+    File.rm!(Path.join(base, "node.pid"))
+
+    {out, status} =
+      System.cmd("sh", ["-c", script()],
+        env: ctx.env ++ [{"PHOTON_ACTION", "uninstall"}],
+        stderr_to_stdout: true
+      )
+
+    assert status != 0
+    assert out =~ "couldn't stop the running node"
+    refute out =~ "PHOTON_UNINSTALL_OK"
+    assert File.exists?(bin)
+    refute gone?(pid)
+  end
+
   defp child_of(pid) do
     case System.cmd("pgrep", ["-P", pid]) do
       {child, 0} -> child

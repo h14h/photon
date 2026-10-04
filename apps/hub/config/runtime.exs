@@ -52,6 +52,12 @@ config :photon, PhotonWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
 if config_env() == :dev do
+  # PHOTON_MOCK_MODEL=1 answers with the scripted models instead of ChatGPT,
+  # for working on the hub without a sign-in. Development only.
+  if System.get_env("PHOTON_MOCK_MODEL") in ~w(1 true) do
+    config :photon, :mock_model, true
+  end
+
   # Reload browser tabs when matching files change.
   config :photon, PhotonWeb.Endpoint,
     live_reload: [
@@ -94,8 +100,9 @@ if config_env() == :prod do
   fly_host = System.get_env("FLY_APP_NAME") && "#{System.get_env("FLY_APP_NAME")}.fly.dev"
   host = System.get_env("PHX_HOST") || fly_host || "localhost"
 
-  # The GUI always needs a password in production; see PhotonWeb.Auth.
-  config :photon, :auth, true
+  # The GUI needs a password in production unless PHOTON_AUTH says
+  # otherwise (below); see Photon.Auth.
+  config :photon, :auth_mode, :password
 
   # Nodes use the tailnet when the hub is on one, otherwise this public URL.
   config :photon, fallback_url: "https://#{host}"
@@ -113,17 +120,41 @@ end
 
 # The GUI password: PHOTON_PASSWORD, else one generated on first boot (prod).
 if password = System.get_env("PHOTON_PASSWORD") do
-  config :photon, :auth, true
+  config :photon, :auth_mode, :password
   config :photon, :password, password
 end
 
-# PHOTON_AUTH=off drops the password, for a hub only reachable through an
-# authenticating front door such as the tailnet (Tailscale Serve).
-if System.get_env("PHOTON_AUTH") in ~w(0 false off) do
-  config :photon, :auth, false
+# Who may open the GUI (see Photon.Auth): "tailscale" (only your own
+# devices on the hub's tailnet, never one that runs a node), "password",
+# "tailscale,password" (your tailnet devices, else the password), or "off"
+# (a hub only another login can reach). PHOTON_TRUST_TAILNET=true is the
+# older name for "tailscale,password".
+auth =
+  System.get_env("PHOTON_AUTH") ||
+    if System.get_env("PHOTON_TRUST_TAILNET") in ~w(1 true), do: "tailscale,password"
+
+case auth do
+  nil ->
+    :ok
+
+  "tailscale" ->
+    config :photon, :auth_mode, :tailscale
+
+  "password" ->
+    config :photon, :auth_mode, :password
+
+  "tailscale,password" ->
+    config :photon, :auth_mode, :tailscale_or_password
+
+  off when off in ~w(0 false off) ->
+    config :photon, :auth_mode, :off
+
+  other ->
+    raise "PHOTON_AUTH must be tailscale, password, tailscale,password or off, not #{inspect(other)}"
 end
 
-# Skip the password for requests from peers on the hub's tailnet.
-if System.get_env("PHOTON_TRUST_TAILNET") in ~w(1 true) do
-  config :photon, :trust_tailnet, true
+# With PHOTON_AUTH=tailscale: the Tailscale logins let in (comma-separated),
+# else whoever owns the hub machine.
+if users = System.get_env("PHOTON_TAILSCALE_USERS") do
+  config :photon, :tailscale_users, String.split(users, ~r/[\s,]+/, trim: true)
 end

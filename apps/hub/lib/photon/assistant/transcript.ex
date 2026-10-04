@@ -210,7 +210,7 @@ defmodule Photon.Assistant.Transcript do
     end
   end
 
-  defp went_wrong?(%{kind: "error", data: data}), do: data["stopped"] != true
+  defp went_wrong?(%{kind: "error", data: data}), do: not quiet?(data)
 
   defp went_wrong?(%{kind: "user", data: %{"source" => %{"kind" => "node_report"} = source}}),
     do: source["failed"] == true
@@ -220,8 +220,12 @@ defmodule Photon.Assistant.Transcript do
 
   defp went_wrong?(_entry), do: false
 
-  defp stopped?(%{kind: "error", data: data}), do: data["stopped"] == true
+  defp stopped?(%{kind: "error", data: data}), do: quiet?(data)
   defp stopped?(_entry), do: false
+
+  @doc "Whether an error entry is a quiet one: a stopped run or a notice, not a failure."
+  @spec quiet?(map()) :: boolean()
+  def quiet?(data), do: data["stopped"] == true or data["notice"] == true
 
   defp report?(%{kind: "user", data: %{"source" => %{"kind" => "node_report"}}}), do: true
   defp report?(_entry), do: false

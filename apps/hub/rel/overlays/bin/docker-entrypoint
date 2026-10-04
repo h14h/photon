@@ -5,8 +5,11 @@
 #   TS_AUTHKEY           join the tailnet (needed once; state lives on the volume)
 #   TS_HOSTNAME          tailnet machine name (default: photon-hub)
 #   TS_EXTRA_ARGS        extra `tailscale up` flags, e.g. --advertise-tags=tag:photon
-#   PHOTON_TRUST_TAILNET skip the GUI password for tailnet peers (default: true
-#                        when the kernel TUN device is available, as on Fly)
+#   PHOTON_AUTH          who may open the GUI (default: tailscale,password,
+#                        your tailnet devices skip the password, when the
+#                        kernel TUN device is available, as on Fly)
+#   PHOTON_TAILSCALE_SERVE  1: serve the hub over HTTPS on its tailnet name
+#                        (tailscale serve), for a hub with no public address
 set -eu
 
 server="$(cd -P -- "$(dirname -- "$0")" && pwd)/server"
@@ -18,9 +21,9 @@ if [ -n "${TS_AUTHKEY:-}" ] || [ -f "$data/tailscale/tailscaled.state" ]; then
   mkdir -p "$data/tailscale" /var/run/tailscale
 
   # Kernel mode (Fly machines have a TUN device) lets the hub see each tailnet
-  # peer's own address, which PHOTON_TRUST_TAILNET checks. Elsewhere, userspace
+  # peer's own address, which `tailscale whois` names. Elsewhere, userspace
   # networking needs no privileges, but connections then arrive from
-  # localhost, so tailnet trust can't apply and the password is always asked.
+  # localhost, so no device can be named and the password is always asked.
   if [ "$(id -u)" = 0 ] && [ -c /dev/net/tun ]; then
     mode=kernel
     tun=tailscale0
@@ -49,8 +52,13 @@ if [ -n "${TS_AUTHKEY:-}" ] || [ -f "$data/tailscale/tailscaled.state" ]; then
     # SSH to machines being set up goes through tailscaled, which resolves
     # tailnet names itself and works in either mode.
     export PHOTON_SSH_PROXY="tailscale nc %h %p"
-    if [ "$mode" = kernel ]; then
-      export PHOTON_TRUST_TAILNET="${PHOTON_TRUST_TAILNET:-true}"
+    if [ "$mode" = kernel ] && [ -z "${PHOTON_TRUST_TAILNET:-}" ]; then
+      export PHOTON_AUTH="${PHOTON_AUTH:-tailscale,password}"
+    fi
+    # Kept in tailscaled's state, so this only confirms it on later boots.
+    if [ -n "${PHOTON_TAILSCALE_SERVE:-}" ]; then
+      tailscale serve --bg "${PORT:-4000}" >/dev/null &&
+        echo "photon: serving the hub over HTTPS on its tailnet name"
     fi
   else
     echo "photon: warning: couldn't join the tailnet (see /tmp/tailscaled.log); continuing without it" >&2

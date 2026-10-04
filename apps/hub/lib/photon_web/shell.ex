@@ -2,18 +2,19 @@ defmodule PhotonWeb.Shell do
   @moduledoc """
   Keeps the app shell current on every page: connected nodes, recent node
   sessions, whether the assistant is busy, the node work it has running,
-  Blip's mood from those, and the model in use. Mounted for the whole
-  `live_session`; pages get it as `@shell`.
+  Blip's mood from those, the model in use, and whether the hub is signed
+  in with ChatGPT. Mounted for the whole `live_session`; pages get it as
+  `@shell`.
 
   It rebuilds on `:nodes_changed`, `:node_sessions_changed`,
-  `{:settings_changed, _}` and `{:durable_tasks, _}`, and lets each message
-  continue to the page, which may want it too.
+  `{:settings_changed, _}`, `{:durable_tasks, _}` and `{:chatgpt_changed, _}`,
+  and lets each message continue to the page, which may want it too.
   """
 
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView
 
-  alias Photon.{Assistant, Nodes, NodeSessions, Settings}
+  alias Photon.{Assistant, ChatGPT, Nodes, NodeSessions, Settings}
   alias Photon.Assistant.Transcript
 
   @spec on_mount(:default, map(), map(), Phoenix.LiveView.Socket.t()) ::
@@ -23,6 +24,7 @@ defmodule PhotonWeb.Shell do
       Nodes.subscribe()
       NodeSessions.subscribe()
       Settings.subscribe()
+      ChatGPT.subscribe()
       Assistant.subscribe_tasks()
     end
 
@@ -32,7 +34,8 @@ defmodule PhotonWeb.Shell do
 
   defp handle_info(message, socket)
        when message in [:nodes_changed, :node_sessions_changed] or
-              (is_tuple(message) and elem(message, 0) in [:settings_changed, :durable_tasks]) do
+              (is_tuple(message) and
+                 elem(message, 0) in [:settings_changed, :durable_tasks, :chatgpt_changed]) do
     {:cont, assign(socket, :shell, build())}
   end
 
@@ -42,6 +45,7 @@ defmodule PhotonWeb.Shell do
   @spec build() :: map()
   def build do
     online = Nodes.list()
+    chatgpt = ChatGPT.status()
     sessions = NodeSessions.list(nil, 60)
     settings = Settings.load()
     conversation = Assistant.conversation_id()
@@ -55,7 +59,8 @@ defmodule PhotonWeb.Shell do
       working: working,
       mood: Transcript.mood(%{outcome: nil, live: nil, working: length(working), busy: busy}),
       model: Settings.model_label(settings),
-      needs_key: not Settings.key?(settings)
+      chatgpt: chatgpt,
+      model_ready: ChatGPT.ready?(chatgpt)
     }
   end
 end

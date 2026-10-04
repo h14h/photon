@@ -26,31 +26,19 @@ defmodule PhotonWeb.PagesTest do
   test "the nodes page offers both ways to add a node", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/nodes")
     assert has_element?(view, "#add-node")
-    assert has_element?(view, "#install-command")
+    assert has_element?(view, "#manual-key-form")
   end
 
   test "settings save", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/settings")
-    refute has_element?(view, "#settings_api_key")
-
-    view |> form("#settings-form", settings: %{provider: "fireworks"}) |> render_change()
-    assert has_element?(view, "#settings_api_key")
 
     view
-    |> form("#settings-form",
-      settings: %{
-        provider: "fireworks",
-        model: "",
-        api_key: "fw-test",
-        timezone: "America/Chicago"
-      }
-    )
+    |> form("#settings-form", settings: %{timezone: "America/Chicago", user_name: "Henry"})
     |> render_submit()
 
     settings = Photon.Settings.load()
-    assert settings["provider"] == "fireworks"
-    assert settings["api_key"] == "fw-test"
-    assert Photon.Settings.model(settings) == "accounts/fireworks/models/deepseek-v4p1-flash"
+    assert settings["timezone"] == "America/Chicago"
+    assert settings["user_name"] == "Henry"
   end
 
   test "a node session shows its commands and output", %{conn: conn} do

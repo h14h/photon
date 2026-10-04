@@ -23,7 +23,7 @@ defmodule PhotonNode.Harness do
       `PhotonNode.Harness.Ops.Job`)
     * lifecycle: the `PhotonNode` supervisor
 
-  Model requests go through the hub's proxy, which holds the provider
+  Model requests go through the hub's relay, which holds the provider
   credentials. Sessions survive node restarts: a session that was working
   when the node stopped, or had input it hadn't started on, is resumed from
   its log on boot.
@@ -156,7 +156,7 @@ defmodule PhotonNode.Harness do
     |> Enum.any?(&match?(%{"kind" => "input", "data" => %{"id" => ^input_id}}, &1))
   end
 
-  @doc "Where model requests go: the hub's proxy, unless configured otherwise (tests)."
+  @doc "Where model requests go: the hub's relay, unless configured otherwise (tests)."
   @spec llm_config() :: PhotonCore.LLM.config()
   defdelegate llm_config, to: ModelRequest, as: :config
 

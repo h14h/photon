@@ -41,7 +41,8 @@ defmodule Photon.Durable.Generation do
     live = fn event -> Durable.live(conversation.id, Map.put(event, "task", task.id)) end
     live.(%{"type" => "start"})
 
-    result = LLM.stream(request, llm.config, &live.(Turn.live_event(&1)))
+    stream = Map.get(llm, :stream, &LLM.stream/3)
+    result = stream.(request, llm.config, &live.(Turn.live_event(&1)))
     commit_result(runtime, task, result, Turn.round(task.checkpoint))
   end
 

@@ -81,6 +81,11 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Kept out of logs (Phoenix and LiveView event params): passwords and keys,
+# and the address pasted back from a ChatGPT sign-in, which carries a
+# one-time code.
+config :phoenix, :filter_parameters, ["password", "secret", "token", "key", "sign_in", "code"]
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

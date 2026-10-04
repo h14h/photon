@@ -71,6 +71,14 @@ defmodule PhotonWeb.NodesLiveTest do
       assert view |> element("#node-box") |> render() =~ ~r/Sessions<\/dt><dd[^>]*>\s*1\s*</
     end
 
+    test "offer to update every outdated node at once", %{view: view} do
+      render_async(view)
+      assert has_element?(view, "#update-all", "Update all (1)")
+
+      render_click(view, "update_all")
+      assert has_element?(view, "#flash-error", "Couldn't update box: This hub can't reach box.")
+    end
+
     test "update when a node leaves", %{view: view} do
       Registry.unregister(Photon.NodeRegistry, "box")
       Nodes.broadcast()
@@ -118,6 +126,22 @@ defmodule PhotonWeb.NodesLiveTest do
     render_async(view)
 
     refute has_element?(view, "#machine-box")
-    assert has_element?(view, "#install-command")
+    assert has_element?(view, "#manual-key-form")
+  end
+
+  test "an install command carries a key made for that node alone", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/nodes")
+    refute has_element?(view, "#install-command")
+
+    view |> form("#manual-key-form", manual: %{node_id: "no spaces"}) |> render_submit()
+    assert has_element?(view, "#flash-error", "Name it with letters")
+
+    view |> form("#manual-key-form", manual: %{node_id: " vps-1 "}) |> render_submit()
+    command = view |> element("#install-command") |> render()
+
+    assert [_, key] =
+             Regex.run(~r/PHOTON_NODE_ID=vps-1 PHOTON_NODE_TOKEN=(pnk_[\w-]+) sh/, command)
+
+    assert {:ok, "vps-1"} = Photon.NodeKeys.authenticate(key, :error)
   end
 end

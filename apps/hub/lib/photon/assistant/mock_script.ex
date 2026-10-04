@@ -1,7 +1,8 @@
 defmodule Photon.Assistant.MockScript do
   @moduledoc """
-  The assistant's mock model, so the hub works end to end without an API
-  key. It understands a few fixed phrasings:
+  The assistant's scripted model, for tests and for working on the hub
+  without a ChatGPT sign-in (`PHOTON_MOCK_MODEL=1` in development). It
+  understands a few fixed phrasings:
 
     * `nodes` lists nodes
     * `on <node>: <task>` hands a task to a node (the node runs it with its
@@ -25,7 +26,7 @@ defmodule Photon.Assistant.MockScript do
   alias PhotonCore.Message
 
   @help """
-  I'm Blip, on the mock model. There's no API key, so I only follow a few fixed phrasings:
+  I'm Blip, on the scripted model, so I only follow a few fixed phrasings:
 
   - `nodes` lists your machines
   - `on <node>: <task>` hands a task to a machine, like `on mp1: $ uptime`
@@ -34,7 +35,7 @@ defmodule Photon.Assistant.MockScript do
   - `in 2 minutes: <prompt>` or `every 30 minutes: <prompt>` schedules a prompt
   - `schedules` lists what's scheduled
 
-  Add a model API key in Settings and I can do the rest.
+  Sign in with ChatGPT and I can do the rest.
   """
 
   @impl true

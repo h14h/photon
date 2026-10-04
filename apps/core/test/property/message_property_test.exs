@@ -112,17 +112,23 @@ defmodule PhotonCore.Property.MessageTest do
     %{reply | "tool_calls" => Enum.map(calls, &Map.delete(&1, "id"))}
   end
 
-  property "the mock agent answers the same directly and through the hub's proxy" do
+  property "the mock agent answers the same directly and through the hub's relay" do
     check all(messages <- session(), max_runs: 150) do
       direct = MockAgent.respond(%{messages: messages})
 
-      proxied =
-        MockAgent.respond(%{
-          messages:
-            messages |> ChatCompletions.encode_messages() |> ChatCompletions.decode_messages()
-        })
+      relayed =
+        %{messages: messages}
+        |> Relay.body()
+        |> Jason.encode!()
+        |> Jason.decode!()
 
-      assert shape(proxied) == shape(direct)
+      assert shape(MockAgent.respond(%{messages: relayed["messages"]})) == shape(direct)
+    end
+  end
+
+  property "every conversation encodes as Responses input without raising" do
+    check all(messages <- session(), max_runs: 150) do
+      assert is_list(Request.encode_messages(messages))
     end
   end
 end

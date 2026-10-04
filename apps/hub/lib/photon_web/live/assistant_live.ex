@@ -13,7 +13,7 @@ defmodule PhotonWeb.AssistantLive do
 
   use PhotonWeb, :live_view
 
-  alias Photon.{Assistant, Markdown, Settings}
+  alias Photon.{Assistant, Markdown}
   alias Photon.Assistant.Transcript
   alias PhotonCore.Message
 
@@ -46,7 +46,6 @@ defmodule PhotonWeb.AssistantLive do
        memory: Assistant.memory(),
        editing_memory: false,
        schedules: Assistant.schedules(),
-       mock?: Settings.load()["provider"] == "mock",
        form: to_form(%{"text" => ""}, as: :message)
      )
      |> stream(:entries, Enum.filter(entries, &Transcript.shown?/1))}
@@ -152,10 +151,6 @@ defmodule PhotonWeb.AssistantLive do
     {:noreply, assign(socket, live: Transcript.live(socket.assigns.live, event))}
   end
 
-  def handle_info({:settings_changed, settings}, socket) do
-    {:noreply, assign(socket, mock?: settings["provider"] == "mock")}
-  end
-
   # A timer for an outcome a later one replaced finds a different ref, and
   # falls through to the last clause.
   def handle_info({:blip_rest, ref}, %{assigns: %{outcome_ref: ref}} = socket),
@@ -237,7 +232,7 @@ defmodule PhotonWeb.AssistantLive do
             class="min-h-0 flex-1 overflow-y-auto"
           >
             <div class="mx-auto w-full max-w-3xl px-4 pt-8 pb-6 sm:px-6">
-              <.empty_state :if={@empty?} mock?={@mock?} shell={@shell} mood={@mood} />
+              <.empty_state :if={@empty?} shell={@shell} mood={@mood} />
 
               <div id="entries" phx-update="stream" class="space-y-6">
                 <div :for={{dom_id, entry} <- @streams.entries} id={dom_id} class="animate-rise">
@@ -254,7 +249,14 @@ defmodule PhotonWeb.AssistantLive do
             </div>
           </div>
 
-          <.composer form={@form} busy={@busy} mode={@mode} queued={@queued} />
+          <.composer
+            :if={@shell.model_ready}
+            form={@form}
+            busy={@busy}
+            mode={@mode}
+            queued={@queued}
+          />
+          <.sign_in_to_talk :if={!@shell.model_ready} chatgpt={@shell.chatgpt} />
         </section>
 
         <.rail
@@ -285,7 +287,6 @@ defmodule PhotonWeb.AssistantLive do
     """
   end
 
-  attr :mock?, :boolean, required: true
   attr :shell, :map, required: true
   attr :mood, :atom, required: true
 
@@ -308,14 +309,23 @@ defmodule PhotonWeb.AssistantLive do
       <p class="mx-auto mt-2 max-w-md text-[15px] leading-relaxed text-ink-soft">
         I'm a photon living on this hub. I can't run commands myself, so I hand work to your machines and tell you what they actually did.
       </p>
-      <p :if={@online == []} class="mx-auto mt-4 max-w-md text-sm text-ink-faint">
+      <p :if={!@shell.model_ready} class="mx-auto mt-4 max-w-md text-sm text-ink-soft">
+        First I need a model to think with. Sign in with ChatGPT and I'll use your plan.
+      </p>
+      <p
+        :if={@shell.model_ready and @online == []}
+        class="mx-auto mt-4 max-w-md text-sm text-ink-faint"
+      >
         No machines yet, so I have nowhere to send work.
         <.link navigate={~p"/nodes"} class="text-accent-strong underline underline-offset-2">Add one</.link>
         first.
       </p>
-      <div class="mx-auto mt-7 flex max-w-xl flex-wrap justify-center gap-2">
+      <div
+        :if={@shell.model_ready}
+        class="mx-auto mt-7 flex max-w-xl flex-wrap justify-center gap-2"
+      >
         <button
-          :for={example <- examples(@mock?, @first && @first.id)}
+          :for={example <- examples(@first && @first.id)}
           phx-click="example"
           phx-value-text={example}
           class="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[13px] text-ink-soft shadow-xs transition hover:-translate-y-px hover:border-accent/40 hover:text-ink"
@@ -327,19 +337,7 @@ defmodule PhotonWeb.AssistantLive do
     """
   end
 
-  defp examples(true, node) do
-    node = node || "mp1"
-
-    [
-      "help",
-      "nodes",
-      "on #{node}: $ uptime",
-      "on #{node}: sleep 3",
-      "remember I prefer short answers"
-    ]
-  end
-
-  defp examples(false, node) do
+  defp examples(node) do
     on = if node, do: " on #{node}", else: ""
 
     [
@@ -408,17 +406,22 @@ defmodule PhotonWeb.AssistantLive do
   end
 
   defp entry(%{entry: %{kind: "error"}} = assigns) do
+    assigns = assign(assigns, quiet: Transcript.quiet?(assigns.entry.data))
+
     ~H"""
     <div class={[
       "ml-10 flex items-start gap-2 rounded-xl px-3.5 py-2.5 text-sm",
-      if(@entry.data["stopped"], do: "bg-sunken text-ink-soft", else: "bg-bad-soft text-ink")
+      if(@quiet, do: "bg-sunken text-ink-soft", else: "bg-bad-soft text-ink")
     ]}>
       <.icon
-        name={if(@entry.data["stopped"], do: "hero-stop-circle", else: "hero-exclamation-triangle")}
-        class={[
-          "mt-0.5 size-4 shrink-0",
-          if(@entry.data["stopped"], do: "text-ink-faint", else: "text-bad")
-        ]}
+        name={
+          cond do
+            @entry.data["notice"] -> "hero-clock"
+            @quiet -> "hero-stop-circle"
+            true -> "hero-exclamation-triangle"
+          end
+        }
+        class={["mt-0.5 size-4 shrink-0", if(@quiet, do: "text-ink-faint", else: "text-bad")]}
       />
       <span class="leading-relaxed">{@entry.data["message"]}</span>
     </div>
@@ -657,6 +660,30 @@ defmodule PhotonWeb.AssistantLive do
       <span class="size-1.5 animate-breathe rounded-full bg-current" />
       <span class="size-1.5 animate-breathe rounded-full bg-current [animation-delay:0.2s]" />
       <span class="size-1.5 animate-breathe rounded-full bg-current [animation-delay:0.4s]" />
+    </div>
+    """
+  end
+
+  attr :chatgpt, :map, required: true
+
+  # In place of the composer until there's a model to talk to.
+  defp sign_in_to_talk(assigns) do
+    ~H"""
+    <div class="shrink-0 border-t border-line bg-canvas/90 px-4 pt-3 pb-4 backdrop-blur sm:px-6">
+      <div
+        id="sign-in-to-talk"
+        class="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 shadow-sm"
+      >
+        <p class="text-[14px] text-ink-soft">
+          {if(@chatgpt.state == :signed_in,
+            do: "Photon isn't allowed to use your ChatGPT plan yet.",
+            else: "Blip needs a ChatGPT sign-in to think."
+          )}
+        </p>
+        <.button navigate={~p"/settings"} variant="primary" size="sm">
+          {if(@chatgpt.state == :signed_in, do: "Fix in Settings", else: "Sign in with ChatGPT")}
+        </.button>
+      </div>
     </div>
     """
   end

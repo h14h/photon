@@ -14,11 +14,11 @@ defmodule PhotonCore.Property.LLMStreamTest do
 
   property "an answer streamed in any HTTP chunks reads as the pure fold of its body" do
     check all(
-            {chunks, _message, _model} <- Generators.streamed_answer(),
+            {events, _message, _model} <- Generators.streamed_answer(),
             cuts <- Generators.cuts(16),
             max_runs: 100
           ) do
-      body = sse_body(chunks ++ [:done])
+      body = sse_body(events)
       StubProvider.streams_in_pieces(__MODULE__, split_at(body, cuts))
       config = stub_config(__MODULE__, max_attempts: 1)
 

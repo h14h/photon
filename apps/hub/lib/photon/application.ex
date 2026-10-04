@@ -12,6 +12,8 @@ defmodule Photon.Application do
       "online" means "its channel is alive" and nothing keeps a pid
     * `Photon.ProvisionTasks` and `Photon.Provision`: SSH jobs, and the
       table of jobs that monitors them
+    * `Photon.ChatGPT`: the ChatGPT account (Sign in with ChatGPT), which
+      holds the tokens and refreshes them one at a time
     * `Photon.Durable.Supervisor`: the assistant's durable harness (left
       out with `config :photon, start_durable: false`, as in tests); see its
       moduledoc for its own plan
@@ -39,7 +41,9 @@ defmodule Photon.Application do
   @impl true
   def start(_type, _args) do
     # Generated (and logged) at boot, not on the first sign-in.
-    _password = if Photon.Auth.enabled?(), do: Photon.Auth.ensure_password!()
+    _password =
+      if Photon.Auth.mode() in [:password, :tailscale_or_password],
+        do: Photon.Auth.ensure_password!()
 
     children =
       [
@@ -51,7 +55,8 @@ defmodule Photon.Application do
         Photon.Tailnet,
         {Registry, keys: :unique, name: Photon.NodeRegistry},
         {Task.Supervisor, name: Photon.ProvisionTasks},
-        Photon.Provision
+        Photon.Provision,
+        Photon.ChatGPT
       ] ++ durable() ++ [PhotonWeb.Endpoint] ++ local_node()
 
     opts = [strategy: :one_for_one, name: Photon.Supervisor]
@@ -75,7 +80,7 @@ defmodule Photon.Application do
       [
         {PhotonNode,
          server: "ws://#{local_address(http[:ip])}:#{http[:port]}/node/websocket",
-         token: Photon.NodeAuth.token(),
+         token: Photon.NodeKeys.local_token(),
          node_id: "local",
          data_dir: Photon.Paths.local_node_dir()}
       ]

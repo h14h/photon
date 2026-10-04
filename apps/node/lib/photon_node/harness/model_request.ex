@@ -51,17 +51,17 @@ defmodule PhotonNode.Harness.ModelRequest do
     :ok
   end
 
-  @doc "Where model requests go: the hub's proxy, unless configured otherwise (tests)."
+  @doc "Where model requests go: the hub's relay, unless configured otherwise (tests)."
   @spec config() :: LLM.config()
   def config do
     case Application.get_env(:photon_node, :llm) do
-      nil -> hub_proxy(PhotonNode.config())
+      nil -> hub_relay(PhotonNode.config())
       config -> config
     end
   end
 
-  defp hub_proxy(node) do
-    %{provider: "custom", base_url: Config.llm_base_url(node), api_key: node.token}
+  defp hub_relay(node) do
+    %{provider: "relay", base_url: Config.llm_base_url(node), api_key: node.token}
   end
 
   @doc "The live event the hub gets for one streamed model event."

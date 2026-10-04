@@ -8,26 +8,59 @@ defmodule Photon.Assistant.Routine do
   The task's input holds `"prompt"`, `"first_at"` (Unix milliseconds) and
   `"every_ms"` (nil for a one-off); its checkpoint, `"next_at"` and how many
   times it has fired (`"runs"`).
+
+  A scheduled run uses the user's ChatGPT plan while they're away, which
+  needs their consent (`Photon.Settings.scheduled_work?/1`). Without it the
+  routine posts a quiet note that it skipped the run, and keeps its
+  schedule.
   """
 
   @behaviour Photon.Durable.TaskKind
 
-  alias Photon.Durable
-  alias Photon.Durable.{Runtime, TaskRecord}
+  alias Photon.{Durable, Settings}
+  alias Photon.Durable.{Runtime, TaskRecord, Tx}
 
   @impl true
   def step("start", task, runtime), do: Runtime.transition(runtime, first_wait(task))
 
   def step("fire", task, runtime) do
-    Runtime.commit(runtime, fn tx ->
-      _prompt =
-        Durable.submit_tx(tx, task.conversation_id, prompt(task),
-          request_id: request_id(task),
-          source: %{"kind" => "routine", "schedule_id" => task.id}
-        )
+    allowed? = scheduled_work?()
 
+    Runtime.commit(runtime, fn tx ->
+      :ok = fire(tx, task, allowed?)
       after_fire(task, System.system_time(:millisecond))
     end)
+  end
+
+  defp fire(tx, task, true = _allowed) do
+    _prompt =
+      Durable.submit_tx(tx, task.conversation_id, prompt(task),
+        request_id: request_id(task),
+        source: %{"kind" => "routine", "schedule_id" => task.id}
+      )
+
+    :ok
+  end
+
+  defp fire(tx, task, false = _allowed) do
+    _note = Tx.append(tx, task.conversation_id, "error", skipped(task))
+    :ok
+  end
+
+  # The scripted model (tests, development) uses nobody's plan.
+  defp scheduled_work? do
+    Application.get_env(:photon, :mock_model, false) or Settings.scheduled_work?(Settings.load())
+  end
+
+  @doc false
+  # The note a run skipped for want of consent leaves.
+  @spec skipped(TaskRecord.t()) :: map()
+  def skipped(task) do
+    %{
+      "message" =>
+        ~s{Skipped "#{task.input["prompt"]}": scheduled work is off. Turn it on in Settings to let me use your plan while you're away.},
+      "notice" => true
+    }
   end
 
   @doc false

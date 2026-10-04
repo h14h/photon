@@ -20,7 +20,7 @@ defmodule PhotonWeb do
   # The web layer: LiveViews, the node channel and controllers, which may
   # use only what `Photon` exports (the contexts) and never Ecto.
   use Boundary,
-    deps: [Photon, PhotonCore, PhotonCore.LLM],
+    deps: [Photon, PhotonCore, PhotonCore.LLM, PhotonCore.LLM.Error],
     exports: [Endpoint, Telemetry],
     check: [apps: [:ecto, :ecto_sql, :photon_node]]
 
