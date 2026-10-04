@@ -133,9 +133,10 @@ repair_musl_runtimes() {
   done
 }
 
-# Whether this user can't write the node's libc to /tmp any more.
+# Whether this user can't write the node's libc to /tmp any more. The probe
+# gets an unguessable name, so nobody else can plant a link where it writes.
 tmp_full() {
-  probe="/tmp/.photon-probe.$$"
+  probe=$(mktemp /tmp/.photon-probe.XXXXXX 2>/dev/null) || return 0
   if dd if=/dev/zero of="$probe" bs=1024 count=700 >/dev/null 2>&1; then
     rm -f "$probe"
     return 1
