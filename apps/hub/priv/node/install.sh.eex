@@ -115,9 +115,43 @@ else
 fi
 chmod 755 "$BIN.new"
 
+# On Linux the node's first run writes a small libc (about 650 KB) to /tmp,
+# named for its SHA-256, and later runs use any file by that name. A write
+# cut short, say by a full /tmp or the user's quota there, leaves a
+# truncated one that no later run can start with, so remove those.
+repair_musl_runtimes() {
+  [ "$os" = linux ] || return 0
+  for f in /tmp/libc-musl-*.so; do
+    [ -f "$f" ] && [ -O "$f" ] || continue
+    want=${f#/tmp/libc-musl-}
+    want=${want%.so}
+    have=$(sha256sum "$f" 2>/dev/null | cut -d' ' -f1)
+    if [ "$have" != "$want" ]; then
+      rm -f "$f"
+      say "removed a damaged $f"
+    fi
+  done
+}
+
+# Whether this user can't write the node's libc to /tmp any more.
+tmp_full() {
+  probe="/tmp/.photon-probe.$$"
+  if dd if=/dev/zero of="$probe" bs=1024 count=700 >/dev/null 2>&1; then
+    rm -f "$probe"
+    return 1
+  fi
+  rm -f "$probe"
+}
+
 # The first run unpacks the bundled runtime, so this also proves it can start.
-version=$("$BIN.new" --version 2>&1) ||
+repair_musl_runtimes
+if ! version=$("$BIN.new" --version 2>&1); then
+  repair_musl_runtimes
+  if [ "$os" = linux ] && tmp_full; then
+    fail "the node couldn't start: on its first run it writes about 650 KB to /tmp, and /tmp is full or over your quota there. Free some space in /tmp and run this again."
+  fi
   fail "the node binary didn't run ($version). If /tmp is mounted noexec, it can't start here."
+fi
 
 stop_existing
 mv "$BIN.new" "$BIN"
