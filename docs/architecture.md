@@ -156,7 +156,9 @@ hotspots still refer to the original snapshot.
 | `Photon.Assistant.Prompt` | functional core (system prompt and reasoning setting from settings, memory and time) | pure | `Memory` |
 | `Photon.Assistant.Memory` | functional core (editing the memory text) | pure | none |
 | `Photon.Assistant.Report` | functional core (how node work's outcome reads, as a report and as a tool result) | pure | none |
-| `Photon.Assistant.Transcript` | functional core (what the assistant page shows: entry index, the in-flight answer fold, a call's status) | pure | `Entry`, `Message` |
+| `Photon.Assistant.Transcript` | functional core (what Blip's conversation shows: entry index, the in-flight answer fold, a call's status, Blip's mood, a message as typed) | pure | `Entry`, `Message`, `Page` |
+| `Photon.Assistant.Notice` | functional core (what Blip says unasked while its panel is closed: its answers, failures, failed node work the user started) | pure | `Entry`, `Message`, `Transcript` |
+| `Photon.Assistant.Page` | functional core (the page under Blip that goes with a message: from a path, as a label, as the note the model sees) | pure | none |
 | `Photon.Assistant.MockScript` | functional core (mock model script) | pure* | `LLM.Mock`, `Message` |
 | `Photon.Assistant.NodeWork` | boundary helpers shared by the node tools | mixed: `ids/1`, `wait_seconds/1`, `parked/3`, `watcher/3`, `resume_result/3`, `session_line/1`, `wait_param/0` pure; `await/4`, `ensure_watcher/2`, `resume/2`, `online_names/0`, `known_session/1` do I/O | `Durable`, `NodeSessions`, `Nodes`, `Report`, `ToolAPI` |
 | `Photon.Assistant.NodeWatch` | worker logic (task kind) | does I/O; `wait_for_signal/1`, `call_live?/1`, `wait_for_call/1` pure | `Durable`, `Runtime`, `Report` |
@@ -217,10 +219,11 @@ hotspots still refer to the original snapshot.
 | `PhotonWeb.ErrorJSON` | boundary (rendering) | pure | Phoenix |
 | `PhotonWeb.CoreComponents` | boundary (UI components) | pure | Phoenix.Component |
 | `PhotonWeb.Layouts` | boundary (UI layout) | pure | `CoreComponents` |
-| `PhotonWeb.AssistantLive` | boundary (UI process) | is a process; talks only to `Photon.Assistant`; folds with `Assistant.Transcript` | `Assistant`, `Assistant.Transcript`, `Markdown`, `Message` |
+| `PhotonWeb.BlipLive` | boundary (UI process; sticky, rendered once by `Layouts.app/1` over every page) | is a process; talks to `Photon.Assistant`, and to `NodeSessions` for the page under it; folds with `Assistant.Transcript` and `Assistant.Notice` | `Assistant`, `Assistant.Transcript`, `Assistant.Notice`, `Assistant.Page`, `NodeSessions`, `Markdown`, `Message` |
+| `PhotonWeb.OverviewLive` | boundary (UI process; the home page) | is a process; machines and sessions from the shell, schedules read on mount and on `{:durable_tasks, _}` | `Assistant` |
 | `PhotonWeb.SessionLive` | boundary (UI process) | is a process; DB, Registry in mount and on `:nodes_changed`, none in `render/1` | `NodeSessions`, `NodeTranscript`, `Nodes`, `Markdown` |
 | `PhotonWeb.NodesLive` | boundary (UI process) | is a process; node data read on mount and on change messages, `tailscale` in a `start_async` task; `render/1` only derives from assigns | `NodeDist`, `NodeSessions`, `Nodes`, `Provision`, `Tailnet`, `Hub`, `NodeKeys` |
-| `PhotonWeb.SettingsLive` | boundary (UI process) | is a process; settings file, the ChatGPT account (sign-in steps; models in a `start_async` task) | `Settings`, `ChatGPT` |
+| `PhotonWeb.SettingsLive` | boundary (UI process) | is a process; settings file, the ChatGPT account (sign-in steps; models in a `start_async` task), Blip's memory | `Settings`, `ChatGPT`, `Assistant` |
 
 ### Test support
 
@@ -309,7 +312,7 @@ Photon.Supervisor  one_for_one                      (Photon.Application)
 │   └── Photon.Durable.Scheduler                    GenServer: reconciles with Durable.Policy, starts steps
 ├── PhotonWeb.Endpoint                              Bandit
 │   ├── /node/websocket -> NodeSocket -> NodeChannel        one process per connected node
-│   ├── /live -> AssistantLive | SessionLive | NodesLive | SettingsLive
+│   ├── /live -> OverviewLive | SessionLive | NodesLive | SettingsLive, each with BlipLive (sticky) over it
 │   └── HTTP -> Router -> ModelRelayController | NodeInstallController | HealthPlug
 └── PhotonNode  rest_for_one                        only with :local_node; the node tree above, dialing this Endpoint
 ```
@@ -533,10 +536,11 @@ than a re-read, would fix it.
 > thousand rows) on mount and on `:nodes_changed`/`:node_sessions_changed`,
 > and runs `tailscale` with `start_async`; `SessionLive` reads whether
 > the node is online on mount and on `:nodes_changed`; `SettingsLive`
-> reads the environment in its event handlers. `AssistantLive` talks only
-> to `Photon.Assistant` and folds with `Photon.Assistant.Transcript`. The
-> shell hook still rebuilds per tab per message, and the assistant page
-> still keeps the whole history's tool results in assigns.
+> reads the environment in its event handlers. `BlipLive` (which was
+> `AssistantLive`) talks only to `Photon.Assistant` and folds with
+> `Photon.Assistant.Transcript`. The shell hook still rebuilds per tab per
+> message, and Blip's panel still keeps the whole history's tool results
+> in assigns.
 
 `PhotonWeb.Shell` rebuilds on `:nodes_changed`, `:node_sessions_changed`,
 `:settings_changed` and every `{:durable_tasks, _}` (`shell.ex:25-29`),

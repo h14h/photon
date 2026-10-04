@@ -181,9 +181,9 @@ defmodule PhotonWeb.NodesLive do
       )
 
     ~H"""
-    <Layouts.app flash={@flash} shell={@shell} active={:nodes}>
+    <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={:nodes}>
       <div class="h-full overflow-y-auto">
-        <div class="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">
+        <div class="blip-clear-y mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">
           <.header>
             Nodes
             <:subtitle>

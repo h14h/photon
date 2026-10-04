@@ -76,19 +76,224 @@
   to { opacity: 1; transform: none; }
 }
 
-/* A Blip that holds its pose: the avatar beside each message. Only the live
-   Blip moves, so a long conversation doesn't blink at you. */
+/* A Blip that holds its pose (`still`). */
 .blip--still, .blip--still * { animation: none !important; }
 
-/* At avatar sizes the working wave would run far past Blip's box and over
-   the text beside it, so a contained Blip keeps it inside, fading out at the
-   sides. The large Blip on the empty page has room and lets it run. */
+/* The working wave would run far past Blip's box and over whatever is
+   beside it, so a contained Blip keeps it inside, fading out at the sides. */
 .blip--contained[data-state="working"] {
   mask-image: linear-gradient(to right, transparent, #000 25%, #000 75%, transparent);
 }
 
 /* Hover and click Blip where it's interactive (the .Blip hook). */
 .blip--interactive { cursor: pointer; }
+
+/* ── Blip, floating over every page (PhotonWeb.BlipLive) ─────────────────
+   One Blip, in the bottom-right corner. It opens into the chat panel and
+   moves into the panel's header: the panel floats in the corner (open),
+   takes the right side (pinned, on wide screens), or fills the window
+   (full). On phones, open fills the screen. The .BlipDock hook sets
+   data-panel; the browser animates the change as a view transition, the
+   panel growing out of Blip (Material's container transform). Every
+   position below comes from the variables, so Blip in the header lines up
+   with the panel in every state. */
+:root { --blip-pin-w: 420px; }
+
+.blip-dock {
+  --blip-m: 16px;            /* gap to the window's edge */
+  --blip-fab: 64px;          /* Blip's box in the corner */
+  --blip-face: 44px;         /* Blip's box in the panel header */
+  --blip-panel-w: min(440px, calc(100vw - 2 * var(--blip-m)));
+  --blip-panel-h: min(720px, calc(100dvh - 2 * var(--blip-m)));
+  --blip-ease: cubic-bezier(0.2, 0, 0, 1); /* Material's emphasized easing */
+}
+@media (min-width: 640px) {
+  .blip-dock { --blip-m: 24px; --blip-fab: 76px; }
+}
+.blip-dock[data-panel="full"] {
+  --blip-m: 12px;
+  --blip-panel-w: calc(100vw - 2 * var(--blip-m));
+  --blip-panel-h: calc(100dvh - 2 * var(--blip-m));
+}
+@media (max-width: 639px) {
+  .blip-dock:not([data-panel="closed"]) {
+    --blip-m: 0px;
+    --blip-panel-w: 100vw;
+    --blip-panel-h: 100dvh;
+  }
+}
+@media (min-width: 1024px) {
+  .blip-dock[data-panel="pinned"] {
+    --blip-m: 0px;
+    --blip-panel-w: var(--blip-pin-w);
+    --blip-panel-h: 100dvh;
+  }
+  /* The page makes room for a pinned panel, and the flash moves out of its way. */
+  html[data-blip-panel="pinned"] #app-main { margin-right: var(--blip-pin-w); }
+  html[data-blip-panel="pinned"] #flash-group { right: calc(var(--blip-pin-w) + 12px); }
+}
+
+/* Blip itself: the button in the corner, then the face in the header. */
+.blip-face {
+  position: fixed;
+  z-index: 46;
+  right: var(--blip-m);
+  bottom: var(--blip-m);
+  width: var(--blip-fab);
+  height: var(--blip-fab);
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  view-transition-name: blip-face;
+  -webkit-tap-highlight-color: transparent;
+}
+.blip-face > span, .blip-face svg { width: 100%; height: 100%; }
+.blip-face svg { filter: drop-shadow(0 6px 10px rgb(0 0 0 / 0.16)); }
+.blip-face:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -4px; }
+.blip-dock:not([data-panel="closed"]) .blip-face {
+  width: var(--blip-face);
+  height: var(--blip-face);
+  right: calc(var(--blip-m) + var(--blip-panel-w) - var(--blip-face) - 10px);
+  bottom: calc(var(--blip-m) + var(--blip-panel-h) - var(--blip-face) - 8px);
+}
+.blip-dock:not([data-panel="closed"]) .blip-face svg { filter: none; }
+
+/* What's unread, on Blip's shoulder. */
+.blip-unread {
+  position: absolute;
+  top: 10%;
+  right: 8%;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--color-canvas);
+}
+
+/* The panel. Closed, it sits invisible in Blip's spot, so the transition
+   grows it from there and shrinks it back. */
+.blip-panel {
+  position: fixed;
+  z-index: 45;
+  right: var(--blip-m);
+  bottom: var(--blip-m);
+  width: var(--blip-panel-w);
+  height: var(--blip-panel-h);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 24px;
+  box-shadow: 0 28px 70px -18px rgb(0 0 0 / 0.32), 0 2px 8px rgb(0 0 0 / 0.06);
+  view-transition-name: blip-panel;
+}
+.blip-dock[data-panel="closed"] .blip-panel {
+  width: var(--blip-fab);
+  height: var(--blip-fab);
+  border-radius: 9999px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+@media (max-width: 639px) {
+  .blip-dock:not([data-panel="closed"]) .blip-panel { border: 0; border-radius: 0; }
+}
+@media (min-width: 1024px) {
+  .blip-dock[data-panel="pinned"] .blip-panel {
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+.blip-tool {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: var(--color-ink-faint);
+  transition: background-color 150ms, color 150ms;
+}
+.blip-tool:hover { background: var(--color-sunken); color: var(--color-ink); }
+.blip-dock[data-panel="pinned"] [data-blip-action="pin"] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+}
+
+/* Blip stretched into a pill (Material's extended FAB): one line, coming out
+   from behind Blip to its left. The hook adds .is-extended for a few
+   seconds; hovering keeps it, scrolling sends it back. */
+.blip-pill {
+  position: fixed;
+  z-index: 45;
+  right: calc(var(--blip-m) + var(--blip-fab) / 2);
+  bottom: calc(var(--blip-m) + var(--blip-fab) / 2 - 22px);
+  height: 44px;
+  max-width: min(380px, calc(100vw - 2 * var(--blip-m) - var(--blip-fab) / 2));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 calc(var(--blip-fab) / 2 + 8px) 0 16px;
+  border: 1px solid var(--color-line);
+  border-radius: 9999px;
+  background: var(--color-surface);
+  box-shadow: 0 12px 32px -10px rgb(0 0 0 / 0.25), 0 1px 3px rgb(0 0 0 / 0.06);
+  color: var(--color-ink);
+  font-size: 13.5px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  clip-path: inset(0 0 0 100% round 9999px);
+  opacity: 0;
+  visibility: hidden;
+  transition: clip-path 260ms var(--blip-ease), opacity 160ms, visibility 0s 260ms;
+}
+.blip-pill.is-extended {
+  clip-path: inset(0 0 0 0 round 9999px);
+  opacity: 1;
+  visibility: visible;
+  transition: clip-path 420ms var(--blip-ease), opacity 120ms;
+}
+.blip-pill:hover { border-color: color-mix(in oklch, var(--color-accent) 45%, var(--color-line)); }
+.blip-pill.is-failed { border-color: color-mix(in oklch, var(--color-bad) 35%, var(--color-line)); }
+.blip-dock:not([data-panel="closed"]) .blip-pill { display: none; }
+
+/* The transition itself: the panel and Blip move on Material's emphasized
+   curve, the panel's contents fade in once it has some size. */
+::view-transition-group(blip-panel),
+::view-transition-group(blip-face) {
+  animation-duration: 420ms;
+  animation-timing-function: var(--blip-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+::view-transition-image-pair(blip-panel) { overflow: hidden; border-radius: 24px; }
+::view-transition-old(blip-panel) { animation: 120ms ease-out both blip-fade-out; }
+::view-transition-new(blip-panel) { animation: 260ms ease-out 90ms both blip-fade-in; }
+::view-transition-old(root),
+::view-transition-new(root) { animation-duration: 200ms; }
+@keyframes blip-fade-in { from { opacity: 0; } }
+@keyframes blip-fade-out { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  /* Nothing moves: the panel and Blip fade where they end up. */
+  ::view-transition-group(blip-panel),
+  ::view-transition-group(blip-face) { animation: none; }
+  .blip-pill, .blip-pill.is-extended { transition: opacity 120ms, visibility 0s; clip-path: none; }
+}
+
+/* Room for Blip in the corner: at the end of a page that scrolls (y), or
+   beside a bar along the bottom (x), until the page is wide enough. */
+.blip-clear-y { padding-bottom: 7rem; }
+.blip-clear-x { padding-right: 5.5rem; }
+@media (min-width: 640px) { .blip-clear-x { padding-right: 6.5rem; } }
+@media (min-width: 1280px) { .blip-clear-x { padding-right: 1.5rem; } }
 
 /* Add variants based on LiveView classes */
 @custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);

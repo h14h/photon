@@ -132,7 +132,7 @@ defmodule PhotonWeb.SessionLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} shell={@shell} active={{:session, @session.id}}>
+    <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={{:session, @session.id}}>
       <div class="flex h-full flex-col">
         <header class="shrink-0 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur sm:px-6">
           <div class="mx-auto flex w-full max-w-3xl items-center gap-3">
@@ -201,7 +201,8 @@ defmodule PhotonWeb.SessionLive do
           </div>
         </div>
 
-        <div class="shrink-0 border-t border-line bg-canvas/90 px-4 pt-3 pb-4 backdrop-blur sm:px-6">
+        <%!-- Room on the right for Blip, in the corner, until the page is wide enough. --%>
+        <div class="blip-clear-x shrink-0 border-t border-line bg-canvas/90 px-4 pt-3 pb-4 backdrop-blur sm:px-6">
           <.form
             for={@form}
             id="session-composer"

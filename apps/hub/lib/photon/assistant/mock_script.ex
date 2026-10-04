@@ -18,10 +18,11 @@ defmodule Photon.Assistant.MockScript do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]
+  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM, Photon.Assistant.Page]
 
   @behaviour PhotonCore.LLM.Mock
 
+  alias Photon.Assistant.Page
   alias PhotonCore.LLM.Mock
   alias PhotonCore.Message
 
@@ -57,6 +58,9 @@ defmodule Photon.Assistant.MockScript do
   defp plan("[Report from " <> _ = report), do: Message.assistant(report_line(report))
 
   defp plan("[Scheduled] " <> prompt), do: plan(prompt)
+
+  # A message sent from a page reads as the user typed it.
+  defp plan("[Looking at " <> _ = text), do: text |> Page.strip() |> String.trim() |> plan()
 
   defp plan(text) do
     Enum.find_value(phrasings(), Message.assistant(@help), fn {pattern, reply} ->

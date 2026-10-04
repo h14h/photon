@@ -1,8 +1,11 @@
 defmodule PhotonWeb.Layouts do
   @moduledoc """
-  The app shell: a sidebar with Blip (the assistant), every node and its
-  recent work, and settings; the page fills the rest. On small screens the
-  sidebar folds into a drawer behind a top bar.
+  The app shell: a sidebar with the overview, every node and its recent
+  work, and settings; the page fills the rest. On small screens the sidebar
+  folds into a drawer behind a top bar.
+
+  Blip floats over all of it: `PhotonWeb.BlipLive`, rendered here once and
+  sticky, so it and its conversation stay put while you move between pages.
   """
   use PhotonWeb, :html
 
@@ -10,11 +13,8 @@ defmodule PhotonWeb.Layouts do
 
   attr :flash, :map, required: true
   attr :shell, :map, required: true
-  attr :active, :any, default: nil, doc: ":assistant, :nodes, :settings, or {:session, id}"
-
-  attr :mood, :atom,
-    default: nil,
-    doc: "Blip's mood in the sidebar, if the page knows better than the shell"
+  attr :socket, Phoenix.LiveView.Socket, required: true, doc: "the page's, to render Blip"
+  attr :active, :any, default: nil, doc: ":overview, :nodes, :settings, or {:session, id}"
 
   slot :inner_block, required: true
 
@@ -31,10 +31,10 @@ defmodule PhotonWeb.Layouts do
         id="sidebar"
         class="fixed inset-y-0 left-0 z-40 hidden w-72 shrink-0 flex-col border-r border-line bg-surface lg:static lg:flex lg:w-64"
       >
-        <.sidebar shell={@shell} active={@active} mood={@mood || @shell.mood} />
+        <.sidebar shell={@shell} active={@active} />
       </aside>
 
-      <div class="flex min-w-0 flex-1 flex-col">
+      <div id="app-main" class="flex min-w-0 flex-1 flex-col">
         <div class="flex h-12 shrink-0 items-center gap-2 border-b border-line bg-surface/80 px-3 backdrop-blur lg:hidden">
           <button
             id="open-sidebar"
@@ -49,6 +49,7 @@ defmodule PhotonWeb.Layouts do
         <main class="min-h-0 flex-1">{render_slot(@inner_block)}</main>
       </div>
     </div>
+    {live_render(@socket, PhotonWeb.BlipLive, id: "blip", sticky: true)}
     <.flash_group flash={@flash} />
     """
   end
@@ -75,7 +76,6 @@ defmodule PhotonWeb.Layouts do
 
   attr :shell, :map, required: true
   attr :active, :any, default: nil
-  attr :mood, :atom, required: true
 
   defp sidebar(assigns) do
     ~H"""
@@ -90,25 +90,16 @@ defmodule PhotonWeb.Layouts do
     </div>
 
     <nav class="space-y-0.5 px-2.5">
-      <.nav_item navigate={~p"/"} active={@active == :assistant} id="nav-assistant">
-        <:leading>
-          <span class="grid size-[18px] place-items-center">
-            <.blip id="blip-nav" state={@mood} size={20} />
-          </span>
-        </:leading>
-        Blip
+      <.nav_item
+        navigate={~p"/"}
+        icon="hero-squares-2x2"
+        active={@active == :overview}
+        id="nav-overview"
+      >
+        Overview
         <:trailing>
-          <span
-            :if={@mood != :idle}
-            id="nav-blip-mood"
-            class={[
-              "text-[11px]",
-              @mood in [:thinking, :working] && "text-accent-strong",
-              @mood == :done && "text-ok",
-              @mood == :error && "text-bad"
-            ]}
-          >
-            {mood_label(@mood)}
+          <span :if={@shell.working != []} class="text-[11px] text-accent-strong tabular-nums">
+            {length(@shell.working)} running
           </span>
         </:trailing>
       </.nav_item>
@@ -212,17 +203,11 @@ defmodule PhotonWeb.Layouts do
     """
   end
 
-  defp mood_label(:thinking), do: "thinking"
-  defp mood_label(:working), do: "working"
-  defp mood_label(:done), do: "done"
-  defp mood_label(:error), do: "failed"
-
   attr :navigate, :string, required: true
-  attr :icon, :string, default: nil, doc: "a hero icon, unless the item has a leading slot"
+  attr :icon, :string, required: true
   attr :active, :boolean, default: false
   attr :id, :string, required: true
   slot :inner_block, required: true
-  slot :leading
   slot :trailing
 
   defp nav_item(assigns) do
@@ -236,9 +221,7 @@ defmodule PhotonWeb.Layouts do
         !@active && "text-ink-soft hover:bg-sunken hover:text-ink"
       ]}
     >
-      {render_slot(@leading)}
       <.icon
-        :if={@leading == []}
         name={@icon}
         class={[
           "size-[18px]",

@@ -3,7 +3,7 @@ defmodule Photon.Assistant.MockScriptTest do
 
   use Photon.Case, async: true
 
-  alias Photon.Assistant.{MockScript, Report}
+  alias Photon.Assistant.{MockScript, Page, Report}
 
   defp ask(text), do: MockScript.respond(%{messages: [Message.user(text)]})
 
@@ -16,6 +16,11 @@ defmodule Photon.Assistant.MockScriptTest do
 
   test "lists nodes" do
     assert calls(ask("nodes")) == [{"list_nodes", %{}}]
+  end
+
+  test "reads a message sent from a page as it was typed" do
+    page = %{"session_id" => "ns_1", "node" => "mp1", "title" => "Backup"}
+    assert calls(ask(Page.note("nodes", page))) == [{"list_nodes", %{}}]
   end
 
   test "hands a task to a node" do
