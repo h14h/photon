@@ -15,6 +15,9 @@ defmodule PhotonWeb.SettingsLiveTest do
 
   setup %{conn: conn} do
     ChatGPTStub.reset!()
+    # Signed in is saved to a file, so a test that signs in would leave the
+    # next test, on any page, signed in without a stub to answer it.
+    on_exit(&ChatGPTStub.reset!/0)
     {:ok, view, _html} = live(conn, ~p"/settings")
     %{view: view}
   end

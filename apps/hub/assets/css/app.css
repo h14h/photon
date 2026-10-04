@@ -411,20 +411,51 @@ body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
 .markdown-body hr { border: 0; border-top: 1px solid var(--color-line); margin-block: 1.4em; }
 .markdown-body img { max-width: 100%; height: auto; border-radius: 0.5rem; }
 
-/* A blinking caret after text that is still streaming in. It goes at the
-   end of the last line of text: inside the last paragraph, heading or list
-   item. After the block itself it would sit on a line of its own. Only when
-   the answer ends in something else (code, a table) does it follow that. */
-.streaming-caret > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
-.streaming-caret > :is(ul, ol):last-child > li:last-child::after,
-.streaming-caret:not(:has(> :is(p, h1, h2, h3, h4, h5, h6, ul, ol):last-child))::after {
-  content: "";
-  display: inline-block;
-  width: 0.5em;
-  height: 1.05em;
-  margin-left: 2px;
-  vertical-align: -0.15em;
-  border-radius: 2px;
-  background: var(--color-accent);
-  animation: breathe 1s ease-in-out infinite;
+/* Text that streams in arrives a finished block at a time
+   (Photon.Markdown.settled/1). Each new block fades in so it doesn't pop:
+   @starting-style applies only when an element is first inserted, and the
+   rule only holds while the answer streams (data-streaming), so the finished
+   answer never replays it. Opacity only, once, no layout change. After T3
+   Code. */
+@media (prefers-reduced-motion: no-preference) {
+  .markdown-body[data-streaming] > * { transition: opacity 600ms ease-out; }
+  @starting-style {
+    .markdown-body[data-streaming] > * { opacity: 0; }
+  }
+}
+
+/* A thread that follows new content while pinned to the bottom (the
+   PinToBottom hook): unpinned, a "Jump to latest" button floats at the
+   bottom of it. The row takes no room in the thread. */
+.pin-jump-row {
+  position: sticky;
+  bottom: 0;
+  height: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.pin-jump {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  transform: translateY(calc(-100% - 12px));
+  border: 1px solid var(--color-line);
+  border-radius: 9999px;
+  background: var(--color-surface);
+  box-shadow: 0 8px 20px -8px rgb(0 0 0 / 0.25);
+  color: var(--color-ink-soft);
+  font-size: 12.5px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 150ms, visibility 0s 150ms, color 150ms;
+}
+.pin-jump:hover { color: var(--color-ink); }
+[data-pinned="false"] .pin-jump {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 150ms, color 150ms;
 }

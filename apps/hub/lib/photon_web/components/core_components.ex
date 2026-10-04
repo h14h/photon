@@ -299,6 +299,22 @@ defmodule PhotonWeb.CoreComponents do
     """
   end
 
+  @doc """
+  The "Jump to latest" button of a thread that follows new content only
+  while it's pinned to the bottom (the `PinToBottom` hook). Put it last
+  inside the scrolling element; it shows only while the thread is unpinned.
+  """
+  @spec jump_to_latest(map()) :: Phoenix.LiveView.Rendered.t()
+  def jump_to_latest(assigns) do
+    ~H"""
+    <div class="pin-jump-row">
+      <button type="button" data-pin-jump class="pin-jump">
+        <.icon name="hero-arrow-down-micro" class="size-3.5" /> Jump to latest
+      </button>
+    </div>
+    """
+  end
+
   @doc "A small spinner."
   attr :class, :any, default: "size-4"
 

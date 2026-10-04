@@ -144,7 +144,13 @@ defmodule PhotonWeb.BlipLiveTest do
     test "shows the in-flight answer until it is committed", %{blip: blip, conversation: c} do
       send(blip.pid, {:live, c, %{"type" => "start"}})
       send(blip.pid, {:live, c, %{"type" => "text", "delta" => "Working on it"}})
-      assert has_element?(blip, "#live-output", "Working on it")
+      # Nothing shows until a paragraph is finished; then only finished ones.
+      refute has_element?(blip, "#live-text")
+      assert has_element?(blip, "#live-output [aria-label=Thinking]")
+
+      send(blip.pid, {:live, c, %{"type" => "text", "delta" => ".\n\nMore to co"}})
+      assert has_element?(blip, "#live-text[data-streaming]", "Working on it.")
+      refute has_element?(blip, "#live-text", "More to co")
 
       send(
         blip.pid,

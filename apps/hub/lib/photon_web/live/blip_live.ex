@@ -61,6 +61,7 @@ defmodule PhotonWeb.BlipLive do
         calls: calls,
         empty?: Transcript.empty?(entries),
         live: nil,
+        shown: nil,
         outcome: nil,
         outcome_ref: nil,
         busy: Assistant.busy?(conversation),
@@ -165,7 +166,7 @@ defmodule PhotonWeb.BlipLive do
     socket =
       socket
       |> assign(queued: Assistant.queued(conversation), busy: busy)
-      |> then(&if(busy, do: &1, else: assign(&1, live: nil)))
+      |> then(&if(busy, do: &1, else: assign(&1, live: nil, shown: nil)))
       |> hold(Transcript.outcome(changes.entries, was_busy, busy))
       |> notify(Notice.from_entries(changes.entries))
 
@@ -176,7 +177,8 @@ defmodule PhotonWeb.BlipLive do
         {:live, conversation, event},
         %{assigns: %{conversation: conversation}} = socket
       ) do
-    {:noreply, assign(socket, live: Transcript.live(socket.assigns.live, event))}
+    live = Transcript.live(socket.assigns.live, event)
+    {:noreply, assign(socket, live: live, shown: shown(live))}
   end
 
   # `PhotonWeb.Shell` has already read the sessions again.
@@ -195,6 +197,12 @@ defmodule PhotonWeb.BlipLive do
     do: {:noreply, assign(socket, outcome: nil, outcome_ref: nil)}
 
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  # What of the in-flight answer is shown: its finished blocks, so it comes
+  # in a paragraph at a time (`Photon.Markdown.settled/1`). Its Markdown is
+  # rendered again only when a block is added, not on every token.
+  defp shown(live),
+    do: %{text: Markdown.settled(live.text), reasoning: Markdown.settled(live.reasoning)}
 
   # Shows an outcome for a moment; a later one replaces it, except that a
   # finish doesn't cover a failure still being shown.
@@ -241,7 +249,7 @@ defmodule PhotonWeb.BlipLive do
   defp add_entry(socket, %{kind: "assistant"} = entry) do
     socket
     |> update(:calls, &Transcript.add_calls(&1, entry))
-    |> assign(live: nil, empty?: false)
+    |> assign(live: nil, shown: nil, empty?: false)
     |> stream_insert(:entries, entry)
   end
 
@@ -331,12 +339,17 @@ defmodule PhotonWeb.BlipLive do
           notice={@notice}
         />
 
-        <div id="conversation" phx-hook=".StickToBottom" class="min-h-0 flex-1 overflow-y-auto">
+        <div id="conversation" phx-hook="PinToBottom" class="min-h-0 flex-1 overflow-y-auto">
           <div class="mx-auto w-full max-w-3xl px-4 pt-5 pb-4 sm:px-5">
             <.empty_state :if={@empty?} shell={@shell} />
 
             <div id="entries" phx-update="stream" class="space-y-5">
-              <div :for={{dom_id, entry} <- @streams.entries} id={dom_id} class="animate-rise">
+              <%!-- An answer arrives already shown, streamed in: no rise. --%>
+              <div
+                :for={{dom_id, entry} <- @streams.entries}
+                id={dom_id}
+                class={entry.kind != "assistant" && "animate-rise"}
+              >
                 <.entry entry={entry} results={@results} settled={@settled} />
               </div>
             </div>
@@ -344,10 +357,12 @@ defmodule PhotonWeb.BlipLive do
             <.live_output
               :if={@live || @mood in [:thinking, :working]}
               live={@live}
+              shown={@shown}
               mood={@mood}
               working={@shell.working}
             />
           </div>
+          <.jump_to_latest />
         </div>
 
         <.composer
@@ -479,11 +494,7 @@ defmodule PhotonWeb.BlipLive do
             const now = this.state
             this.js().setAttribute(this.el, "data-panel", now)
             this.mark(now)
-            if (now !== "closed") {
-              this.collapse()
-              const thread = this.el.querySelector("#conversation")
-              if (from === "closed" && thread) thread.scrollTop = thread.scrollHeight
-            }
+            if (now !== "closed") this.collapse()
           }
           // With reduced motion, app.css keeps the transition to a fade. A
           // transition waits for the page to draw a frame, and while it runs
@@ -534,23 +545,6 @@ defmodule PhotonWeb.BlipLive do
           clearTimeout(this.timer)
           if (this.extended) this.timer = setTimeout(() => this.collapse(), ms)
         }
-      }
-    </script>
-
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".StickToBottom">
-      export default {
-        mounted() {
-          this.stick = true
-          this.el.scrollTop = this.el.scrollHeight
-          this.el.addEventListener("scroll", () => {
-            this.stick = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 120
-          })
-          this.observer = new MutationObserver(() => {
-            if (this.stick) this.el.scrollTop = this.el.scrollHeight
-          })
-          this.observer.observe(this.el, {childList: true, subtree: true, characterData: true})
-        },
-        destroyed() { this.observer.disconnect() }
       }
     </script>
     """
@@ -889,6 +883,7 @@ defmodule PhotonWeb.BlipLive do
   end
 
   attr :live, :map, required: true
+  attr :shown, :map, required: true, doc: "the finished blocks of the in-flight answer"
   attr :mood, :atom, required: true
   attr :working, :list, required: true
 
@@ -920,6 +915,9 @@ defmodule PhotonWeb.BlipLive do
     """
   end
 
+  # The answer as it streams: whole blocks, each fading in as it arrives
+  # (`data-streaming`, see app.css), with the thinking dots under them while
+  # more is on its way.
   defp live_output(assigns) do
     ~H"""
     <div id="live-output" data-mood={@mood} class="mt-5 space-y-2">
@@ -930,13 +928,13 @@ defmodule PhotonWeb.BlipLive do
         <.icon name="hero-arrow-path" class="size-4 animate-spin text-warn" /> {@live.retry}
       </p>
       <p
-        :if={@live.reasoning != "" and @live.text == ""}
+        :if={@shown.reasoning != "" and @shown.text == ""}
         class="line-clamp-3 text-[13px] leading-relaxed text-ink-faint italic"
       >
-        {@live.reasoning |> String.slice(-400, 400)}
+        {@shown.reasoning |> String.slice(-400, 400)}
       </p>
-      <div :if={@live.text != ""} class="markdown-body streaming-caret text-ink">
-        {raw(Markdown.to_html(@live.text))}
+      <div :if={@shown.text != ""} id="live-text" class="markdown-body text-ink" data-streaming>
+        {raw(Markdown.to_html(@shown.text))}
       </div>
       <div
         :for={{_index, name} <- @live.tools}
@@ -944,12 +942,7 @@ defmodule PhotonWeb.BlipLive do
       >
         <.spinner class="size-3.5" /> Preparing {name}
       </div>
-      <div
-        :if={
-          @live.text == "" and @live.reasoning == "" and @live.tools == %{} and is_nil(@live.retry)
-        }
-        class="flex h-6 items-center"
-      >
+      <div :if={@live.tools == %{} and is_nil(@live.retry)} class="flex h-6 items-center">
         <.thinking />
       </div>
     </div>
