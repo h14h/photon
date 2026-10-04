@@ -39,6 +39,23 @@ defmodule PhotonWeb.ModelRelayControllerTest do
     assert relay(conn, "not-a-key", too_big).status == 401
   end
 
+  test "takes a node's whole conversation, beyond what the rest of the hub accepts", %{
+    conn: conn,
+    key: key
+  } do
+    picture = Base.encode64(:crypto.strong_rand_bytes(1_500_000))
+    request = update_in(@request.messages, &[Message.user("look: " <> picture) | &1])
+
+    assert relay(conn, key, Jason.encode!(Relay.body(request))).status == 200
+
+    # Anywhere else, a body that size isn't even read.
+    assert_error_sent 413, fn ->
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> post(~p"/", Jason.encode!(%{"x" => picture}))
+    end
+  end
+
   @tag :tmp_dir
   test "takes a key only from the machine it's tied to", %{conn: conn, key: key, tmp_dir: dir} do
     FakeTailscale.install!(dir, %{

@@ -39,6 +39,55 @@ defmodule PhotonWeb.NodeChannelTest do
     refute Nodes.online?("other")
   end
 
+  @tag capture_log: true
+  test "a connection whose key was replaced is closed, and can't join again" do
+    {:ok, key} = Photon.NodeKeys.issue("box")
+    {:ok, socket} = connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(key))
+    {:ok, _reply, joined} = subscribe_and_join(socket, "node:box", %{})
+    assert socket.id == "node_socket:box:1"
+    PhotonWeb.Endpoint.subscribe(socket.id)
+
+    Process.unlink(joined.channel_pid)
+    ref = Process.monitor(joined.channel_pid)
+    {:ok, _new_key} = Photon.NodeKeys.issue("box")
+
+    assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: "node_socket:box:1"}
+    assert_receive {:DOWN, ^ref, :process, _pid, {:shutdown, :key_replaced}}
+    refute Nodes.online?("box")
+
+    assert {:error, %{"reason" => "this key has been replaced"}} =
+             subscribe_and_join(socket, "node:box", %{})
+  end
+
+  test "a node can't touch another node's sessions" do
+    {:ok, theirs, input} = NodeSessions.start("other", "hello")
+    {:ok, _reply, socket} = join("box")
+    NodeSessions.subscribe(theirs.id)
+
+    push(socket, "live", %{"session_id" => theirs.id, "data" => %{"text" => "spoofed"}})
+
+    push(socket, "input_rejected", %{
+      "session_id" => theirs.id,
+      "input_id" => input.id,
+      "reason" => "nope"
+    })
+
+    # The channel handles messages in order, so the reply-less push above has
+    # been dealt with once this one is.
+    _ = :sys.get_state(socket.channel_pid)
+    refute_received {:node_live, _, _}
+    assert NodeSessions.input(input.id).state == "queued"
+  end
+
+  @tag capture_log: true
+  test "a hub that vouches through its tailnet refuses keys from anywhere it can't name" do
+    Application.put_env(:photon, :auth_mode, :tailscale)
+    on_exit(fn -> Application.delete_env(:photon, :auth_mode) end)
+    {:ok, key} = Photon.NodeKeys.issue("box")
+
+    assert connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(key)) == :error
+  end
+
   test "joins with a sync map, resends queued input, and ingests records" do
     {:ok, session, input} = NodeSessions.start("box", "hello")
     Phoenix.PubSub.subscribe(Photon.PubSub, Nodes.topic())

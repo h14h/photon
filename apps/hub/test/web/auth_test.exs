@@ -111,13 +111,41 @@ defmodule PhotonWeb.AuthTest do
       assert {:ok, _view, _html} = live_blip(from(conn, "100.64.0.10"))
     end
 
+    defp make_box_a_node, do: NodeKeys.issue("box", device: %{device: "nBox", device_name: "box"})
+
     test "keeps out a machine that runs a node", %{conn: conn} do
-      {:ok, key} = NodeKeys.issue("box")
-      {:ok, "box"} = NodeKeys.authenticate(key, Photon.Tailnet.whois({100, 64, 0, 11}))
+      {:ok, _key} = make_box_a_node()
 
       denied = get(from(conn, "100.64.0.11"), ~p"/")
       assert denied.status == 403
       assert denied.resp_body =~ "box runs a Photon node"
+    end
+
+    test "keeps a node's machine out while its key is replaced", %{conn: conn} do
+      {:ok, _key} = make_box_a_node()
+      {:ok, _key} = NodeKeys.issue("box")
+
+      assert get(from(conn, "100.64.0.11"), ~p"/").status == 403
+    end
+
+    test "closes a page that was open on a machine when it becomes a node", %{conn: conn} do
+      {:ok, view, _html} = live(from(conn, "100.64.0.11"), ~p"/")
+
+      {:ok, _key} = make_box_a_node()
+
+      assert_redirect(view, "/")
+    end
+
+    test "checks an open page again every minute", %{conn: conn, tmp_dir: dir} do
+      {:ok, view, _html} = live(from(conn, "100.64.0.10"), ~p"/")
+      send(view.pid, :auth_recheck)
+      assert render(view)
+
+      # The laptop has since been tagged, so it's no one's to let in.
+      FakeTailscale.install!(dir, %{"100.64.0.10" => {"nLaptop", "laptop", nil}})
+      send(view.pid, :auth_recheck)
+
+      assert_redirect(view, "/")
     end
 
     test "keeps out other people, tagged devices, and what isn't on the tailnet", %{conn: conn} do
@@ -133,8 +161,7 @@ defmodule PhotonWeb.AuthTest do
     end
 
     test "checks the LiveView connection on its own", %{conn: conn} do
-      {:ok, key} = NodeKeys.issue("box")
-      {:ok, "box"} = NodeKeys.authenticate(key, Photon.Tailnet.whois({100, 64, 0, 11}))
+      {:ok, _key} = make_box_a_node()
 
       # The page loads from the laptop, but the websocket comes from the node.
       conn = conn |> from("100.64.0.10") |> live_from("100.64.0.11")
@@ -154,6 +181,16 @@ defmodule PhotonWeb.AuthTest do
       stranger = conn |> from("203.0.113.9") |> basic("s3cret") |> get(~p"/")
       assert stranger.status == 200
       assert {:ok, _view, _html} = live(recycle(stranger), ~p"/")
+    end
+
+    test "with a password too, still keeps out a machine that runs a node", %{conn: conn} do
+      Application.put_env(:photon, :auth_mode, :tailscale_or_password)
+      Application.put_env(:photon, :password, "s3cret")
+      {:ok, _key} = make_box_a_node()
+
+      denied = conn |> from("100.64.0.11") |> basic("s3cret") |> get(~p"/")
+      assert denied.status == 403
+      assert denied.resp_body =~ "box runs a Photon node"
     end
 
     test "without a list of logins, lets in whoever owns the hub machine", %{

@@ -87,10 +87,17 @@ defmodule Photon.ChatGPT do
   @spec begin_sign_in() :: {:ok, String.t()}
   def begin_sign_in, do: GenServer.call(__MODULE__, :begin_sign_in)
 
-  @doc "Finishes the sign-in with the address the browser landed on."
+  @doc """
+  Finishes the sign-in with the address the browser landed on. The address
+  carries a one-time code, so a call that fails (it timed out, say) comes
+  back as an error rather than an exit, whose reason would hold it.
+  """
   @spec finish_sign_in(String.t()) :: :ok | {:error, String.t()}
-  def finish_sign_in(pasted),
-    do: GenServer.call(__MODULE__, {:finish_sign_in, pasted}, @call_timeout)
+  def finish_sign_in(pasted) do
+    GenServer.call(__MODULE__, {:finish_sign_in, pasted}, @call_timeout)
+  catch
+    :exit, _reason -> {:error, "Signing in didn't finish in time. Start again."}
+  end
 
   @spec cancel_sign_in() :: :ok
   def cancel_sign_in, do: GenServer.call(__MODULE__, :cancel_sign_in)
@@ -108,7 +115,11 @@ defmodule Photon.ChatGPT do
   refreshes it rather than handing it out again.
   """
   @spec token_rejected(String.t()) :: :ok
-  def token_rejected(token), do: GenServer.call(__MODULE__, {:token_rejected, token})
+  def token_rejected(token),
+    do: GenServer.call(__MODULE__, {:token_rejected, fingerprint(token)})
+
+  # What names a token in messages, so no exit reason or crash report holds it.
+  defp fingerprint(token), do: :crypto.hash(:sha256, token)
 
   @doc "The models the account can use, in the server's order (cached for a few minutes)."
   @spec models() :: {:ok, [model()]} | {:error, String.t()}
@@ -219,8 +230,8 @@ defmodule Photon.ChatGPT do
     {:reply, reply, state}
   end
 
-  def handle_call({:token_rejected, token}, _from, state),
-    do: {:reply, :ok, expire(state, token)}
+  def handle_call({:token_rejected, fingerprint}, _from, state),
+    do: {:reply, :ok, expire(state, fingerprint)}
 
   # Crash reports and `:sys.get_status/1` show the state and the last
   # message; tokens and sign-in secrets are left out of both.
@@ -246,9 +257,8 @@ defmodule Photon.ChatGPT do
 
   defp redact(state), do: state
 
-  defp redact_message({:"$gen_call", from, {call, _secret}})
-       when call in [:finish_sign_in, :token_rejected],
-       do: {:"$gen_call", from, {call, :redacted}}
+  defp redact_message({:"$gen_call", from, {:finish_sign_in, _pasted}}),
+    do: {:"$gen_call", from, {:finish_sign_in, :redacted}}
 
   defp redact_message(message), do: message
 
@@ -312,20 +322,23 @@ defmodule Photon.ChatGPT do
     end
   end
 
-  # The API refused `token`: if it's still the current one, the next
-  # request refreshes it rather than handing it out again.
-  defp expire(state, token) do
+  # The API refused the token with this fingerprint: if it's still the
+  # current one, the next request refreshes it rather than handing it out
+  # again.
+  defp expire(state, fingerprint) do
     case state.account["credentials"] do
-      %{"access_token" => ^token} = credentials ->
-        put_account(state, %{
-          state.account
-          | "credentials" => %{credentials | "expires_at" => 0}
-        })
+      %{"access_token" => token} = credentials when is_binary(token) ->
+        if fingerprint(token) == fingerprint,
+          do: expire_credentials(state, credentials),
+          else: state
 
-      _other ->
+      _signed_out ->
         state
     end
   end
+
+  defp expire_credentials(state, credentials),
+    do: put_account(state, %{state.account | "credentials" => %{credentials | "expires_at" => 0}})
 
   defp refresh(state, credentials) do
     expect = %{client_id: credentials["client_id"], sub: credentials["sub"]}
@@ -335,7 +348,12 @@ defmodule Photon.ChatGPT do
       account =
         Map.merge(state.account, %{"credentials" => renewed, "id_token" => renewed["id_token"]})
 
-      {{:ok, renewed["access_token"]}, put_account(state, account)}
+      state = put_account(state, account)
+
+      # A refresh can come back with less than the user granted before.
+      if OAuth.plan_use?(renewed),
+        do: {{:ok, renewed["access_token"]}, state},
+        else: {{:error, @no_plan_use}, state}
     else
       {:error, {:token, body}} -> refresh_failed(state, body)
       {:error, reason} -> {{:error, "Couldn't refresh the ChatGPT sign-in: #{reason}"}, state}
@@ -410,7 +428,8 @@ defmodule Photon.ChatGPT do
           {{:ok, models}, %{state | models: {now(), models}}}
 
         {:ok, %Req.Response{status: 401}} ->
-          {{:error, "ChatGPT refused the sign-in's token. Try again."}, expire(state, token)}
+          {{:error, "ChatGPT refused the sign-in's token. Try again."},
+           expire(state, fingerprint(token))}
 
         {:ok, %Req.Response{status: status}} ->
           {{:error, "ChatGPT didn't list models (HTTP #{status})."}, state}

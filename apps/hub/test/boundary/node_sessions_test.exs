@@ -71,7 +71,8 @@ defmodule Photon.NodeSessionsTest do
       NodeSessions.reject_input(
         session.id,
         input.id,
-        "workspace /nope is not a directory on this node"
+        "workspace /nope is not a directory on this node",
+        session.node_id
       )
 
       assert NodeSessions.input(input.id).state == "failed"

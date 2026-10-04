@@ -305,17 +305,27 @@ defmodule Photon.NodeSessions do
   end
 
   @doc "The node refused an input (bad workspace, invalid ID, ...)."
-  @spec reject_input(String.t(), String.t(), term()) :: :ok
-  def reject_input(session_id, input_id, reason) do
+  @spec reject_input(String.t(), String.t(), term(), String.t()) :: :ok
+  def reject_input(session_id, input_id, reason, node_id) do
     reason = Mirror.reason_text(reason)
-    status_changed? = Durable.commit(&reject_tx(&1, session_id, input_id, reason))
+    status_changed? = Durable.commit(&reject_tx(&1, session_id, input_id, reason, node_id))
     if status_changed?, do: broadcast()
     :ok
   end
 
-  defp reject_tx(tx, session_id, input_id, reason) do
+  # Only the node a session runs on can refuse its inputs.
+  defp reject_tx(tx, session_id, input_id, reason, node_id) do
     input = input(input_id)
-    if Mirror.rejectable?(input, session_id), do: fail_input(tx, input, reason), else: false
+
+    if owned?(session_id, node_id) and Mirror.rejectable?(input, session_id),
+      do: fail_input(tx, input, reason),
+      else: false
+  end
+
+  @doc "Whether session `id` runs on node `node_id`."
+  @spec owned?(String.t(), String.t()) :: boolean()
+  def owned?(id, node_id) do
+    Session |> where([s], s.id == ^id and s.node_id == ^node_id) |> Repo.exists?()
   end
 
   defp fail_input(tx, input, reason) do

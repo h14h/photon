@@ -22,6 +22,7 @@ defmodule Photon.Tailnet do
   @cache_seconds 60
 
   @type machine :: %{
+          id: String.t() | nil,
           name: String.t(),
           dns: String.t(),
           hostname: String.t() | nil,
@@ -199,6 +200,8 @@ defmodule Photon.Tailnet do
     name = if name == "", do: peer["HostName"] || "?", else: name
 
     %{
+      # Tailscale's stable device ID, as `whois/1` reports it.
+      id: peer["ID"],
       name: name,
       dns: dns,
       hostname: peer["HostName"],

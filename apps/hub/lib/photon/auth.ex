@@ -32,6 +32,13 @@ defmodule Photon.Auth do
   @spec mode() :: mode()
   def mode, do: Application.get_env(:photon, :auth_mode, :off)
 
+  @doc """
+  Whether this hub vouches for devices through its tailnet: then node keys
+  must come from a device it can name too (`Photon.NodeKeys`).
+  """
+  @spec tailnet?() :: boolean()
+  def tailnet?, do: mode() in [:tailscale, :tailscale_or_password]
+
   ## Tailscale
 
   @doc "The Tailscale logins let in: `PHOTON_TAILSCALE_USERS`, else the hub machine's owner."

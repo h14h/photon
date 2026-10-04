@@ -2,9 +2,12 @@ defmodule PhotonWeb.NodeSocket do
   @moduledoc """
   Websocket that agent nodes connect to. A node presents its own key
   (header `x-photon-token`), which `Photon.NodeKeys` checks against where
-  the connection came from (`PhotonWeb.ClientIP`); the socket then knows
-  which node it is (`:node_id`), and `PhotonWeb.NodeChannel` lets it join
-  as that node only.
+  the connection came from (`PhotonWeb.ClientIP`), requiring a tailnet
+  device when the hub vouches for devices through its tailnet. The socket
+  then knows which node it is (`:node_id`) and which of its keys it used
+  (`:generation`), and `PhotonWeb.NodeChannel` lets it join as that node
+  only, while that key is current. Its ID names both, so the channel can
+  close the connection when the key is replaced.
   """
 
   use Phoenix.Socket
@@ -25,8 +28,9 @@ defmodule PhotonWeb.NodeSocket do
       end
 
     with {_, token} <- List.keyfind(headers, "x-photon-token", 0),
-         {:ok, node_id} <- Photon.NodeKeys.authenticate(token, origin) do
-      {:ok, assign(socket, :node_id, node_id)}
+         {:ok, node_id, generation} <-
+           Photon.NodeKeys.authenticate(token, origin, require_tailnet: Photon.Auth.tailnet?()) do
+      {:ok, socket |> assign(:node_id, node_id) |> assign(:generation, generation)}
     else
       nil -> refuse("no node key")
       {:error, reason} -> refuse(reason)
@@ -41,5 +45,5 @@ defmodule PhotonWeb.NodeSocket do
   end
 
   @impl true
-  def id(_socket), do: nil
+  def id(socket), do: "node_socket:#{socket.assigns.node_id}:#{socket.assigns.generation}"
 end

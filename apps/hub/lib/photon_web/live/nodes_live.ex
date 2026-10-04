@@ -3,7 +3,9 @@ defmodule PhotonWeb.NodesLive do
   The user's machines: connected nodes, one-click installs and updates over
   SSH for machines on the hub's tailnet (one machine at a time, or every
   outdated node at once), and a one-line installer for anywhere else, made
-  per node since each node has its own key (`Photon.NodeKeys`).
+  per node since each node has its own key (`Photon.NodeKeys`). That key
+  goes straight to the browser (a pushed event the page's hook shows) and
+  is never kept in the page's state, which crash reports would print.
 
   What the page shows is read into assigns when it mounts and when it hears
   a change (`:nodes_changed`, `:node_sessions_changed`, `{:provision, jobs}`);
@@ -87,10 +89,9 @@ defmodule PhotonWeb.NodesLive do
       {:ok, key} = NodeKeys.issue(node_id)
 
       {:noreply,
-       assign(socket,
-         manual: %{node_id: node_id, key: key},
-         manual_form: to_form(%{"node_id" => node_id}, as: :manual)
-       )}
+       socket
+       |> assign(manual: node_id, manual_form: to_form(%{"node_id" => node_id}, as: :manual))
+       |> push_event("install-command", %{command: install_command(socket.assigns, node_id, key)})}
     else
       {:noreply,
        put_flash(socket, :error, "Name it with letters, digits, dots, dashes or underscores.")}
@@ -135,7 +136,8 @@ defmodule PhotonWeb.NodesLive do
         host: machine.dns,
         ssh_user: assigns.ssh_user,
         node_id: machine.name,
-        base_url: base
+        base_url: base,
+        device: machine.id && %{device: machine.id, device_name: machine.name}
       )
     end
   end
@@ -162,21 +164,26 @@ defmodule PhotonWeb.NodesLive do
   defp self_machine({:ok, %{self: self_machine}}), do: self_machine
   defp self_machine(_tailnet), do: nil
 
-  @impl true
-  def render(assigns) do
+  defp install_command(assigns, node_id, key) do
+    "curl -fsSL #{manual_base(assigns)}/node/install.sh | " <>
+      "PHOTON_NODE_ID=#{node_id} PHOTON_NODE_TOKEN=#{key} sh"
+  end
+
+  # Where a hand-installed node reaches the hub: as nodes do, else as this page does.
+  defp manual_base(%{hub: {:ok, base}}), do: base
+
+  defp manual_base(assigns) do
     uri = assigns.server_uri || %URI{host: "localhost", port: 4000, scheme: "http"}
     port = if uri.port in [80, 443, nil], do: "", else: ":#{uri.port}"
+    "#{uri.scheme}://#{uri.host}#{port}"
+  end
 
-    manual_base =
-      case assigns.hub do
-        {:ok, base} -> base
-        _ -> "#{uri.scheme}://#{uri.host}#{port}"
-      end
-
+  @impl true
+  def render(assigns) do
     assigns =
       assign(assigns,
         base: match?({:ok, _}, assigns.hub) && elem(assigns.hub, 1),
-        manual_base: manual_base,
+        manual_base: manual_base(assigns),
         self_machine: self_machine(assigns.tailnet)
       )
 
@@ -352,11 +359,14 @@ defmodule PhotonWeb.NodesLive do
               />
               <.button id="make-install-command" size="sm" type="submit">Make its command</.button>
             </.form>
-            <div :if={@manual} class="group relative mt-3">
+            <div id="install-command-box" class={["group relative mt-3", !@manual && "hidden"]}>
               <pre
                 id="install-command"
+                phx-hook=".InstallCommand"
+                phx-update="ignore"
+                data-node={@manual}
                 class="overflow-x-auto rounded-xl border border-line bg-sunken p-3.5 pr-12 font-mono text-[12.5px] leading-relaxed select-all"
-              >curl -fsSL {@manual_base}/node/install.sh | PHOTON_NODE_ID={@manual.node_id} PHOTON_NODE_TOKEN={@manual.key} sh</pre>
+              ></pre>
               <button
                 id="copy-install"
                 phx-hook=".Copy"
@@ -375,6 +385,14 @@ defmodule PhotonWeb.NodesLive do
         </div>
       </div>
     </Layouts.app>
+
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".InstallCommand">
+      export default {
+        mounted() {
+          this.handleEvent("install-command", ({command}) => { this.el.textContent = command })
+        }
+      }
+    </script>
 
     <script :type={Phoenix.LiveView.ColocatedHook} name=".Copy">
       export default {
