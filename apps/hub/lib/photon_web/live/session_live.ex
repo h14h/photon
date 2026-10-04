@@ -32,6 +32,7 @@ defmodule PhotonWeb.SessionLive do
            online?: Nodes.online?(session.node_id),
            transcript: transcript,
            live_text: "",
+           live_shown: "",
            live_output: %{},
            form: to_form(%{"text" => ""}, as: :message)
          )
@@ -87,23 +88,8 @@ defmodule PhotonWeb.SessionLive do
     {:noreply, socket}
   end
 
-  def handle_info({:node_live, id, data}, %{assigns: %{session: %{id: id}}} = socket) do
-    socket =
-      case data do
-        %{"type" => "text", "delta" => delta} ->
-          update(socket, :live_text, &(&1 <> delta))
-
-        %{"type" => "op_output", "op" => op, "text" => text} ->
-          update(socket, :live_output, fn outputs ->
-            Map.update(outputs, op, text, &tail(&1 <> text))
-          end)
-
-        _ ->
-          socket
-      end
-
-    {:noreply, socket}
-  end
+  def handle_info({:node_live, id, data}, %{assigns: %{session: %{id: id}}} = socket),
+    do: {:noreply, add_live(socket, data)}
 
   def handle_info(:node_sessions_changed, socket) do
     case NodeSessions.get(socket.assigns.session.id) do
@@ -117,7 +103,22 @@ defmodule PhotonWeb.SessionLive do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  defp clear_live(socket, %{type: :assistant}), do: assign(socket, live_text: "")
+  # The agent's text is shown a finished block at a time, and its Markdown
+  # rendered again only when one is added; command output as it comes.
+  defp add_live(socket, %{"type" => "text", "delta" => delta}) do
+    text = socket.assigns.live_text <> delta
+    assign(socket, live_text: text, live_shown: Markdown.settled(text))
+  end
+
+  defp add_live(socket, %{"type" => "op_output", "op" => op, "text" => text}) do
+    update(socket, :live_output, fn outputs ->
+      Map.update(outputs, op, text, &tail(&1 <> text))
+    end)
+  end
+
+  defp add_live(socket, _data), do: socket
+
+  defp clear_live(socket, %{type: :assistant}), do: assign(socket, live_text: "", live_shown: "")
 
   defp clear_live(socket, %{type: :tool, op: op, status: status}) when status != :running,
     do: update(socket, :live_output, &Map.delete(&1, op))
@@ -132,7 +133,7 @@ defmodule PhotonWeb.SessionLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} shell={@shell} active={{:session, @session.id}}>
+    <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={{:session, @session.id}}>
       <div class="flex h-full flex-col">
         <header class="shrink-0 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur sm:px-6">
           <div class="mx-auto flex w-full max-w-3xl items-center gap-3">
@@ -170,10 +171,15 @@ defmodule PhotonWeb.SessionLive do
           </div>
         </header>
 
-        <div id="session-scroll" phx-hook=".Follow" class="min-h-0 flex-1 overflow-y-auto">
+        <div id="session-scroll" phx-hook="PinToBottom" class="min-h-0 flex-1 overflow-y-auto">
           <div class="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
             <div id="items" phx-update="stream" class="space-y-4">
-              <div :for={{dom_id, item} <- @streams.items} id={dom_id} class="animate-rise">
+              <%!-- An answer arrives already shown, streamed in: no rise. --%>
+              <div
+                :for={{dom_id, item} <- @streams.items}
+                id={dom_id}
+                class={item.type != :assistant && "animate-rise"}
+              >
                 <.item item={item} />
               </div>
             </div>
@@ -182,10 +188,10 @@ defmodule PhotonWeb.SessionLive do
               <pre class="max-h-64 overflow-auto rounded-xl bg-sunken px-3.5 py-2.5 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink-soft">{text}</pre>
             </div>
 
-            <div :if={@live_text != ""} class="mt-4 flex gap-3">
+            <div :if={@live_shown != ""} class="mt-4 flex gap-3">
               <.agent_mark />
-              <div class="markdown-body streaming-caret min-w-0 flex-1 text-ink">
-                {raw(Markdown.to_html(@live_text))}
+              <div id="live-text" class="markdown-body min-w-0 flex-1 text-ink" data-streaming>
+                {raw(Markdown.to_html(@live_shown))}
               </div>
             </div>
 
@@ -199,9 +205,11 @@ defmodule PhotonWeb.SessionLive do
               )}
             </p>
           </div>
+          <.jump_to_latest />
         </div>
 
-        <div class="shrink-0 border-t border-line bg-canvas/90 px-4 pt-3 pb-4 backdrop-blur sm:px-6">
+        <%!-- Room on the right for Blip, in the corner, until the page is wide enough. --%>
+        <div class="blip-clear-x shrink-0 border-t border-line bg-canvas/90 px-4 pt-3 pb-4 backdrop-blur sm:px-6">
           <.form
             for={@form}
             id="session-composer"
@@ -222,20 +230,6 @@ defmodule PhotonWeb.SessionLive do
       </div>
     </Layouts.app>
 
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".Follow">
-      export default {
-        mounted() {
-          this.stick = true
-          this.el.scrollTop = this.el.scrollHeight
-          this.el.addEventListener("scroll", () => {
-            this.stick = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 120
-          })
-          this.observer = new MutationObserver(() => { if (this.stick) this.el.scrollTop = this.el.scrollHeight })
-          this.observer.observe(this.el, {childList: true, subtree: true, characterData: true})
-        },
-        destroyed() { this.observer.disconnect() }
-      }
-    </script>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".SubmitOnEnter">
       export default {
         mounted() {

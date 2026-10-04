@@ -1,8 +1,8 @@
 defmodule PhotonWeb.SettingsLiveTest do
   @moduledoc """
   The settings page: signing in with ChatGPT (against a stub of OpenAI's
-  endpoints), the model choices once signed in, and what Blip knows about
-  the user.
+  endpoints), the model choices once signed in, what Blip knows about the
+  user, and what Blip remembers.
   """
 
   use PhotonWeb.ConnCase, async: false
@@ -15,6 +15,9 @@ defmodule PhotonWeb.SettingsLiveTest do
 
   setup %{conn: conn} do
     ChatGPTStub.reset!()
+    # Signed in is saved to a file, so a test that signs in would leave the
+    # next test, on any page, signed in without a stub to answer it.
+    on_exit(&ChatGPTStub.reset!/0)
     {:ok, view, _html} = live(conn, ~p"/settings")
     %{view: view}
   end
@@ -104,5 +107,34 @@ defmodule PhotonWeb.SettingsLiveTest do
     view |> form("#settings-form", settings: %{user_name: "  Henry  "}) |> render_submit()
     assert Photon.Settings.load()["user_name"] == "Henry"
     assert has_element?(view, "#settings_user_name[value=Henry]")
+  end
+
+  describe "what Blip remembers" do
+    test "can be edited, or the edit cancelled", %{view: view} do
+      view |> element("#edit-memory") |> render_click()
+      assert has_element?(view, "#memory-form")
+      render_click(view, "cancel_memory")
+      refute has_element?(view, "#memory-form")
+
+      view |> element("#edit-memory") |> render_click()
+      view |> form("#memory-form", memory: "  likes tea  ") |> render_submit()
+      assert Photon.Assistant.memory() == "likes tea"
+      assert has_element?(view, "#memory-text", "likes tea")
+    end
+
+    test "shows what Blip saves", %{view: view} do
+      assert has_element?(view, "#memory-text", "Empty")
+      Photon.Assistant.put_memory("the NAS is mp1")
+      assert has_element?(view, "#memory-text", "the NAS is mp1")
+    end
+
+    test "a fresh context keeps the history and marks the break", %{view: view} do
+      conversation = Photon.Assistant.conversation_id()
+      Photon.Durable.subscribe(conversation)
+
+      view |> element("#fresh-start") |> render_click()
+      await_entry(conversation, &(&1.kind == "reset"))
+      assert has_element?(view, "#flash-info", "fresh context")
+    end
   end
 end

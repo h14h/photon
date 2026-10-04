@@ -7,20 +7,28 @@ defmodule PhotonWeb.PagesTest do
 
   alias Photon.{Durable, NodeSessions}
 
-  test "the assistant answers in the conversation", %{conn: conn} do
+  test "the overview shows machines, work and schedules", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
-    assert has_element?(view, "#composer")
-    assert has_element?(view, "#empty-state")
+    assert has_element?(view, "#no-machines")
+    assert has_element?(view, "#running", "Nothing running")
+    assert has_element?(view, "#nav-overview")
+  end
+
+  test "Blip answers in the conversation over the page", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+    blip = find_live_child(view, "blip")
+    assert has_element?(blip, "#composer")
+    assert has_element?(blip, "#empty-state")
 
     conversation = Photon.Assistant.conversation_id()
     Durable.subscribe(conversation)
 
-    view |> form("#composer", message: %{text: "help"}) |> render_submit()
+    blip |> form("#composer", message: %{text: "help"}) |> render_submit()
     await_entry(conversation, &(&1.kind == "assistant"))
 
-    _ = render(view)
-    assert has_element?(view, "#entries [id^=entries-]")
-    refute has_element?(view, "#empty-state")
+    _ = render(blip)
+    assert has_element?(blip, "#entries [id^=entries-]")
+    refute has_element?(blip, "#empty-state")
   end
 
   test "the nodes page offers both ways to add a node", %{conn: conn} do

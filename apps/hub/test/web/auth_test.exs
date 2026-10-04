@@ -77,6 +77,12 @@ defmodule PhotonWeb.AuthTest do
     # client's tailnet address.
     defp from(conn, ip), do: put_req_header(conn, "x-forwarded-for", ip)
 
+    # Every page has Blip over it, a LiveView of its own. In a browser it
+    # joins over the page's websocket, with the page's connect info, but
+    # LiveViewTest gives a nested LiveView none. So the LiveView check is
+    # made on Blip by itself: it runs the same on_mount check as the pages.
+    defp live_blip(conn), do: live_isolated(conn, PhotonWeb.BlipLive)
+
     # LiveViewTest takes the websocket's connect info from the conn unless
     # it's given its own: here, a websocket from somewhere else.
     defp live_from(conn, ip) do
@@ -102,7 +108,7 @@ defmodule PhotonWeb.AuthTest do
 
     test "lets your own device in, over HTTP and LiveView", %{conn: conn} do
       assert get(from(conn, "100.64.0.10"), ~p"/").status == 200
-      assert {:ok, _view, _html} = live(from(conn, "100.64.0.10"), ~p"/")
+      assert {:ok, _view, _html} = live_blip(from(conn, "100.64.0.10"))
     end
 
     test "keeps out a machine that runs a node", %{conn: conn} do
@@ -142,7 +148,7 @@ defmodule PhotonWeb.AuthTest do
       Application.put_env(:photon, :password, "s3cret")
 
       assert get(from(conn, "100.64.0.10"), ~p"/").status == 200
-      assert {:ok, _view, _html} = live(from(conn, "100.64.0.10"), ~p"/")
+      assert {:ok, _view, _html} = live_blip(from(conn, "100.64.0.10"))
 
       assert get(from(conn, "203.0.113.9"), ~p"/").status == 401
       stranger = conn |> from("203.0.113.9") |> basic("s3cret") |> get(~p"/")

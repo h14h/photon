@@ -76,8 +76,10 @@ defmodule PhotonWeb.SessionLiveTest do
       view: view,
       session: s
     } do
-      send(view.pid, {:node_live, s.id, %{"type" => "text", "delta" => "Looking"}})
-      assert render(view) =~ "Looking"
+      # A finished paragraph shows; the one still being written waits.
+      send(view.pid, {:node_live, s.id, %{"type" => "text", "delta" => "Looking.\n\nThen the"}})
+      assert has_element?(view, "#live-text[data-streaming]", "Looking.")
+      refute has_element?(view, "#live-text", "Then the")
 
       asked =
         record("model_response", %{

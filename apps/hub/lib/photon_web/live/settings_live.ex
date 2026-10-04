@@ -4,11 +4,15 @@ defmodule PhotonWeb.SettingsLive do
   user's plan, and what Blip should know about the user. Signing in is
   `Photon.ChatGPT`'s (the page shows its steps); the rest is a form that
   changes nothing until it is saved (`Photon.Settings.save/1`).
+
+  Below the form, what Blip remembers (`Photon.Assistant.memory/0`), which
+  Blip keeps up itself and the user can edit, and a fresh start for the
+  conversation.
   """
 
   use PhotonWeb, :live_view
 
-  alias Photon.{ChatGPT, Settings}
+  alias Photon.{Assistant, ChatGPT, Settings}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -27,7 +31,9 @@ defmodule PhotonWeb.SettingsLive do
        sign_in_form: to_form(%{"address" => ""}, as: :sign_in),
        sign_in_error: nil,
        models: [],
-       models_error: nil
+       models_error: nil,
+       memory: Assistant.memory(),
+       editing_memory: false
      )
      |> load_models(status)}
   end
@@ -50,9 +56,33 @@ defmodule PhotonWeb.SettingsLive do
   def handle_async(:models, {:exit, reason}, socket),
     do: {:noreply, assign(socket, models_error: Exception.format_exit(reason))}
 
-  ## Signing in
+  ## Memory and the conversation
 
   @impl true
+  def handle_event("edit_memory", _params, socket),
+    do: {:noreply, assign(socket, editing_memory: true)}
+
+  def handle_event("cancel_memory", _params, socket),
+    do: {:noreply, assign(socket, editing_memory: false)}
+
+  def handle_event("save_memory", %{"memory" => text}, socket) do
+    Assistant.put_memory(text)
+    {:noreply, assign(socket, memory: Assistant.memory(), editing_memory: false)}
+  end
+
+  def handle_event("fresh_start", _params, socket) do
+    Assistant.fresh_start(Assistant.conversation_id())
+
+    {:noreply,
+     put_flash(
+       socket,
+       :info,
+       "Started a fresh context. Earlier messages stay in the chat, but Blip won't see them."
+     )}
+  end
+
+  ## Signing in
+
   def handle_event("begin_sign_in", _params, socket) do
     {:ok, url} = ChatGPT.begin_sign_in()
     {:noreply, assign(socket, sign_in_url: url, sign_in_error: nil)}
@@ -104,6 +134,12 @@ defmodule PhotonWeb.SettingsLive do
     {:noreply, socket |> assign(chatgpt: status) |> load_models(status)}
   end
 
+  def handle_info({:durable, "global", changes}, socket) do
+    if Enum.any?(changes.docs, &(&1.kind == "memory")),
+      do: {:noreply, assign(socket, memory: Assistant.memory())},
+      else: {:noreply, socket}
+  end
+
   def handle_info(_message, socket), do: {:noreply, socket}
 
   # The account's models, with the one in use kept even if it isn't listed.
@@ -121,9 +157,9 @@ defmodule PhotonWeb.SettingsLive do
     assigns = assign(assigns, model: Settings.model(assigns.settings))
 
     ~H"""
-    <Layouts.app flash={@flash} shell={@shell} active={:settings}>
+    <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={:settings}>
       <div class="h-full overflow-y-auto">
-        <div class="mx-auto w-full max-w-2xl px-4 py-8 sm:px-6">
+        <div class="blip-clear-y mx-auto w-full max-w-2xl px-4 py-8 sm:px-6">
           <.header>
             Settings
             <:subtitle>
@@ -230,6 +266,57 @@ defmodule PhotonWeb.SettingsLive do
               <.button type="submit" variant="primary" id="save-settings">Save settings</.button>
             </div>
           </.form>
+
+          <section
+            id="memory"
+            class="mt-6 space-y-3 rounded-2xl border border-line bg-surface p-5 shadow-xs"
+          >
+            <div class="flex items-center justify-between">
+              <h2 class="text-[13px] font-semibold text-ink">What Blip remembers</h2>
+              <.button
+                :if={!@editing_memory}
+                id="edit-memory"
+                size="sm"
+                variant="ghost"
+                phx-click="edit_memory"
+              >
+                Edit
+              </.button>
+            </div>
+            <form :if={@editing_memory} id="memory-form" phx-submit="save_memory" class="space-y-2">
+              <textarea
+                name="memory"
+                rows="8"
+                class={[field_class(), "h-auto py-2 font-mono text-[12.5px] leading-relaxed"]}
+              >{@memory}</textarea>
+              <div class="flex justify-end gap-2">
+                <.button type="button" size="sm" variant="ghost" phx-click="cancel_memory">
+                  Cancel
+                </.button>
+                <.button type="submit" size="sm" variant="primary">Save</.button>
+              </div>
+            </form>
+            <div
+              :if={!@editing_memory}
+              id="memory-text"
+              class="rounded-lg bg-sunken px-3.5 py-3 text-[13px] leading-relaxed text-ink-soft"
+            >
+              <span phx-no-format class="whitespace-pre-wrap">{if(@memory == "", do: "Empty. Blip saves facts here as it learns them.", else: @memory)}</span>
+            </div>
+            <div class="flex items-center justify-between gap-3 border-t border-line pt-4">
+              <p class="text-[12.5px] leading-relaxed text-ink-faint">
+                A fresh context keeps the chat history and memory, but Blip stops seeing earlier messages.
+              </p>
+              <.button
+                id="fresh-start"
+                size="sm"
+                phx-click="fresh_start"
+                data-confirm="Start a fresh context? Blip stops seeing earlier messages (they stay in the chat). Memory is kept."
+              >
+                <.icon name="hero-arrow-path" class="size-4" /> Fresh context
+              </.button>
+            </div>
+          </section>
         </div>
       </div>
     </Layouts.app>

@@ -37,6 +37,8 @@ defmodule Photon do
     check: [apps: [:photon_node]],
     exports: [
       Assistant,
+      Assistant.Notice,
+      Assistant.Page,
       Assistant.Transcript,
       Auth,
       ChatGPT,

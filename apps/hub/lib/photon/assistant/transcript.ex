@@ -1,7 +1,7 @@
 defmodule Photon.Assistant.Transcript do
   @moduledoc """
   What the assistant page shows, as pure functions over the conversation's
-  entries and its `{:live, ...}` events. `PhotonWeb.AssistantLive` drives
+  entries and its `{:live, ...}` events. `PhotonWeb.BlipLive` drives
   them, the way `PhotonWeb.SessionLive` drives `Photon.NodeTranscript`.
 
     * which entries are shown (`shown?/1`); tool results aren't shown on
@@ -15,11 +15,14 @@ defmodule Photon.Assistant.Transcript do
     * a tool call's status as the page shows it (`action_status/2`)
     * Blip's mood (`mood/1`), and the outcome a batch of new entries is
       worth showing for a moment (`outcome/3`)
+    * a user message as it was typed, without the note of the page it was
+      sent from (`typed/2`)
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore]
+  use Boundary, type: :strict, deps: [PhotonCore, Photon.Assistant.Page]
 
+  alias Photon.Assistant.Page
   alias Photon.Durable.Entry
   alias PhotonCore.Message
 
@@ -55,6 +58,14 @@ defmodule Photon.Assistant.Transcript do
   @doc "Whether an entry is shown in the conversation on its own."
   @spec shown?(Entry.t()) :: boolean()
   def shown?(%{kind: kind}), do: kind in @shown
+
+  @doc """
+  A user message's `text` as the user typed it: a message sent from a page
+  (its `source` has a `"page"`) loses the note of the page the model sees.
+  """
+  @spec typed(String.t(), map() | nil) :: String.t()
+  def typed(text, %{"page" => _page}), do: Page.strip(text)
+  def typed(text, _source), do: text
 
   @doc "Whether a conversation has nothing to show yet (only tool results, or nothing)."
   @spec empty?([Entry.t()]) :: boolean()

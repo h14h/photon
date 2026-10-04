@@ -34,11 +34,11 @@ defmodule Photon.Assistant do
       PhotonCore,
       PhotonCore.LLM
     ],
-    exports: [Transcript]
+    exports: [Notice, Page, Transcript]
 
   @behaviour Photon.Durable.Profile
 
-  alias Photon.Assistant.{Memory, Prompt, Tools}
+  alias Photon.Assistant.{Memory, Page, Prompt, Tools}
   alias Photon.{Durable, Settings}
   alias Photon.Durable.{Entry, Submission, TaskRecord}
 
@@ -80,11 +80,22 @@ defmodule Photon.Assistant do
     end
   end
 
-  @doc "Sends the user's message. See `Photon.Durable.submit/3` for options."
+  @doc """
+  Sends the user's message. With `page:` (a `Photon.Assistant.Page`), the
+  model sees a note of the page the user had open in front of it. Other
+  options are `Photon.Durable.submit/3`'s.
+  """
   @spec send(String.t(), keyword()) :: {:ok, Submission.t()} | {:error, :busy}
-  def send(text, opts \\ []),
-    do:
-      Durable.submit(conversation_id(), text, Keyword.put_new(opts, :source, %{"kind" => "user"}))
+  def send(text, opts \\ []) do
+    {page, opts} = Keyword.pop(opts, :page)
+    source = if page, do: %{"kind" => "user", "page" => page}, else: %{"kind" => "user"}
+
+    Durable.submit(
+      conversation_id(),
+      Page.note(text, page),
+      Keyword.put_new(opts, :source, source)
+    )
+  end
 
   @doc """
   Stops the current run and withdraws the user's queued messages. Reports

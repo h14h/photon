@@ -33,6 +33,7 @@ defmodule Photon.Assistant.Prompt do
     - Keep durable facts about the user, their machines and their preferences in memory with update_memory. Your memory is below.
     - Use schedule for anything recurring or for later. A scheduled prompt arrives here as a message starting with "[Scheduled]", and you act on it then.
     - Never invent results. If a node is offline or a task failed, say so plainly.
+    - The user talks to you from a panel that floats over the hub's web pages. A message may start with "[Looking at ...]": the page they had open when they wrote it. "This", "here" or "it" probably mean that.
 
     ## Memory
 

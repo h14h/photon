@@ -76,19 +76,306 @@
   to { opacity: 1; transform: none; }
 }
 
-/* A Blip that holds its pose: the avatar beside each message. Only the live
-   Blip moves, so a long conversation doesn't blink at you. */
+/* A Blip that holds its pose (`still`). */
 .blip--still, .blip--still * { animation: none !important; }
 
-/* At avatar sizes the working wave would run far past Blip's box and over
-   the text beside it, so a contained Blip keeps it inside, fading out at the
-   sides. The large Blip on the empty page has room and lets it run. */
+/* The working wave would run far past Blip's box and over whatever is
+   beside it, so a contained Blip keeps it inside, fading out at the sides. */
 .blip--contained[data-state="working"] {
   mask-image: linear-gradient(to right, transparent, #000 25%, #000 75%, transparent);
 }
 
 /* Hover and click Blip where it's interactive (the .Blip hook). */
 .blip--interactive { cursor: pointer; }
+
+/* ── Blip, floating over every page (PhotonWeb.BlipLive) ─────────────────
+   One Blip, in the bottom-right corner. It opens into the chat panel and
+   moves into the panel's header: the panel floats in the corner (open),
+   takes the right side (pinned, on wide screens), or fills the window
+   (full). On phones, open fills the screen. The .BlipDock hook sets
+   data-panel; the browser animates the change as a view transition, the
+   panel growing out of Blip (Material's container transform). Every
+   position below comes from the variables, so Blip in the header lines up
+   with the panel in every state. */
+:root { --blip-pin-w: 420px; }
+
+.blip-dock {
+  --blip-m: 16px;            /* gap to the window's edge */
+  --blip-fab: 64px;          /* Blip's box in the corner */
+  --blip-face: 44px;         /* Blip's box in the panel header */
+  --blip-panel-w: min(440px, calc(100vw - 2 * var(--blip-m)));
+  --blip-panel-h: min(720px, calc(100dvh - 2 * var(--blip-m)));
+  --blip-ease: cubic-bezier(0.2, 0, 0, 1); /* Material's emphasized easing */
+}
+@media (min-width: 640px) {
+  .blip-dock { --blip-m: 24px; --blip-fab: 76px; }
+}
+.blip-dock[data-panel="full"] {
+  --blip-m: 12px;
+  --blip-panel-w: calc(100vw - 2 * var(--blip-m));
+  --blip-panel-h: calc(100dvh - 2 * var(--blip-m));
+}
+@media (max-width: 639px) {
+  .blip-dock:not([data-panel="closed"]) {
+    --blip-m: 0px;
+    --blip-panel-w: 100vw;
+    --blip-panel-h: 100dvh;
+  }
+}
+@media (min-width: 1024px) {
+  .blip-dock[data-panel="pinned"] {
+    --blip-m: 0px;
+    --blip-panel-w: var(--blip-pin-w);
+    --blip-panel-h: 100dvh;
+  }
+  /* The page makes room for a pinned panel, and the flash moves out of its way. */
+  html[data-blip-panel="pinned"] #app-main { margin-right: var(--blip-pin-w); }
+  html[data-blip-panel="pinned"] #flash-group { right: calc(var(--blip-pin-w) + 12px); }
+}
+
+/* Blip itself: the button in the corner, then the face in the header. */
+.blip-face {
+  position: fixed;
+  z-index: 46;
+  right: var(--blip-m);
+  bottom: var(--blip-m);
+  width: var(--blip-fab);
+  height: var(--blip-fab);
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  view-transition-name: blip-face;
+  -webkit-tap-highlight-color: transparent;
+}
+.blip-face { isolation: isolate; }
+/* The avatar's hook wrapper and the SVG fill the box; the unread badge doesn't. */
+.blip-face > [phx-hook], .blip-face svg { width: 100%; height: 100%; }
+
+/* A soft shadow under Blip in the corner, so it floats over the page. It's
+   drawn, not a filter: Safari clips a filter on an SVG to the SVG's box,
+   and Blip's glow fills that box, so a drop-shadow showed as a square. */
+.blip-face::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 30%;
+  right: 30%;
+  bottom: 17%;
+  height: 10%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(0 0 0 / 0.22), transparent);
+  pointer-events: none;
+}
+
+/* The brand kit blurs Blip while it thinks. That reads as soft at the size
+   of an icon, but at this size it looks out of focus, and Safari renders a
+   filtered SVG at low resolution. The purple, the tilt, the bob and the
+   orbiting mote say "thinking" on their own. */
+.blip-face .blip[data-state="thinking"] .blip-self { filter: none; }
+.blip-face:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -4px; }
+.blip-dock:not([data-panel="closed"]) .blip-face {
+  width: var(--blip-face);
+  height: var(--blip-face);
+  right: calc(var(--blip-m) + var(--blip-panel-w) - var(--blip-face) - 10px);
+  bottom: calc(var(--blip-m) + var(--blip-panel-h) - var(--blip-face) - 8px);
+}
+.blip-dock:not([data-panel="closed"]) .blip-face::after { display: none; }
+
+/* What's unread, on Blip's shoulder. */
+.blip-unread {
+  position: absolute;
+  top: 17%;
+  right: 17%;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--color-canvas);
+}
+
+/* The panel. Closed, it sits invisible in Blip's spot, so the transition
+   grows it from there and shrinks it back. */
+.blip-panel {
+  position: fixed;
+  z-index: 45;
+  right: var(--blip-m);
+  bottom: var(--blip-m);
+  width: var(--blip-panel-w);
+  height: var(--blip-panel-h);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 24px;
+  box-shadow: 0 28px 70px -18px rgb(0 0 0 / 0.32), 0 2px 8px rgb(0 0 0 / 0.06);
+  view-transition-name: blip-panel;
+}
+.blip-dock[data-panel="closed"] .blip-panel {
+  width: var(--blip-fab);
+  height: var(--blip-fab);
+  border-radius: 9999px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+@media (max-width: 639px) {
+  .blip-dock:not([data-panel="closed"]) .blip-panel { border: 0; border-radius: 0; }
+}
+@media (min-width: 1024px) {
+  .blip-dock[data-panel="pinned"] .blip-panel {
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+.blip-tool {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: var(--color-ink-faint);
+  transition: background-color 150ms, color 150ms;
+}
+.blip-tool:hover { background: var(--color-sunken); color: var(--color-ink); }
+.blip-dock[data-panel="pinned"] [data-blip-action="pin"] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+}
+
+/* What Blip says while the panel is closed: speech bubbles stacked above
+   it, the newest at the bottom with its tail pointing down at Blip. A new
+   bubble grows in from nothing (its row opens from 0fr), which pushes the
+   one before it up, and that one fades out on its way (.is-leaving) until
+   the server drops it. Each holds a whole paragraph; a very long one
+   scrolls inside its bubble rather than covering the page. */
+.blip-bubbles {
+  position: fixed;
+  z-index: 45;
+  right: var(--blip-m);
+  bottom: calc(var(--blip-m) + var(--blip-fab) - 18px);
+  width: min(360px, calc(100vw - 2 * var(--blip-m)));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  pointer-events: none;
+}
+.blip-dock:not([data-panel="closed"]) .blip-bubbles { display: none; }
+
+.blip-bubble {
+  display: grid;
+  grid-template-rows: 1fr;
+  max-width: 100%;
+  transform-origin: bottom right;
+  transition:
+    grid-template-rows 380ms var(--blip-ease),
+    opacity 320ms ease-out,
+    transform 380ms var(--blip-ease);
+  pointer-events: auto;
+}
+@starting-style {
+  .blip-bubble { grid-template-rows: 0fr; opacity: 0; transform: translateY(10px) scale(0.96); }
+}
+.blip-bubble.is-leaving {
+  opacity: 0;
+  transform: translateY(-14px) scale(0.98);
+  pointer-events: none;
+}
+
+/* Room around the card for its shadow and its tail, inside the row that
+   opens; the row clips while it does. */
+.blip-bubble-clip {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  padding: 6px 6px 16px;
+}
+.blip-bubble-card {
+  position: relative;
+  max-height: min(45vh, 420px);
+  overflow-y: auto;
+  padding: 11px 38px 12px 15px;
+  border: 1px solid var(--color-line);
+  border-radius: 18px;
+  background: var(--color-surface);
+  box-shadow: 0 14px 34px -14px rgb(0 0 0 / 0.3), 0 1px 3px rgb(0 0 0 / 0.06);
+  color: var(--color-ink);
+  cursor: pointer;
+  transition: border-color 150ms;
+}
+.blip-bubble-card:hover { border-color: color-mix(in oklch, var(--color-accent) 40%, var(--color-line)); }
+.blip-bubble.is-failed .blip-bubble-card {
+  border-color: color-mix(in oklch, var(--color-bad) 35%, var(--color-line));
+  cursor: default;
+}
+.blip-bubble-text { font-size: 14px; line-height: 1.55; }
+
+/* The tail: a corner of the card turned toward Blip, under its middle. */
+.blip-bubble-tail {
+  position: absolute;
+  bottom: 10px;
+  right: calc(var(--blip-fab) / 2 - 7px);
+  width: 14px;
+  height: 14px;
+  border-right: 1px solid var(--color-line);
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-surface);
+  transform: rotate(45deg);
+}
+.blip-bubble.is-failed .blip-bubble-tail {
+  border-color: color-mix(in oklch, var(--color-bad) 35%, var(--color-line));
+}
+
+.blip-bubble-close {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  color: var(--color-ink-faint);
+  transition: background-color 150ms, color 150ms;
+}
+.blip-bubble-close:hover { background: var(--color-sunken); color: var(--color-ink); }
+
+/* The transition itself: the panel and Blip move on Material's emphasized
+   curve, the panel's contents fade in once it has some size. */
+::view-transition-group(blip-panel),
+::view-transition-group(blip-face) {
+  animation-duration: 420ms;
+  animation-timing-function: var(--blip-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+::view-transition-image-pair(blip-panel) { overflow: hidden; border-radius: 24px; }
+::view-transition-old(blip-panel) { animation: 120ms ease-out both blip-fade-out; }
+::view-transition-new(blip-panel) { animation: 260ms ease-out 90ms both blip-fade-in; }
+::view-transition-old(root),
+::view-transition-new(root) { animation-duration: 200ms; }
+@keyframes blip-fade-in { from { opacity: 0; } }
+@keyframes blip-fade-out { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  /* Nothing moves: the panel and Blip fade where they end up. */
+  ::view-transition-group(blip-panel),
+  ::view-transition-group(blip-face) { animation: none; }
+  .blip-bubble, .blip-bubble.is-leaving { transform: none; }
+}
+
+/* Room for Blip in the corner: at the end of a page that scrolls (y), or
+   beside a bar along the bottom (x), until the page is wide enough. */
+.blip-clear-y { padding-bottom: 7rem; }
+.blip-clear-x { padding-right: 5.5rem; }
+@media (min-width: 640px) { .blip-clear-x { padding-right: 6.5rem; } }
+@media (min-width: 1280px) { .blip-clear-x { padding-right: 1.5rem; } }
 
 /* Add variants based on LiveView classes */
 @custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
@@ -183,20 +470,51 @@ body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
 .markdown-body hr { border: 0; border-top: 1px solid var(--color-line); margin-block: 1.4em; }
 .markdown-body img { max-width: 100%; height: auto; border-radius: 0.5rem; }
 
-/* A blinking caret after text that is still streaming in. It goes at the
-   end of the last line of text: inside the last paragraph, heading or list
-   item. After the block itself it would sit on a line of its own. Only when
-   the answer ends in something else (code, a table) does it follow that. */
-.streaming-caret > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
-.streaming-caret > :is(ul, ol):last-child > li:last-child::after,
-.streaming-caret:not(:has(> :is(p, h1, h2, h3, h4, h5, h6, ul, ol):last-child))::after {
-  content: "";
-  display: inline-block;
-  width: 0.5em;
-  height: 1.05em;
-  margin-left: 2px;
-  vertical-align: -0.15em;
-  border-radius: 2px;
-  background: var(--color-accent);
-  animation: breathe 1s ease-in-out infinite;
+/* Text that streams in arrives a finished block at a time
+   (Photon.Markdown.settled/1). Each new block fades in so it doesn't pop:
+   @starting-style applies only when an element is first inserted, and the
+   rule only holds while the answer streams (data-streaming), so the finished
+   answer never replays it. Opacity only, once, no layout change. After T3
+   Code. */
+@media (prefers-reduced-motion: no-preference) {
+  .markdown-body[data-streaming] > * { transition: opacity 600ms ease-out; }
+  @starting-style {
+    .markdown-body[data-streaming] > * { opacity: 0; }
+  }
+}
+
+/* A thread that follows new content while pinned to the bottom (the
+   PinToBottom hook): unpinned, a "Jump to latest" button floats at the
+   bottom of it. The row takes no room in the thread. */
+.pin-jump-row {
+  position: sticky;
+  bottom: 0;
+  height: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.pin-jump {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  transform: translateY(calc(-100% - 12px));
+  border: 1px solid var(--color-line);
+  border-radius: 9999px;
+  background: var(--color-surface);
+  box-shadow: 0 8px 20px -8px rgb(0 0 0 / 0.25);
+  color: var(--color-ink-soft);
+  font-size: 12.5px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 150ms, visibility 0s 150ms, color 150ms;
+}
+.pin-jump:hover { color: var(--color-ink); }
+[data-pinned="false"] .pin-jump {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 150ms, color 150ms;
 }
