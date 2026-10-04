@@ -1,0 +1,100 @@
+defmodule Photon.Application do
+  @moduledoc """
+  Starts the hub. The supervision tree, in start order (each child needs
+  only the ones before it):
+
+    * `PhotonWeb.Telemetry`: metrics
+    * `Photon.Repo` and `Ecto.Migrator` (migrates at boot, then exits
+      normally): the SQLite database
+    * `Photon.PubSub`: every change notification below goes through it
+    * `Photon.Tailnet`: owns the tailnet lookup cache (an ETS table)
+    * `Photon.NodeRegistry`: node ID to the node's channel process, so
+      "online" means "its channel is alive" and nothing keeps a pid
+    * `Photon.ProvisionTasks` and `Photon.Provision`: SSH jobs, and the
+      table of jobs that monitors them
+    * `Photon.Durable.Supervisor`: the assistant's durable harness (left
+      out with `config :photon, start_durable: false`, as in tests); see its
+      moduledoc for its own plan
+    * `PhotonWeb.Endpoint`: HTTP, LiveViews and the node websocket. It
+      starts after everything pages and channels call, and stops first.
+    * `PhotonNode` (with `config :photon, local_node: true`): a node inside
+      this VM, last because it dials the endpoint
+
+  The strategy is `:one_for_one`: each child recovers on its own. The
+  per-connection processes (node channels and LiveViews) live under the
+  endpoint and find what they need by name, and durable work is in the
+  database, so a restarted child doesn't need its neighbours restarted.
+  The exceptions are the library processes `Photon.PubSub` and
+  `Photon.NodeRegistry`, whose subscribers and registrations a restart
+  would drop; they are not expected to crash, and the strategy is kept as
+  it was rather than restart the web layer with them. Shutdown runs in
+  reverse: the local node and the endpoint stop before the durable harness,
+  so nothing new arrives while it stops.
+  """
+
+  use Boundary, top_level?: true, deps: [Photon, PhotonWeb, PhotonNode]
+
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    # Generated (and logged) at boot, not on the first sign-in.
+    _password = if Photon.Auth.enabled?(), do: Photon.Auth.ensure_password!()
+
+    children =
+      [
+        PhotonWeb.Telemetry,
+        Photon.Repo,
+        {Ecto.Migrator,
+         repos: [Photon.Repo], skip: Application.get_env(:photon, :skip_migrations, false)},
+        {Phoenix.PubSub, name: Photon.PubSub},
+        Photon.Tailnet,
+        {Registry, keys: :unique, name: Photon.NodeRegistry},
+        {Task.Supervisor, name: Photon.ProvisionTasks},
+        Photon.Provision
+      ] ++ durable() ++ [PhotonWeb.Endpoint] ++ local_node()
+
+    opts = [strategy: :one_for_one, name: Photon.Supervisor]
+    Supervisor.start_link(children, opts)
+  end
+
+  # The assistant's harness. Tests start it themselves, inside the sandbox.
+  defp durable do
+    if Application.get_env(:photon, :start_durable, true),
+      do: [Photon.Durable.Supervisor],
+      else: []
+  end
+
+  # An agent node inside this BEAM, connecting over the same websocket as
+  # remote nodes: handy in development. Its sessions resume when the hub
+  # restarts, since they live in the data directory.
+  defp local_node do
+    if Application.get_env(:photon, :local_node) do
+      http = Application.get_env(:photon, PhotonWeb.Endpoint)[:http]
+
+      [
+        {PhotonNode,
+         server: "ws://#{local_address(http[:ip])}:#{http[:port]}/node/websocket",
+         token: Photon.NodeAuth.token(),
+         node_id: "local",
+         data_dir: Photon.Paths.local_node_dir()}
+      ]
+    else
+      []
+    end
+  end
+
+  # The embedded node dials whatever address the endpoint listens on.
+  defp local_address(ip) when ip in [nil, {0, 0, 0, 0}], do: "127.0.0.1"
+  defp local_address({0, 0, 0, 0, 0, 0, 0, 0}), do: "[::1]"
+  defp local_address({_, _, _, _} = ip), do: ip |> :inet.ntoa() |> to_string()
+  defp local_address(ip), do: "[#{ip |> :inet.ntoa() |> to_string()}]"
+
+  # Tell Phoenix to update the endpoint configuration
+  # whenever the application is updated.
+  @impl true
+  def config_change(changed, _new, removed) do
+    PhotonWeb.Endpoint.config_change(changed, removed)
+    :ok
+  end
+end

@@ -1,8 +1,33 @@
-This is a web application written using the Phoenix web framework.
+This is an all-Elixir monorepo: a Phoenix hub and the node agent it hands work to.
+
+## Layout
+
+- `apps/core` (`:photon_core`): the streaming model client, message format and mock models, shared by both apps
+- `apps/node` (`:photon_node`): the node's agent harness (a port of unreal-agent; see `docs/unreal-agent-port-spec.md`) and hub connection, packaged with Burrito
+- `apps/hub` (`:photon`): the Phoenix hub, its durable harness (`Photon.Durable`, after pi-durable) and the assistant
+
+Each app is its own Mix project linked by path dependencies, so run Mix in the app's directory, e.g. `cd apps/hub && mix test`. The Phoenix guidelines below apply to `apps/hub`.
+
+## Checks
+
+The design rules in `docs/otp-design-guide.md` are enforced by tools; each rule there says how. Run these in each app you changed (`apps/core`, `apps/node`, `apps/hub`):
+
+- `mix precommit`: the gate to pass before you finish, in the test env. It runs `compile --warnings-as-errors` (compiler warnings, Elixir 1.20's type checker, and Boundary), `deps.unlock --check-unused`, `format --check-formatted`, `credo --strict` and `test --warnings-as-errors`. Fix formatting with `mix format`.
+- `mix dialyzer`: the first run builds the PLTs (about three minutes per app; the OTP/Elixir one is shared in the repo root's `_build/plts`); later runs take seconds to a minute. Findings that aren't bugs go in the app's `.dialyzer_ignore.exs`, each with its reason.
+- `mix test --cover`: fails below the app's coverage threshold (`test_coverage` in `mix.exs`).
+
+Where the rules live:
+
+- Credo: each app's `.credo.exs`, plus the checks they share in `tools/credo_checks/shared_checks.exs`. Photon's own checks are `PhotonCredo.Check.*` in `tools/credo_checks/lib`; their tests run with apps/core's suite (`cd apps/core && mix test ../../tools/credo_checks/test`). An allow-list entry (`PreferCall`, `NoSleep`) needs its reason.
+- Boundary: `use Boundary` declarations in the code. A new functional-core module gets `use Boundary, type: :strict, deps: [...]` naming only other core or data modules, and goes in the `FunctionalCore` list in the app's `.credo.exs`. A new registered process name goes in `ProcessNameOwnership`'s `names` there. The web layer may use only what `Photon` exports.
+- Types: every public function in `lib/` has a `@spec`, and every struct a `@type t`.
+- Exceptions say why. Dialyzer runs with `:unmatched_returns`: handle a result, or drop it with `_ =` and a comment directly above saying why it's safe (a named discard like `_entry =` is fine without one only for raising calls and the modules allow-listed in `DiscardNeedsReason`). Every `.dialyzer_ignore.exs` entry, inline `credo:disable` comment and `@dialyzer` attribute needs a reason comment above it. Announce changes with `Photon.Events`, not `Phoenix.PubSub` directly.
+
+After first pulling these tools into an existing checkout, Boundary may report stale "unknown module" warnings for path dependencies; `mix deps.compile photon_core photon_node --force` and `mix compile --force` clear them.
 
 ## Project guidelines
 
-- Use `mix precommit` alias when you are done with all changes and fix any pending issues
+- Use `mix precommit` alias when you are done with all changes and fix any pending issues (see Checks)
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
 
 ### Phoenix v1.8 guidelines

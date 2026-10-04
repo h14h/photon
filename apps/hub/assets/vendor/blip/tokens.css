@@ -1,0 +1,39 @@
+/* Blip colour tokens. Matches the Photon hub palette (warm paper and ink,
+   amber accent) and adds the mood tints Blip uses. Drop this file in as-is;
+   the hub already defines the base --color-* variables, so only the --blip-*
+   ones are new. */
+
+:root {
+  /* Body */
+  --blip-amber: oklch(70% 0.165 58);
+  --blip-amber-deep: oklch(58% 0.17 45);
+  --blip-eye: oklch(25% 0.03 50);
+  --blip-sclera: oklch(99% 0.006 90);
+  --blip-halo: oklch(70% 0.165 58 / 0.35);
+
+  /* Moods as wavelengths. Longer wavelength to the left. */
+  --blip-mood-error: oklch(60% 0.19 28);      /* red,    ~650 nm: something went wrong, and I'm sorry */
+  --blip-mood-rest: oklch(70% 0.165 58);      /* amber,  ~590 nm: at rest, content */
+  --blip-mood-done: oklch(63% 0.14 155);      /* green,  ~530 nm: finished, and it went fine */
+  --blip-mood-think: oklch(66% 0.13 300);     /* violet, ~410 nm: thinking it through */
+  --blip-mood-blush: oklch(74% 0.14 350);     /* pink: noticed you looking */
+
+  /* Soft versions for backgrounds and halos */
+  --blip-mood-error-soft: oklch(60% 0.19 28 / 0.3);
+  --blip-mood-done-soft: oklch(63% 0.14 155 / 0.3);
+  --blip-mood-think-soft: oklch(66% 0.13 300 / 0.3);
+  --blip-mood-blush-soft: oklch(74% 0.14 350 / 0.5);
+}
+
+[data-theme="dark"] {
+  --blip-amber: oklch(77% 0.15 65);
+  --blip-amber-deep: oklch(68% 0.16 52);
+  --blip-eye: oklch(16% 0.03 50);
+  --blip-sclera: oklch(96% 0.01 90);
+  --blip-halo: oklch(77% 0.15 65 / 0.3);
+  --blip-mood-error: oklch(70% 0.17 25);
+  --blip-mood-rest: oklch(77% 0.15 65);
+  --blip-mood-done: oklch(72% 0.14 155);
+  --blip-mood-think: oklch(76% 0.12 300);
+  --blip-mood-blush: oklch(78% 0.13 350);
+}
