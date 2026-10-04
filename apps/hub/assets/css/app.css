@@ -148,7 +148,8 @@
   -webkit-tap-highlight-color: transparent;
 }
 .blip-face { isolation: isolate; }
-.blip-face > span, .blip-face svg { width: 100%; height: 100%; }
+/* The avatar's hook wrapper and the SVG fill the box; the unread badge doesn't. */
+.blip-face > [phx-hook], .blip-face svg { width: 100%; height: 100%; }
 
 /* A soft shadow under Blip in the corner, so it floats over the page. It's
    drawn, not a filter: Safari clips a filter on an SVG to the SVG's box,
@@ -183,8 +184,8 @@
 /* What's unread, on Blip's shoulder. */
 .blip-unread {
   position: absolute;
-  top: 10%;
-  right: 8%;
+  top: 17%;
+  right: 17%;
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
