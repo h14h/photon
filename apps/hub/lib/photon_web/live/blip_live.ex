@@ -382,14 +382,17 @@ defmodule PhotonWeb.BlipLive do
       // The panel changes here first, so it's instant and the browser can
       // animate it: the panel grows out of Blip, and Blip moves into its
       // header (a view transition, where the browser has them). The server
-      // hears about it after. The attribute is set as a JS command, so
-      // patches from the server keep it.
+      // hears about it at once. The browser applies the change a frame
+      // later, so the hook keeps the state itself (this.state) rather than
+      // reading it back from the page. The attribute is set as a JS command,
+      // so patches from the server keep it.
       const KEEP_MS = 6000, AGAIN_MS = 2500
 
       export default {
         mounted() {
+          this.state = this.el.dataset.panel
           this.notice = this.el.dataset.notice
-          this.mark(this.el.dataset.panel)
+          this.mark(this.state)
 
           this.el.addEventListener("click", e => {
             const action = e.target.closest("[data-blip-action]")?.dataset.blipAction
@@ -443,7 +446,7 @@ defmodule PhotonWeb.BlipLive do
           clearTimeout(this.timer)
         },
 
-        panel() { return this.el.dataset.panel },
+        panel() { return this.state },
         pill() { return this.el.querySelector("#blip-pill") },
 
         act(action) {
@@ -455,12 +458,16 @@ defmodule PhotonWeb.BlipLive do
         },
 
         go(to) {
-          const from = this.panel()
+          const from = this.state
           if (from === to) return
+          this.state = to
+          this.pushEvent("panel", {to})
+          // Applies whatever the state is by then, in case it changed again.
           const apply = () => {
-            this.js().setAttribute(this.el, "data-panel", to)
-            this.mark(to)
-            if (to !== "closed") {
+            const now = this.state
+            this.js().setAttribute(this.el, "data-panel", now)
+            this.mark(now)
+            if (now !== "closed") {
               this.collapse()
               const thread = this.el.querySelector("#conversation")
               if (from === "closed" && thread) thread.scrollTop = thread.scrollHeight
@@ -471,10 +478,10 @@ defmodule PhotonWeb.BlipLive do
             ? document.startViewTransition(apply).finished
             : Promise.resolve(apply())
           done.finally(() => {
+            if (this.state !== to) return
             if (to === "closed") this.el.querySelector("#blip-face")?.focus()
             else if (from === "closed") this.el.querySelector("#composer-input")?.focus()
           })
-          this.pushEvent("panel", {to})
         },
 
         // Pages make room for a pinned panel from this (see app.css).
