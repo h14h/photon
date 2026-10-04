@@ -64,6 +64,12 @@ defmodule Photon.AssistantTest do
       assert Assistant.system_prompt(nil) =~ "the NAS is mp1"
     end
 
+    test "searches the web itself: the model gets OpenAI's web search", %{conversation: c} do
+      llm = Assistant.llm(%{id: c})
+      assert llm.config.hosted_tools == [%{"type" => "web_search"}]
+      assert llm.cache_key == c
+    end
+
     test "schedules fire into the conversation", %{conversation: c} do
       {:ok, s} = Assistant.send("in 0 minutes: nodes")
       await_settled(c, s.id)

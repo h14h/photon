@@ -42,6 +42,51 @@ defmodule PhotonCore.Responses.ResponseTest do
            ]
   end
 
+  test "web searches the API ran are reported as they start and finish, and kept in order" do
+    reasoning = %{"type" => "reasoning", "id" => "rs_1", "encrypted_content" => "x"}
+
+    search = %{
+      "type" => "web_search_call",
+      "id" => "ws_1",
+      "status" => "completed",
+      "action" => %{"type" => "search", "query" => "elixir release", "queries" => ["elixir"]}
+    }
+
+    page = %{
+      "type" => "web_search_call",
+      "id" => "ws_2",
+      "status" => "completed",
+      "action" => %{"type" => "open_page", "url" => "https://github.com/elixir-lang/elixir"}
+    }
+
+    body =
+      sse_body([
+        item_done(0, reasoning),
+        %{
+          "type" => "response.output_item.added",
+          "output_index" => 1,
+          "item" => %{"type" => "web_search_call", "id" => "ws_1", "status" => "in_progress"}
+        },
+        %{"type" => "response.web_search_call.searching", "item_id" => "ws_1"},
+        item_done(1, search),
+        item_done(2, page),
+        text_delta("v1.20.4."),
+        completed()
+      ])
+
+    assert {{:ok, response}, events} = read_stream([body])
+    assert response["message"]["reasoning_items"] == [reasoning, search, page]
+    assert response["stop"] == "end_turn"
+
+    assert events == [
+             {:web_search, "ws_1", nil},
+             {:web_search, "ws_1", %{"type" => "search", "query" => "elixir release"}},
+             {:web_search, "ws_2",
+              %{"type" => "open_page", "url" => "https://github.com/elixir-lang/elixir"}},
+             {:text, "v1.20.4."}
+           ]
+  end
+
   test "a finished call's arguments win over its deltas, and an unnamed call gets a name" do
     body =
       sse_body([

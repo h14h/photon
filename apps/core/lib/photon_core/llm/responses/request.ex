@@ -23,6 +23,10 @@ defmodule PhotonCore.LLM.Responses.Request do
       after a caption naming its call.
 
   Tools go in one namespace (`"functions"`), as Sign in with ChatGPT asks.
+  Tools the API runs itself (`config[:hosted_tools]`, e.g.
+  `%{"type" => "web_search"}`) go beside the namespace. What they did comes
+  back as output items (a `"web_search_call"`), kept with the reasoning
+  items and handed back the same way, in the order they came.
   A request's `:cache_key` (a conversation or session ID) becomes the
   `prompt_cache_key`, so its growing history is cached between turns. Sign
   in with ChatGPT accepts no output cap or sampling settings, so a request's
@@ -48,7 +52,7 @@ defmodule PhotonCore.LLM.Responses.Request do
       "reasoning" => reasoning(request[:reasoning]),
       "prompt_cache_key" => request[:cache_key]
     }
-    |> with_tools(request[:tools] || [])
+    |> with_tools(request[:tools] || [], config[:hosted_tools] || [])
     |> Map.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.merge(config[:extra_body] || %{})
   end
@@ -58,9 +62,9 @@ defmodule PhotonCore.LLM.Responses.Request do
   defp reasoning(effort) when effort in [nil, ""], do: %{"summary" => "auto"}
   defp reasoning(effort), do: %{"effort" => effort, "summary" => "auto"}
 
-  defp with_tools(body, []), do: body
+  defp with_tools(body, [], []), do: body
 
-  defp with_tools(body, tools) do
+  defp with_tools(body, tools, hosted) do
     namespace = %{
       "type" => "namespace",
       "name" => "functions",
@@ -69,7 +73,7 @@ defmodule PhotonCore.LLM.Responses.Request do
     }
 
     Map.merge(body, %{
-      "tools" => [namespace],
+      "tools" => if(tools == [], do: hosted, else: [namespace | hosted]),
       "tool_choice" => "auto",
       "parallel_tool_calls" => true
     })
@@ -124,9 +128,10 @@ defmodule PhotonCore.LLM.Responses.Request do
 
   defp input_text(text), do: %{"type" => "input_text", "text" => text}
 
-  # Items the model returned for its reasoning, handed back as they came.
+  # Items the model returned for its reasoning, and the searches it ran
+  # between them, handed back as they came.
   defp reasoning_items(%{"reasoning_items" => items}) when is_list(items),
-    do: Enum.filter(items, &match?(%{"type" => "reasoning"}, &1))
+    do: Enum.filter(items, &(&1["type"] in ["reasoning", "web_search_call"]))
 
   defp reasoning_items(_message), do: []
 

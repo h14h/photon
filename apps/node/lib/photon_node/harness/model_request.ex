@@ -82,6 +82,9 @@ defmodule PhotonNode.Harness.ModelRequest do
     }
   end
 
+  def live_event(turn_id, {:web_search, id, action}),
+    do: %{"type" => "web_search", "turn" => turn_id, "id" => id, "action" => action}
+
   def live_event(turn_id, {:retry, attempt, delay, error}) do
     %{
       "type" => "retry",

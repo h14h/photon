@@ -35,6 +35,10 @@ defmodule Photon.Assistant.PromptTest do
     assert String.ends_with?(prompt, "## The user's instructions\n\nPrefer mp1.")
   end
 
+  test "searches the web itself rather than sending a machine" do
+    assert Prompt.system_prompt(settings(), "", @now) =~ "You can search the web yourself"
+  end
+
   test "says what a note of the page the user had open means" do
     assert Prompt.system_prompt(settings(), "", @now) =~ ~s(may start with "[Looking at ...]")
   end

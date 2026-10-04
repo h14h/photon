@@ -24,6 +24,7 @@ defmodule PhotonCore.RelayWireTest do
         Wire.event({:retry, 1, 1000, error}),
         Wire.event({:text, "h"}),
         Wire.event({:tool_call, 0, nil, "{}"}),
+        Wire.event({:web_search, "ws_1", %{"type" => "search", "query" => "q"}}),
         Wire.done(response),
         Wire.event({:text, "after the end"})
       ])
@@ -34,7 +35,8 @@ defmodule PhotonCore.RelayWireTest do
          {:reasoning, "hm"},
          {:retry, 1, 1000, %{error | retryable: false}},
          {:text, "h"},
-         {:tool_call, 0, nil, "{}"}
+         {:tool_call, 0, nil, "{}"},
+         {:web_search, "ws_1", %{"type" => "search", "query" => "q"}}
        ]}
 
     assert fold([body]) == expected

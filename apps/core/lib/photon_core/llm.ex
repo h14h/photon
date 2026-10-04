@@ -30,12 +30,17 @@ defmodule PhotonCore.LLM do
     * `:retry_base_ms` - the first retry's backoff (default 1000)
     * `:receive_timeout` - milliseconds to wait for data (default 180000)
     * `:extra_body` - fields merged into the request body
+    * `:hosted_tools` - tools the API runs itself, e.g.
+      `[%{"type" => "web_search"}]` (Responses only)
     * `:req_options` - extra `Req` options, e.g. a test plug
 
   Keys it doesn't know are ignored.
 
   `on_event` receives `{:text, delta}`, `{:reasoning, delta}`,
-  `{:tool_call, index, name, args_delta}` while the answer streams, and
+  `{:tool_call, index, name, args_delta}` and `{:web_search, id, action}`
+  (a search a hosted tool ran: `action` is nil when it starts, then what it
+  did, e.g. `%{"type" => "search", "query" => ...}`) while the answer
+  streams, and
   `{:retry, attempt, delay_ms, error}` before a retry, after which deltas
   start over.
 
@@ -84,6 +89,7 @@ defmodule PhotonCore.LLM do
           optional(:retry_base_ms) => non_neg_integer(),
           optional(:receive_timeout) => timeout(),
           optional(:extra_body) => map(),
+          optional(:hosted_tools) => [map()],
           optional(:req_options) => keyword(),
           optional(atom()) => term()
         }
@@ -93,6 +99,7 @@ defmodule PhotonCore.LLM do
           {:text, String.t()}
           | {:reasoning, String.t()}
           | {:tool_call, non_neg_integer(), String.t() | nil, String.t()}
+          | {:web_search, String.t(), map() | nil}
           | {:retry, pos_integer(), non_neg_integer(), Error.t()}
 
   @type on_event :: (event() -> term())

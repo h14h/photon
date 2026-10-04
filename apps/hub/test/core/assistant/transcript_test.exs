@@ -52,7 +52,26 @@ defmodule Photon.Assistant.TranscriptTest do
         |> Transcript.live(%{"type" => "tool_call", "index" => 0, "name" => nil})
         |> Transcript.live(%{"type" => "tool_output", "text" => "ignored"})
 
-      assert live == %{text: "Hello", reasoning: "hm", tools: %{0 => "wait"}, retry: nil}
+      assert live == %{
+               text: "Hello",
+               reasoning: "hm",
+               searches: [],
+               tools: %{0 => "wait"},
+               retry: nil
+             }
+    end
+
+    test "lists web searches as they start, and fills in what each did, in place" do
+      query = %{"type" => "search", "query" => "elixir release"}
+
+      live =
+        nil
+        |> Transcript.live(%{"type" => "web_search", "id" => "ws_1", "action" => nil})
+        |> Transcript.live(%{"type" => "web_search", "id" => "ws_2", "action" => nil})
+        |> Transcript.live(%{"type" => "web_search", "id" => "ws_1", "action" => query})
+
+      # Newest first.
+      assert live.searches == [%{id: "ws_2", action: nil}, %{id: "ws_1", action: query}]
     end
 
     test "starts without a start event" do
@@ -61,7 +80,7 @@ defmodule Photon.Assistant.TranscriptTest do
 
     test "a retry clears it and says when the model is asked again; text clears the notice" do
       retry =
-        Transcript.live(%{text: "He", reasoning: "", tools: %{}, retry: nil}, %{
+        Transcript.live(%{text: "He", reasoning: "", searches: [], tools: %{}, retry: nil}, %{
           "type" => "retry",
           "delay_ms" => 1500,
           "message" => "HTTP 503"
@@ -70,6 +89,7 @@ defmodule Photon.Assistant.TranscriptTest do
       assert retry == %{
                text: "",
                reasoning: "",
+               searches: [],
                tools: %{},
                retry: "The model didn't answer (HTTP 503). Trying again in 1.5s."
              }
@@ -207,6 +227,41 @@ defmodule Photon.Assistant.TranscriptTest do
     test "a run the user stopped is nothing" do
       stopped = entry("error", %{"message" => "Stopped.", "stopped" => true})
       assert Transcript.outcome([stopped], true, false) == nil
+    end
+  end
+
+  describe "web searches" do
+    test "an answer's searches are the ones kept with its reasoning, in order" do
+      search = %{"type" => "web_search_call", "id" => "ws_1", "action" => %{"type" => "search"}}
+
+      message =
+        Map.put(Message.assistant("hi"), "reasoning_items", [%{"type" => "reasoning"}, search])
+
+      assert Transcript.searches(message) == [%{id: "ws_1", action: %{"type" => "search"}}]
+      assert Transcript.searches(Message.assistant("hi")) == []
+    end
+
+    test "read as what was looked for, or the page that was read" do
+      assert Transcript.search_label(%{"type" => "search", "query" => "elixir"}) ==
+               "Searched the web for \u201celixir\u201d"
+
+      assert Transcript.search_label(%{
+               "type" => "open_page",
+               "url" => "https://www.github.com/elixir-lang/elixir/?tab=readme"
+             }) == "Read github.com/elixir-lang/elixir"
+
+      assert Transcript.search_label(%{
+               "type" => "find_in_page",
+               "url" => "https://hexdocs.pm/elixir",
+               "pattern" => "OTP"
+             }) == "Looked in hexdocs.pm/elixir for \u201cOTP\u201d"
+
+      long = "https://example.com/" <> String.duplicate("a", 80)
+      # "Read " and the address, cut to 60 characters.
+      assert String.length(Transcript.search_label(%{"type" => "open_page", "url" => long})) == 65
+
+      assert Transcript.search_label(nil) == "Searching the web"
+      assert Transcript.search_label(%{"type" => "search"}) == "Searched the web"
     end
   end
 end

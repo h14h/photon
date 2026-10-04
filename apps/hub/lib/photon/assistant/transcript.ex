@@ -10,8 +10,11 @@ defmodule Photon.Assistant.Transcript do
       (`index/1`, `add_result/2`, `add_calls/2`)
     * node work a call left running, settled by the report that comes in
       later (`settle/3`)
-    * the in-flight answer (`live/2`): text, reasoning and tool calls being
-      prepared, or a retry notice, until the response is committed
+    * the in-flight answer (`live/2`): text, reasoning, web searches and
+      tool calls being prepared, or a retry notice, until the response is
+      committed
+    * the web searches an answer ran (`searches/1`), and how each reads
+      (`search_label/1`)
     * a tool call's status as the page shows it (`action_status/2`)
     * Blip's mood (`mood/1`), and the outcome a batch of new entries is
       worth showing for a moment (`outcome/3`)
@@ -38,9 +41,14 @@ defmodule Photon.Assistant.Transcript do
   @type live :: %{
           text: String.t(),
           reasoning: String.t(),
+          searches: [search()],
+          # searches: newest first
           tools: %{non_neg_integer() => String.t()},
           retry: String.t() | nil
         }
+
+  @typedoc "A web search the model ran: its ID, and what it did (nil while it runs)."
+  @type search :: %{id: String.t(), action: map() | nil}
 
   @typedoc "Blip's mood, as the avatar shows it."
   @type mood :: :idle | :thinking | :working | :done | :error
@@ -140,7 +148,9 @@ defmodule Photon.Assistant.Transcript do
 
   @doc "Folds a `{:live, ...}` event into the in-flight answer (nil before the first)."
   @spec live(live() | nil, map()) :: live()
-  def live(_live, %{"type" => "start"}), do: %{text: "", reasoning: "", tools: %{}, retry: nil}
+  def live(_live, %{"type" => "start"}),
+    do: %{text: "", reasoning: "", searches: [], tools: %{}, retry: nil}
+
   def live(nil, event), do: live(live(nil, %{"type" => "start"}), event)
 
   def live(live, %{"type" => "text", "delta" => delta}),
@@ -153,18 +163,72 @@ defmodule Photon.Assistant.Transcript do
       when is_binary(name),
       do: %{live | tools: Map.put(live.tools, index, name)}
 
+  # A search starts (no action yet), then says what it did, in its place.
+  # Newest first.
+  def live(live, %{"type" => "web_search", "id" => id} = event) when is_binary(id) do
+    search = %{id: id, action: event["action"]}
+
+    searches =
+      if Enum.any?(live.searches, &(&1.id == id)),
+        do: Enum.map(live.searches, &if(&1.id == id, do: search, else: &1)),
+        else: [search | live.searches]
+
+    %{live | searches: searches}
+  end
+
   def live(_live, %{"type" => "retry"} = event) do
     seconds = Float.round(event["delay_ms"] / 1000, 1)
 
     %{
       text: "",
       reasoning: "",
+      searches: [],
       tools: %{},
       retry: "The model didn't answer (#{event["message"]}). Trying again in #{seconds}s."
     }
   end
 
   def live(live, _event), do: live
+
+  @doc """
+  The web searches a committed assistant message ran, in order: they're
+  kept with its reasoning items, so they can be handed back to the model.
+  """
+  @spec searches(map()) :: [search()]
+  def searches(%{"reasoning_items" => items}) when is_list(items) do
+    for %{"type" => "web_search_call"} = item <- items,
+        do: %{id: item["id"], action: item["action"]}
+  end
+
+  def searches(_message), do: []
+
+  @doc """
+  How a web search reads: what it looked for, or the page it read. A search
+  still running (no action yet) reads as "Searching the web".
+  """
+  @spec search_label(map() | nil) :: String.t()
+  def search_label(%{"type" => "search", "query" => query}) when is_binary(query) and query != "",
+    do: "Searched the web for \u201c#{query}\u201d"
+
+  def search_label(%{"type" => "open_page", "url" => url}) when is_binary(url),
+    do: "Read #{short_url(url)}"
+
+  def search_label(%{"type" => "find_in_page", "url" => url, "pattern" => pattern})
+      when is_binary(url) and is_binary(pattern),
+      do: "Looked in #{short_url(url)} for \u201c#{pattern}\u201d"
+
+  def search_label(nil), do: "Searching the web"
+  def search_label(_action), do: "Searched the web"
+
+  # A URL without its scheme, "www." or query, and cut short if it runs long.
+  defp short_url(url) do
+    %URI{host: host, path: path} = URI.parse(url)
+
+    short =
+      String.replace_prefix(host || url, "www.", "") <> String.trim_trailing(path || "", "/")
+
+    if String.length(short) > 60, do: String.slice(short, 0, 57) <> "...", else: short
+  end
 
   @doc """
   A tool call's status on the page, from its result entry's data (nil while

@@ -6,6 +6,7 @@ defmodule PhotonCore.LLM.Relay.Wire do
 
     * `"text"`, `"reasoning"`: `"delta"`
     * `"tool_call"`: `"index"`, `"name"` (or null) and `"delta"`
+    * `"web_search"`: `"id"` and `"action"` (or null)
     * `"retry"`: `"attempt"`, `"delay_ms"` and `"error"`; deltas start over
     * `"done"`: `"response"`, the finished response; the stream ends
     * `"error"`: `"error"`; the stream ends
@@ -42,6 +43,9 @@ defmodule PhotonCore.LLM.Relay.Wire do
 
   def event({:tool_call, index, name, delta}),
     do: sse(%{"type" => "tool_call", "index" => index, "name" => name, "delta" => delta})
+
+  def event({:web_search, id, action}),
+    do: sse(%{"type" => "web_search", "id" => id, "action" => action})
 
   def event({:retry, attempt, delay_ms, %Error{} = error}) do
     sse(%{
@@ -135,6 +139,9 @@ defmodule PhotonCore.LLM.Relay.Wire do
   defp decode_event(%{"type" => "retry", "attempt" => attempt, "delay_ms" => delay} = event)
        when is_integer(attempt) and attempt > 0 and is_integer(delay) and delay >= 0,
        do: {:retry, attempt, delay, decode_error(event["error"])}
+
+  defp decode_event(%{"type" => "web_search", "id" => id} = event) when is_binary(id),
+    do: {:web_search, id, event["action"]}
 
   defp decode_event(_payload), do: nil
 

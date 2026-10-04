@@ -137,6 +137,9 @@ defmodule Photon.Durable.TurnTest do
       assert Turn.live_event({:text, "he"}) == %{"type" => "text", "delta" => "he"}
       assert Turn.live_event({:reasoning, "hm"}) == %{"type" => "reasoning", "delta" => "hm"}
 
+      assert Turn.live_event({:web_search, "ws_1", nil}) ==
+               %{"type" => "web_search", "id" => "ws_1", "action" => nil}
+
       assert Turn.live_event({:tool_call, 0, "wait", "{"}) ==
                %{"type" => "tool_call", "index" => 0, "name" => "wait", "delta" => "{"}
 

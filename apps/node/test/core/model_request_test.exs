@@ -9,6 +9,9 @@ defmodule PhotonNode.Harness.ModelRequestTest do
     assert ModelRequest.live_event("t1", {:text, "Hi"}) ==
              %{"type" => "text", "turn" => "t1", "delta" => "Hi"}
 
+    assert ModelRequest.live_event("t1", {:web_search, "ws_1", nil}) ==
+             %{"type" => "web_search", "turn" => "t1", "id" => "ws_1", "action" => nil}
+
     assert ModelRequest.live_event("t1", {:reasoning, "hm"}) ==
              %{"type" => "reasoning", "turn" => "t1", "delta" => "hm"}
 

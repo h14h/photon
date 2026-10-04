@@ -36,6 +36,17 @@ defmodule PhotonCore.Responses.RequestTest do
       assert body["tool_choice"] == "auto"
     end
 
+    test "offers the API's own tools beside the namespace, or on their own" do
+      tool = %{"name" => "Bash", "description" => "Run it"}
+      search = %{"type" => "web_search"}
+
+      body = Request.encode(request(tools: [tool]), %{hosted_tools: [search]})
+      assert [%{"type" => "namespace"}, ^search] = body["tools"]
+
+      assert Request.encode(request(), %{hosted_tools: [search]})["tools"] == [search]
+      refute Map.has_key?(Request.encode(request(), %{}), "tools")
+    end
+
     test "names the history it continues, for the prompt cache" do
       assert Request.encode(request(cache_key: "c_1"), %{})["prompt_cache_key"] == "c_1"
       refute Map.has_key?(Request.encode(request(), %{}), "prompt_cache_key")
@@ -86,6 +97,24 @@ defmodule PhotonCore.Responses.RequestTest do
                  "namespace" => "functions"
                }
              ] = Request.encode_messages([message])
+    end
+
+    test "the web searches an answer ran go back with its reasoning, in the order they came" do
+      reasoning = %{"type" => "reasoning", "id" => "rs_1", "encrypted_content" => "x"}
+
+      search = %{
+        "type" => "web_search_call",
+        "id" => "ws_1",
+        "status" => "completed",
+        "action" => %{"type" => "search", "query" => "elixir release"}
+      }
+
+      message =
+        "v1.20.4."
+        |> Message.assistant()
+        |> Map.put("reasoning_items", [reasoning, search, %{"type" => "other"}])
+
+      assert [^reasoning, ^search, %{"type" => "message"}] = Request.encode_messages([message])
     end
 
     test "a call whose arguments aren't a JSON object goes back wrapped, so it's accepted" do
