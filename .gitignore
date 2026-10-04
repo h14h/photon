@@ -1,45 +1,25 @@
-# The directory Mix will write compiled artifacts to.
-/_build/
-
-# If you run "mix test --cover", coverage assets end up here.
-/cover/
-
-# The directory Mix downloads your dependencies sources to.
-/deps/
-
-# Where 3rd-party dependencies like ExDoc output generated docs.
-/doc/
-
-# Ignore .fetch files in case you like to edit your project deps locally.
-/.fetch
-
-# If the VM crashes, it generates a dump, let's ignore it too.
+# Build output and fetched dependencies, per app.
+_build/
+deps/
+cover/
+doc/
+.fetch
 erl_crash.dump
-
-# Also ignore archive artifacts (built via "mix archive.build").
 *.ez
+tmp/
 
-# Temporary files, for example, from tests.
-/tmp/
-
-# Ignore package tarball (built via "mix hex.build").
-photon-*.tar
-
-# Ignore assets that are produced by build tools.
-/priv/static/assets/
-
-# Ignore digested assets cache.
-/priv/static/cache_manifest.json
-
-# In case you use Node.js/npm, you want to ignore these.
+# The hub's built assets.
+/apps/hub/priv/static/assets/
+/apps/hub/priv/static/cache_manifest.json
+/apps/hub/assets/node_modules/
 npm-debug.log
-/assets/node_modules/
 
+# Local hub data (sessions, settings, the assistant's database).
+/apps/hub/.photon/
 
-# Playground data and the locally built runner
-/.photon/
-/priv/bin/
+# Packaged node binaries.
+/apps/node/burrito_out/
+/apps/node/dist/
 
-# Local tool state and test scratch
+# Local tool state.
 /.claude/
-/node/tmp/

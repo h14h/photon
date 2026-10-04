@@ -1,0 +1,122 @@
+/* Blip avatar states. Inline brand/blip.svg and set data-state on the <svg>:
+   idle | thinking | working | done | error | observed
+   All CSS, so it works at 24px in a sidebar or 260px on a page.
+   Reduced motion: animations stop; states still read from pose and colour. */
+
+.blip {
+  --blip-ring: transparent;
+  display: inline-block;
+  overflow: visible;
+  color: var(--blip-eye, oklch(25% 0.03 50));
+}
+.blip * { transform-box: fill-box; transform-origin: center; }
+
+/* Parts */
+.blip-wave    { opacity: 0; transition: opacity .3s; }
+.blip-ring    { opacity: 0; stroke: var(--blip-ring); }
+.blip-mote    { opacity: 0; fill: var(--blip-mood-think, oklch(66% 0.13 300)); }
+.blip-cheeks  { opacity: 0; fill: var(--blip-mood-blush, oklch(74% 0.14 350)); transition: opacity .25s; }
+.blip-happy   { stroke: currentColor; }
+.blip-happy path { opacity: 0; transition: opacity .15s; }
+.blip-sclera  { fill: var(--blip-sclera, oklch(99% 0.006 90)); }
+.blip-pupil   { fill: currentColor; }
+.blip-eyes    { transition: opacity .15s, transform .3s; }
+.blip-pupil-g { transition: transform .25s cubic-bezier(.2,.7,.2,1); }
+.blip-lid     { transform: translateY(0); transition: transform .25s; }   /* upper lid: a circle above the eye; translateY(+) lowers it, curved edge */
+.blip-lower   { transform: translateY(0); transition: transform .25s; }      /* lower lid: a circle below; translateY(-) raises it, the warm squint */
+.blip stop    { transition: stop-color .4s; }
+.blip-halo    { animation: blip-breathe 3.2s ease-in-out infinite; }
+.blip-self    { transition: transform .35s cubic-bezier(.2,.7,.2,1), filter .35s, opacity .3s; }
+.blip-body-g  { animation: blip-idle 3.2s ease-in-out infinite; }
+.blip-eye-l .blip-lid { animation: blip-blink 5.5s infinite; }
+.blip-eye-r .blip-lid { animation: blip-blink 5.5s infinite; animation-delay: .03s; }
+
+/* Bounce. Add .is-poked for one jelly wobble (the site does this on click). */
+.blip.is-poked .blip-self { animation: blip-jelly .7s cubic-bezier(.2,.7,.2,1) 1; }
+
+/* thinking: fuzzy, violet, eyes drift up and to the side, a mote orbits */
+.blip[data-state="thinking"] .blip-stop-a, .blip[data-state="thinking"] .blip-stop-halo { stop-color: var(--blip-mood-think, oklch(66% 0.13 300)); }
+.blip[data-state="thinking"] .blip-stop-b { stop-color: color-mix(in oklch, var(--blip-mood-think, oklch(66% 0.13 300)) 75%, var(--blip-amber-deep)); }
+.blip[data-state="thinking"] .blip-self { filter: blur(1.6px); transform: rotate(-6deg) translateY(-3px) scale(.9, 1.1); animation: blip-bob 1.8s ease-in-out infinite; }
+.blip[data-state="thinking"] .blip-pupil-g { transform: translate(1.2px, -2.4px); }
+.blip[data-state="thinking"] .blip-lid { transform: translateY(2.2px); animation: none; }
+.blip[data-state="thinking"] .blip-lower { transform: translateY(-1px); }
+.blip[data-state="thinking"] .blip-mote { opacity: 1; animation: blip-orbit 2.2s linear infinite; }
+
+/* working: the particle becomes a wave. Body stretches and fades, eyes ride the crest. */
+.blip[data-state="working"] .blip-body-g { animation: none; }
+.blip[data-state="working"] .blip-self { transform: scale(1.35, .55); }
+.blip[data-state="working"] .blip-core, .blip[data-state="working"] .blip-cheeks { opacity: 0; transition: opacity .3s; }
+.blip[data-state="working"] .blip-halo { opacity: .6; transform: scale(1.3, .7); }
+.blip[data-state="working"] .blip-wave { opacity: 1; animation: blip-travel 1.4s linear infinite; }
+.blip[data-state="working"] .blip-eyes { transform: scale(.62, 1.5); animation: blip-ride 1.4s ease-in-out infinite; }
+.blip[data-state="working"] .blip-pupil-g { transform: translate(1.2px, 0); }
+.blip[data-state="working"] .blip-lid { transform: translateY(1.2px); animation: none; }
+.blip[data-state="working"] .blip-lower { transform: translateY(-2.2px); }
+.blip[data-state="working"] .blip-lid { animation: none; }
+
+/* done: hop, happy eyes, one green ring rolls out */
+.blip[data-state="done"] { --blip-ring: var(--blip-mood-done, oklch(63% 0.14 155)); }
+.blip[data-state="done"] .blip-stop-a, .blip[data-state="done"] .blip-stop-halo { stop-color: var(--blip-mood-done, oklch(63% 0.14 155)); }
+.blip[data-state="done"] .blip-stop-b { stop-color: color-mix(in oklch, var(--blip-mood-done, oklch(63% 0.14 155)) 70%, var(--blip-amber-deep)); }
+.blip[data-state="done"] .blip-eyes { opacity: 0; }
+.blip[data-state="done"] .blip-happy path { opacity: 1; }
+.blip[data-state="done"] .blip-ring { animation: blip-pulse 1.2s ease-out 1 both; }
+.blip[data-state="done"] .blip-self { transform: translateY(4px) scale(1.14, .86); animation: blip-hop .7s cubic-bezier(.3,.8,.3,1) 1; }
+
+/* error: red, deflates a little, eyes drop and lids come halfway down. Sorry, not angry. */
+.blip[data-state="error"] .blip-stop-a, .blip[data-state="error"] .blip-stop-halo { stop-color: var(--blip-mood-error, oklch(60% 0.19 28)); }
+.blip[data-state="error"] .blip-stop-b { stop-color: color-mix(in oklch, var(--blip-mood-error, oklch(60% 0.19 28)) 70%, var(--blip-amber-deep)); }
+.blip[data-state="error"] .blip-self { transform: translateY(3px) scale(1.06, .9); animation: blip-shiver .9s ease-in-out 1; }
+.blip[data-state="error"] .blip-pupil-g { transform: translate(0, 1.6px) scale(.9); }
+.blip[data-state="error"] .blip-lid-l { transform: translateY(4.6px) skewY(-18deg); animation: none; }
+.blip[data-state="error"] .blip-lid-r { transform: translateY(4.6px) skewY(18deg); animation: none; }
+.blip[data-state="error"] .blip-lower { transform: translateY(0); }
+
+/* observed: you looked. It noticed. Shrinks, blushes, glances aside. */
+.blip[data-state="observed"] .blip-cheeks { opacity: .8; }
+.blip[data-state="observed"] .blip-pupil-g { transform: translate(1.8px, .8px); }
+.blip[data-state="observed"] .blip-lid { transform: translateY(.6px); animation: none; }
+.blip[data-state="observed"] .blip-lower { transform: translateY(-2.8px); }
+.blip[data-state="observed"] .blip-self { transform: rotate(3deg) translateY(2px) scale(.92); }
+.blip[data-state="observed"] .blip-body-g { animation: blip-fidget 1.6s ease-in-out infinite; }
+.blip[data-state="observed"] .blip-halo { animation: none; opacity: .9; }
+.blip[data-state="observed"] .blip-stop-halo { stop-color: var(--blip-mood-blush, oklch(74% 0.14 350)); }
+
+@keyframes blip-breathe { 0%,100% { opacity: .55; transform: scale(.9) } 50% { opacity: 1; transform: scale(1) } }
+@keyframes blip-idle { 0%,100% { transform: scale(1, 1) } 35% { transform: scale(1.03, .97) } 70% { transform: scale(.98, 1.03) } }
+@keyframes blip-blink { 0%, 93%, 100% { transform: translateY(0) } 95.5%, 97% { transform: translateY(13px) } }
+@keyframes blip-bob { 0%,100% { transform: rotate(-6deg) translateY(-3px) scale(.9, 1.1) } 50% { transform: rotate(-6deg) translateY(-6px) scale(.9, 1.1) } }
+@keyframes blip-fidget { 0%,100% { transform: rotate(0deg) scale(1,1) } 30% { transform: rotate(-2.5deg) scale(1.02,.98) } 70% { transform: rotate(2deg) scale(.98,1.02) } }
+@keyframes blip-orbit {
+  from { transform: rotate(0deg) translate(32px) rotate(0deg) }
+  to   { transform: rotate(360deg) translate(32px) rotate(-360deg) }
+}
+@keyframes blip-travel { from { transform: translateX(0) } to { transform: translateX(-60px) } }
+@keyframes blip-ride { 0%,100% { transform: scale(.62, 1.5) translateY(0) } 25% { transform: scale(.62, 1.5) translateY(-11px) } 75% { transform: scale(.62, 1.5) translateY(11px) } }
+@keyframes blip-pulse { from { opacity: .9; transform: scale(.75) } to { opacity: 0; transform: scale(1.5) } }
+@keyframes blip-hop {
+  0%   { transform: translateY(0) scale(1, 1) }
+  20%  { transform: translateY(2px) scale(1.12, .86) }
+  50%  { transform: translateY(-12px) scale(.92, 1.1) }
+  75%  { transform: translateY(5px) scale(1.2, .8) }
+  100% { transform: translateY(4px) scale(1.14, .86) }
+}
+@keyframes blip-jelly {
+  0%   { transform: scale(1, 1) }
+  20%  { transform: scale(1.18, .84) }
+  40%  { transform: scale(.88, 1.12) }
+  60%  { transform: scale(1.07, .94) }
+  80%  { transform: scale(.97, 1.03) }
+  100% { transform: scale(1, 1) }
+}
+@keyframes blip-shiver { 0%,100% { transform: translateY(3px) scale(1.06,.9) } 25% { transform: translate(-2px,3px) scale(1.06,.9) } 50% { transform: translate(2px,3px) scale(1.06,.9) } 75% { transform: translate(-1px,3px) scale(1.06,.9) } }
+
+@media (prefers-reduced-motion: reduce) {
+  .blip *, .blip { animation: none !important; transition: none !important; }
+  .blip[data-state="working"] .blip-wave { opacity: 1; }
+  .blip[data-state="working"] .blip-eyes { transform: scale(.62, 1.5); }
+  .blip[data-state="done"] .blip-ring { opacity: .6; }
+  .blip[data-state="thinking"] .blip-mote { opacity: 1; transform: translate(32px, -10px); }
+  .blip[data-state="thinking"] .blip-self { filter: blur(1.2px); }
+}

@@ -1,0 +1,21 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- Blip at rest, for the favicon. From the brand kit's blip.svg (commit
+       617c74b): colours written in, only the body, halo and eyes, and the
+       body and eyes drawn larger so they read at 16px. -->
+  <defs>
+    <linearGradient id="b" gradientUnits="userSpaceOnUse" x1="26" y1="50" x2="74" y2="50">
+      <stop offset="0" stop-color="oklch(70% 0.165 58)"/>
+      <stop offset="1" stop-color="oklch(58% 0.17 45)"/>
+    </linearGradient>
+    <radialGradient id="h">
+      <stop offset="0.45" stop-color="oklch(70% 0.165 58)" stop-opacity="0.38"/>
+      <stop offset="1" stop-color="oklch(70% 0.165 58)" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="50" cy="50" r="46" fill="url(#h)"/>
+  <circle cx="50" cy="50" r="30" fill="url(#b)"/>
+  <circle cx="40" cy="49" r="8.2" fill="oklch(99% 0.006 90)"/>
+  <circle cx="60" cy="49" r="8.2" fill="oklch(99% 0.006 90)"/>
+  <circle cx="40.5" cy="50" r="5.2" fill="oklch(25% 0.03 50)"/>
+  <circle cx="60.5" cy="50" r="5.2" fill="oklch(25% 0.03 50)"/>
+</svg>
