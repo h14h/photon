@@ -182,7 +182,12 @@ defmodule Photon.Assistant do
     settings = Settings.load()
 
     %{
-      config: Photon.ChatGPT.llm_config(Photon.Assistant.MockScript),
+      # Blip searches the web itself (OpenAI runs the search), rather than
+      # sending a machine to look something up. The scripted model ignores it.
+      config:
+        Photon.Assistant.MockScript
+        |> Photon.ChatGPT.llm_config()
+        |> Map.put(:hosted_tools, [%{"type" => "web_search"}]),
       stream: &Photon.ChatGPT.stream/3,
       model: Settings.model(settings),
       reasoning: Prompt.reasoning(settings),

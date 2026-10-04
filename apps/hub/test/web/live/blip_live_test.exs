@@ -136,6 +136,39 @@ defmodule PhotonWeb.BlipLiveTest do
       assert has_element?(find_live_child(reloaded, "blip"), "#action-c1[data-status=done]")
     end
 
+    test "shows the web searches an answer runs, and keeps them with the answer", %{
+      blip: blip,
+      conversation: c
+    } do
+      send(blip.pid, {:live, c, %{"type" => "start"}})
+      send(blip.pid, {:live, c, %{"type" => "web_search", "id" => "ws_1", "action" => nil}})
+      assert has_element?(blip, "#live-searches [data-search]", "Searching the web")
+
+      query = %{"type" => "search", "query" => "latest elixir"}
+      send(blip.pid, {:live, c, %{"type" => "web_search", "id" => "ws_1", "action" => query}})
+      assert has_element?(blip, "#live-searches", "Searched the web for")
+
+      page = %{"type" => "open_page", "url" => "https://github.com/elixir-lang/elixir/releases"}
+
+      message =
+        "v1.20.4."
+        |> PhotonCore.Message.assistant()
+        |> Map.put("reasoning_items", [
+          %{"type" => "web_search_call", "id" => "ws_1", "action" => query},
+          %{"type" => "web_search_call", "id" => "ws_2", "action" => page}
+        ])
+
+      Durable.commit(&Durable.Tx.append(&1, c, "assistant", %{"message" => message}))
+      refute has_element?(blip, "#live-searches")
+      assert has_element?(blip, "#entries [data-search]", "latest elixir")
+
+      assert has_element?(
+               blip,
+               ~s(#entries [data-search] a[href="https://github.com/elixir-lang/elixir/releases"]),
+               "Read github.com/elixir-lang/elixir/releases"
+             )
+    end
+
     test "a blank message sends nothing", %{blip: blip, conversation: c} do
       blip |> form("#composer", message: %{text: "   "}) |> render_submit()
       assert Durable.entries(c) == []

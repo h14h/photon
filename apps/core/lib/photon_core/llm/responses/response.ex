@@ -18,6 +18,9 @@ defmodule PhotonCore.LLM.Responses.Response do
       a tool call as it is written; `response.output_item.done` gives each
       finished item, whose arguments win over the deltas, and the reasoning
       items to hand back next time
+    * `response.output_item.added` and `.done` for a `"web_search_call"`:
+      a web search the API ran (a hosted tool), reported as it starts and
+      again with what it did, and kept, in order, with the reasoning items
     * `response.completed` and `response.incomplete`: the end, with usage
     * `response.failed` and `error`: a failure
 
@@ -90,6 +93,11 @@ defmodule PhotonCore.LLM.Responses.Response do
          "output_index" => output_index
        }),
        do: start_call(stream, output_index, item)
+
+  defp on(stream, "response.output_item.added", %{
+         "item" => %{"type" => "web_search_call", "id" => id}
+       }),
+       do: emit(stream, {:web_search, id, nil})
 
   defp on(stream, "response.function_call_arguments.delta", %{
          "output_index" => output_index,
@@ -180,6 +188,11 @@ defmodule PhotonCore.LLM.Responses.Response do
   defp finish_item(stream, _output_index, %{"type" => "reasoning"} = item),
     do: %{stream | reasoning_items: [item | stream.reasoning_items]}
 
+  defp finish_item(stream, _output_index, %{"type" => "web_search_call"} = item) do
+    %{stream | reasoning_items: [item | stream.reasoning_items]}
+    |> emit({:web_search, item["id"], search_action(item["action"])})
+  end
+
   defp finish_item(stream, _output_index, _item), do: stream
 
   defp ended(stream, how, response) do
@@ -192,6 +205,10 @@ defmodule PhotonCore.LLM.Responses.Response do
   end
 
   defp emit(stream, event), do: %{stream | events: [event | stream.events]}
+
+  # What a search did: searched for something, or opened or looked in a page.
+  defp search_action(%{} = action), do: Map.take(action, ["type", "query", "url", "pattern"])
+  defp search_action(_action), do: %{}
 
   @doc """
   The result once the body has ended. `call_id` names a tool call the model

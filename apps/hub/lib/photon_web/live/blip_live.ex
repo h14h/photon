@@ -783,10 +783,19 @@ defmodule PhotonWeb.BlipLive do
 
   defp entry(%{entry: %{kind: "assistant"}} = assigns) do
     message = assigns.entry.data["message"]
-    assigns = assign(assigns, text: Message.text_of(message), calls: Message.tool_calls(message))
+
+    assigns =
+      assign(assigns,
+        text: Message.text_of(message),
+        calls: Message.tool_calls(message),
+        searches: Transcript.searches(message)
+      )
 
     ~H"""
     <div class="min-w-0 space-y-2.5">
+      <div :if={@searches != []} class="space-y-1">
+        <.search :for={search <- @searches} action={search.action} />
+      </div>
       <div :if={@text != ""} class="markdown-body text-ink">{raw(Markdown.to_html(@text))}</div>
       <div :if={@calls != []} class="space-y-1.5">
         <.action
@@ -924,6 +933,31 @@ defmodule PhotonWeb.BlipLive do
     """
   end
 
+  attr :action, :map, default: nil, doc: "what the search did; nil while it runs"
+
+  # A web search Blip ran (OpenAI runs it): what it looked for, or the page
+  # it read, linked.
+  defp search(assigns) do
+    ~H"""
+    <p class="flex min-w-0 items-center gap-2 text-[13px] text-ink-faint" data-search>
+      <span :if={is_nil(@action)} class="text-accent-strong"><.spinner class="size-3.5" /></span>
+      <.icon :if={@action} name="hero-globe-alt-micro" class="size-3.5 shrink-0" />
+      <%= if @action && @action["url"] do %>
+        <a
+          href={@action["url"]}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="min-w-0 truncate hover:text-ink hover:underline"
+        >
+          {Transcript.search_label(@action)}
+        </a>
+      <% else %>
+        <span class="min-w-0 truncate">{Transcript.search_label(@action)}</span>
+      <% end %>
+    </p>
+    """
+  end
+
   defp action_label("run_on_node", args),
     do: "#{args["node"]}: #{args["title"] || truncate(args["task"])}"
 
@@ -1010,6 +1044,9 @@ defmodule PhotonWeb.BlipLive do
       >
         {@shown.reasoning |> String.slice(-400, 400)}
       </p>
+      <div :if={@live.searches != []} id="live-searches" class="space-y-1">
+        <.search :for={search <- Enum.reverse(@live.searches)} action={search.action} />
+      </div>
       <div :if={@shown.text != ""} id="live-text" class="markdown-body text-ink" data-streaming>
         {raw(Markdown.to_html(@shown.text))}
       </div>

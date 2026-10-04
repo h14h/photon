@@ -167,6 +167,9 @@ defmodule Photon.Durable.Turn do
   def live_event({:tool_call, index, name, args}),
     do: %{"type" => "tool_call", "index" => index, "name" => name, "delta" => args}
 
+  def live_event({:web_search, id, action}),
+    do: %{"type" => "web_search", "id" => id, "action" => action}
+
   def live_event({:retry, attempt, delay, error}) do
     %{
       "type" => "retry",
