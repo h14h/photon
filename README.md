@@ -99,6 +99,11 @@ every platform. You get one always-on machine with a volume for your data.
   then lists your machines for one-click installs, and your own devices on
   the tailnet skip the password (`PHOTON_AUTH=tailscale,password`).
 
+To keep a Fly hub off the internet entirely, deploy it with
+`--no-public-ips`, set `PHOTON_AUTH=tailscale` and `PHOTON_TAILSCALE_SERVE=1`,
+and `PHOTON_PUBLIC_URL` to `https://<TS_HOSTNAME>.<tailnet>.ts.net`: it then
+answers only on your tailnet, over HTTPS, to your own devices.
+
 The image runs anywhere Docker does, for example on a VM that's already on
 your tailnet, where it can open for your devices on the tailnet and nobody
 else, behind Tailscale Serve (or another TLS proxy on the same machine):

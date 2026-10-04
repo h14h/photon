@@ -8,6 +8,8 @@
 #   PHOTON_AUTH          who may open the GUI (default: tailscale,password,
 #                        your tailnet devices skip the password, when the
 #                        kernel TUN device is available, as on Fly)
+#   PHOTON_TAILSCALE_SERVE  1: serve the hub over HTTPS on its tailnet name
+#                        (tailscale serve), for a hub with no public address
 set -eu
 
 server="$(cd -P -- "$(dirname -- "$0")" && pwd)/server"
@@ -52,6 +54,11 @@ if [ -n "${TS_AUTHKEY:-}" ] || [ -f "$data/tailscale/tailscaled.state" ]; then
     export PHOTON_SSH_PROXY="tailscale nc %h %p"
     if [ "$mode" = kernel ] && [ -z "${PHOTON_TRUST_TAILNET:-}" ]; then
       export PHOTON_AUTH="${PHOTON_AUTH:-tailscale,password}"
+    fi
+    # Kept in tailscaled's state, so this only confirms it on later boots.
+    if [ -n "${PHOTON_TAILSCALE_SERVE:-}" ]; then
+      tailscale serve --bg "${PORT:-4000}" >/dev/null &&
+        echo "photon: serving the hub over HTTPS on its tailnet name"
     fi
   else
     echo "photon: warning: couldn't join the tailnet (see /tmp/tailscaled.log); continuing without it" >&2
