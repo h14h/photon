@@ -26,18 +26,18 @@ defmodule PhotonWeb.NodeChannel do
 
   alias Photon.{Nodes, NodeSessions}
 
+  # A node joins as the node its key belongs to (`PhotonWeb.NodeSocket`).
   @impl true
-  def join("node:" <> node_id, info, socket) do
-    if Regex.match?(~r/\A[\w.-]{1,64}\z/, node_id) do
-      :ok = Nodes.register(node_id, node_info(info))
-      send(self(), :joined)
+  def join("node:" <> node_id, info, %{assigns: %{node_id: node_id}} = socket) do
+    :ok = Nodes.register(node_id, node_info(info))
+    send(self(), :joined)
 
-      {:ok, %{"sync" => NodeSessions.sync_for(node_id)},
-       socket |> assign(:node_id, node_id) |> assign(:pushed_inputs, MapSet.new())}
-    else
-      {:error, %{"reason" => "invalid node id"}}
-    end
+    {:ok, %{"sync" => NodeSessions.sync_for(node_id)},
+     assign(socket, :pushed_inputs, MapSet.new())}
   end
+
+  def join("node:" <> other, _info, socket),
+    do: {:error, %{"reason" => "this key belongs to #{socket.assigns.node_id}, not #{other}"}}
 
   defp node_info(info) do
     info

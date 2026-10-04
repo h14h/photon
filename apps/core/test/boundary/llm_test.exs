@@ -159,6 +159,12 @@ defmodule PhotonCore.LLMTest do
       assert {:error, %Error{kind: :config, message: "not signed in with ChatGPT"}} =
                LLM.stream(request(), stub_config(__MODULE__, api_key: nil))
 
+      assert {:error, %Error{kind: :config, message: "plan use isn't allowed"}} =
+               LLM.stream(
+                 request(),
+                 stub_config(__MODULE__, api_key: nil, problem: "plan use isn't allowed")
+               )
+
       assert {:error, %Error{kind: :config, message: "no model selected"}} =
                LLM.stream(request(model: ""), stub_config(__MODULE__))
 

@@ -121,7 +121,7 @@ hotspots still refer to the original snapshot.
 | Module | Layer | Purity | Depends on |
 | --- | --- | --- | --- |
 | `Photon` | namespace (docs only: the contexts and where each layer lives) | pure | none |
-| `Photon.Application` | lifecycle (the lifecycle plan is in its moduledoc) | is a process (app supervisor); `start/2` may generate and write the GUI password before the tree starts | `Auth`, `NodeAuth`, `Paths`, every child it starts |
+| `Photon.Application` | lifecycle (the lifecycle plan is in its moduledoc) | is a process (app supervisor); `start/2` may generate and write the GUI password before the tree starts | `Auth`, `NodeKeys` (the built-in node's key), `Paths`, every child it starts |
 | `Photon.Repo` | boundary (SQLite) | is a process (connection pool) | Ecto, ecto_sqlite3 |
 | `Photon.Paths` | boundary (locations) | reads app env | none |
 | **Durable harness** | | | |
@@ -180,17 +180,19 @@ hotspots still refer to the original snapshot.
 | `Photon.Nodes` | boundary (connected nodes, which are channel processes in a Registry; why commands are plain sends is in its moduledoc) | does I/O (Registry, sends, PubSub); `roster/2`, `sort/1` pure | `Photon.NodeRegistry`, Phoenix.PubSub |
 | `Photon.NodeDist` | boundary (packaged binaries, install script) | `dir/0`, `binary/1`, `available/0`, `version/0` do I/O; `outdated?/2`, `target/2`, `install_script/1` pure | `Hub`, EEx |
 | `Photon.Hub` | boundary (how nodes reach the hub) | reads app env; `node_socket_url/1` pure | none |
-| `Photon.Provision` | boundary (API and server: job table; jobs run as monitored tasks) | is a process; `System.cmd` ssh, temp files, PubSub | `Jobs`, `Script`, `NodeDist`, `Nodes`, `NodeAuth`, `Photon.ProvisionTasks` |
+| `Photon.Provision` | boundary (API and server: job table; jobs run as monitored tasks) | is a process; `System.cmd` ssh, temp files, PubSub | `Jobs`, `Script`, `NodeDist`, `Nodes`, `NodeKeys` (a fresh key per install, revoked on removal), `Photon.ProvisionTasks` |
 | `Photon.Provision.Jobs` | functional core (the job table: validation, busy, events, a task that died) | pure | none |
 | `Photon.Provision.Script` | functional core (probe, upload, installer input, ssh arguments, failure reasons) | pure | `NodeDist`, `Hub` |
 | `Photon.Provision.Lines` | functional core (Collectable line splitter, now in `provision/lines.ex`) | pure apart from the `log` callback it calls | none |
-| `Photon.Tailnet` | boundary (`tailscale` CLI, ETS cache) and the cache table's owner (a GenServer that creates it in `init/1`) | does I/O; `parse/1`, `names/1`, `fresh?/2` pure | ETS |
+| `Photon.Tailnet` | boundary (`tailscale` CLI, ETS cache) and the cache table's owner (a GenServer that creates it in `init/1`) | does I/O; `parse/1`, `parse_whois/1`, `names/1`, `fresh?/2` pure | ETS |
 | **Settings and auth** | | | |
-| `Photon.Settings` | boundary (`load/0`, `save/1`) and pure functions of a settings map (`normalize/2`, `model/1`, `model_label/1`, `scheduled_work?/1`, `node_config/1`) | `load/0`, `save/1` do I/O | `Paths`, `Events` |
-| `Photon.ChatGPT` | boundary (API and server: the ChatGPT account; sign-in, tokens, serialized refresh, models) | is a process; HTTP to OpenAI, the account file, PubSub | `ChatGPT.OAuth`, `Paths`, `Events`, Req |
+| `Photon.Settings` | boundary (`load/0`, `save/1`) and pure functions of a settings map (`normalize/2`, `model/1`, `model_label/1`, `scheduled_work?/1`, `node_config/1`) | `load/0`, `save/1` do I/O | `Paths`, `PrivateFile`, `Events` |
+| `Photon.ChatGPT` | boundary (API and server: the ChatGPT account; sign-in, tokens only while plan use is allowed, serialized refresh, models; `stream/3` runs a request in the caller and reports a refused token) | is a process; HTTP to OpenAI, the account file, PubSub; its state is redacted from crash reports (`format_status/1`) | `ChatGPT.OAuth`, `Paths`, `PrivateFile`, `Events`, `PhotonCore.LLM`, Req |
 | `Photon.ChatGPT.OAuth` | functional core (Sign in with ChatGPT's rules: the link, the pasted address, the token forms and claims, when to refresh) | pure (secrets and time passed in) | Jason |
-| `Photon.Auth` | boundary (GUI password) | does I/O (file, `:persistent_term`) | `Paths` |
-| `Photon.NodeAuth` | boundary (node token) | does I/O (env, file, `:persistent_term`) | `Paths` |
+| `Photon.Auth` | boundary (who may open the GUI: `:tailscale`, `:password`, both, or `:off`) | the password does I/O (file, `:persistent_term`); `check_device/3` is pure | `Paths`, `Tailnet` |
+| `Photon.NodeKeys` | boundary (each node's own key: issued, checked against the device it came from, tied to it on first use, revoked) | does I/O (DB; the built-in node's key in `:persistent_term`); `check/2` is pure | `Repo`, `NodeKeys.Key`, `Tailnet` |
+| `Photon.NodeKeys.Key` | data (the `node_keys` table: a key's hash and its device) | pure | Ecto |
+| `Photon.PrivateFile` | boundary (whole-or-nothing 0600 file writes) | does I/O (temp file, sync, rename) | none |
 | `Photon.Markdown` | functional core (rendering through a NIF) | pure | MDEx |
 
 ### apps/hub (`:photon`), web
@@ -201,13 +203,15 @@ hotspots still refer to the original snapshot.
 | `PhotonWeb.Endpoint` | boundary (HTTP and websocket entry) and lifecycle (supervises Bandit and sockets) | is a process | `Router`, `NodeSocket`, Phoenix |
 | `PhotonWeb.Router` | boundary (routing) | pure | controllers, LiveViews, `Auth`, `Shell` |
 | `PhotonWeb.Telemetry` | lifecycle | is a process (Supervisor) | telemetry_poller |
-| `PhotonWeb.Auth` | boundary (plug and `on_mount`) | does I/O (session; `Tailnet.peer?/1` shells out) | `Photon.Auth`, `Tailnet` |
+| `PhotonWeb.Auth` | boundary (plug and `on_mount`; in `:tailscale` mode checks every request and every LiveView connection) | does I/O (session; `tailscale whois` through `ClientIP`, node devices from `NodeKeys`) | `Photon.Auth`, `ClientIP`, `NodeKeys` |
+| `PhotonWeb.ClientIP` | boundary (where a request came from, behind the hub's own TLS proxy) | `client/2` is pure; `identify/2` asks `Tailnet.whois/1` | `Tailnet` |
+| `PhotonWeb.NodeAuthPlug` | boundary (the model relay's key check, in the endpoint before the body is parsed) | does I/O through `NodeKeys` | `NodeKeys`, `ClientIP`, `Relay` |
 | `PhotonWeb.Origin` | boundary (`check_origin`) | does I/O (app env, `Tailnet.own_names/0`) | `Tailnet` |
 | `PhotonWeb.Shell` | boundary (LiveView hook for the app shell) | does I/O on mount and on the messages it rebuilds on; the derivations are `Nodes.roster/2`, `Settings.model_label/1` and `ChatGPT.ready?/1` | `Assistant`, `ChatGPT`, `NodeSessions`, `Nodes`, `Settings` |
 | `PhotonWeb.HealthPlug` | boundary | does I/O (response only) | Plug |
-| `PhotonWeb.NodeSocket` | boundary (node socket auth) | does I/O (token) | `NodeAuth`, `NodeChannel` |
+| `PhotonWeb.NodeSocket` | boundary (node socket auth: the node's key against where it connected from) | does I/O through `NodeKeys` | `NodeKeys`, `ClientIP`, `NodeChannel` |
 | `PhotonWeb.NodeChannel` | boundary and worker (one per connected node; the server layer for a node, rule 11) | is a process; DB through `NodeSessions`, Registry | `NodeSessions`, `Nodes`, `Photon.NodeRegistry` |
-| `PhotonWeb.ModelRelayController` | boundary (the model relay for nodes: runs a node's request on the hub's ChatGPT sign-in and streams it back) | does I/O (settings file, streaming HTTP); the request runs in a linked task | `Settings`, `ChatGPT`, `NodeAuth`, `PhotonCore.LLM`, `Relay`, `MockAgent` |
+| `PhotonWeb.ModelRelayController` | boundary (the model relay for nodes: runs a node's request on the hub's ChatGPT sign-in and streams it back) | does I/O (settings file, streaming HTTP); the request runs in a linked task | `Settings`, `ChatGPT` (`stream/3`), `NodeAuthPlug` (in front), `Relay`, `MockAgent` |
 | `PhotonWeb.NodeInstallController` | boundary | does I/O (files) | `NodeDist` |
 | `PhotonWeb.ErrorHTML` | boundary (rendering) | pure | Phoenix |
 | `PhotonWeb.ErrorJSON` | boundary (rendering) | pure | Phoenix |
@@ -215,7 +219,7 @@ hotspots still refer to the original snapshot.
 | `PhotonWeb.Layouts` | boundary (UI layout) | pure | `CoreComponents` |
 | `PhotonWeb.AssistantLive` | boundary (UI process) | is a process; talks only to `Photon.Assistant`; folds with `Assistant.Transcript` | `Assistant`, `Assistant.Transcript`, `Markdown`, `Message` |
 | `PhotonWeb.SessionLive` | boundary (UI process) | is a process; DB, Registry in mount and on `:nodes_changed`, none in `render/1` | `NodeSessions`, `NodeTranscript`, `Nodes`, `Markdown` |
-| `PhotonWeb.NodesLive` | boundary (UI process) | is a process; node data read on mount and on change messages, `tailscale` in a `start_async` task; `render/1` only derives from assigns | `NodeDist`, `NodeSessions`, `Nodes`, `Provision`, `Tailnet`, `Hub`, `NodeAuth` |
+| `PhotonWeb.NodesLive` | boundary (UI process) | is a process; node data read on mount and on change messages, `tailscale` in a `start_async` task; `render/1` only derives from assigns | `NodeDist`, `NodeSessions`, `Nodes`, `Provision`, `Tailnet`, `Hub`, `NodeKeys` |
 | `PhotonWeb.SettingsLive` | boundary (UI process) | is a process; settings file, the ChatGPT account (sign-in steps; models in a `start_async` task) | `Settings`, `ChatGPT` |
 
 ### Test support

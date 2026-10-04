@@ -21,7 +21,9 @@ defmodule PhotonCore.LLM do
       `"mock"` (a scripted model; tests)
     * `:base_url` - where the provider is
     * `:api_key` - the bearer token: the ChatGPT access token, or the
-      node's token for the relay
+      node's key for the relay
+    * `:problem` - for `"chatgpt"` without a token, why there is none (the
+      error says so instead of "not signed in")
     * `:headers` - extra request headers
     * `:script` - for `"mock"`, the module that answers (see `PhotonCore.LLM.Mock`)
     * `:max_attempts` - attempts for retryable failures (default 6)
@@ -75,6 +77,7 @@ defmodule PhotonCore.LLM do
           optional(:provider) => String.t() | nil,
           optional(:base_url) => String.t() | nil,
           optional(:api_key) => String.t() | nil,
+          optional(:problem) => String.t() | nil,
           optional(:headers) => [{String.t(), String.t()}],
           optional(:script) => module() | nil,
           optional(:max_attempts) => pos_integer(),
@@ -105,7 +108,8 @@ defmodule PhotonCore.LLM do
     do: Mock.stream(request, config, on_event)
 
   def stream(request, %{provider: "chatgpt"} = config, on_event) do
-    with :ok <- require_present(config[:api_key], "not signed in with ChatGPT"),
+    with :ok <-
+           require_present(config[:api_key], config[:problem] || "not signed in with ChatGPT"),
          :ok <- require_present(request[:model], "no model selected") do
       attempt(Responses, request, config, on_event, 1)
     end

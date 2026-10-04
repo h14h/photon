@@ -26,7 +26,7 @@ defmodule PhotonWeb.PagesTest do
   test "the nodes page offers both ways to add a node", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/nodes")
     assert has_element?(view, "#add-node")
-    assert has_element?(view, "#install-command")
+    assert has_element?(view, "#manual-key-form")
   end
 
   test "settings save", %{conn: conn} do

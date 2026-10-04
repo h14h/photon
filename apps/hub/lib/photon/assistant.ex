@@ -172,6 +172,7 @@ defmodule Photon.Assistant do
 
     %{
       config: Photon.ChatGPT.llm_config(Photon.Assistant.MockScript),
+      stream: &Photon.ChatGPT.stream/3,
       model: Settings.model(settings),
       reasoning: Prompt.reasoning(settings),
       cache_key: conversation.id

@@ -18,7 +18,7 @@ defmodule PhotonNode.CLI do
 
   Configure with environment variables:
     PHOTON_SERVER          hub websocket, e.g. ws://hub.tailnet.ts.net:4000/node/websocket
-    PHOTON_NODE_TOKEN      the hub's node token (required)
+    PHOTON_NODE_TOKEN      the node's own key, made by the hub (required)
     PHOTON_NODE_ID         this node's name (default: the hostname)
     PHOTON_NODE_DATA       data directory (default: ~/.photon-node)
     PHOTON_NODE_WORKSPACE  agent workspace (default: <data>/workspace)

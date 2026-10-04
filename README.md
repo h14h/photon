@@ -96,21 +96,28 @@ every platform. You get one always-on machine with a volume for your data.
 - **Optional: join your tailnet** with a Tailscale
   [auth key](https://login.tailscale.com/admin/settings/keys):
   `fly secrets set TS_AUTHKEY=tskey-auth-... PHOTON_SSH_USER=<you>`. The hub
-  then lists your machines for one-click installs and lets tailnet devices in
-  without the password.
+  then lists your machines for one-click installs, and your own devices on
+  the tailnet skip the password (`PHOTON_AUTH=tailscale,password`).
 
 The image runs anywhere Docker does, for example on a VM that's already on
-your tailnet, behind Tailscale Serve:
+your tailnet, where it can open for your devices on the tailnet and nobody
+else, behind Tailscale Serve (or another TLS proxy on the same machine):
 
 ```sh
 docker build -t photon .
 docker run -d --name photon --restart unless-stopped --network host \
   -v "$HOME/photon-data:/data" -v /var/run/tailscale:/var/run/tailscale \
-  -e PORT=8000 -e PHOTON_BIND=127.0.0.1 -e PHOTON_AUTH=off \
+  -e PORT=8000 -e PHOTON_BIND=127.0.0.1 -e PHOTON_AUTH=tailscale \
   -e PHOTON_PUBLIC_URL=https://<hub>.<tailnet>.ts.net -e PHX_HOST=<hub>.<tailnet>.ts.net \
   photon
 sudo tailscale serve --bg 8000
 ```
+
+With `PHOTON_AUTH=tailscale` the hub asks Tailscale which device each
+request comes from (the address the proxy forwards) and lets in only your
+own devices: ones that belong to you (or to `PHOTON_TAILSCALE_USERS`),
+aren't tagged, and don't run a node, so an agent on a node can't drive the
+hub as you.
 
 ## Add nodes
 
@@ -121,14 +128,18 @@ Open **Nodes**:
   user service, and waits for the node to connect. Your tailnet's SSH policy
   must let the hub log in to the machine. **Update** and **Uninstall** live
   there too.
-- **Anywhere else:** run the one-liner the page shows, which includes your hub's
-  URL and node token:
+- **Anywhere else:** name the node, and the page makes its one-liner, with
+  your hub's URL and a key for that node alone:
 
   ```sh
-  curl -fsSL https://<hub>/node/install.sh | PHOTON_NODE_TOKEN=<token> sh
+  curl -fsSL https://<hub>/node/install.sh | PHOTON_NODE_ID=<name> PHOTON_NODE_TOKEN=<key> sh
   ```
 
-Nodes need no root and nothing else installed.
+Nodes need no root and nothing else installed. Each node has its own key: the
+hub keeps only its hash, ties it to the tailnet device that first connects
+with it (so a copied key works nowhere else), and makes a fresh one with
+every install or update. **Update all** updates every node running an older
+build at once.
 
 ## Using the assistant
 
@@ -150,10 +161,10 @@ Hub:
 
 | Variable | Purpose |
 | --- | --- |
-| `PHOTON_PASSWORD` | GUI password (production; generated if unset) |
-| `PHOTON_AUTH` | `off` drops the password, for a hub only reachable through the tailnet |
+| `PHOTON_AUTH` | Who may open the GUI: `password` (production default), `tailscale` (only your devices on the tailnet), `tailscale,password` (those, else the password), or `off` |
+| `PHOTON_PASSWORD` | GUI password (generated if unset) |
+| `PHOTON_TAILSCALE_USERS` | Tailscale logins let in (default: whoever owns the hub machine) |
 | `TS_AUTHKEY`, `TS_HOSTNAME`, `TS_EXTRA_ARGS` | Put the hub's container on a tailnet |
-| `PHOTON_TRUST_TAILNET` | Let tailnet peers skip the password (default on, on a tailnet) |
 | `PHOTON_SSH_USER` | Remote user for installing nodes over SSH |
 | `PHOTON_PUBLIC_URL` | URL nodes use to reach the hub, if not detected |
 | `PHOTON_BIND` | Address the hub listens on |
@@ -166,7 +177,7 @@ Node (set by the installer in `~/.config/photon-node/env`):
 | Variable | Purpose |
 | --- | --- |
 | `PHOTON_SERVER` | The hub's websocket, e.g. `wss://hub.example.ts.net/node/websocket` |
-| `PHOTON_NODE_TOKEN` | The hub's node token (required) |
+| `PHOTON_NODE_TOKEN` | The node's own key, made by the hub (required) |
 | `PHOTON_NODE_ID` | Node name (default: hostname) |
 | `PHOTON_NODE_WORKSPACE` | Where agents work (default: `~/.photon-node/workspace`) |
 
@@ -186,7 +197,8 @@ and `docs/otp-design-guide.md` the design rules they enforce.
 Packaging uses [Burrito](https://github.com/burrito-elixir/burrito) and needs
 `xz`, Zig 0.16.0 and an Erlang/OTP release Burrito publishes runtimes for, e.g.
 `mise exec erlang@29.1 zig@0.16.0 -- mix photon.package`. Nodes can also run
-from source: `cd apps/node && PHOTON_SERVER=... PHOTON_NODE_TOKEN=... mix run --no-halt`.
+from source with a key from the Nodes page:
+`cd apps/node && PHOTON_SERVER=... PHOTON_NODE_ID=... PHOTON_NODE_TOKEN=... mix run --no-halt`.
 
 The hub–node protocol, including how sessions survive reconnects, is documented
 in `apps/node/lib/photon_node.ex`; the durable harness in

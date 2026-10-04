@@ -10,18 +10,33 @@ defmodule PhotonWeb.NodeChannelTest do
 
   @endpoint PhotonWeb.Endpoint
 
-  defp token_info(token), do: %{x_headers: [{"x-photon-token", token}]}
+  # A node somewhere off the tailnet (the tests run no tailscale).
+  defp token_info(token),
+    do: %{x_headers: [{"x-photon-token", token}], peer_data: %{address: {10, 0, 0, 5}}}
 
   defp join(node) do
-    {:ok, socket} =
-      connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(Photon.NodeAuth.token()))
-
+    {:ok, key} = Photon.NodeKeys.issue(node)
+    {:ok, socket} = connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(key))
     subscribe_and_join(socket, "node:" <> node, %{"hostname" => node, "version" => "0.1.0"})
   end
 
-  test "rejects nodes without the token" do
+  @tag capture_log: true
+  test "rejects nodes without a key of their own" do
     assert connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info("nope")) == :error
     assert connect(PhotonWeb.NodeSocket, %{}, connect_info: %{x_headers: []}) == :error
+
+    local = Photon.NodeKeys.local_token()
+    assert connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(local)) == :error
+  end
+
+  test "a key joins as its own node only" do
+    {:ok, key} = Photon.NodeKeys.issue("box")
+    {:ok, socket} = connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(key))
+
+    assert {:error, %{"reason" => "this key belongs to box, not other"}} =
+             subscribe_and_join(socket, "node:other", %{})
+
+    refute Nodes.online?("other")
   end
 
   test "joins with a sync map, resends queued input, and ingests records" do

@@ -6,9 +6,15 @@ defmodule Photon.ChatGPT do
   them.
 
   This process owns the account. It keeps the tokens in the data directory
-  (`chatgpt.json`, mode 0600), refreshes the access token one request at a
-  time (OpenAI asks that refreshes for a session be serialized), and
-  announces changes on `topic/0` as `{:chatgpt_changed, status}`. The rules
+  (`chatgpt.json`, mode 0600, replaced whole by `Photon.PrivateFile`),
+  refreshes the access token one request at a time (OpenAI asks that
+  refreshes for a session be serialized), and announces changes on
+  `topic/0` as `{:chatgpt_changed, status}`. It hands out a token only
+  while the user lets Photon use their plan, and its state (tokens,
+  sign-in secrets) never appears in crash reports (`format_status/1`).
+
+  Model requests go through `stream/3`, which tells this process when the
+  API refuses a token, so the next request gets a fresh one. The rules
   (the sign-in link, the pasted address, the tokens) are
   `Photon.ChatGPT.OAuth`'s; this module does the HTTP and the file.
 
@@ -19,20 +25,31 @@ defmodule Photon.ChatGPT do
   (`config :photon, :mock_model, true`); `llm_config/1` then returns it.
   """
 
-  use Boundary, deps: [Photon.Events, Photon.Paths, PhotonCore.LLM, Jason, Req]
+  use Boundary,
+    deps: [
+      Photon.Events,
+      Photon.Paths,
+      Photon.PrivateFile,
+      PhotonCore.LLM,
+      PhotonCore.LLM.Error,
+      Jason,
+      Req
+    ]
 
   use GenServer
 
   require Logger
 
   alias Photon.ChatGPT.OAuth
-  alias Photon.{Events, Paths}
+  alias Photon.{Events, Paths, PrivateFile}
+  alias PhotonCore.LLM
 
   @topic "chatgpt"
   @models_url "https://api.openai.com/v1/models"
   @models_ttl_ms 10 * 60 * 1000
   @sign_in_ttl_ms 15 * 60 * 1000
   @call_timeout 30_000
+  @no_plan_use "Photon isn't allowed to use your ChatGPT plan. Sign in again and allow it."
 
   @typedoc """
   Where the account stands: `:signed_out`, `:signed_in`, or
@@ -110,21 +127,45 @@ defmodule Photon.ChatGPT do
   @doc """
   The model config for a request now: ChatGPT with a current token, or,
   when the hub is set to the scripted model, `script` (see the moduledoc).
-  Without a sign-in the token is nil, and the request fails saying so.
+  Without a token (signed out, plan use not allowed, a refresh that
+  failed) the token is nil and `:problem` says why, which is what the
+  request fails with.
   """
-  @spec llm_config(module()) :: PhotonCore.LLM.config()
+  @spec llm_config(module()) :: LLM.config()
   def llm_config(script) do
     if Application.get_env(:photon, :mock_model, false) do
       %{provider: "mock", script: script}
     else
-      token =
-        case access_token() do
-          {:ok, token} -> token
-          {:error, _reason} -> nil
-        end
+      case access_token() do
+        {:ok, token} ->
+          %{provider: "chatgpt", base_url: OAuth.resource(), api_key: token}
 
-      %{provider: "chatgpt", base_url: OAuth.resource(), api_key: token}
+        {:error, reason} ->
+          %{provider: "chatgpt", base_url: OAuth.resource(), api_key: nil, problem: reason}
+      end
     end
+  end
+
+  @doc """
+  Runs a model request with `config` (from `llm_config/1`), as
+  `PhotonCore.LLM.stream/3` does, in the caller. If the API refuses the
+  token (a 401), says so with `token_rejected/1`, so the next request gets
+  a fresh one. Blip's turns and the node relay both go through here.
+  """
+  @spec stream(LLM.request(), LLM.config(), LLM.on_event()) ::
+          {:ok, LLM.response()} | {:error, PhotonCore.LLM.Error.t()}
+  def stream(request, config, on_event) do
+    result = LLM.stream(request, config, on_event)
+
+    case {result, config} do
+      {{:error, %PhotonCore.LLM.Error{status: 401}}, %{api_key: token}} when is_binary(token) ->
+        token_rejected(token)
+
+      _other ->
+        :ok
+    end
+
+    result
   end
 
   ## Server
@@ -178,16 +219,38 @@ defmodule Photon.ChatGPT do
     {:reply, reply, state}
   end
 
-  def handle_call({:token_rejected, token}, _from, state) do
-    case state.account["credentials"] do
-      %{"access_token" => ^token} = credentials ->
-        account = %{state.account | "credentials" => %{credentials | "expires_at" => 0}}
-        {:reply, :ok, put_account(state, account)}
+  def handle_call({:token_rejected, token}, _from, state),
+    do: {:reply, :ok, expire(state, token)}
 
-      _other ->
-        {:reply, :ok, state}
-    end
+  # Crash reports and `:sys.get_status/1` show the state and the last
+  # message; tokens and sign-in secrets are left out of both.
+  @impl true
+  def format_status(status) do
+    Map.new(status, fn
+      {:state, state} -> {:state, redact(state)}
+      {:message, message} -> {:message, redact_message(message)}
+      {:log, _log} -> {:log, []}
+      other -> other
+    end)
   end
+
+  # The state with its secrets replaced by `:redacted`.
+  defp redact(%{account: account, pending: pending} = state) do
+    secret = fn
+      {key, value} when key in ["credentials", "id_token"] and value != nil -> {key, :redacted}
+      pair -> pair
+    end
+
+    %{state | account: Map.new(account, secret), pending: pending && :redacted}
+  end
+
+  defp redact(state), do: state
+
+  defp redact_message({:"$gen_call", from, {call, _secret}})
+       when call in [:finish_sign_in, :token_rejected],
+       do: {:"$gen_call", from, {call, :redacted}}
+
+  defp redact_message(message), do: message
 
   ## Signing in
 
@@ -239,12 +302,29 @@ defmodule Photon.ChatGPT do
   ## Tokens
 
   defp fresh_token(%{account: %{"credentials" => nil}} = state),
-    do: {{:error, "Not signed in with ChatGPT."}, state}
+    do: {{:error, "The hub isn't signed in with ChatGPT."}, state}
 
   defp fresh_token(%{account: %{"credentials" => credentials}} = state) do
-    if OAuth.refresh_due?(credentials, now()),
-      do: refresh(state, credentials),
-      else: {{:ok, credentials["access_token"]}, state}
+    cond do
+      not OAuth.plan_use?(credentials) -> {{:error, @no_plan_use}, state}
+      OAuth.refresh_due?(credentials, now()) -> refresh(state, credentials)
+      true -> {{:ok, credentials["access_token"]}, state}
+    end
+  end
+
+  # The API refused `token`: if it's still the current one, the next
+  # request refreshes it rather than handing it out again.
+  defp expire(state, token) do
+    case state.account["credentials"] do
+      %{"access_token" => ^token} = credentials ->
+        put_account(state, %{
+          state.account
+          | "credentials" => %{credentials | "expires_at" => 0}
+        })
+
+      _other ->
+        state
+    end
   end
 
   defp refresh(state, credentials) do
@@ -265,7 +345,7 @@ defmodule Photon.ChatGPT do
   defp refresh_failed(state, body) do
     case OAuth.failure(body) do
       :sign_in_again ->
-        Logger.warning("ChatGPT sign-in lapsed: #{inspect(body)}")
+        Logger.warning("ChatGPT sign-in lapsed: #{token_error(body)}")
 
         state =
           put_account(
@@ -305,8 +385,13 @@ defmodule Photon.ChatGPT do
            [form: OAuth.revoke_form(credentials), retry: false] ++ req_options()
          ) do
       {:ok, %Req.Response{status: 200}} -> :ok
-      other -> Logger.warning("couldn't revoke the ChatGPT sign-in: #{inspect(other)}")
+      {:ok, %Req.Response{status: status}} -> revoke_failed("HTTP #{status}")
+      {:error, exception} -> revoke_failed(Exception.message(exception))
     end
+  end
+
+  defp revoke_failed(reason) do
+    Logger.warning("couldn't revoke the ChatGPT sign-in: #{reason}")
   end
 
   ## Models
@@ -324,6 +409,9 @@ defmodule Photon.ChatGPT do
           models = OAuth.models(body)
           {{:ok, models}, %{state | models: {now(), models}}}
 
+        {:ok, %Req.Response{status: 401}} ->
+          {{:error, "ChatGPT refused the sign-in's token. Try again."}, expire(state, token)}
+
         {:ok, %Req.Response{status: status}} ->
           {{:error, "ChatGPT didn't list models (HTTP #{status})."}, state}
 
@@ -335,14 +423,38 @@ defmodule Photon.ChatGPT do
 
   ## The account file
 
+  # A missing file is a new hub. One that can't be read stops the hub
+  # rather than being replaced (that would lose the sign-in for good); one
+  # that isn't an account is set aside, with a note in the log.
   defp load do
-    with {:ok, body} <- File.read(Paths.chatgpt_file()),
-         {:ok, %{"host_id" => host_id} = account} when is_binary(host_id) <- Jason.decode(body) do
-      Map.merge(blank(host_id), account)
-    else
-      _ ->
-        16 |> :crypto.strong_rand_bytes() |> OAuth.uuid() |> OAuth.host_id() |> blank() |> save()
+    path = Paths.chatgpt_file()
+
+    case File.read(path) do
+      {:ok, body} ->
+        case Jason.decode(body) do
+          {:ok, %{"host_id" => host_id} = account} when is_binary(host_id) ->
+            Map.merge(blank(host_id), account)
+
+          _malformed ->
+            set_aside(path)
+            new_account()
+        end
+
+      {:error, :enoent} ->
+        new_account()
+
+      {:error, reason} ->
+        raise "couldn't read #{path}: #{:file.format_error(reason)}"
     end
+  end
+
+  defp new_account,
+    do: 16 |> :crypto.strong_rand_bytes() |> OAuth.uuid() |> OAuth.host_id() |> blank() |> save()
+
+  defp set_aside(path) do
+    aside = "#{path}.unreadable-#{System.system_time(:second)}"
+    File.rename!(path, aside)
+    Logger.error("#{path} wasn't a ChatGPT account; moved it to #{aside}. Sign in again.")
   end
 
   defp blank(host_id) do
@@ -361,10 +473,7 @@ defmodule Photon.ChatGPT do
   defp put_account(state, account), do: %{state | account: save(account)}
 
   defp save(account) do
-    path = Paths.chatgpt_file()
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, Jason.encode_to_iodata!(account, pretty: true))
-    File.chmod!(path, 0o600)
+    :ok = PrivateFile.write!(Paths.chatgpt_file(), Jason.encode_to_iodata!(account, pretty: true))
     account
   end
 

@@ -41,7 +41,9 @@ defmodule Photon.Application do
   @impl true
   def start(_type, _args) do
     # Generated (and logged) at boot, not on the first sign-in.
-    _password = if Photon.Auth.enabled?(), do: Photon.Auth.ensure_password!()
+    _password =
+      if Photon.Auth.mode() in [:password, :tailscale_or_password],
+        do: Photon.Auth.ensure_password!()
 
     children =
       [
@@ -78,7 +80,7 @@ defmodule Photon.Application do
       [
         {PhotonNode,
          server: "ws://#{local_address(http[:ip])}:#{http[:port]}/node/websocket",
-         token: Photon.NodeAuth.token(),
+         token: Photon.NodeKeys.local_token(),
          node_id: "local",
          data_dir: Photon.Paths.local_node_dir()}
       ]

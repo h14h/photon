@@ -1,7 +1,9 @@
 defmodule PhotonWeb.NodesLive do
   @moduledoc """
-  The user's machines: connected nodes, one-click installs over SSH for
-  machines on the hub's tailnet, and a one-line installer for anywhere else.
+  The user's machines: connected nodes, one-click installs and updates over
+  SSH for machines on the hub's tailnet (one machine at a time, or every
+  outdated node at once), and a one-line installer for anywhere else, made
+  per node since each node has its own key (`Photon.NodeKeys`).
 
   What the page shows is read into assigns when it mounts and when it hears
   a change (`:nodes_changed`, `:node_sessions_changed`, `{:provision, jobs}`);
@@ -11,7 +13,7 @@ defmodule PhotonWeb.NodesLive do
 
   use PhotonWeb, :live_view
 
-  alias Photon.{NodeDist, Nodes, NodeSessions, Provision, Tailnet}
+  alias Photon.{NodeDist, NodeKeys, Nodes, NodeSessions, Provision, Tailnet}
 
   @max_counted_sessions 1000
 
@@ -28,7 +30,8 @@ defmodule PhotonWeb.NodesLive do
         default_ssh_user: Provision.default_ssh_user(),
         latest: NodeDist.version(),
         built: NodeDist.available(),
-        token: Photon.NodeAuth.token(),
+        manual: nil,
+        manual_form: to_form(%{"node_id" => ""}, as: :manual),
         server_uri: nil
       )
       |> assign_nodes()
@@ -76,14 +79,51 @@ defmodule PhotonWeb.NodesLive do
   def handle_event("ssh_user", %{"ssh_user" => user}, socket),
     do: {:noreply, assign(socket, ssh_user: String.trim(user))}
 
+  # A key for a node installed by hand, shown once in its install command.
+  def handle_event("manual_key", %{"manual" => %{"node_id" => node_id}}, socket) do
+    node_id = String.trim(node_id)
+
+    if Regex.match?(~r/\A[\w.-]{1,64}\z/, node_id) do
+      {:ok, key} = NodeKeys.issue(node_id)
+
+      {:noreply,
+       assign(socket,
+         manual: %{node_id: node_id, key: key},
+         manual_form: to_form(%{"node_id" => node_id}, as: :manual)
+       )}
+    else
+      {:noreply,
+       put_flash(socket, :error, "Name it with letters, digits, dots, dashes or underscores.")}
+    end
+  end
+
+  def handle_event("update_all", _params, socket) do
+    failures =
+      socket.assigns.outdated
+      |> Enum.sort()
+      |> Enum.flat_map(fn id ->
+        case provision(socket.assigns, id, :install) do
+          :ok -> []
+          other -> ["#{id}: #{failure(other, id)}"]
+        end
+      end)
+
+    case failures do
+      [] -> {:noreply, socket}
+      _ -> {:noreply, put_flash(socket, :error, "Couldn't update " <> Enum.join(failures, "; "))}
+    end
+  end
+
   def handle_event("provision", %{"machine" => name, "action" => action}, socket)
       when action in ~w(install uninstall) do
     case provision(socket.assigns, name, String.to_existing_atom(action)) do
       :ok -> {:noreply, socket}
-      {:error, reason} when is_binary(reason) -> {:noreply, put_flash(socket, :error, reason)}
-      _ -> {:noreply, put_flash(socket, :error, "This hub can't reach #{name}.")}
+      other -> {:noreply, put_flash(socket, :error, failure(other, name))}
     end
   end
+
+  defp failure({:error, reason}, _name) when is_binary(reason), do: reason
+  defp failure(_other, name), do: "This hub can't reach #{name}."
 
   # Starts a job for a tailnet machine, through the URL it reaches this hub at.
   defp provision(assigns, name, action) do
@@ -152,9 +192,21 @@ defmodule PhotonWeb.NodesLive do
           </.header>
 
           <section class="mt-7">
-            <h2 class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
-              Connected
-            </h2>
+            <div class="flex items-center justify-between">
+              <h2 class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
+                Connected
+              </h2>
+              <.button
+                :if={MapSet.size(@outdated) > 0 and match?({:ok, _}, @tailnet)}
+                id="update-all"
+                size="sm"
+                variant="primary"
+                phx-click="update_all"
+                disabled={!is_binary(@base) or @built == []}
+              >
+                Update all ({MapSet.size(@outdated)})
+              </.button>
+            </div>
             <p
               :if={@online == []}
               class="mt-3 rounded-xl border border-dashed border-line-strong px-4 py-6 text-center text-sm text-ink-faint"
@@ -282,13 +334,29 @@ defmodule PhotonWeb.NodesLive do
               Any other machine
             </h2>
             <p class="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
-              Run this on the machine, or put it in a VPS's cloud-init. It downloads the right build from this hub and sets up a user service:
+              Name the node, then run its command on the machine (or put it in a VPS's cloud-init). It downloads the right build from this hub and sets up a user service.
             </p>
-            <div class="group relative mt-3">
+            <.form
+              for={@manual_form}
+              id="manual-key-form"
+              phx-submit="manual_key"
+              class="mt-3 flex flex-wrap items-center gap-2"
+            >
+              <input
+                id="manual-node-id"
+                name={@manual_form[:node_id].name}
+                value={@manual_form[:node_id].value}
+                placeholder="node name, e.g. vps-1"
+                autocomplete="off"
+                class="h-8 w-52 rounded-lg border border-line bg-surface px-2.5 font-mono text-[12px] text-ink outline-none transition placeholder:text-ink-faint focus:border-accent/70"
+              />
+              <.button id="make-install-command" size="sm" type="submit">Make its command</.button>
+            </.form>
+            <div :if={@manual} class="group relative mt-3">
               <pre
                 id="install-command"
                 class="overflow-x-auto rounded-xl border border-line bg-sunken p-3.5 pr-12 font-mono text-[12.5px] leading-relaxed select-all"
-              >curl -fsSL {@manual_base}/node/install.sh | PHOTON_NODE_TOKEN={@token} sh</pre>
+              >curl -fsSL {@manual_base}/node/install.sh | PHOTON_NODE_ID={@manual.node_id} PHOTON_NODE_TOKEN={@manual.key} sh</pre>
               <button
                 id="copy-install"
                 phx-hook=".Copy"
@@ -300,8 +368,8 @@ defmodule PhotonWeb.NodesLive do
               </button>
             </div>
             <p class="mt-2 text-[12px] leading-relaxed text-ink-faint">
-              Remove it with <code class="font-mono">curl -fsSL {@manual_base}/node/install.sh | PHOTON_ACTION=uninstall sh</code>.
-              The token lets a machine join as a node, and the assistant can run commands on every node, so keep it private.
+              The command carries a key for that node alone, which the hub ties to the first machine that connects with it. It isn't shown again, and making another replaces it.
+              Remove a node with <code class="font-mono">curl -fsSL {@manual_base}/node/install.sh | PHOTON_ACTION=uninstall sh</code>.
             </p>
           </section>
         </div>

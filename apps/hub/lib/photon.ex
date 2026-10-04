@@ -14,7 +14,8 @@ defmodule Photon do
     * `Photon.Settings`: the model and the assistant's instructions
     * `Photon.Provision`, `Photon.NodeDist`, `Photon.Hub`,
       `Photon.Tailnet`: putting nodes on machines, and how they reach the hub
-    * `Photon.Auth`, `Photon.NodeAuth`: the GUI password and the node token
+    * `Photon.Auth`, `Photon.NodeKeys`: who may open the GUI (your devices
+      on the tailnet, or a password), and each node's own key
 
   Layers, after *Designing Elixir Systems with OTP*: each context's
   moduledoc names its pure core and its processes. The pure modules are
@@ -44,8 +45,8 @@ defmodule Photon do
       Hub,
       InstallScript,
       Markdown,
-      NodeAuth,
       NodeDist,
+      NodeKeys,
       NodeSessions,
       NodeSessions.Session,
       NodeTranscript,

@@ -13,9 +13,9 @@ defmodule Photon.Settings do
   function of a settings map, so callers load once and pass the map along.
   """
 
-  use Boundary, deps: [Photon.Events, Photon.Paths]
+  use Boundary, deps: [Photon.Events, Photon.Paths, Photon.PrivateFile]
 
-  alias Photon.{Events, Paths}
+  alias Photon.{Events, Paths, PrivateFile}
 
   # The model Codex itself starts with, used until the user picks one.
   @default_model "gpt-6.1-sol"
@@ -70,10 +70,10 @@ defmodule Photon.Settings do
   @spec save(map()) :: t()
   def save(params) do
     settings = normalize(params, load())
-    path = Paths.settings_file()
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, Jason.encode_to_iodata!(settings, pretty: true))
-    File.chmod!(path, 0o600)
+
+    :ok =
+      PrivateFile.write!(Paths.settings_file(), Jason.encode_to_iodata!(settings, pretty: true))
+
     :ok = Events.broadcast(@topic, {:settings_changed, settings})
     settings
   end

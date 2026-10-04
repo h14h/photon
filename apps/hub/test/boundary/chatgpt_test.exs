@@ -17,7 +17,7 @@ defmodule Photon.ChatGPTTest do
 
   test "a hub that never signed in is signed out, with a host ID kept for good" do
     assert %{state: :signed_out, signing_in: false} = ChatGPT.status()
-    assert {:error, "Not signed in with ChatGPT."} = ChatGPT.access_token()
+    assert {:error, "The hub isn't signed in with ChatGPT."} = ChatGPT.access_token()
 
     host_id = Jason.decode!(File.read!(Paths.chatgpt_file()))["host_id"]
     assert "urn:uuid:" <> _ = host_id
@@ -179,6 +179,83 @@ defmodule Photon.ChatGPTTest do
     ChatGPTStub.sign_in!()
     assert %{provider: "chatgpt", api_key: "at_" <> _} = ChatGPT.llm_config(nil)
     assert ChatGPT.ready?(ChatGPT.status())
+  end
+
+  test "a sign-in without plan use hands out no token, and requests say why" do
+    Application.put_env(:photon, :mock_model, false)
+    on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+
+    ChatGPTStub.sign_in!(%{"scope" => "openid profile email offline_access"})
+
+    assert %{state: :signed_in, plan_use: false} = ChatGPT.status()
+
+    assert {:error, "Photon isn't allowed to use your ChatGPT plan." <> _} =
+             ChatGPT.access_token()
+
+    assert %{api_key: nil, problem: "Photon isn't allowed" <> _} = ChatGPT.llm_config(nil)
+  end
+
+  test "a request the API refuses with a 401 gets a fresh token next time" do
+    ChatGPTStub.sign_in!()
+    {:ok, token} = ChatGPT.access_token()
+
+    ChatGPTStub.answer(%{
+      "/v1/responses" => fn _ -> {401, %{"error" => %{"message" => "token expired"}}} end,
+      "/api/accounts/oauth/token" => fn _ -> {200, %{"access_token" => "at_after_401"}} end
+    })
+
+    config = %{
+      provider: "chatgpt",
+      base_url: "https://api.openai.com/v1",
+      api_key: token,
+      max_attempts: 1,
+      req_options: [plug: {Req.Test, ChatGPT}]
+    }
+
+    request = %{model: "gpt-6.1-sol", messages: [PhotonCore.Message.user("hi")]}
+
+    assert {:error, %PhotonCore.LLM.Error{status: 401}} =
+             ChatGPT.stream(request, config, fn _event -> :ok end)
+
+    assert {:ok, "at_after_401"} = ChatGPT.access_token()
+  end
+
+  test "a model list the API refuses gets a fresh token next time" do
+    ChatGPTStub.sign_in!()
+
+    ChatGPTStub.answer(%{
+      "/v1/models" => fn _ -> {401, %{}} end,
+      "/api/accounts/oauth/token" => fn _ -> {200, %{"access_token" => "at_after_models"}} end
+    })
+
+    assert {:error, "ChatGPT refused the sign-in's token." <> _} = ChatGPT.models()
+    assert {:ok, "at_after_models"} = ChatGPT.access_token()
+  end
+
+  test "tokens and sign-in secrets stay out of the process's status and crash reports" do
+    ChatGPTStub.sign_in!()
+    {:ok, token} = ChatGPT.access_token()
+    {:ok, _url} = ChatGPT.begin_sign_in()
+
+    status = inspect(:sys.get_status(ChatGPT), limit: :infinity, printable_limit: :infinity)
+
+    refute status =~ token
+    refute status =~ "rt_"
+    refute status =~ "verifier"
+    assert status =~ "henry@example.com"
+    assert status =~ ":redacted"
+  end
+
+  @tag capture_log: true
+  test "an account file that isn't one is set aside, not overwritten" do
+    File.write!(Paths.chatgpt_file(), "not an account")
+    :ok = Supervisor.terminate_child(Photon.Supervisor, ChatGPT)
+    {:ok, _pid} = Supervisor.restart_child(Photon.Supervisor, ChatGPT)
+
+    assert %{state: :signed_out} = ChatGPT.status()
+    assert [aside] = Path.wildcard(Paths.chatgpt_file() <> ".unreadable-*")
+    on_exit(fn -> File.rm(aside) end)
+    assert File.read!(aside) == "not an account"
   end
 
   defp flush_requests(acc \\ []) do

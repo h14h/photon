@@ -12,9 +12,6 @@ defmodule Photon.Paths do
   @spec chatgpt_file() :: Path.t()
   def chatgpt_file, do: Path.join(data_dir(), "chatgpt.json")
 
-  @spec node_token_file() :: Path.t()
-  def node_token_file, do: Path.join(data_dir(), "node-token")
-
   # The embedded local node (development) keeps its sessions here too.
   @spec local_node_dir() :: Path.t()
   def local_node_dir, do: Path.join(data_dir(), "local-node")

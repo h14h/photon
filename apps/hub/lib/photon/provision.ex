@@ -8,9 +8,14 @@ defmodule Photon.Provision do
 
     1. probes the machine's OS and CPU,
     2. streams up the matching binary from `Photon.NodeDist`,
-    3. runs the install script (`priv/node/install.sh.eex`) with the token on
-       stdin, never on a command line,
+    3. runs the install script (`priv/node/install.sh.eex`) with a new key
+       for the node (`Photon.NodeKeys.issue/1`) on stdin, never on a
+       command line,
     4. waits for the node to connect.
+
+  So every install and update gives the node a fresh key and revokes its
+  old one; an update that fails after that leaves the node offline until
+  it's run again. Removing a node revokes its key.
 
   One job runs per machine at a time. Job state is broadcast on `topic/0` as
   `{:provision, jobs}`, so every open tab sees progress.
@@ -29,7 +34,7 @@ defmodule Photon.Provision do
   """
 
   use Boundary,
-    deps: [Photon.Events, Photon.InstallScript, Photon.NodeAuth, Photon.NodeDist, Photon.Nodes]
+    deps: [Photon.Events, Photon.InstallScript, Photon.NodeDist, Photon.NodeKeys, Photon.Nodes]
 
   use GenServer
 
@@ -161,6 +166,7 @@ defmodule Photon.Provision do
 
     with {:ok, out} <- ssh(opts, "sh -s", {:text, Script.uninstall_input(opts.base_url)}, log),
          true <- out =~ "PHOTON_UNINSTALL_OK" || {:error, "the uninstaller didn't finish"} do
+      :ok = Photon.NodeKeys.revoke(opts.node_id)
       {:ok, "Removed the node from #{opts.machine}. Its sessions stay here, read-only."}
     end
   end
@@ -180,7 +186,8 @@ defmodule Photon.Provision do
   defp install(opts, log) do
     log.("Installing")
     since = DateTime.utc_now()
-    input = Script.install_input(opts, Photon.NodeAuth.token())
+    {:ok, key} = Photon.NodeKeys.issue(opts.node_id)
+    input = Script.install_input(opts, key)
 
     with {:ok, out} <- ssh(opts, "sh -s", {:text, input}, log),
          true <- out =~ "PHOTON_INSTALL_OK" || {:error, "the installer didn't finish"} do
