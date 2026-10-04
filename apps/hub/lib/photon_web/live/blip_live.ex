@@ -8,7 +8,8 @@ defmodule PhotonWeb.BlipLive do
   Blip rests in the bottom-right corner, its face showing its mood. Click
   it (or press Ctrl/⌘+J) and it opens into the chat panel, moving into the
   panel's header. The panel floats in the corner, pins to the right as a
-  column, or fills the window (`@panel`). The `.BlipDock` hook makes each
+  column, or fills the window (`@panel`). Esc or a click outside closes a
+  floating panel; a pinned one stays. The `.BlipDock` hook makes each
   change at once in the browser, animated where the browser can, and then
   tells the server.
 
@@ -410,6 +411,16 @@ defmodule PhotonWeb.BlipLive do
           }
           document.addEventListener("keydown", this.onKey)
 
+          // A click outside the floating panel closes it, like a dialog's
+          // backdrop. Pinned stays: it's a column you work beside. Focus
+          // stays wherever the click put it.
+          this.onOutside = e => {
+            if (["open", "full"].includes(this.state) && !this.el.contains(e.target)) {
+              this.go("closed", {refocus: false})
+            }
+          }
+          document.addEventListener("pointerdown", this.onOutside, true)
+
           // Blip shrinks back from the pill when you scroll or swipe, but not
           // when a page scrolls itself to follow new output.
           this.onWheel = () => { if (this.extended && Date.now() - this.extended > 800) this.collapse() }
@@ -440,6 +451,7 @@ defmodule PhotonWeb.BlipLive do
 
         destroyed() {
           document.removeEventListener("keydown", this.onKey)
+          document.removeEventListener("pointerdown", this.onOutside, true)
           document.removeEventListener("wheel", this.onWheel, {capture: true})
           document.removeEventListener("touchmove", this.onWheel, {capture: true})
           window.removeEventListener("phx:page-loading-stop", this.onNavigate)
@@ -457,7 +469,7 @@ defmodule PhotonWeb.BlipLive do
           if (action === "full") this.go(now === "full" ? "open" : "full")
         },
 
-        go(to) {
+        go(to, {refocus = true} = {}) {
           const from = this.state
           if (from === to) return
           this.state = to
@@ -473,12 +485,20 @@ defmodule PhotonWeb.BlipLive do
               if (from === "closed" && thread) thread.scrollTop = thread.scrollHeight
             }
           }
-          // With reduced motion, app.css keeps the transition to a fade.
-          const done = document.startViewTransition
-            ? document.startViewTransition(apply).finished
-            : Promise.resolve(apply())
+          // With reduced motion, app.css keeps the transition to a fade. A
+          // transition waits for the page to draw a frame, and while it runs
+          // it takes every click; a page that isn't drawing (a covered
+          // window) would hang there, so one that runs long is skipped.
+          let done = Promise.resolve()
+          if (document.startViewTransition) {
+            const transition = document.startViewTransition(apply)
+            const guard = setTimeout(() => transition.skipTransition(), 1000)
+            done = transition.finished.finally(() => clearTimeout(guard))
+          } else {
+            apply()
+          }
           done.finally(() => {
-            if (this.state !== to) return
+            if (this.state !== to || !refocus) return
             if (to === "closed") this.el.querySelector("#blip-face")?.focus()
             else if (from === "closed") this.el.querySelector("#composer-input")?.focus()
           })
