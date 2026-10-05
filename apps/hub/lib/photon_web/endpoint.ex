@@ -17,9 +17,11 @@ defmodule PhotonWeb.Endpoint do
     websocket: [connect_info: [:x_headers, :peer_data], check_origin: false],
     longpoll: false
 
+  # Websocket only: a long-poll transport carries its session in a token
+  # that any device holding it could keep using, past the device checks.
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [:peer_data, :x_headers, session: @session_options]],
-    longpoll: [connect_info: [:peer_data, :x_headers, session: @session_options]]
+    longpoll: false
 
   # Serve at "/" the static files from "priv/static" directory.
   #
@@ -44,14 +46,15 @@ defmodule PhotonWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
-  # The model relay checks a node's key before reading a byte of its body.
+  # The model relay checks a node's key before reading a byte of its body,
+  # and parses the (large) bodies it lets through itself.
   plug PhotonWeb.NodeAuthPlug
 
+  # Everything else is small: forms and the LiveView long-poll fallback.
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],
-    # A relayed model request carries a whole conversation, images included.
-    length: 32_000_000,
+    length: 1_000_000,
     json_decoder: Phoenix.json_library()
 
   plug Plug.MethodOverride

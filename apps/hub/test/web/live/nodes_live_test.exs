@@ -131,17 +131,42 @@ defmodule PhotonWeb.NodesLiveTest do
 
   test "an install command carries a key made for that node alone", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/nodes")
-    refute has_element?(view, "#install-command")
+    assert has_element?(view, "#install-command-box.hidden")
 
     view |> form("#manual-key-form", manual: %{node_id: "no spaces"}) |> render_submit()
     assert has_element?(view, "#flash-error", "Name it with letters")
 
-    view |> form("#manual-key-form", manual: %{node_id: " vps-1 "}) |> render_submit()
-    command = view |> element("#install-command") |> render()
+    html = view |> form("#manual-key-form", manual: %{node_id: " vps-1 "}) |> render_submit()
+
+    # Straight to the browser, never into the page's state or its HTML.
+    assert_push_event(view, "install-command", %{command: command})
 
     assert [_, key] =
              Regex.run(~r/PHOTON_NODE_ID=vps-1 PHOTON_NODE_TOKEN=(pnk_[\w-]+) sh/, command)
 
-    assert {:ok, "vps-1"} = Photon.NodeKeys.authenticate(key, :error)
+    refute html =~ key
+    refute inspect(:sys.get_state(view.pid)) =~ key
+    refute has_element?(view, "#install-command-box.hidden")
+    assert {:ok, "vps-1", _generation} = Photon.NodeKeys.authenticate(key, :error)
+  end
+
+  test "won't make a key for the built-in node's name", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/nodes")
+    view |> form("#manual-key-form", manual: %{node_id: "local"}) |> render_submit()
+    assert has_element?(view, "#flash-error", "built-in node")
+  end
+
+  test "keeps removed machines out until the user lets them back in", %{conn: conn} do
+    {:ok, _key} = Photon.NodeKeys.issue("old", device: %{device: "nOld", device_name: "old-box"})
+    :ok = Photon.NodeKeys.revoke("old")
+
+    {:ok, view, _html} = live(conn, ~p"/nodes")
+    assert has_element?(view, "#removed-old", "old-box")
+
+    view |> element("#forget-old") |> render_click()
+
+    refute has_element?(view, "#removed-nodes")
+    assert has_element?(view, "#flash-info", "can open the hub again")
+    assert Photon.NodeKeys.node_devices() == MapSet.new()
   end
 end

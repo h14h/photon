@@ -246,6 +246,32 @@ defmodule Photon.ChatGPTTest do
     assert status =~ ":redacted"
   end
 
+  test "a refresh that comes back without plan use hands out no token" do
+    ChatGPTStub.sign_in!(%{"expires_in" => 1})
+
+    ChatGPTStub.answer(%{
+      "/api/accounts/oauth/token" => fn _ ->
+        {200, %{"access_token" => "at_reduced", "scope" => "openid profile email offline_access"}}
+      end
+    })
+
+    assert {:error, "Photon isn't allowed to use your ChatGPT plan." <> _} =
+             ChatGPT.access_token()
+  end
+
+  test "a call that fails never puts the pasted address or a token in its exit" do
+    ChatGPTStub.sign_in!()
+    {:ok, token} = ChatGPT.access_token()
+    :ok = Supervisor.terminate_child(Photon.Supervisor, ChatGPT)
+    on_exit(fn -> Supervisor.restart_child(Photon.Supervisor, ChatGPT) end)
+
+    pasted = "http://127.0.0.1:50000/auth/callback?code=secret_code&state=s"
+    assert {:error, "Signing in didn't finish in time." <> _} = ChatGPT.finish_sign_in(pasted)
+
+    reason = catch_exit(ChatGPT.token_rejected(token))
+    refute inspect(reason, limit: :infinity) =~ token
+  end
+
   @tag capture_log: true
   test "an account file that isn't one is set aside, not overwritten" do
     File.write!(Paths.chatgpt_file(), "not an account")

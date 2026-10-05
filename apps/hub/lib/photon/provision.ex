@@ -9,7 +9,8 @@ defmodule Photon.Provision do
     1. probes the machine's OS and CPU,
     2. streams up the matching binary from `Photon.NodeDist`,
     3. runs the install script (`priv/node/install.sh.eex`) with a new key
-       for the node (`Photon.NodeKeys.issue/1`) on stdin, never on a
+       for the node (`Photon.NodeKeys.issue/2`), tied to the machine's
+       tailnet device before it exists anywhere, on stdin, never on a
        command line,
     4. waits for the node to connect.
 
@@ -67,8 +68,9 @@ defmodule Photon.Provision do
   Starts a job. `action` is `:install` (also updates) or `:uninstall`.
 
   Options: `:machine` (tailnet name), `:host` (what to ssh to), `:ssh_user`,
-  `:node_id`, `:base_url` (how the node reaches the hub), `:env` (extra
-  variables for the install script).
+  `:node_id`, `:base_url` (how the node reaches the hub), `:device` (the
+  machine's tailnet device, `Photon.NodeKeys.device()`, to tie the node's
+  key to), `:env` (extra variables for the install script).
   """
   @spec run(:install | :uninstall, keyword()) :: :ok | {:error, String.t()}
   def run(action, opts) when action in [:install, :uninstall] do
@@ -186,7 +188,7 @@ defmodule Photon.Provision do
   defp install(opts, log) do
     log.("Installing")
     since = DateTime.utc_now()
-    {:ok, key} = Photon.NodeKeys.issue(opts.node_id)
+    {:ok, key} = Photon.NodeKeys.issue(opts.node_id, device: opts[:device])
     input = Script.install_input(opts, key)
 
     with {:ok, out} <- ssh(opts, "sh -s", {:text, input}, log),

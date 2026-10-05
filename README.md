@@ -141,10 +141,14 @@ Open **Nodes**:
   ```
 
 Nodes need no root and nothing else installed. Each node has its own key: the
-hub keeps only its hash, ties it to the tailnet device that first connects
-with it (so a copied key works nowhere else), and makes a fresh one with
-every install or update. **Update all** updates every node running an older
-build at once.
+hub keeps only its hash and makes a fresh one with every install or update,
+dropping any connection still using the old one. On a tailnet the key is
+tied to its machine (up front when installed over SSH; otherwise to the
+first machine that uses it within an hour), so a copied key works nowhere
+else, and that machine stays kept out of the hub's GUI through every update.
+Removing a node keeps its machine out too, until you choose **Let it open the
+hub** under Removed on the Nodes page. **Update all** updates every node
+running an older build at once.
 
 ## Using the assistant
 

@@ -4,9 +4,18 @@ defmodule PhotonWeb.NodeAuthPlug do
   is read, so nobody without a key can make the hub parse one. The key is
   the bearer token, checked by `Photon.NodeKeys` against where the request
   came from (`PhotonWeb.ClientIP`). A valid one goes on with the node's ID
-  in `conn.assigns.node_id`; anything else gets a 401 in the relay's error
+  in `conn.assigns.node_id` and its body parsed here, up to 32 MB (a whole
+  conversation, images included); the endpoint's own parser, after this,
+  takes only small bodies. Anything else gets a 401 in the relay's error
   format. Other paths pass untouched.
   """
+
+  @relay_body Plug.Parsers.init(
+                parsers: [:json],
+                pass: ["*/*"],
+                length: 32_000_000,
+                json_decoder: Jason
+              )
 
   import Plug.Conn
 
@@ -21,8 +30,9 @@ defmodule PhotonWeb.NodeAuthPlug do
     origin = ClientIP.identify(conn.remote_ip, conn.req_headers)
 
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
-         {:ok, node_id} <- Photon.NodeKeys.authenticate(token, origin) do
-      assign(conn, :node_id, node_id)
+         {:ok, node_id, _generation} <-
+           Photon.NodeKeys.authenticate(token, origin, Photon.Auth.node_key_policy()) do
+      conn |> assign(:node_id, node_id) |> Plug.Parsers.call(@relay_body)
     else
       {:error, reason} -> refuse(conn, reason)
       _no_key -> refuse(conn, "no node key")

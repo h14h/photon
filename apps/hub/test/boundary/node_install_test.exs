@@ -165,6 +165,29 @@ defmodule Photon.NodeInstallTest do
     refute gone?(pid)
   end
 
+  test "refuses to report an uninstall while the unpacked runtime still runs", ctx do
+    {_out, 0} = install(ctx, [{"PHOTON_SERVICE", "none"}])
+    base = Path.join(ctx.home, ".local/share/photon-node")
+    System.cmd("sh", ["-c", "kill $(cat #{base}/node.pid)"])
+    File.rm!(Path.join(base, "node.pid"))
+
+    # Where Burrito unpacks the node's Erlang runtime, which can outlive it.
+    beam = Path.join(ctx.home, ".local/share/.burrito/photon_node_erts-17.1_9.9.9/bin/beam.smp")
+    File.mkdir_p!(Path.dirname(beam))
+    File.cp!(Path.join(ctx.dir, "fake-node"), beam)
+    {_, 0} = System.cmd("sh", ["-c", "nohup #{beam} </dev/null >/dev/null 2>&1 &"])
+    on_exit(fn -> System.cmd("pkill", ["-f", beam]) end)
+
+    {out, status} =
+      System.cmd("sh", ["-c", script()],
+        env: ctx.env ++ [{"PHOTON_ACTION", "uninstall"}],
+        stderr_to_stdout: true
+      )
+
+    assert status != 0
+    assert out =~ "couldn't stop the running node"
+  end
+
   defp child_of(pid) do
     case System.cmd("pgrep", ["-P", pid]) do
       {child, 0} -> child

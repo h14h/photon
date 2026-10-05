@@ -96,18 +96,25 @@ defmodule PhotonWeb.SettingsLive do
          |> assign(sign_in_url: nil, sign_in_form: to_form(%{"address" => ""}, as: :sign_in))
          |> put_flash(:info, "Signed in with ChatGPT. Blip is awake.")}
 
+      # The address carries a one-time code, so it isn't kept on the page.
       {:error, reason} ->
         {:noreply,
          assign(socket,
            sign_in_error: reason,
-           sign_in_form: to_form(%{"address" => address}, as: :sign_in)
+           sign_in_form: to_form(%{"address" => ""}, as: :sign_in)
          )}
     end
   end
 
   def handle_event("cancel_sign_in", _params, socket) do
     :ok = ChatGPT.cancel_sign_in()
-    {:noreply, assign(socket, sign_in_url: nil, sign_in_error: nil)}
+
+    {:noreply,
+     assign(socket,
+       sign_in_url: nil,
+       sign_in_error: nil,
+       sign_in_form: to_form(%{"address" => ""}, as: :sign_in)
+     )}
   end
 
   def handle_event("sign_out", _params, socket) do

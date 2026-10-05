@@ -24,20 +24,37 @@ defmodule PhotonWeb.NodeChannel do
 
   require Logger
 
-  alias Photon.{Nodes, NodeSessions}
+  alias Photon.{NodeKeys, Nodes, NodeSessions}
 
-  # A node joins as the node its key belongs to (`PhotonWeb.NodeSocket`).
+  # A node joins as the node its key belongs to (`PhotonWeb.NodeSocket`),
+  # while that key is still current. It listens for key changes before it
+  # checks (so none slips in between), and checks again once registered,
+  # which can wait on a previous connection; afterwards it goes, closing
+  # the connection, as soon as its own key is no longer current.
   @impl true
   def join("node:" <> node_id, info, %{assigns: %{node_id: node_id}} = socket) do
-    :ok = Nodes.register(node_id, node_info(info))
-    send(self(), :joined)
+    :ok = NodeKeys.subscribe()
+    current? = fn -> NodeKeys.current?(node_id, socket.assigns.generation) end
 
-    {:ok, %{"sync" => NodeSessions.sync_for(node_id)},
-     assign(socket, :pushed_inputs, MapSet.new())}
+    with true <- current?.(),
+         :ok <- Nodes.register(node_id, node_info(info)),
+         true <- still_current(current?, node_id) do
+      send(self(), :joined)
+
+      {:ok, %{"sync" => NodeSessions.sync_for(node_id)},
+       socket |> assign(:pushed_inputs, MapSet.new()) |> assign(:sessions, MapSet.new())}
+    else
+      _replaced -> {:error, %{"reason" => "this key has been replaced"}}
+    end
   end
 
   def join("node:" <> other, _info, socket),
     do: {:error, %{"reason" => "this key belongs to #{socket.assigns.node_id}, not #{other}"}}
+
+  # If the key was replaced meanwhile, gives up the registration it just took.
+  defp still_current(current?, node_id) do
+    current?.() or Nodes.unregister(node_id) != :ok
+  end
 
   defp node_info(info) do
     info
@@ -55,9 +72,21 @@ defmodule PhotonWeb.NodeChannel do
     {:noreply, socket}
   end
 
+  # Live output streams often, so which sessions are this node's is
+  # remembered once looked up.
   def handle_in("live", %{"session_id" => id, "data" => data}, socket) do
-    NodeSessions.live(id, data)
-    {:noreply, socket}
+    cond do
+      MapSet.member?(socket.assigns.sessions, id) ->
+        NodeSessions.live(id, data)
+        {:noreply, socket}
+
+      NodeSessions.owned?(id, socket.assigns.node_id) ->
+        NodeSessions.live(id, data)
+        {:noreply, assign(socket, :sessions, MapSet.put(socket.assigns.sessions, id))}
+
+      true ->
+        {:noreply, socket}
+    end
   end
 
   def handle_in(
@@ -65,7 +94,7 @@ defmodule PhotonWeb.NodeChannel do
         %{"session_id" => id, "input_id" => input_id, "reason" => reason},
         socket
       ) do
-    NodeSessions.reject_input(id, input_id, reason)
+    NodeSessions.reject_input(id, input_id, reason, socket.assigns.node_id)
     {:noreply, socket}
   end
 
@@ -101,6 +130,19 @@ defmodule PhotonWeb.NodeChannel do
   end
 
   def handle_info(:replaced, socket), do: {:stop, {:shutdown, :replaced}, socket}
+
+  def handle_info({:node_keys_changed, node_id}, %{assigns: %{node_id: node_id}} = socket) do
+    if NodeKeys.current?(node_id, socket.assigns.generation) do
+      {:noreply, socket}
+    else
+      # Closes the websocket itself, not only this channel, so the old key
+      # can't join again over it.
+      :ok = socket.endpoint.broadcast(socket.id, "disconnect", %{})
+      {:stop, {:shutdown, :key_replaced}, socket}
+    end
+  end
+
+  def handle_info({:node_keys_changed, _other}, socket), do: {:noreply, socket}
 
   @impl true
   def terminate(_reason, socket) do

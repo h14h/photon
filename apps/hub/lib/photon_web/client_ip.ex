@@ -17,6 +17,7 @@ defmodule PhotonWeb.ClientIP do
   # ::1, and the ::ffff:0:0/96 prefix of IPv4 addresses written as IPv6.
   @ipv6_loopback elem(:inet.parse_address(~c"::1"), 1)
   @mapped_prefix [0, 0, 0, 0, 0, 0xFFFF]
+  @tailnet_ipv6_prefix [0xFD7A, 0x115C, 0xA1E0]
 
   @doc """
   The client's address, `:local` for the hub machine itself, or nil when a
@@ -25,18 +26,18 @@ defmodule PhotonWeb.ClientIP do
   @spec client(:inet.ip_address(), [{String.t(), String.t()}]) ::
           :inet.ip_address() | :local | nil
   def client(remote_ip, headers) do
-    if loopback?(remote_ip), do: forwarded(headers), else: remote_ip
+    if loopback?(remote_ip), do: forwarded(headers), else: ipv4(remote_ip)
   end
 
   @doc "Who connected: a tailnet device (per `tailscale whois`), `:local`, or `:error`."
   @spec identify(:inet.ip_address(), [{String.t(), String.t()}]) :: Photon.NodeKeys.origin()
-  def identify(remote_ip, headers) do
-    case client(remote_ip, headers) do
-      :local -> :local
-      nil -> :error
-      ip -> Photon.Tailnet.whois(ip)
-    end
-  end
+  def identify(remote_ip, headers), do: remote_ip |> client(headers) |> whois()
+
+  @doc "Who a client from `client/2` is: a tailnet device, `:local`, or `:error`."
+  @spec whois(:inet.ip_address() | :local | nil) :: Photon.NodeKeys.origin()
+  def whois(:local), do: :local
+  def whois(nil), do: :error
+  def whois(ip), do: Photon.Tailnet.whois(ip)
 
   defp forwarded(headers) do
     case for {"x-forwarded-for", value} <- headers, do: value do
@@ -47,10 +48,32 @@ defmodule PhotonWeb.ClientIP do
 
   defp parse(address) do
     case address |> String.trim() |> String.to_charlist() |> :inet.parse_strict_address() do
-      {:ok, ip} -> ip
+      {:ok, ip} -> ipv4(ip)
       {:error, _reason} -> nil
     end
   end
+
+  @doc "Whether an address is in Tailscale's ranges (100.64.0.0/10, fd7a:115c:a1e0::/48)."
+  @spec tailnet?(term()) :: boolean()
+  def tailnet?(ip) when is_tuple(ip) and tuple_size(ip) == 4 do
+    [a, b | _] = Tuple.to_list(ip)
+    a == 100 and b in 64..127
+  end
+
+  def tailnet?(ip) when is_tuple(ip) and tuple_size(ip) == 8,
+    do: ip |> Tuple.to_list() |> Enum.take(3) == @tailnet_ipv6_prefix
+
+  def tailnet?(_client), do: false
+
+  # An IPv4 address written as IPv6 (::ffff:a.b.c.d) is the IPv4 address,
+  # which is how tailscale knows it.
+  defp ipv4(ip) when tuple_size(ip) == 8 do
+    if ip |> Tuple.to_list() |> Enum.take(6) == @mapped_prefix,
+      do: :inet.ipv4_mapped_ipv6_address(ip),
+      else: ip
+  end
+
+  defp ipv4(ip), do: ip
 
   defp loopback?({127, _, _, _}), do: true
 
