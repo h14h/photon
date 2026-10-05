@@ -1,26 +1,33 @@
 ---
 name: verify-photon
-description: "Drive the Photon hub's Phoenix LiveView (playground, sessions, settings, nodes) in a headless browser against an isolated PHOTON_DATA_DIR. Use to prove hub UI behavior, after LiveView changes, or when maintaining this verification skill."
+description: "Drive the Photon hub's Phoenix LiveView (overview, Blip, sessions, settings, nodes) in a headless browser against an isolated PHOTON_DATA_DIR. Use to prove hub UI behavior, after LiveView changes, or when maintaining this verification skill."
 ---
 
 # Verify Photon
 
-Photon is a Phoenix LiveView hub for unreal-agent. This skill starts that hub the way the README does, drives it in Chrome, and keeps proof after the process is gone. The primary surface is the single LiveView at `/` and `/s/:id` (`PhotonWeb.PlaygroundLive`): composer, session list, settings, and the nodes panel. Remote node install, the `node/` CLI, and Fly deploy are not this harness.
+Photon is a Phoenix LiveView hub. This skill starts that hub the way the README does, drives it in Chrome, and keeps proof after the process is gone. The GUI is the shell in `PhotonWeb.Layouts` plus four pages and Blip:
 
-The repo has LiveView tests in `test/photon_web/live/playground_live_test.exs`. They name the stable DOM ids this skill uses, and they run inside `mix test` with a fake node. They do not drive `mix phx.server`. There is no Playwright or Cypress suite. This harness is headless Chrome (Playwright's driver, system Google Chrome) against the real dev server and the built-in `local` node.
+- `/` is `PhotonWeb.OverviewLive` (machines, running work, recent work, schedules).
+- `/sessions/:id` is `PhotonWeb.SessionLive` (one node session).
+- `/nodes` is `PhotonWeb.NodesLive`.
+- `/settings` is `PhotonWeb.SettingsLive`.
+- `PhotonWeb.BlipLive` floats over every page. That is where you send a message.
+
+Remote node install, the `apps/node` CLI, and Fly deploy are not this harness. It drives one hub and the built-in `local` node.
+
+The repo has LiveView tests under `apps/hub/test/web/live/`. They name the stable DOM ids this skill uses, and they run inside `mix test`. They do not drive `mix phx.server`. There is no Playwright or Cypress suite. This harness is headless Chrome (Playwright's driver, system Google Chrome) against the real dev server and the built-in `local` node.
 
 Run every command from anywhere. Paths below are relative to the repo root.
 
 ## Launch
 
-One-time, from the repo root, with Elixir on `PATH` (`mix.exs` requires `~> 1.17`; the README asks for 1.20+) and Go 1.27+:
+One-time, from `apps/hub`, with Elixir on `PATH` (`apps/hub/mix.exs` requires `~> 1.17`; the README asks for 1.20+):
 
 ```sh
-mix setup
-mix photon.build_runner
+cd apps/hub && mix setup
 ```
 
-`mix photon.build_runner` clones unreal-agent and writes `node/priv/bin/unreal-agent-runner`. The dev server copies that into `_build` on compile. Without it the composer stays disabled and the page says the node has no `unreal-agent-runner`.
+There is no `mix photon.build_runner`. The hub starts a built-in node named `local` inside the same VM (`config :photon, local_node: true` in development). `mix photon.package` (from `apps/node`) only fills binaries for remote installs. This harness does not need those binaries.
 
 Each verification run:
 
@@ -32,11 +39,12 @@ That command:
 
 - Installs `playwright-core` into `.cursor/skills/verify-photon/node_modules` on first use (`npm install`). Needs Node.js and network once.
 - Binds `127.0.0.1` and `PORT` (default **4010**, not the app's 4000). Override with `PHOTON_VERIFY_PORT`.
-- Sets `PHOTON_DATA_DIR` to `$PHOTON_VERIFY_ROOT/run/data` (default `/tmp/verify-photon/run/data`). This replaces any `PHOTON_DATA_DIR` already in the environment. It does not read or write the repo `.photon/` directory.
-- Unsets `PHOTON_PASSWORD`, `PHOTON_BIND`, `PHOTON_PUBLIC_URL`, and `PHOTON_TRUST_TAILNET` for the server process only. Dev auth stays open. Do not export `PHOTON_PASSWORD` into this server.
+- Runs `mix phx.server` in `apps/hub` (the repo root has no Mix project).
+- Sets `PHOTON_DATA_DIR` to `$PHOTON_VERIFY_ROOT/run/data` (default `/tmp/verify-photon/run/data`) and `PHOTON_MOCK_MODEL=1`. This replaces any `PHOTON_DATA_DIR` already in the environment. It does not read or write `apps/hub/.photon/`. The scripted model is what lets Blip answer without a ChatGPT sign-in. Without it the composer is replaced by **Sign in with ChatGPT**.
+- Unsets `PHOTON_PASSWORD`, `PHOTON_AUTH`, `PHOTON_BIND`, `PHOTON_PUBLIC_URL`, and `PHOTON_TRUST_TAILNET` for the server process only. Dev auth stays open (`Photon.Auth` mode `:off`). Do not export `PHOTON_PASSWORD` into this server.
 - Starts `mix phx.server` with `nohup` and records its pid in `$PHOTON_VERIFY_ROOT/run/pid`. Log: `$PHOTON_VERIFY_ROOT/run/server.log`.
 - Refuses to start if that port is already taken. It does not kill a hub it did not start.
-- Returns when doctor passes (below), or kills the process it started and exits non-zero. First boot can spend the wait compiling; the limit is 90s.
+- Returns when doctor passes (below), or kills the process it started and exits non-zero. First boot can spend the wait compiling and waiting for `local` to connect; the limit is 90s.
 
 Ready means doctor prints `ok`, not merely that a port is open. A second `launch` while that same pid is healthy prints the doctor block and does not start another server.
 
@@ -61,14 +69,16 @@ node=local
 provider=mock
 ```
 
+`provider=mock` means the server process was started with `PHOTON_MOCK_MODEL=1`. The sidebar still names the default model **GPT-6.1 Sol**. That label is not a ChatGPT sign-in.
+
 It fails unless all of these are true:
 
 - `run/pid` is alive and is the process (or its parent) listening on `127.0.0.1:$PORT`. Another machine's bind is rejected.
 - `GET /healthz` body is `ok`. This route is unauthenticated and is not proof of the GUI.
-- `GET /` is HTTP 200, not 401 `Photon needs its password`.
-- The HTML title contains `Photon`, the empty state says `Try the Unreal Agent harness`, `textarea#composer` exists and is not `disabled`, the sidebar lists `local`, and `select[name="settings[provider]"]` has `mock` selected.
-- The HTML does not contain `No nodes are connected yet.`, `is offline.`, or `has no` (the missing-runner banner).
-- The HTML contains the run's `PHOTON_DATA_DIR` (the local node's workspace is `<data>/workspace`). A page that does not mention that directory is a different instance.
+- `GET /` and `GET /nodes` are HTTP 200, not 401 `Photon needs its password`.
+- The HTML title contains `Overview · Photon`, `#blip-face` exists, and `#composer-input` exists. `#sign-in-to-talk` instead of the composer means the mock model is off.
+- The overview HTML lists `#side-node-local` or `#machine-local`, and does not contain `No nodes are connected`.
+- The nodes HTML lists `#node-local` and contains the run's `PHOTON_DATA_DIR` (the local node's workspace is `<data>/local-node/workspace`). A page that does not mention that directory is a different instance.
 
 Do not drive a hub this run did not start.
 
@@ -82,14 +92,14 @@ The browser daemon keeps one Chrome window (1440×900, headless, `--no-sandbox`)
 .cursor/skills/verify-photon/verify-photon browser stop
 ```
 
-`browser start` is idempotent while its pid is alive. It opens the hub and waits until `textarea#composer` is enabled and the LiveView has class `phx-connected` (the socket is up). Commands talk to `$PHOTON_VERIFY_ROOT/run/browser.sock`. `browser.mjs` is the daemon; call it only through `verify-photon`.
+`browser start` is idempotent while its pid is alive. It opens the hub, waits until the LiveView has class `phx-connected`, clicks `#blip-face`, and waits until `#composer-input` is visible. Commands talk to `$PHOTON_VERIFY_ROOT/run/browser.sock`. `browser.mjs` is the daemon; call it only through `verify-photon`.
 
 | Command | Flags | Result |
 | --- | --- | --- |
 | `goto` | `--url` `/` or an absolute URL | Opens that URL |
 | `fill` | `--selector` `--value` | Replaces the field value |
 | `click` | `--selector` `--confirm` (optional) | Clicks. `--confirm` accepts a `window.confirm`; without it the dialog is dismissed |
-| `press` | `--selector` `--key` | Presses a key (`Enter` in `#composer` submits) |
+| `press` | `--selector` `--key` | Presses a key (`Enter` in `#composer-input` submits) |
 | `hover` | `--selector` | Hovers |
 | `select` | `--selector` `--value` | Selects an `<option>` |
 | `check` / `uncheck` | `--selector` | Toggles a checkbox |
@@ -103,39 +113,45 @@ The browser daemon keeps one Chrome window (1440×900, headless, `--no-sandbox`)
 
 `drive send-message` runs the composer path in `features/send-message.md` and writes evidence. Other features are driven with the commands in their feature files. Read `features/README.md` first.
 
-Stable handles, from `playground_live.ex` and the LiveView tests:
+Stable handles, from the LiveViews and their tests:
 
 | UI | Selector |
 | --- | --- |
-| Composer | `#composer` |
-| Composer form | `#composer-form` |
-| Send | `#composer-form button[title="Send"]` |
-| Stop | `button[title="Stop (sends SIGINT to the runner)"]` |
-| Transcript | `#transcript` |
-| Page heading | `h1` |
-| New session | `aside a[href="/"]` |
-| Session sidebar | `aside:has(a[href="/"])` |
-| A session | `aside a[href="/s/<uuid>"]` |
-| Delete session | `a[href="/s/<uuid>"] + button[title="Delete session"]` |
-| Settings toggle | `button[title="Settings"]` |
+| Open Blip | `#blip-face` |
+| Blip panel | `#blip-panel` |
+| Close Blip | `#blip-close` |
+| Blip conversation | `#conversation` |
+| Empty Blip state | `#empty-state` |
+| Composer form | `#composer` |
+| Composer | `#composer-input` |
+| Send | `#send` |
+| Stop Blip | `#stop` |
+| Steer / wait toggle | `#mode-toggle` |
+| Example (empty transcript only) | `#empty-state button` |
+| Overview | `#nav-overview` |
+| Nodes | `#nav-nodes` |
+| Settings | `#nav-settings` |
+| Sidebar | `#sidebar` |
+| Built-in node | `#side-node-local` |
+| A session row | `#side-session-<id>` |
+| Overview machine | `#machine-local` |
+| Session page input | `#session-input` |
+| Session send | `#session-composer button[type="submit"]` |
+| Stop session | `#stop-session` |
+| Delete session | `#delete-session` |
 | Settings form | `#settings-form` |
-| Provider | `select[name="settings[provider]"]` |
-| Model | `input[name="settings[model]"]` |
-| API key | `input[name="settings[api_key]"]` |
-| Base URL | `input[name="settings[base_url]"]` |
-| Thinking level | `input[name="settings[thinking_level]"][value="high"]` (also `low`, `medium`, `xhigh`, `max`) |
-| Tool checkbox | `input[name="settings[enabled_tools][]"][value="Bash"]` and `ViewImage` |
-| Workspace | `input[name="settings[workspace]"]` |
-| System prompt | `textarea[name="settings[system_prompt]"]` |
-| Max attempts | `input[name="settings[max_attempts]"]` |
-| Reset settings | `button[phx-click="reset_settings"]` |
-| Node picker (new session only) | `#node-picker select[name="node"]` |
-| Add a node | `button[title="Connect a node"]` |
-| Close the node panel | `div.fixed button[phx-click="toggle_connect"]` |
-| Conversation tab | `button[phx-click="tab"][phx-value-tab="chat"]` |
-| Raw events tab | `button[phx-click="tab"][phx-value-tab="raw"]` |
-| Mock examples (empty transcript only) | `button:has-text("What can the mock do?")`, `button:has-text("Run a command")`, `button:has-text("Watch an async tool")`, `button:has-text("Look around")` |
-| Image file input | `#composer-form input[type="file"]` |
+| Save settings | `#save-settings` |
+| Your name | `input[name="settings[user_name]"]` |
+| Time zone | `input[name="settings[timezone]"]` |
+| Standing instructions | `textarea[name="settings[instructions]"]` |
+| Sign in button | `#begin-sign-in` |
+| Edit memory | `#edit-memory` |
+| Memory text | `#memory-text` |
+| Fresh context | `#fresh-start` |
+| Node card | `#node-local` |
+| Manual node name | `#manual-node-id` |
+| Make install command | `#make-install-command` |
+| Install command | `#install-command` |
 
 Bundled proof:
 
@@ -144,7 +160,7 @@ Bundled proof:
 .cursor/skills/verify-photon/verify-photon drive send-message
 ```
 
-`drive send-message` runs doctor again, types `help`, clicks Send, waits for the mock reply and `run finished`, and copies the session files into the evidence directory.
+`drive send-message` runs doctor again, opens Blip, types `help`, clicks Send, waits for the scripted reply, and copies the conversation rows out of `<data>/photon.db`.
 
 ## Evidence
 
@@ -153,21 +169,20 @@ Proof goes to `$PHOTON_VERIFY_ROOT/evidence/<feature>/` (default `/tmp/verify-ph
 `drive send-message` writes:
 
 - `action.png` — composer filled with `help`, before Send
-- `result.png` — transcript after the run, with the Photon sidebar still visible
-- `transcript.txt`, `heading.txt`, `url.txt`, `title.txt`
-- `meta.json` and `events.jsonl` — copies of `<data>/sessions/<id>/meta.json` and `events.jsonl`
+- `result.png` — Blip's reply, with the Photon sidebar still visible
+- `transcript.txt`, `url.txt`, `title.txt`
+- `entries.jsonl` — the `data` column of every row in `photon.db`'s `entries` table
 - `doctor.txt`, `summary.txt`
 
 A passing send-message proof has all of:
 
-- `heading.txt` is `help` and `url.txt` matches `/s/<uuid>`
-- `transcript.txt` contains the prompt `help`, the sentence `I'm the built-in mock model`, and `run finished` (the UI uppercases that line to `RUN FINISHED`)
-- `meta.json` has `"title": "help"` and `"node": "local"`
-- `events.jsonl` contains `"Payload":"help"` and `"Kind":"model_response"` plus the same mock sentence
+- `title.txt` contains `Photon` and `url.txt` is the hub root (Blip does not navigate away)
+- `transcript.txt` contains the prompt `help` and the sentence `I'm Blip, on the scripted model`
+- `entries.jsonl` contains both of those strings
 
-That is the user path (type and Send), the resulting transcript, and the files the hub wrote. The mock provider is the product's built-in stand-in; `help` does not call a shell and does not use the network. Do not prove messaging by writing session files yourself.
+That is the user path (open Blip, type, and Send) and the rows the hub committed. The scripted model is the product's built-in stand-in; `help` does not call a shell and does not use the network. Do not prove messaging by inserting rows yourself.
 
-Screenshots of **Add a node** after expanding **Any other machine** include the node token. Do not put that image in evidence. Assert that the command contains `/node/install.sh` and `PHOTON_NODE_TOKEN=` without recording the token.
+Screenshots of **Any other machine** after **Make its command** include that node's key. Do not put that image in evidence. Assert that the command contains `/node/install.sh` and `PHOTON_NODE_TOKEN=` without recording the token.
 
 ## Cleanup
 
@@ -175,13 +190,13 @@ Screenshots of **Add a node** after expanding **Any other machine** include the 
 .cursor/skills/verify-photon/verify-photon cleanup
 ```
 
-Sends `SIGTERM` (then `SIGKILL` if needed) to the browser pid and the server pid recorded under `$PHOTON_VERIFY_ROOT/run`, then deletes that `run` directory, including the disposable data dir. It does not delete `$PHOTON_VERIFY_ROOT/evidence`, the repo `.photon/` directory, or any process it did not start. It does not kill `epmd` or every `beam.smp`.
+Sends `SIGTERM` (then `SIGKILL` if needed) to the browser pid and the server pid recorded under `$PHOTON_VERIFY_ROOT/run`, then deletes that `run` directory, including the disposable data dir. It does not delete `$PHOTON_VERIFY_ROOT/evidence`, `apps/hub/.photon/`, or any process it did not start. It does not kill `epmd` or every `beam.smp`.
 
 After a failed drive, run cleanup before starting again so the port and Chrome daemon are not left behind. Then confirm evidence is still there:
 
 ```sh
 test -f /tmp/verify-photon/evidence/send-message/result.png \
-  && test -f /tmp/verify-photon/evidence/send-message/meta.json \
+  && test -f /tmp/verify-photon/evidence/send-message/entries.jsonl \
   && test ! -d /tmp/verify-photon/run
 ```
 
@@ -194,7 +209,7 @@ test -f /tmp/verify-photon/evidence/send-message/result.png \
 .cursor/skills/verify-photon/verify-photon doctor
 .cursor/skills/verify-photon/verify-photon drive send-message
 .cursor/skills/verify-photon/verify-photon browser start
-.cursor/skills/verify-photon/verify-photon browser click --selector 'button[title="Settings"]'
+.cursor/skills/verify-photon/verify-photon browser click --selector '#nav-settings'
 .cursor/skills/verify-photon/verify-photon browser stop
 .cursor/skills/verify-photon/verify-photon cleanup
 ```

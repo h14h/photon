@@ -1,46 +1,43 @@
 # Settings
 
-Settings choose the provider, model, tools, and workspace used for the next run. Changes save immediately into the hub data directory and show up in the open form.
+Settings are the hub's ChatGPT sign-in, the name and instructions Blip should know, and the memory Blip keeps. The name and instructions save when you click **Save settings**, into `settings.json` in the data directory. Memory has its own edit button.
 
 ## Sub-features
 
-- `settings-open` shows the settings aside on a fresh page and toggles it from the header.
-- `settings-provider` switches provider and persists `settings.json`.
-- `settings-tools` turns Bash or ViewImage off for the next run.
-- `settings-reset` restores the built-in defaults after confirmation.
+- `settings-open` shows the settings page and the signed-out ChatGPT card.
+- `settings-save` stores your name, time zone, and standing instructions.
+- `settings-memory` edits what Blip remembers.
+- `settings-fresh` starts a fresh context after confirmation.
 
 ## How to get to it (user POV)
 
-- The **Settings** aside is open on first load, to the right of the transcript.
-- Click the gear (tooltip **Settings**) to hide or show it.
-- Change **Provider**, **Thinking level**, **Tools**, **Workspace**, **System prompt**, or **Max attempts**. There is no save button.
-- **Model** and **Base URL** appear for OpenAI, OpenAI Codex, OpenRouter, Fireworks, and Ollama. **API key** appears for OpenAI, OpenRouter, and Fireworks. OpenAI Codex shows a hint about `~/.codex/auth.json`. Ollama shows a hint that the default base URL is `http://localhost:11434/v1`.
-- Click **Reset** and confirm **Reset all settings to defaults?**
+- Click **Settings** in the sidebar. The page heading is **Settings**.
+- The **ChatGPT** card says Blip needs a model and offers **Sign in with ChatGPT**. With the scripted model, Blip can already talk; this card is still signed out.
+- Under **Blip**, edit **Your name**, **Your time zone**, and **Standing instructions**. Click **Save settings**. There is no save-as-you-type.
+- Under **What Blip remembers**, click **Edit**, change the text, and click **Save**.
+- Click **Fresh context** and confirm **Start a fresh context? Blip stops seeing earlier messages (they stay in the chat). Memory is kept.**
 
 ## Driving it with verify-photon
 
 Preconditions:
 
 - `verify-photon doctor` prints `provider=mock` and the isolated data dir.
-- Do not type a real API key. Leave **API key** blank.
+- Do not finish a ChatGPT sign-in. Do not paste a callback address. Leave the sign-in form unsubmitted.
 - Start from a fresh launch so `<data>/settings.json` does not exist yet. Defaults apply without that file.
 
-- **Aside is open.** Run `.cursor/skills/verify-photon/verify-photon browser start` and `.cursor/skills/verify-photon/verify-photon browser wait-selector --selector '#settings-form'`. The heading **Settings** is visible and `select[name="settings[provider]"]` value is `mock` (doctor already checked the selected option in the HTML).
-- **Toggle.** Run `.cursor/skills/verify-photon/verify-photon browser click --selector 'button[title="Settings"]'`. `#settings-form` is gone. Click the same button again and `#settings-form` is back.
-- **Change provider.** Run `.cursor/skills/verify-photon/verify-photon browser select --selector 'select[name="settings[provider]"]' --value openrouter`, then `.cursor/skills/verify-photon/verify-photon browser wait-text --text 'OPENROUTER_API_KEY'`. The hint names that variable. Read `<data>/settings.json`: `"provider"` is `"openrouter"`. The file mode is `0600`. Screenshot `$PHOTON_VERIFY_ROOT/evidence/settings/openrouter.png` with the Photon sidebar and the OpenRouter hint visible.
-- **Blank key.** Do not fill `input[name="settings[api_key]"]`. With OpenRouter selected and the key empty, the hint reads `$OPENROUTER_API_KEY isn't set on node local. Paste a key here, or export it where the node runs.` when that variable is unset on the local node, and `✓ $OPENROUTER_API_KEY is set on node local.` when the node reports it.
-- **Thinking level.** The level control is the visible label, not the clipped radio. Run `.cursor/skills/verify-photon/verify-photon browser click --selector '#settings-form label:has(input[name="settings[thinking_level]"][value="low"])'`. `settings.json` `"thinking_level"` becomes `"low"`.
-- **Disable a tool.** Run `.cursor/skills/verify-photon/verify-photon browser uncheck --selector 'input[name="settings[enabled_tools][]"][value="Bash"]'`. `settings.json` `"disallowed_tools"` contains `"Bash"`.
-- **Reset.** Run `.cursor/skills/verify-photon/verify-photon browser click --confirm --selector 'button[phx-click="reset_settings"]'`. `settings.json` `"provider"` is `"mock"`, `"thinking_level"` is `"high"`, and `"disallowed_tools"` is `[]`. The provider select shows **Mock model (built in, no API key)** and the OpenRouter key hint is gone.
-- **Proof.** Copy the post-reset `settings.json` to `$PHOTON_VERIFY_ROOT/evidence/settings/settings.json` and record `feature=settings` in `summary.txt`. The copy is the side effect; the screenshot is the visible state before reset.
+- **Open the page.** Run `.cursor/skills/verify-photon/verify-photon browser click --selector '#nav-settings'`, then `.cursor/skills/verify-photon/verify-photon browser wait-selector --selector '#settings-form'`. The heading **Settings** is visible, `#begin-sign-in` is visible, and `#chatgpt` does not say `Signed in`. The model and reasoning fields are absent. The sidebar still shows **Photon**.
+- **Save.** Run `.cursor/skills/verify-photon/verify-photon browser fill --selector 'input[name="settings[user_name]"]' --value 'Ada'`, then the same for `input[name="settings[timezone]"]` with `UTC` and `textarea[name="settings[instructions]"]` with `Prefer the local machine.`, then `.cursor/skills/verify-photon/verify-photon browser click --selector '#save-settings'`. Wait for `Saved. The next message uses these settings.` Read `<data>/settings.json`: `user_name` is `Ada`, `timezone` is `UTC`, `instructions` is `Prefer the local machine.`, and `scheduled_work` is `false`. The file mode is `0600`.
+- **Memory.** Run `.cursor/skills/verify-photon/verify-photon browser click --selector '#edit-memory'`, fill `#memory-form textarea` with `The local machine is the one to use.`, click `#memory-form button[type="submit"]`, and wait until `#memory-text` contains that sentence.
+- **Fresh context.** Run `.cursor/skills/verify-photon/verify-photon browser click --confirm --selector '#fresh-start'`. The page says `Started a fresh context.` Earlier Blip messages stay in the panel if you open it again.
+- **Proof.** Copy the saved `settings.json` to `$PHOTON_VERIFY_ROOT/evidence/settings/settings.json`. Screenshot `$PHOTON_VERIFY_ROOT/evidence/settings/saved.png` after save, with the Photon sidebar and **Saved.** visible. Record `feature=settings` in `summary.txt`.
 
 ## Gotchas
 
-- The form saves on `phx-change`. Waiting for a submit button will hang. After `browser select` or `browser check`, read `settings.json` rather than trusting the control alone.
-- Labels are plain text, not `<label for>`. Use the `name` selectors, not an accessible name.
-- `#settings-form` is absent from the DOM while the aside is closed. Open it with `button[title="Settings"]` before selecting.
-- **Reset** uses `window.confirm`. Without `--confirm` the click is dismissed and the previous provider stays.
-- Mock hides model, API key, and base URL. Model and base URL inputs are in the DOM for every other provider. `input[name="settings[api_key]"]` is in the DOM for OpenAI, OpenRouter, and Fireworks.
-- API keys are written in plain text to `settings.json` and sent to the node with each run. A verification run must leave `api_key` empty.
-- `phx-auto-recover="ignore"` is on this form so a reconnect does not replay a stale change. There is nothing to click.
-- Default node is `local`, but the node choice for a new session is `#node-picker`, not a field inside `#settings-form`. Picking a node writes `"node"` in `settings.json`.
+- The form does not save on `phx-change`. **Save settings** (`#save-settings`) writes the file. Waiting for a change to touch `settings.json` without that click will hang.
+- Model, reasoning effort, and the schedules checkbox render only when ChatGPT is signed in (`#chatgpt` shows **Signed in**). The mock model does not sign in, so those controls are not in the DOM. Do not select a provider; there is no provider field.
+- **Sign in with ChatGPT** (`#begin-sign-in`) starts the real OpenAI redirect. Verification stops at the button. Completing it needs a ChatGPT account and a callback address this harness does not have.
+- API keys are not a field. The account lives in `chatgpt.json`, which this run must not create.
+- **Fresh context** uses `window.confirm`. Without `--confirm` the click is dismissed and no reset entry is written.
+- **Fresh context** does not delete messages and does not clear memory. It is not a reset of `settings.json`.
+- The sidebar's model chip reads **GPT-6.1 Sol** from the default model name even while the scripted model is answering. That is not proof of a sign-in.
+- Clicking `#nav-settings` closes Blip's floating panel. Open Blip again with `#blip-face` before sending.

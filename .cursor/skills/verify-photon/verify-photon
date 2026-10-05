@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$SCRIPT_DIR/../../.." && pwd)
+HUB="$REPO/apps/hub"
 export PHOTON_VERIFY_ROOT="${PHOTON_VERIFY_ROOT:-/tmp/verify-photon}"
 VERIFY_ROOT="$PHOTON_VERIFY_ROOT"
 RUN="$VERIFY_ROOT/run"
@@ -19,8 +20,9 @@ usage() {
   cat <<EOF
 Usage: verify-photon <command>
 
-  launch                 Start mix phx.server on 127.0.0.1:\$PHOTON_VERIFY_PORT (default $PORT)
-                         with PHOTON_DATA_DIR=\$PHOTON_VERIFY_ROOT/run/data.
+  launch                 Start apps/hub's mix phx.server on 127.0.0.1:\$PHOTON_VERIFY_PORT
+                         (default $PORT) with PHOTON_DATA_DIR=\$PHOTON_VERIFY_ROOT/run/data
+                         and PHOTON_MOCK_MODEL=1.
   doctor                 Read-only check that this run's hub is the one to drive.
   drive send-message     Send "help" through the composer and write evidence.
   browser start|stop     Start or stop the headless Chrome daemon.
@@ -33,8 +35,8 @@ EOF
 }
 
 ensure_repo() {
-  if [[ ! -f "$REPO/mix.exs" ]] || ! grep -q 'app: :photon' "$REPO/mix.exs"; then
-    echo "refusing to run: $REPO is not the Photon repo" >&2
+  if [[ ! -f "$HUB/mix.exs" ]] || ! grep -q 'app: :photon' "$HUB/mix.exs"; then
+    echo "refusing to run: $HUB is not the Photon hub" >&2
     exit 1
   fi
 }
@@ -88,15 +90,24 @@ cmd_doctor() {
     echo "doctor: GET / returned HTTP ${code:-none} (401 means PHOTON_PASSWORD leaked into the server)" >&2
     return 1
   fi
-  health=$(curl -fsS "http://127.0.0.1:${port}/healthz" || true)
+  nodes_code=$(curl -sS -o "$RUN/nodes.html" -w '%{http_code}' "http://127.0.0.1:${port}/nodes" || true)
+  if [[ "$nodes_code" != "200" ]]; then
+    echo "doctor: GET /nodes returned HTTP ${nodes_code:-none}" >&2
+    return 1
+  fi
+  health=$(curl -fsS "http://127.0.0.1:${port}/healthz" | tr -d '\r\n' || true)
   if [[ "$health" != "ok" ]]; then
     echo "doctor: GET /healthz returned $(printf '%q' "$health"), expected ok" >&2
+    return 1
+  fi
+  if ! tr '\0' '\n' <"/proc/${pid}/environ" | grep -qx 'PHOTON_MOCK_MODEL=1'; then
+    echo "doctor: server is not running with PHOTON_MOCK_MODEL=1" >&2
     return 1
   fi
   if ! listen=$(node "$SCRIPT_DIR/browser.mjs" listen-pid "$port" "$pid"); then
     return 1
   fi
-  if ! node "$SCRIPT_DIR/browser.mjs" check-home "$RUN/home.html" "$data_dir"; then
+  if ! node "$SCRIPT_DIR/browser.mjs" check-home "$RUN/home.html" "$RUN/nodes.html" "$data_dir"; then
     return 1
   fi
   printf 'ok\nurl=http://127.0.0.1:%s\npid=%s\nlisten_pid=%s\ndata_dir=%s\nauth=open\nnode=local\nprovider=mock\n' \
@@ -128,7 +139,7 @@ cmd_launch() {
   ensure_repo
   ensure_deps
   if ! command -v mix >/dev/null 2>&1; then
-    echo "launch: mix is not on PATH. Install Elixir 1.17+ (mix.exs requires ~> 1.17; README asks for 1.20+) and Erlang/OTP." >&2
+    echo "launch: mix is not on PATH. Install Elixir 1.17+ (apps/hub/mix.exs requires ~> 1.17; README asks for 1.20+) and Erlang/OTP." >&2
     exit 1
   fi
   if ! command -v curl >/dev/null 2>&1; then
@@ -164,13 +175,15 @@ cmd_launch() {
   printf '%s\n' "$REPO" >"$RUN/repo"
   : >"$RUN/server.log"
 
-  pushd "$REPO" >/dev/null
+  pushd "$HUB" >/dev/null
   nohup env \
     -u PHOTON_PASSWORD \
+    -u PHOTON_AUTH \
     -u PHOTON_BIND \
     -u PHOTON_PUBLIC_URL \
     -u PHOTON_TRUST_TAILNET \
     PHOTON_DATA_DIR="$data" \
+    PHOTON_MOCK_MODEL=1 \
     PORT="$PORT" \
     mix phx.server >>"$RUN/server.log" 2>&1 &
   echo $! >"$RUN/pid"
@@ -262,66 +275,82 @@ cmd_drive_send_message() {
   mkdir -p "$ev"
   "$SCRIPT_DIR/verify-photon" doctor | tee "$ev/doctor.txt"
   "$SCRIPT_DIR/verify-photon" browser start
-  "$SCRIPT_DIR/verify-photon" browser wait-selector --selector '#composer:not([disabled])'
-  "$SCRIPT_DIR/verify-photon" browser wait-text --text 'Try the Unreal Agent harness'
-  "$SCRIPT_DIR/verify-photon" browser fill --selector '#composer' --value 'help'
+  "$SCRIPT_DIR/verify-photon" browser click --selector '#blip-face'
+  "$SCRIPT_DIR/verify-photon" browser wait-selector --selector '#composer-input'
+  "$SCRIPT_DIR/verify-photon" browser fill --selector '#composer-input' --value 'help'
   "$SCRIPT_DIR/verify-photon" browser screenshot --path "$ev/action.png"
-  "$SCRIPT_DIR/verify-photon" browser click --selector '#composer-form button[title="Send"]'
-  "$SCRIPT_DIR/verify-photon" browser wait-url --includes '/s/'
-  "$SCRIPT_DIR/verify-photon" browser wait-text --within '#transcript' --text "I'm the built-in mock model"
-  "$SCRIPT_DIR/verify-photon" browser wait-text --within '#transcript' --text 'run finished'
-  "$SCRIPT_DIR/verify-photon" browser text --selector '#transcript' >"$ev/transcript.txt"
-  "$SCRIPT_DIR/verify-photon" browser text --selector 'h1' >"$ev/heading.txt"
+  "$SCRIPT_DIR/verify-photon" browser click --selector '#send'
+  # The reply sentence can already be on screen from an earlier example.
+  # The user bubble "help" is new, and the row after it has to land in sqlite.
+  "$SCRIPT_DIR/verify-photon" browser wait-text --within '#conversation' --text 'help'
+
+  local url data i
+  data=$(cat "$RUN/data-dir")
+  if [[ ! -f "$data/photon.db" ]]; then
+    echo "drive: no photon.db under $data" >&2
+    exit 1
+  fi
+  for i in $(seq 1 40); do
+    if python3 - "$data/photon.db" "$ev/entries.jsonl" <<'PY'
+import sqlite3, sys
+db, dest = sys.argv[1], sys.argv[2]
+con = sqlite3.connect(db)
+rows = []
+for (data,) in con.execute("select data from entries order by seq"):
+    if isinstance(data, bytes):
+        data = data.decode()
+    rows.append(data or "")
+blob = "\n".join(rows)
+help_at = None
+reply_after = False
+for index, row in enumerate(rows):
+    if '"role":"user"' in row.replace(" ", "") and '"text":"help"' in row.replace(" ", ""):
+        help_at = index
+    if help_at is not None and index > help_at and "I'm Blip, on the scripted model" in row:
+        reply_after = True
+if not reply_after:
+    sys.exit(1)
+open(dest, "w").write(blob + ("\n" if blob else ""))
+print("entries ok")
+PY
+    then
+      break
+    fi
+    if [[ "$i" == 40 ]]; then
+      echo "drive: timed out waiting for the help reply in photon.db" >&2
+      exit 1
+    fi
+    sleep 0.5
+  done
+  "$SCRIPT_DIR/verify-photon" browser wait-text --within '#conversation' --text "I'm Blip, on the scripted model"
+  "$SCRIPT_DIR/verify-photon" browser text --selector '#conversation' >"$ev/transcript.txt"
   "$SCRIPT_DIR/verify-photon" browser url >"$ev/url.txt"
   "$SCRIPT_DIR/verify-photon" browser title >"$ev/title.txt"
   "$SCRIPT_DIR/verify-photon" browser screenshot --path "$ev/result.png"
 
-  local url id data heading
   url=$(tr -d '\n' <"$ev/url.txt")
-  heading=$(tr -d '[:space:]' <"$ev/heading.txt")
-  id=$(printf '%s\n' "$url" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -n 1)
-  data=$(cat "$RUN/data-dir")
-  if [[ -z "$id" || ! -f "$data/sessions/$id/meta.json" ]]; then
-    echo "drive: no session meta for url $url" >&2
-    exit 1
-  fi
-  if [[ "$heading" != "help" ]]; then
-    echo "drive: heading is $(printf '%q' "$heading"), expected help" >&2
-    exit 1
-  fi
-  cp "$data/sessions/$id/meta.json" "$ev/meta.json"
-  cp "$data/sessions/$id/events.jsonl" "$ev/events.jsonl"
-  node "$SCRIPT_DIR/browser.mjs" check-session \
-    --meta "$ev/meta.json" \
-    --events "$ev/events.jsonl" \
-    --id "$id" \
-    --title help \
-    --node local \
-    --includes "I'm the built-in mock model"
-  if ! grep -q "I'm the built-in mock model" "$ev/transcript.txt"; then
-    echo "drive: transcript text is missing the mock reply" >&2
+  if ! grep -q "I'm Blip, on the scripted model" "$ev/transcript.txt"; then
+    echo "drive: transcript text is missing the scripted reply" >&2
     exit 1
   fi
   if ! grep -q 'help' "$ev/transcript.txt"; then
     echo "drive: transcript text is missing the sent prompt" >&2
     exit 1
   fi
-  if ! grep -qi 'run finished' "$ev/transcript.txt"; then
-    echo "drive: transcript text is missing the run-finished line" >&2
+  if ! grep -q 'Photon' "$ev/title.txt"; then
+    echo "drive: title is missing Photon" >&2
     exit 1
   fi
   cat >"$ev/summary.txt" <<EOF
 feature=send-message
-entry=composer
+entry=blip-composer
 url=$url
-session_id=$id
-node=local
-title=help
+prompt=help
+provider=mock
 data_dir=$data
 action=$ev/action.png
 result=$ev/result.png
-side_effect=$ev/meta.json
-side_effect_events=$ev/events.jsonl
+side_effect=$ev/entries.jsonl
 EOF
   echo "evidence $ev"
 }

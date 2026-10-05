@@ -127,60 +127,38 @@ function listenPid(port, expect) {
   process.stdout.write(`${pid}\n`);
 }
 
-function checkHome(htmlPath, dataDir) {
-  const html = fs.readFileSync(htmlPath, "utf8");
+function checkHome(homePath, nodesPath, dataDir) {
+  const home = fs.readFileSync(homePath, "utf8");
+  const nodes = fs.readFileSync(nodesPath, "utf8");
   const errors = [];
-  if (html.includes("Photon needs its password")) {
+  if (home.includes("Photon needs its password") || nodes.includes("Photon needs its password")) {
     errors.push("GUI returned the password challenge; launch must leave PHOTON_PASSWORD unset");
   }
-  if (!html.includes("New session · Photon") && !html.includes(">Photon<")) {
-    errors.push("page is missing the Photon title");
+  if (!home.includes("Overview · Photon")) {
+    errors.push('page is missing the title "Overview · Photon"');
   }
-  if (!html.includes("Try the Unreal Agent harness")) {
-    errors.push('page is missing the empty-state heading "Try the Unreal Agent harness"');
+  if (!home.includes('id="blip-face"')) errors.push("Blip is missing from the overview");
+  if (!home.includes('id="composer-input"')) {
+    if (home.includes('id="sign-in-to-talk"')) {
+      errors.push("Blip is waiting for ChatGPT; launch must set PHOTON_MOCK_MODEL=1");
+    } else {
+      errors.push("textarea#composer-input is missing");
+    }
   }
-  const textarea = html.match(/<textarea\b[^>]*\bid="composer"[^>]*>/i);
-  if (!textarea) errors.push("textarea#composer is missing");
-  else if (/\sdisabled(?:[\s=/>]|$)/.test(textarea[0])) {
-    errors.push("textarea#composer is disabled (node offline or runner missing)");
+  if (!home.includes('id="side-node-local"') && !home.includes('id="machine-local"')) {
+    errors.push("built-in node local is not listed");
   }
-  if (!/>\s*local\s*</.test(html)) errors.push("built-in node local is not listed");
-  if (html.includes("No nodes are connected yet.")) {
+  if (home.includes("No nodes are connected") || nodes.includes("No nodes are connected")) {
     errors.push("hub has no connected node");
   }
-  if (html.includes("is offline.")) errors.push("target node is offline");
-  if (html.includes("has no")) {
-    errors.push("node has no unreal-agent-runner; run mix photon.build_runner (Go 1.27+) and restart");
-  }
-  if (!/value="mock"[^>]*\bselected\b/.test(html)) {
-    errors.push('provider select does not have mock selected');
-  }
-  if (!html.includes(dataDir)) {
-    errors.push(`page does not mention data dir ${dataDir}; refusing to drive a different instance`);
+  if (!nodes.includes('id="node-local"')) errors.push("nodes page does not list local");
+  if (!nodes.includes(dataDir)) {
+    errors.push(`nodes page does not mention data dir ${dataDir}; refusing to drive a different instance`);
   }
   if (errors.length) {
     for (const error of errors) console.error(`doctor: ${error}`);
     process.exit(1);
   }
-}
-
-function checkSession(opts) {
-  const meta = JSON.parse(fs.readFileSync(opts.meta, "utf8"));
-  const events = fs.readFileSync(opts.events, "utf8");
-  const errors = [];
-  if (meta.title !== opts.title) errors.push(`meta title ${JSON.stringify(meta.title)} != ${JSON.stringify(opts.title)}`);
-  if (meta.node !== opts.node) errors.push(`meta node ${JSON.stringify(meta.node)} != ${JSON.stringify(opts.node)}`);
-  if (meta.id !== opts.id) errors.push(`meta id ${meta.id} != ${opts.id}`);
-  if (!events.includes('"Kind":"model_response"')) errors.push("events.jsonl has no model_response");
-  if (!events.includes('"Payload":"help"') && !events.includes('"Payload": "help"')) {
-    errors.push("events.jsonl has no user payload help");
-  }
-  if (!events.includes(opts.includes)) errors.push(`events.jsonl missing ${JSON.stringify(opts.includes)}`);
-  if (errors.length) {
-    for (const error of errors) console.error(`session: ${error}`);
-    process.exit(1);
-  }
-  process.stdout.write("session ok\n");
 }
 
 async function daemon() {
@@ -207,9 +185,12 @@ async function daemon() {
   page.on("pageerror", (error) => console.error("pageerror", error.message));
 
   await page.goto(baseUrl(), { waitUntil: "domcontentloaded" });
-  await page.waitForSelector("#composer:not([disabled])", { timeout: 20000 });
-  // app.js is deferred, so the composer can exist before the LiveView socket connects.
+  // app.js is deferred, so the markup can exist before the LiveView socket connects.
   await page.waitForSelector(".phx-connected", { timeout: 20000 });
+  await page.waitForSelector("#blip-face", { timeout: 20000 });
+  // The composer sits in the panel, which is visibility:hidden until Blip opens.
+  await page.click("#blip-face");
+  await page.waitForSelector("#composer-input", { state: "visible", timeout: 20000 });
   fs.writeFileSync(readyPath, "ok\n");
 
   let chain = Promise.resolve();
@@ -367,18 +348,16 @@ function rpc(cmd, argv) {
 
 const command = process.argv[2];
 if (!command) {
-  console.error("usage: browser.mjs <daemon|check-home|listen-pid|check-session|command>");
+  console.error("usage: browser.mjs <daemon|check-home|listen-pid|command>");
   process.exit(2);
 }
 
 if (command === "daemon") {
   await daemon();
 } else if (command === "check-home") {
-  checkHome(process.argv[3], process.argv[4]);
+  checkHome(process.argv[3], process.argv[4], process.argv[5]);
 } else if (command === "listen-pid") {
   listenPid(Number(process.argv[3]), process.argv[4]);
-} else if (command === "check-session") {
-  checkSession(parseFlags(process.argv.slice(3)));
 } else {
   try {
     const msg = await rpc(command, process.argv.slice(3));

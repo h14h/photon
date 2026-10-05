@@ -1,49 +1,43 @@
 # Sessions
 
-Sessions are the hub's history of each conversation. The sidebar lists them, opening one shows its transcript, New session returns to a blank composer, and delete removes that history from the hub.
+Sessions are the hub's record of work on a node. The sidebar lists the latest few under each machine, Overview lists what is running and what finished, and opening one shows that agent's transcript. Delete removes it from the hub.
 
 ## Sub-features
 
-- `sessions-empty` shows an empty sidebar before any message.
-- `sessions-create` adds a row when a message is sent.
-- `sessions-open` loads a saved session from its sidebar link.
-- `sessions-new` leaves the saved session and shows a blank composer.
+- `sessions-empty` shows no session rows before any node work.
+- `sessions-create` adds a row when Blip hands a task to `local`.
+- `sessions-open` loads that session from its sidebar link.
+- `sessions-overview` shows the same work on Overview.
 - `sessions-delete` removes the session after confirmation.
 
 ## How to get to it (user POV)
 
-- Look at the left sidebar under **New session**. Before any message it says **No sessions yet**.
-- Send a message. The row title is that prompt, and the address becomes `/s/<id>`.
-- Click the row to reopen it later.
-- Click **New session** to start another prompt without deleting the one you were reading.
-- Hover a row and click the trash icon (tooltip **Delete session**). Confirm **Delete this session and its history?**
+- Look at **Overview**. Before any node work the local machine card says **No work yet**, **Running now** says **Nothing running on your machines.**, and **Recent work** says **Nothing has finished yet.** The sidebar lists `local` and no session under it.
+- Ask Blip to run something on `local`. A row titled with that task appears under `local`, and under Recent work once it finishes.
+- Click the row. The address becomes `/sessions/<id>` and the heading is the task.
+- Click **Overview** to leave the page without deleting the session.
+- On the session page, click the trash (tooltip **Delete**) and confirm **Delete this session here and on the node?**
 
 ## Driving it with verify-photon
 
 Preconditions:
 
 - `verify-photon doctor` prints `ok`.
-- Start from a fresh launch so the sidebar is empty. Create the session this recipe deletes by driving `send-message` first (`help` is enough).
+- Start from a fresh launch for the empty checks. Create the session this recipe deletes with the shell step in `send-message.md` (`on local: $ echo photon-verify`).
 
-- **Empty list.** After launch, run `.cursor/skills/verify-photon/verify-photon browser start` and `.cursor/skills/verify-photon/verify-photon browser wait-text --text 'No sessions yet'`. The sidebar contains that sentence and no `a[href^="/s/"]` link.
-- **Create by sending.** Run the composer steps in `send-message.md` (or `verify-photon drive send-message`). The sidebar link `aside a[href="/s/<id>"]` shows the title `help` on its first line, matching `meta.json` `"title": "help"`. `browser text` on that link also includes the relative-time subtitle (`just now` on a fresh row). With only the `local` node connected, that subtitle does not include `local`.
-- **Reopen.** Run `.cursor/skills/verify-photon/verify-photon browser click --selector 'aside a[href="/"]'`, wait until the URL has no `/s/`, then `.cursor/skills/verify-photon/verify-photon browser click --selector 'aside a[href="/s/<id>"]'` with that same id. The heading is `help` and the transcript still contains `I'm the built-in mock model`.
-- **New session.** From that open session, run `.cursor/skills/verify-photon/verify-photon browser click --selector 'aside a[href="/"]'`. The URL is the hub root, the heading is `New session`, and `aside a[href="/s/<id>"]` is still present. `<data>/sessions/<id>/meta.json` still exists.
-- **Delete.** Hover the row, then click the trash button and accept the confirm:
-
-  ```sh
-  .cursor/skills/verify-photon/verify-photon browser hover --selector 'aside a[href="/s/<id>"]'
-  .cursor/skills/verify-photon/verify-photon browser click --confirm --selector 'a[href="/s/<id>"] + button[title="Delete session"]'
-  ```
-
-  The sidebar says `No sessions yet`, the URL returns to `/` if that session was open, and `<data>/sessions/<id>` is gone.
-- **Proof.** Screenshot the sidebar after create (`$PHOTON_VERIFY_ROOT/evidence/sessions/created.png`) and after delete (`deleted.png`). Record the id in `summary.txt`. The deleted id's directory must be absent, and the earlier `meta.json` copy in the evidence directory must still exist.
+- **Empty list.** After launch, run `.cursor/skills/verify-photon/verify-photon browser start`, then `.cursor/skills/verify-photon/verify-photon browser click --selector '#blip-close'`, then `.cursor/skills/verify-photon/verify-photon browser wait-text --text 'Nothing has finished yet'`. `#side-node-local` is present and `#sidebar a[href^="/sessions/"]` is not. The machine card `#machine-local` contains `No work yet`. Screenshot `$PHOTON_VERIFY_ROOT/evidence/sessions/empty.png` with the Photon sidebar visible.
+- **Create by handing off work.** Run the shell step in `send-message.md`. Wait until `#sidebar a[href^="/sessions/"]` exists. Its text is the title `$ echo photon-verify`. In `photon.db`, `node_sessions.title` is that string and `node_id` is `local`.
+- **Reopen.** Run `.cursor/skills/verify-photon/verify-photon browser click --selector '#sidebar a[href^="/sessions/"]'`, then `.cursor/skills/verify-photon/verify-photon browser wait-url --includes '/sessions/'`. The heading is `$ echo photon-verify` and `#items` contains `photon-verify`. The URL's id matches the `node_sessions` row.
+- **Overview.** Run `.cursor/skills/verify-photon/verify-photon browser click --selector '#nav-overview'`. The URL is the hub root, `#side-session-<id>` is still present, and **Recent work** links to the same `/sessions/<id>`. The `node_sessions` row still exists.
+- **Delete.** Open the session again and run `.cursor/skills/verify-photon/verify-photon browser click --confirm --selector '#delete-session'`. The URL returns to `/`, the flash says `Deleted the session.`, the sidebar has no `#side-session-<id>`, and that id is gone from `node_sessions`.
+- **Proof.** Screenshot the sidebar after create (`$PHOTON_VERIFY_ROOT/evidence/sessions/created.png`) and after delete (`deleted.png`). Record the id in `summary.txt`. The deleted id must be absent from `node_sessions`.
 
 ## Gotchas
 
-- **New session** does not create a stored session. A row appears only when Send accepts a prompt or an image. The button patches to `/`.
-- The trash button is `display: none` until the row is hovered (`group-hover`). Clicking it without `browser hover` on that row fails.
-- Delete uses `window.confirm` with the text `Delete this session and its history?`. Omit `--confirm` and the harness dismisses the dialog, leaving the session in place.
-- The delete control is the next sibling of the session link: `a[href="/s/<id>"] + button[title="Delete session"]`. A bare `button[title="Delete session"]` matches every row and Playwright will refuse the click.
-- Deleting also asks the node to drop its copy. The proof that matters here is the hub directory under `<data>/sessions/<id>` disappearing and the sidebar updating.
-- More than one connected node makes the row subtitle include the node name. With only `local`, the subtitle is the relative time and does not repeat `local`.
+- Nothing in the shell creates a stored node session by itself. A row appears when Blip hands work to a node, or when a message is sent on a session page that already exists. There is no **New session** control.
+- The sidebar shows the title only. The machine name is the parent row (`local`), not a subtitle on the session. Overview's work row reads `local · by Blip` when Blip started it.
+- The trash control is `#delete-session` on the session page, always in the header. It is not a hover-only sibling of the sidebar link.
+- Delete uses `window.confirm` with the text `Delete this session here and on the node?`. Omit `--confirm` and the harness dismisses the dialog, leaving the session in place.
+- Deleting also tells the node to drop its copy. The proof that matters here is the hub row disappearing and the sidebar updating.
+- Session ids are `ns_` plus 26 characters. A selector written for a UUID will not match.
+- Closing Blip before the empty screenshot keeps the overview text in view. The panel covers the bottom of the page while it is open.
