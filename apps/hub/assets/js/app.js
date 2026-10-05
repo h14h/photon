@@ -27,8 +27,8 @@ import topbar from "../vendor/topbar"
 import PinToBottom from "./hooks/pin_to_bottom"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
+// No long-poll fallback: the hub only takes websockets (see PhotonWeb.Endpoint).
 const liveSocket = new LiveSocket("/live", Socket, {
-  longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
   hooks: {...colocatedHooks, PinToBottom},
 })

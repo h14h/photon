@@ -62,7 +62,8 @@ defmodule PhotonWeb.NodesLive do
           NodeDist.outdated?(n, socket.assigns.latest),
           into: MapSet.new(),
           do: n["id"]
-        )
+        ),
+      removed: NodeKeys.removed()
     )
   end
 
@@ -85,20 +86,55 @@ defmodule PhotonWeb.NodesLive do
   def handle_event("manual_key", %{"manual" => %{"node_id" => node_id}}, socket) do
     node_id = String.trim(node_id)
 
-    if Regex.match?(~r/\A[\w.-]{1,64}\z/, node_id) do
-      {:ok, key} = NodeKeys.issue(node_id)
+    cond do
+      NodeKeys.reserved?(node_id) ->
+        {:noreply, put_flash(socket, :error, "#{node_id} is the built-in node's name.")}
 
-      {:noreply,
-       socket
-       |> assign(manual: node_id, manual_form: to_form(%{"node_id" => node_id}, as: :manual))
-       |> push_event("install-command", %{command: install_command(socket.assigns, node_id, key)})}
-    else
-      {:noreply,
-       put_flash(socket, :error, "Name it with letters, digits, dots, dashes or underscores.")}
+      Regex.match?(~r/\A[\w.-]{1,64}\z/, node_id) ->
+        manual_key(socket, node_id)
+
+      true ->
+        {:noreply,
+         put_flash(socket, :error, "Name it with letters, digits, dots, dashes or underscores.")}
+    end
+  end
+
+  # A removed node's machine stays out of the GUI until this.
+  def handle_event("forget", %{"node" => node_id}, socket) do
+    case NodeKeys.forget(node_id) do
+      :ok ->
+        {:noreply,
+         socket
+         |> assign(removed: NodeKeys.removed())
+         |> put_flash(:info, "#{node_id}'s machine can open the hub again.")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, reason)}
     end
   end
 
   def handle_event("update_all", _params, socket) do
+    update_all(socket)
+  end
+
+  def handle_event("provision", %{"machine" => name, "action" => action}, socket)
+      when action in ~w(install uninstall) do
+    case provision(socket.assigns, name, String.to_existing_atom(action)) do
+      :ok -> {:noreply, socket}
+      other -> {:noreply, put_flash(socket, :error, failure(other, name))}
+    end
+  end
+
+  defp manual_key(socket, node_id) do
+    {:ok, key} = NodeKeys.issue(node_id)
+
+    {:noreply,
+     socket
+     |> assign(manual: node_id, manual_form: to_form(%{"node_id" => node_id}, as: :manual))
+     |> push_event("install-command", %{command: install_command(socket.assigns, node_id, key)})}
+  end
+
+  defp update_all(socket) do
     failures =
       socket.assigns.outdated
       |> Enum.sort()
@@ -112,14 +148,6 @@ defmodule PhotonWeb.NodesLive do
     case failures do
       [] -> {:noreply, socket}
       _ -> {:noreply, put_flash(socket, :error, "Couldn't update " <> Enum.join(failures, "; "))}
-    end
-  end
-
-  def handle_event("provision", %{"machine" => name, "action" => action}, socket)
-      when action in ~w(install uninstall) do
-    case provision(socket.assigns, name, String.to_existing_atom(action)) do
-      :ok -> {:noreply, socket}
-      other -> {:noreply, put_flash(socket, :error, failure(other, name))}
     end
   end
 
@@ -154,7 +182,9 @@ defmodule PhotonWeb.NodesLive do
   end
 
   @impl true
-  def handle_info({:provision, jobs}, socket), do: {:noreply, assign(socket, jobs: jobs)}
+  # A finished removal leaves its machine in the removed list.
+  def handle_info({:provision, jobs}, socket),
+    do: {:noreply, assign(socket, jobs: jobs, removed: NodeKeys.removed())}
 
   def handle_info(message, socket) when message in [:nodes_changed, :node_sessions_changed],
     do: {:noreply, assign_nodes(socket)}
@@ -261,6 +291,38 @@ defmodule PhotonWeb.NodesLive do
                     </dd>
                   </div>
                 </dl>
+              </div>
+            </div>
+          </section>
+
+          <section :if={@removed != []} id="removed-nodes" class="mt-10">
+            <h2 class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
+              Removed
+            </h2>
+            <p class="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
+              These machines ran a node, so they still can't open the hub: something an agent started there could still be running. Let one back in once you're sure it's clean.
+            </p>
+            <div class="mt-3 divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface shadow-xs">
+              <div
+                :for={key <- @removed}
+                id={"removed-#{key.node_id}"}
+                class="flex items-center gap-3 px-4 py-3 text-sm"
+              >
+                <.dot status={:off} />
+                <span class="font-mono">{key.node_id}</span>
+                <span :if={key.device_name} class="text-[12px] text-ink-faint">
+                  on {key.device_name}
+                </span>
+                <span class="flex-1" />
+                <.button
+                  id={"forget-#{key.node_id}"}
+                  size="sm"
+                  phx-click="forget"
+                  phx-value-node={key.node_id}
+                  data-confirm={"Let #{key.device_name || key.node_id} open the hub again?"}
+                >
+                  Let it open the hub
+                </.button>
               </div>
             </div>
           </section>

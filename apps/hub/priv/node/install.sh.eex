@@ -74,6 +74,15 @@ stop_existing() {
   fi
 }
 
+# Where the node unpacks its Erlang runtime: Burrito's per-user data
+# directory, or PHOTON_NODE_INSTALL_DIR when set.
+runtime_dir() {
+  if [ -n "${PHOTON_NODE_INSTALL_DIR:-}" ]; then echo "$PHOTON_NODE_INSTALL_DIR"
+  elif [ "$os" = macos ]; then echo "$HOME/Library/Application Support/.burrito"
+  else echo "${XDG_DATA_HOME:-$HOME/.local/share}/.burrito"
+  fi
+}
+
 # Whether any part of this user's node still runs: its binary, or the
 # Erlang runtime it unpacked (which can outlive it). Exits 2 when it can't
 # tell. The paths go to awk through its environment, so awk's own command
@@ -81,7 +90,7 @@ stop_existing() {
 node_running() {
   procs=$(ps -eo args= 2>/dev/null) || return 2
   printf '%s\n' "$procs" |
-    NODE_BIN="$BIN" NODE_RUNTIME="${XDG_DATA_HOME:-$HOME/.local/share}/.burrito/photon_node_erts-" \
+    NODE_BIN="$BIN" NODE_RUNTIME="$(runtime_dir)/photon_node_erts-" \
       awk 'index($0, ENVIRON["NODE_BIN"]) || index($0, ENVIRON["NODE_RUNTIME"]) { found = 1 } END { exit !found }'
 }
 

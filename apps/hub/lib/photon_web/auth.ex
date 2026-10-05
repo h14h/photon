@@ -78,9 +78,10 @@ defmodule PhotonWeb.Auth do
   defp live_device_check(socket, mode, signed_in) do
     if Phoenix.LiveView.connected?(socket) do
       client = live_client(socket)
+      # Before deciding, so a change can't slip in between.
+      :ok = NodeKeys.subscribe()
 
       if decide(client, mode, signed_in) == :ok do
-        :ok = NodeKeys.subscribe()
         :ok = schedule_recheck()
 
         {:cont,
@@ -150,9 +151,16 @@ defmodule PhotonWeb.Auth do
         {:error, reason}
 
       {{:error, reason}, :tailscale_or_password} ->
-        password_fallback(identity, node_devices, signed_in, reason)
+        if unnamed_tailnet_address?(client, identity),
+          do: {:error, "Photon couldn't tell which of your devices this is. Try again."},
+          else: password_fallback(identity, node_devices, signed_in, reason)
     end
   end
+
+  # A tailnet address tailscale couldn't name (it failed, say) isn't a
+  # stranger to ask for the password: it may be a node, so it waits.
+  defp unnamed_tailnet_address?(client, :error), do: ClientIP.tailnet?(client)
+  defp unnamed_tailnet_address?(_client, _identity), do: false
 
   defp password_fallback({:ok, %{device: device}}, node_devices, signed_in, reason) do
     cond do

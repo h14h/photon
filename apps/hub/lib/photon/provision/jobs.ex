@@ -37,6 +37,9 @@ defmodule Photon.Provision.Jobs do
       opts[:node_id] && not valid?(opts[:node_id], ~r/\A[\w.\-]{1,64}\z/) ->
         {:error, "invalid node name"}
 
+      opts[:node_id] == "local" ->
+        {:error, "local is the built-in node's name"}
+
       true ->
         :ok
     end

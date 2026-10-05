@@ -147,6 +147,26 @@ defmodule PhotonWeb.NodesLiveTest do
     refute html =~ key
     refute inspect(:sys.get_state(view.pid)) =~ key
     refute has_element?(view, "#install-command-box.hidden")
-    assert {:ok, "vps-1", 1} = Photon.NodeKeys.authenticate(key, :error)
+    assert {:ok, "vps-1", _generation} = Photon.NodeKeys.authenticate(key, :error)
+  end
+
+  test "won't make a key for the built-in node's name", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/nodes")
+    view |> form("#manual-key-form", manual: %{node_id: "local"}) |> render_submit()
+    assert has_element?(view, "#flash-error", "built-in node")
+  end
+
+  test "keeps removed machines out until the user lets them back in", %{conn: conn} do
+    {:ok, _key} = Photon.NodeKeys.issue("old", device: %{device: "nOld", device_name: "old-box"})
+    :ok = Photon.NodeKeys.revoke("old")
+
+    {:ok, view, _html} = live(conn, ~p"/nodes")
+    assert has_element?(view, "#removed-old", "old-box")
+
+    view |> element("#forget-old") |> render_click()
+
+    refute has_element?(view, "#removed-nodes")
+    assert has_element?(view, "#flash-info", "can open the hub again")
+    assert Photon.NodeKeys.node_devices() == MapSet.new()
   end
 end

@@ -45,6 +45,8 @@ defmodule PhotonWeb.SettingsLiveTest do
       |> render_submit()
 
       assert has_element?(view, "#sign-in-error", "different sign-in")
+      # The pasted address carries a code, so the page doesn't keep it.
+      refute inspect(:sys.get_state(view.pid)) =~ "code=c&state=wrong"
 
       ChatGPTStub.answer(%{
         "/api/accounts/oauth/token" => fn _ ->

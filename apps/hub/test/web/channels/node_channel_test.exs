@@ -44,19 +44,31 @@ defmodule PhotonWeb.NodeChannelTest do
     {:ok, key} = Photon.NodeKeys.issue("box")
     {:ok, socket} = connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(key))
     {:ok, _reply, joined} = subscribe_and_join(socket, "node:box", %{})
-    assert socket.id == "node_socket:box:1"
-    PhotonWeb.Endpoint.subscribe(socket.id)
+    assert socket.id == "node_socket:box:#{socket.assigns.generation}"
+    topic = socket.id
+    PhotonWeb.Endpoint.subscribe(topic)
 
     Process.unlink(joined.channel_pid)
     ref = Process.monitor(joined.channel_pid)
     {:ok, _new_key} = Photon.NodeKeys.issue("box")
 
-    assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: "node_socket:box:1"}
+    assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: ^topic}
     assert_receive {:DOWN, ^ref, :process, _pid, {:shutdown, :key_replaced}}
     refute Nodes.online?("box")
 
     assert {:error, %{"reason" => "this key has been replaced"}} =
              subscribe_and_join(socket, "node:box", %{})
+  end
+
+  test "a connection made before a removal can't join after the node is installed again" do
+    {:ok, key} = Photon.NodeKeys.issue("box")
+    {:ok, idle} = connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(key))
+
+    :ok = Photon.NodeKeys.revoke("box")
+    {:ok, _new_key} = Photon.NodeKeys.issue("box")
+
+    assert {:error, %{"reason" => "this key has been replaced"}} =
+             subscribe_and_join(idle, "node:box", %{})
   end
 
   test "a node can't touch another node's sessions" do

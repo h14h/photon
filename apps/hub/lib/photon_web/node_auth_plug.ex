@@ -31,7 +31,7 @@ defmodule PhotonWeb.NodeAuthPlug do
 
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
          {:ok, node_id, _generation} <-
-           Photon.NodeKeys.authenticate(token, origin, require_tailnet: Photon.Auth.tailnet?()) do
+           Photon.NodeKeys.authenticate(token, origin, Photon.Auth.node_key_policy()) do
       conn |> assign(:node_id, node_id) |> Plug.Parsers.call(@relay_body)
     else
       {:error, reason} -> refuse(conn, reason)

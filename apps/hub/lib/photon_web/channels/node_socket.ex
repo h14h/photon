@@ -29,7 +29,7 @@ defmodule PhotonWeb.NodeSocket do
 
     with {_, token} <- List.keyfind(headers, "x-photon-token", 0),
          {:ok, node_id, generation} <-
-           Photon.NodeKeys.authenticate(token, origin, require_tailnet: Photon.Auth.tailnet?()) do
+           Photon.NodeKeys.authenticate(token, origin, Photon.Auth.node_key_policy()) do
       {:ok, socket |> assign(:node_id, node_id) |> assign(:generation, generation)}
     else
       nil -> refuse("no node key")

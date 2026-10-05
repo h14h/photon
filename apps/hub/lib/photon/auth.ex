@@ -39,6 +39,16 @@ defmodule Photon.Auth do
   @spec tailnet?() :: boolean()
   def tailnet?, do: mode() in [:tailscale, :tailscale_or_password]
 
+  @doc """
+  How `Photon.NodeKeys.authenticate/3` treats keys here: on a hub that
+  vouches through its tailnet, only from devices it can name, and an untied
+  key only claimed by the allowed logins' devices (or tagged ones).
+  """
+  @spec node_key_policy() :: keyword()
+  def node_key_policy do
+    if tailnet?(), do: [require_tailnet: true, logins: tailscale_logins()], else: []
+  end
+
   ## Tailscale
 
   @doc "The Tailscale logins let in: `PHOTON_TAILSCALE_USERS`, else the hub machine's owner."

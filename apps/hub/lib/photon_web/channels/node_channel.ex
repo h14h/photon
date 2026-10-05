@@ -27,24 +27,34 @@ defmodule PhotonWeb.NodeChannel do
   alias Photon.{NodeKeys, Nodes, NodeSessions}
 
   # A node joins as the node its key belongs to (`PhotonWeb.NodeSocket`),
-  # while that key is still current. It hears when the node's key changes,
-  # and goes (closing the connection) if its own key is no longer current.
+  # while that key is still current. It listens for key changes before it
+  # checks (so none slips in between), and checks again once registered,
+  # which can wait on a previous connection; afterwards it goes, closing
+  # the connection, as soon as its own key is no longer current.
   @impl true
   def join("node:" <> node_id, info, %{assigns: %{node_id: node_id}} = socket) do
-    if NodeKeys.current?(node_id, socket.assigns.generation) do
-      :ok = NodeKeys.subscribe()
-      :ok = Nodes.register(node_id, node_info(info))
+    :ok = NodeKeys.subscribe()
+    current? = fn -> NodeKeys.current?(node_id, socket.assigns.generation) end
+
+    with true <- current?.(),
+         :ok <- Nodes.register(node_id, node_info(info)),
+         true <- still_current(current?, node_id) do
       send(self(), :joined)
 
       {:ok, %{"sync" => NodeSessions.sync_for(node_id)},
        socket |> assign(:pushed_inputs, MapSet.new()) |> assign(:sessions, MapSet.new())}
     else
-      {:error, %{"reason" => "this key has been replaced"}}
+      _replaced -> {:error, %{"reason" => "this key has been replaced"}}
     end
   end
 
   def join("node:" <> other, _info, socket),
     do: {:error, %{"reason" => "this key belongs to #{socket.assigns.node_id}, not #{other}"}}
+
+  # If the key was replaced meanwhile, gives up the registration it just took.
+  defp still_current(current?, node_id) do
+    current?.() or Nodes.unregister(node_id) != :ok
+  end
 
   defp node_info(info) do
     info

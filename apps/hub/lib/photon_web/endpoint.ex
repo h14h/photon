@@ -17,9 +17,11 @@ defmodule PhotonWeb.Endpoint do
     websocket: [connect_info: [:x_headers, :peer_data], check_origin: false],
     longpoll: false
 
+  # Websocket only: a long-poll transport carries its session in a token
+  # that any device holding it could keep using, past the device checks.
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [:peer_data, :x_headers, session: @session_options]],
-    longpoll: [connect_info: [:peer_data, :x_headers, session: @session_options]]
+    longpoll: false
 
   # Serve at "/" the static files from "priv/static" directory.
   #

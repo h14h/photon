@@ -68,6 +68,10 @@ defmodule PhotonWeb.AuthTest do
       assert get(conn, "/node/install.sh").status == 200
       assert get(conn, "/node/download/photon-node-nope").status == 404
     end
+
+    test "takes pages over websockets only, never long-poll", %{conn: conn} do
+      assert get(conn, "/live/longpoll").status == 404
+    end
   end
 
   describe "with tailscale" do
@@ -129,7 +133,7 @@ defmodule PhotonWeb.AuthTest do
     end
 
     test "closes a page that was open on a machine when it becomes a node", %{conn: conn} do
-      {:ok, view, _html} = live(from(conn, "100.64.0.11"), ~p"/")
+      {:ok, view, _html} = live_blip(from(conn, "100.64.0.11"))
 
       {:ok, _key} = make_box_a_node()
 
@@ -137,7 +141,7 @@ defmodule PhotonWeb.AuthTest do
     end
 
     test "checks an open page again every minute", %{conn: conn, tmp_dir: dir} do
-      {:ok, view, _html} = live(from(conn, "100.64.0.10"), ~p"/")
+      {:ok, view, _html} = live_blip(from(conn, "100.64.0.10"))
       send(view.pid, :auth_recheck)
       assert render(view)
 
@@ -181,6 +185,17 @@ defmodule PhotonWeb.AuthTest do
       stranger = conn |> from("203.0.113.9") |> basic("s3cret") |> get(~p"/")
       assert stranger.status == 200
       assert {:ok, _view, _html} = live(recycle(stranger), ~p"/")
+    end
+
+    test "with a password too, won't take the password from a tailnet address it can't name",
+         %{conn: conn} do
+      Application.put_env(:photon, :auth_mode, :tailscale_or_password)
+      Application.put_env(:photon, :password, "s3cret")
+
+      # 100.64.0.99 is a tailnet address the stand-in tailscale can't name.
+      denied = conn |> from("100.64.0.99") |> basic("s3cret") |> get(~p"/")
+      assert denied.status == 403
+      assert denied.resp_body =~ "couldn't tell which of your devices"
     end
 
     test "with a password too, still keeps out a machine that runs a node", %{conn: conn} do
