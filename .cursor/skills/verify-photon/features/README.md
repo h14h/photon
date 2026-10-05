@@ -24,7 +24,7 @@ Remote install over SSH, the `apps/node` service, and Fly deploy are outside thi
 
 - Prefer the ids and `name` selectors in `../SKILL.md`. Do not click by coordinates.
 - Run browser actions through `verify-photon browser`. Quoted flags are literal.
-- `browser start` opens Blip once. A click outside the floating panel closes it (the nav links count). Click `#blip-face` again before using `#composer-input`.
+- `browser start` opens Blip once. A click outside the floating panel closes it. That click is consumed by the close animation, so it does not also follow a link underneath. Close with `#blip-close` first, then click `#nav-overview`, `#nav-nodes`, `#nav-settings`, or a session row. Click `#blip-face` again before using `#composer-input`.
 - `verify-photon drive send-message` is the bundled Blip proof. It runs the `help` steps in `send-message.md`. It does not cover the other features.
 - Restore nothing under `apps/hub/.photon/`. The disposable data dir is removed by cleanup. Do not remove `$PHOTON_VERIFY_ROOT/evidence`.
 

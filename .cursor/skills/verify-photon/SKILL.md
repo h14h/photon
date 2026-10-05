@@ -127,7 +127,7 @@ Stable handles, from the LiveViews and their tests:
 | Send | `#send` |
 | Stop Blip | `#stop` |
 | Steer / wait toggle | `#mode-toggle` |
-| Example (empty transcript only) | `#empty-state button` |
+| Example (empty transcript only) | `button:has-text("Which of my machines are online?")` |
 | Overview | `#nav-overview` |
 | Nodes | `#nav-nodes` |
 | Settings | `#nav-settings` |

@@ -25,7 +25,7 @@ Preconditions:
 - Do not click **Install**, **Update**, **Uninstall**, or **Update all**. Those call `phx-click="provision"` or `update_all` and SSH to another machine.
 - Do not put a screenshot of `#install-command` in evidence. It includes a node key. Do not write that key into `summary.txt`.
 
-- **Open the page.** Run `.cursor/skills/verify-photon/verify-photon browser click --selector '#nav-nodes'`, then `.cursor/skills/verify-photon/verify-photon browser wait-selector --selector '#node-local'`. The card contains `local`. `#sidebar` contains `local` and does not contain `No machines yet`.
+- **Open the page.** If Blip is open, run `.cursor/skills/verify-photon/verify-photon browser click --selector '#blip-close'` first. Then `.cursor/skills/verify-photon/verify-photon browser click --selector '#nav-nodes'`, then `.cursor/skills/verify-photon/verify-photon browser wait-selector --selector '#node-local'`. The card contains `local`. `#sidebar` contains `local` and does not contain `No machines yet`.
 - **Workspace.** Run `.cursor/skills/verify-photon/verify-photon browser text --selector '#node-local'`. The text contains the doctor `data_dir` (the workspace is `<data>/local-node/workspace`).
 - **Capture the page before any key exists.** Run `.cursor/skills/verify-photon/verify-photon browser screenshot --path "$PHOTON_VERIFY_ROOT/evidence/nodes/page.png"`. The image shows **Nodes**, the `local` card, and the Photon sidebar. It must not contain `PHOTON_NODE_TOKEN=`.
 - **Tailnet branch.** Run `.cursor/skills/verify-photon/verify-photon browser text --selector '#add-node'`. On a hub without the `tailscale` binary, the text contains `tailscale isn't installed on the hub machine`. On a hub that is on a tailnet, it lists machine rows instead; leave **Install** alone. A dev server bound to `127.0.0.1` also shows `The hub only listens on this machine` and a `PHOTON_BIND=` hint. With nothing in `apps/node/dist`, the page contains `No node builds are on this hub yet`. None of those warnings mean `local` is down.
@@ -35,6 +35,7 @@ Preconditions:
 
 ## Gotchas
 
+- Close Blip with `#blip-close` before `#nav-nodes`. An outside click closes the panel and does not follow the link.
 - The **+** next to **Machines** is a link to `/nodes`, not a dialog. The words **Add a node** are that tooltip and the tailnet section heading. `browser text` prints the heading as `ADD A NODE FROM YOUR TAILNET` because it is Tailwind `uppercase`. `wait-text` ignores case.
 - The built-in node id is `local`. Assert `#node-local` and `#side-node-local`, not the hostname.
 - Naming the manual node `local` is rejected: `local is the built-in node's name.` Use a different name, such as `vps-1`.
