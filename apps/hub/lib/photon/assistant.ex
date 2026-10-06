@@ -19,8 +19,8 @@ defmodule Photon.Assistant do
       `Photon.Assistant.MockScript` (the mock model)
     * boundary: the tools in `Photon.Assistant.Tools`; the machine tools
       are their own context, `Photon.MachineTools`
-    * workers: the task kind `Photon.Assistant.Routine`, run by the durable
-      scheduler
+    * workers: none of its own; Blip's schedules fire through the
+      `"routine"` task kind, `Photon.Schedules.Routine`
 
   Blip floats over every page, so it knows which project, context file or
   thread is on screen: `page_at/1` makes the page from its path, and
@@ -220,9 +220,14 @@ defmodule Photon.Assistant do
     :ok
   end
 
-  @doc "Scheduled routines that haven't finished."
+  @doc """
+  Blip's scheduled routines that haven't finished. Only those in the old
+  shape (a `"prompt"` in the input, no `"schedule_id"`): a project's
+  schedules are `Photon.Schedules`' and don't show here.
+  """
   @spec schedules() :: [TaskRecord.t()]
-  def schedules, do: Durable.live_tasks("routine")
+  def schedules,
+    do: Enum.reject(Durable.live_tasks("routine"), &Map.has_key?(&1.input, "schedule_id"))
 
   @doc "Cancels a scheduled routine (the web page's cancel button)."
   @spec cancel_schedule(String.t()) :: :ok

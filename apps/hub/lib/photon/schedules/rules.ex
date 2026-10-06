@@ -310,6 +310,13 @@ defmodule Photon.Schedules.Rules do
   end
 
   @doc """
+  The first whole hour (UTC) after `now`: the schedule form's starting
+  time.
+  """
+  @spec next_hour(ms()) :: ms()
+  def next_hour(now), do: (div(now, 3_600_000) + 1) * 3_600_000
+
+  @doc """
   The first time after `now` on the grid that `at` (a time it fired for)
   is on, so slots missed while the hub was down are skipped rather than
   fired in a burst.

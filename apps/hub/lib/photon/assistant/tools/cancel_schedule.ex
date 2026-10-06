@@ -25,7 +25,8 @@ defmodule Photon.Assistant.Tools.CancelSchedule do
   @impl true
   def execute(%{"schedule_id" => id}, _api) do
     case Durable.task(id) do
-      %{kind: "routine"} ->
+      # A project's schedule isn't Blip's to cancel.
+      %{kind: "routine", input: input} when not is_map_key(input, "schedule_id") ->
         _routine = Durable.abort_task(id, background: true)
         {:ok, "Cancelled #{id}."}
 

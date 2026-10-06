@@ -352,6 +352,15 @@ defmodule Photon.Schedules.RulesTest do
     end
   end
 
+  describe "next_hour/1" do
+    test "is the first whole hour after now" do
+      at = &DateTime.to_unix(&1, :millisecond)
+      assert Rules.next_hour(at.(~U[2026-10-08 14:05:40Z])) == at.(~U[2026-10-08 15:00:00Z])
+      assert Rules.next_hour(at.(~U[2026-10-08 14:00:00Z])) == at.(~U[2026-10-08 15:00:00Z])
+      assert Rules.next_hour(at.(~U[2026-10-08 23:59:59Z])) == at.(~U[2026-10-09 00:00:00Z])
+    end
+  end
+
   describe "target/1" do
     test "follows from the project and the conversation" do
       assert Rules.target(%{project_id: nil, conversation_id: "c_blip"}) == :blip

@@ -516,9 +516,11 @@ Table `schedules`, schema `Photon.Schedules.Schedule`, behind
 The row is the schedule's definition and a summary of its last firing.
 Its next time and state are derived from its task, never stored on the
 row (rule 15). `Schedules.list/1` reads the rows and their tasks in two
-queries and returns, for each, `%{schedule: Schedule.t(), next_at:
+queries and returns, for each, `%{id: schedule_id, schedule: Schedule.t(), next_at:
 DateTime.t() | nil, state: :waiting | :done | {:stopped, reason}}`, by
-`next_at` (nil last), then `inserted_at`:
+`next_at` (nil last), then `inserted_at` (K5c: `id` is there so the
+pages can stream the rows, as `Skills.list/0` does; `get/1` returns the
+same shape or nil):
 
 - `:waiting`: the task hasn't finished; `next_at` is its
   `checkpoint["next_at"] || input["first_at"]`, as today's
@@ -530,6 +532,10 @@ DateTime.t() | nil, state: :waiting | :done | {:stopped, reason}}`, by
   otherwise sit there never firing again with nothing on the page to say
   so. Section 3.3 says how a failure is announced, and section 6.6 how it
   shows.
+- (K5c) A task `aborted` while the row still names it can't happen
+  through the API (an edit or delete replaces or removes the row in the
+  same commit); if it does, the state is `{:stopped, "its timer was
+  stopped"}`. A row with no task (`task_id` nil) reads as `:done`.
 
 What each firing did is in the conversations it touched; the row keeps
 only the last one, enough for the project page to say "Last ran 09:00,
@@ -652,7 +658,9 @@ project_id}` on `"schedules"`.
   form (below), the commit checks the project exists and, for a thread
   target, that the thread belongs to it, inserts the row (`created_by:
   "owner"`) and its routine task, and stores the task's ID on the row.
-- `update(id, params, version)`: in one commit, refuses a stale edit
+- `update(id, params, version)` (project schedules only; Blip's own are
+  `{:error, :not_found}` here, since Blip's tools change them, K5c): in
+  one commit, refuses a stale edit
   (`{:error, :stale}` when the row's `version` isn't the one the form
   loaded, as skills and context files do), re-checks the params, marks
   the old task for abort (`Tx.request_abort(tx, task, background:
@@ -670,7 +678,18 @@ project_id}` on `"schedules"`.
   running the same steps 1 to 5 as a firing, with consent taken as given
   (the owner pressed the button, so nothing runs while they're away) and
   a request ID `"schedule:<id>:now:<ID.new>"`. The overlap rule still
-  applies. It doesn't touch the task. Returns `{:ok, outcome}`.
+  applies. It doesn't touch the task. Returns `{:ok, outcome}`, or
+  `{:error, :not_found}`.
+- (K5c) `create/2` for a project that doesn't exist is `{:error,
+  :not_found}`. The firing's steps 1 to 5 are `Routine.fire_tx/3`, which
+  the fire step and `run_now/1` share. A skip keeps the row's
+  `last_thread_id`, so the thread a new-thread schedule last started
+  keeps holding off the next one while it runs.
+- (K5c) `new_params(now)` takes a `DateTime` and returns the form's
+  string-keyed starting values: `at` the next whole hour (UTC,
+  `Rules.next_hour/1`) as ISO 8601, `repeat` `"once"`, `every` `"1"` and
+  `unit` `"days"` ready for Every, `target` `"new_thread"` and an empty
+  prompt.
 
 `Rules.schedule(params, %{now: now, thread_ids: ids})` (pure) reads the
 owner's form:
@@ -1243,8 +1262,8 @@ No changes.
 |---|---|---|---|
 | `Photon.Schedules` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Repo, Photon.Settings, Photon.Threads, PhotonCore, Ecto], exports: [Schedule]` | `subscribe/0`, `list/1`, `get/1` (with `next_at` and `state`), `create/2`, `update/3` (id, params, version), `delete/1`, `run_now/1`, `consent?/0`, `new_params/1` (the form's defaults for a time), and for Blip's tools `blip_schedule_tx/5`, `delete_tx/3`. Moduledoc: targets, the routine, the fence, consent and overlap, that there is no process. |
 | `Photon.Schedules.Schedule` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 3.1. |
-| `Photon.Schedules.Rules` | core | `use Boundary, type: :strict, deps: []` | `schedule/2`, `from_tool/2`, `arm/4`, `fired_through/3`, `next_after/3`, `target/1` (a row's target), `fire/2`, `text/1` (`"[Scheduled] " <> prompt`), `skipped_note/2`, `request_id/3`, `when_text/2` (the tool's "first at ..., then every N minutes"), `datetime/1` (milliseconds to the row's `DateTime`). `now` is always Unix milliseconds passed in; the row's times (`first_at` in `schedule/2`'s and `from_tool/2`'s answer, `when_text/2`'s argument) are `DateTime`s. |
-| `Photon.Schedules.Routine` | worker logic (task kind, inside `Photon.Schedules`) | none of its own | Moved from `Photon.Assistant.Routine` (section 3.3). |
+| `Photon.Schedules.Rules` | core | `use Boundary, type: :strict, deps: []` | `schedule/2`, `from_tool/2`, `arm/4`, `fired_through/3`, `next_after/3`, `target/1` (a row's target), `fire/2`, `text/1` (`"[Scheduled] " <> prompt`), `skipped_note/2`, `request_id/3`, `when_text/2` (the tool's "first at ..., then every N minutes"), `datetime/1` (milliseconds to the row's `DateTime`), `next_hour/1` (the form's starting time, K5c). `now` is always Unix milliseconds passed in; the row's times (`first_at` in `schedule/2`'s and `from_tool/2`'s answer, `when_text/2`'s argument) are `DateTime`s. |
+| `Photon.Schedules.Routine` | worker logic (task kind, inside `Photon.Schedules`) | none of its own | Moved from `Photon.Assistant.Routine` (section 3.3). `task/2` (a row's task attributes, waiting first for the armed time), `step/3`, `on_fail/3`, and `fire_tx/3` (a firing's commit, shared with `run_now/1`). |
 | `Photon.Threads` | boundary | unchanged deps | `start_tx/4`, `send_tx/4` public with `:source` and `:request_id`. `stop/1` unchanged (section 3.7). |
 | `Photon.Durable.Submission` | data | unchanged | `background?/1`. |
 | `Photon.Assistant.Tools.Schedule`, `.ListSchedules`, `.CancelSchedule` | boundary (durable tools) | inside `Photon.Assistant` | Section 3.6, including `schedule`'s new description line. |
@@ -1754,7 +1773,11 @@ K5c. The schedules context and the routine. After K5a and K5b.
   `"schedule_id"` (post `"[Scheduled] " <> input["prompt"]` into the
   task's conversation, with today's consent note), and K6 removes that
   path. `assistant.ex`'s moduledoc line naming `Photon.Assistant.Routine`
-  changes to `Photon.Schedules.Routine`.
+  changes to `Photon.Schedules.Routine`. (K5c) Until K6,
+  `Assistant.schedules/0` and the `cancel_schedule` tool also skip
+  routine tasks with a `"schedule_id"`, so a project's schedules don't
+  show on the home page or in Blip's list and Blip can't cancel them;
+  K6 replaces both.
 
 K6. Blip's schedules over the context. After K5c.
 - `Schedules.blip_schedule_tx/5`, `delete_tx/3`.

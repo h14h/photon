@@ -57,7 +57,7 @@ config :photon, Photon.Durable,
     "test_workdir" => Photon.TestProfile.Workdir
   },
   kinds: %{
-    "routine" => Photon.Assistant.Routine,
+    "routine" => Photon.Schedules.Routine,
     "thread_title" => Photon.Threads.Titling
   }
 
