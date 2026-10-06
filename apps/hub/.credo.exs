@@ -83,7 +83,8 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Provision.Script",
                    "Photon.Provision.Lines",
                    "Photon.InstallScript",
-                   "Photon.Markdown"
+                   "Photon.Markdown",
+                   "PhotonWeb.ProjectText"
                  ],
                  nondeterministic_extra: ["PhotonCore.ID.new"]
                ]},

@@ -636,6 +636,9 @@ list only grows. `#project-threads` and `#context-files` are
 `phx-update="stream"` containers; `stream_configure/3` gives the rows
 their IDs (`project-thread-<id>`, `context-file-<id>`); each empty state
 is the `hidden only:block` first child, so no `empty?` assign is needed.
+The empty states carry IDs (`#no-threads`, `#no-files`), since
+`Phoenix.LiveViewTest` refuses a stream child without one. A file's
+"by" names the thread from `Threads.titles/1`.
 A row's running state is part of the streamed item (`%{thread: t,
 running?: boolean}`), so it changes only by re-streaming the rows.
 
@@ -903,6 +906,7 @@ No Boundary or Credo list changes.
 | `PhotonWeb.ConversationImageController` | boundary | Renamed from `BlipImageController`; `blip/2` and `thread/2`. |
 | `PhotonWeb.BlipLive` | server (LiveView) | Uses the shared components and helpers; the page chip and the `page` event (section 5.9). |
 | `PhotonWeb.ProjectNewLive`, `ProjectLive`, `ContextFileLive`, `ThreadLive` | server (LiveViews) | Sections 5.3 to 5.7. Each callback hands its message to `Photon.Projects`, `Photon.Threads` or the shared helpers in at most 15 lines (rule 30). `ProjectLive` streams its threads and files (section 5.4). |
+| `PhotonWeb.ProjectText` | functional core (web formatting) | The project pages' words for times ("5 minutes ago"), file sizes ("4.2 KB") and who changed a file ("by you", `by "Fix the pump"`), given the time and the thread titles. `ProjectLive` uses it, and `ContextFileLive`'s `#file-meta` can. |
 | `PhotonWeb.OverviewLive`, `NodesLive`, `SettingsLive` | server (LiveViews) | `active={:home}` for the overview; nothing else. |
 
 ### 6.5 Credo and Boundary lists

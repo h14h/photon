@@ -259,9 +259,11 @@ defmodule Photon.Threads do
     |> Repo.one() || raise "There's no thread #{thread_id}."
   end
 
-  @doc false
-  # Other threads' titles by ID, for the context-file tools to name who
-  # wrote a file.
+  @doc """
+  The titles of threads `thread_ids`, by ID; an ID with no thread is left
+  out. The context-file tools and the project pages use it to name the
+  thread that last wrote a file.
+  """
   @spec titles([String.t()]) :: %{optional(String.t()) => String.t()}
   def titles([]), do: %{}
 
