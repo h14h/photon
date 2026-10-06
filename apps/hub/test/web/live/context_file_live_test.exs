@@ -75,6 +75,23 @@ defmodule PhotonWeb.ContextFileLiveTest do
       assert Enum.map(Projects.list_files(project.id), & &1.name) == ["notes.md"]
     end
 
+    test "typing a name or text marks it unsaved", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/projects/garden/files/new")
+      assert has_element?(view, ~s(#file-form[data-dirty="false"]))
+      refute has_element?(view, "#file-dirty")
+
+      view |> form("#file-form", file: %{name: "", content: "Water daily."}) |> render_change()
+      assert has_element?(view, ~s(#file-form[data-dirty="true"]))
+      assert has_element?(view, "#file-dirty")
+
+      view |> form("#file-form", file: %{name: "plan", content: ""}) |> render_change()
+      assert has_element?(view, "#file-dirty")
+
+      view |> form("#file-form", file: %{name: " ", content: "\n"}) |> render_change()
+      assert has_element?(view, ~s(#file-form[data-dirty="false"]))
+      refute has_element?(view, "#file-dirty")
+    end
+
     test "a name that is taken says so", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/projects/garden/files/new")
 
@@ -100,8 +117,12 @@ defmodule PhotonWeb.ContextFileLiveTest do
       {:ok, view, _html} = open_notes(conn)
       assert view |> element("#file-meta") |> render() =~ "Version 1, changed just now by you"
 
+      assert has_element?(view, ~s(#file-form[phx-hook][data-dirty="false"]))
+      assert has_element?(view, ~s(#file-content[phx-debounce]))
+
       view |> form("#file-form", file: %{content: "Zone 2 and 3."}) |> render_change()
       assert has_element?(view, "#file-dirty")
+      assert has_element?(view, ~s(#file-form[data-dirty="true"]))
 
       view |> form("#file-form", file: %{content: "Zone 2 and 3."}) |> render_submit()
 
@@ -111,6 +132,14 @@ defmodule PhotonWeb.ContextFileLiveTest do
 
       assert %{version: 2, content: "Zone 2 and 3."} =
                Projects.get_file(notes.project_id, "notes")
+    end
+
+    test "a tick redraws the meta line from the loaded file", %{conn: conn} do
+      {:ok, view, _html} = open_notes(conn)
+      send(view.pid, :tick)
+      # Aging itself is ProjectText's (test/web/project_text_test.exs) and
+      # the project page's tick test; the editor keeps showing its version.
+      assert view |> element("#file-meta") |> render() =~ "Version 1, changed just now by you"
     end
 
     test "the meta line names the thread that wrote it", %{conn: conn, project: project} do

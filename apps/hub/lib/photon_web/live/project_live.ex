@@ -22,6 +22,8 @@ defmodule PhotonWeb.ProjectLive do
       state may have changed
     * `{:project_files_changed, id, key}` (`Projects.subscribe_files/1`):
       reload the files, written by the user or a thread
+    * `:tick`, its own timer, once a minute: reload both lists, so "just
+      now" turns into "5 minutes ago" on a page left open
 
   An unknown slug goes back to `/` with a flash.
   """
@@ -32,11 +34,16 @@ defmodule PhotonWeb.ProjectLive do
   alias Photon.Projects.Project
   alias PhotonWeb.ProjectText
 
+  @tick_ms :timer.minutes(1)
+
   @impl true
   def mount(%{"slug" => slug}, _session, socket) do
     case Projects.get_by_slug(slug) do
       %Project{} = project ->
-        if connected?(socket), do: Projects.subscribe_files(project.id)
+        if connected?(socket) do
+          :ok = Projects.subscribe_files(project.id)
+          tick()
+        end
 
         {:ok,
          socket
@@ -52,6 +59,13 @@ defmodule PhotonWeb.ProjectLive do
   end
 
   defp gone(socket, message), do: socket |> put_flash(:error, message) |> push_navigate(to: ~p"/")
+
+  # The rows say how long ago things happened, so they are redrawn once a minute.
+  defp tick do
+    # Never cancelled: it fires once and the next is set then; it dies with the page.
+    _timer = Process.send_after(self(), :tick, @tick_ms)
+    :ok
+  end
 
   # The project's threads, most recently active first, each with whether
   # it is running and when it last got a message.
@@ -141,6 +155,11 @@ defmodule PhotonWeb.ProjectLive do
 
   def handle_info({:project_files_changed, id, _key}, %{assigns: %{project: %{id: id}}} = socket),
     do: {:noreply, load_files(socket)}
+
+  def handle_info(:tick, socket) do
+    tick()
+    {:noreply, socket |> load_threads() |> load_files()}
+  end
 
   def handle_info({:durable_tasks, tasks}, socket) do
     if Enum.any?(tasks, &MapSet.member?(socket.assigns.thread_ids, &1.conversation_id)),

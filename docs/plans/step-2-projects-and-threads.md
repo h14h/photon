@@ -630,6 +630,10 @@ messages under their fields.
     files yet. Threads write notes here as they work, and so can you."
 - Step 3 adds Skills and Schedules to the second column. Nothing stands
   in for them now.
+- The times are words ("5 minutes ago"), so the page re-streams both
+  lists on a `:tick` once a minute, and `ContextFileLive` redraws
+  `#file-meta` the same way; otherwise a page left open says "just now"
+  for hours.
 
 Both lists are LiveView streams, as the project's AGENTS.md requires for
 collections: a project's threads are never deleted in this step, so the
@@ -669,7 +673,9 @@ concerns it), and the edit form.
   `Photon.Markdown.to_html/1`), the form `#file-form` with the textarea
   and a hidden `version`, `Save` (`#file-save`) and `Delete`
   (`#file-delete`, with `data-confirm`).
-- `phx-change="edit"` keeps the text in the form and marks it dirty.
+- `phx-change="edit"` keeps the text in the form and marks it dirty. The
+  textarea has `phx-debounce="400"`, since every change sends the whole
+  file (up to 100,000 characters) up and back.
 - When `{:project_files_changed, id, key}` names this file: a clean
   editor reloads it; a dirty one shows `#file-changed` ("A thread changed
   this file while you were editing.", or "This file was saved somewhere
@@ -681,7 +687,11 @@ concerns it), and the edit form.
   banner and keeps your text in the box. A file deleted meanwhile shows
   `#file-deleted`, and `Save` creates it again.
 - The `:new` form has the `Write` and `Preview` tabs too. A dirty editor
-  says "Unsaved changes" (`#file-dirty`) next to `Save`. When the server
+  (on `:new`, any name or text) says "Unsaved changes" (`#file-dirty`)
+  next to `Save`, and `#file-form` carries `data-dirty`. Its colocated
+  hook `.UnsavedGuard` asks "Leave without saving?" before a live link
+  (the sidebar, the back link) leaves a dirty editor, and sets
+  `beforeunload` for closing or reloading the tab. When the server
   replaces the text (a clean reload, `#file-reload`), the editor's
   wrapper gets a new DOM ID (`#file-editor-<n>`), because LiveView leaves
   a focused textarea's value alone and the user would otherwise see, and
@@ -788,7 +798,9 @@ projects and threads.
 
 - `.BlipDock` reports `location.pathname` when it mounts and on every
   `phx:page-loading-stop` (`pushEvent("page", {path})`), skipping a path
-  it already reported, as it did before step 1.
+  it already reported, as it did before step 1. Its `reconnected()` forgets
+  the path and reports it again, because a reconnect (or a rejoin after a
+  crash) mounts `BlipLive` afresh with no page while the hook survives.
 - `BlipLive.handle_event("page", %{"path" => path}, ...)` assigns
   `page: Assistant.page_at(path)` and clears `page_dismissed`.
 - `Assistant.page_at/1` calls `Page.at(path)`, which is pure:

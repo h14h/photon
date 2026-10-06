@@ -21,7 +21,8 @@ defmodule PhotonWeb.BlipLive do
   counts what's unread until the panel opens.
 
   It knows which page is under it: the `.BlipDock` hook reports each path
-  the browser shows (`page`), and on a page inside a project (the project,
+  the browser shows (`page`), again after a reconnect (a fresh mount starts
+  with no page), and on a page inside a project (the project,
   a context file, a new thread, a thread) `Photon.Assistant.page_at/1`
   gives the page (`@page`). The message box shows it as a chip, "About
   Garden / Fix the pump"; its × leaves it out (`@page_dismissed`, until
@@ -415,6 +416,14 @@ defmodule PhotonWeb.BlipLive do
         },
 
         updated() { this.schedule() },
+
+        // After the socket reconnects or this LiveView rejoins, the server
+        // has mounted again without a page; the path hasn't changed, so the
+        // check in reportPage() would keep it quiet. Report it again.
+        reconnected() {
+          this.path = null
+          this.reportPage()
+        },
 
         destroyed() {
           document.removeEventListener("keydown", this.onKey)

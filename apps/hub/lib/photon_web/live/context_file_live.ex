@@ -26,7 +26,8 @@ defmodule PhotonWeb.ContextFileLive do
   the old text.
 
   `{:projects_changed, id}` comes through `PhotonWeb.Shell` and keeps the
-  project's name current. An unknown project or file goes back to `/`
+  project's name current. A `:tick` once a minute redraws `#file-meta`, so
+  "changed just now" ages on a page left open. An unknown project or file goes back to `/`
   with a flash.
   """
 
@@ -36,11 +37,16 @@ defmodule PhotonWeb.ContextFileLive do
   alias Photon.Projects.{ContextFile, Project}
   alias PhotonWeb.ProjectText
 
+  @tick_ms :timer.minutes(1)
+
   @impl true
   def mount(%{"slug" => slug} = params, _session, socket) do
     with {:ok, project} <- project(slug),
          {:ok, file} <- file(project, params, socket.assigns.live_action) do
-      if file && connected?(socket), do: Projects.subscribe_files(project.id)
+      if file && connected?(socket) do
+        :ok = Projects.subscribe_files(project.id)
+        tick()
+      end
 
       {:ok,
        socket
@@ -72,6 +78,13 @@ defmodule PhotonWeb.ContextFileLive do
   defp title(project, file), do: "#{file.name} in #{project.name}"
 
   defp gone(socket, message), do: socket |> put_flash(:error, message) |> push_navigate(to: ~p"/")
+
+  # The meta line says how long ago the file changed, so it is redrawn once a minute.
+  defp tick do
+    # Never cancelled: it fires once and the next is set then; it dies with the page.
+    _timer = Process.send_after(self(), :tick, @tick_ms)
+    :ok
+  end
 
   ## The editor's state
 
@@ -117,17 +130,21 @@ defmodule PhotonWeb.ContextFileLive do
   # The text in the editor now.
   defp text_of(form), do: form[:content].value || ""
 
+  # Whether the editor holds something a save would keep: for a new file,
+  # any name or text; for a file, text other than what was loaded.
+  defp dirty?(nil, params),
+    do: Enum.any?(["name", "content"], &(String.trim(params[&1] || "") != ""))
+
+  defp dirty?(%ContextFile{content: content}, params), do: params["content"] != content
+
   ## Events
 
   @impl true
   def handle_event("edit", %{"file" => params}, socket) do
     params = clean(params)
 
-    dirty? =
-      match?(%ContextFile{}, socket.assigns.file) and
-        params["content"] != socket.assigns.file.content
-
-    {:noreply, assign(socket, form: file_form(params), dirty?: dirty?)}
+    {:noreply,
+     assign(socket, form: file_form(params), dirty?: dirty?(socket.assigns.file, params))}
   end
 
   def handle_event("tab", %{"tab" => tab}, socket) when tab in ["write", "preview"],
@@ -218,6 +235,11 @@ defmodule PhotonWeb.ContextFileLive do
       %Project{} = project -> {:noreply, assign(socket, project: project)}
       nil -> {:noreply, gone(socket, "There's no project called #{socket.assigns.project.slug}.")}
     end
+  end
+
+  def handle_info(:tick, socket) do
+    tick()
+    {:noreply, assign(socket, meta: meta(socket.assigns.file))}
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
@@ -314,6 +336,8 @@ defmodule PhotonWeb.ContextFileLive do
             id="file-form"
             phx-change="edit"
             phx-submit="save"
+            phx-hook=".UnsavedGuard"
+            data-dirty={to_string(@dirty?)}
             class="mt-6 space-y-5"
           >
             <.input
@@ -351,6 +375,7 @@ defmodule PhotonWeb.ContextFileLive do
                   id="file-content"
                   type="textarea"
                   rows="20"
+                  phx-debounce="400"
                   aria-label="Content"
                   spellcheck="false"
                   placeholder="What should this project's threads know? Markdown works here."
@@ -396,6 +421,49 @@ defmodule PhotonWeb.ContextFileLive do
         </div>
       </div>
     </Layouts.app>
+
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".UnsavedGuard">
+      // Asks before leaving the editor with unsaved text: closing or
+      // reloading the tab (beforeunload), and following a live link (the
+      // sidebar, the back link), which LiveView handles without unloading.
+      // The server's data-dirty lags typing by the content's debounce, so
+      // typing since the last patch of the form counts as unsaved too.
+      export default {
+        mounted() {
+          this.typed = false
+          this.onInput = () => { this.typed = true }
+          this.el.addEventListener("input", this.onInput)
+
+          this.onUnload = e => {
+            if (!this.dirty()) return
+            e.preventDefault()
+            e.returnValue = ""
+          }
+          window.addEventListener("beforeunload", this.onUnload)
+
+          // In the capture phase, so it runs before LiveView's own handler
+          // on window; stopping the event there keeps the page.
+          this.onClick = e => {
+            const link = e.target.closest?.("a[data-phx-link]")
+            if (!link || !this.dirty()) return
+            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+            if (confirm("Leave without saving? Your changes to this file will be lost.")) return
+            e.preventDefault()
+            e.stopPropagation()
+          }
+          document.addEventListener("click", this.onClick, true)
+        },
+
+        updated() { this.typed = false },
+
+        destroyed() {
+          window.removeEventListener("beforeunload", this.onUnload)
+          document.removeEventListener("click", this.onClick, true)
+        },
+
+        dirty() { return this.typed || this.el.dataset.dirty === "true" }
+      }
+    </script>
     """
   end
 

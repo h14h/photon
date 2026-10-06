@@ -11,6 +11,7 @@ defmodule PhotonWeb.ProjectLiveTest do
 
   use PhotonWeb.ConnCase, async: false
 
+  import Ecto.Query, only: [where: 2]
   import Phoenix.LiveViewTest
 
   alias Photon.{Durable, Machines, Projects, Threads}
@@ -208,6 +209,31 @@ defmodule PhotonWeb.ProjectLiveTest do
              "context-file-#{notes.id}",
              "context-file-#{plan.id}"
            ]
+  end
+
+  test "redraws how long ago things happened once a minute", %{conn: conn, project: project} do
+    thread = idle_thread!(project, "Fix the pump")
+    {:ok, plan} = Projects.create_file(project.id, %{name: "plan.md", content: "Water daily."})
+    {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}")
+
+    assert has_element?(view, "#project-thread-#{thread}", "just now")
+    assert has_element?(view, "#context-file-#{plan.id}", "changed just now by you")
+
+    # Time passes without anything announcing it.
+    {1, _} =
+      Photon.Repo.update_all(where(Photon.Threads.Thread, id: ^thread),
+        set: [active_at: DateTime.add(DateTime.utc_now(), -2, :hour)]
+      )
+
+    {1, _} =
+      Photon.Repo.update_all(where(Photon.Projects.ContextFile, id: ^plan.id),
+        set: [updated_at: DateTime.add(DateTime.utc_now(), -3, :hour)]
+      )
+
+    send(view.pid, :tick)
+
+    assert has_element?(view, "#project-thread-#{thread}", "2 hours ago")
+    assert has_element?(view, "#context-file-#{plan.id}", "changed 3 hours ago by you")
   end
 
   test "an unknown slug goes home with a flash", %{conn: conn} do
