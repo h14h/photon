@@ -910,6 +910,14 @@ knows the owner's zone, so the pages convert there:
   every change the hook writes `new Date(value).toISOString()` into the
   hidden field and dispatches an `input` event so `phx-change` sees it.
   Tests set the hidden field directly with `render_change/2`.
+  (K8) The visible input is `#<id>-local` with no `name`, so the form
+  sends only the hidden `#<id>`; the hook stops the visible input's own
+  events, so each edit pushes one change. It reads the field's errors as
+  `input/1` does, and marks the input with `data-invalid` (an ignored
+  element still takes `data-` attributes). When the server's UTC value
+  changes (say, loading the saved version), `updated()` shows it again.
+  Under the field, the hook names the browser's zone ("Your time zone:
+  Europe/London."). `local_time/1`'s `datetime` is truncated to seconds.
 - A repeat is an interval on a UTC grid, as routines are today. "Every
   day" from 09:00 in winter fires at 10:00 local after the clocks go
   forward. The form says "Repeats every 1 day from the first time" so
@@ -1164,6 +1172,18 @@ aren't a whole number of hours, days or weeks are said in minutes),
 words for each state, above), and `target(schedule, thread_title)`. Times are rendered by
 `TimeComponents.local_time/1`.
 
+(K8) `state/2` returns the words tagged with what goes with them, since
+the time itself is a component: `{:next, "Every day · next"}` or
+`{:next, "Once ·"}` while waiting (the page follows it with
+`local_time/1` of `next_at`), `{:done, "Done"}`, and `{:stopped,
+words}` (the error colour); a reason's trailing full stop is dropped
+before the sentence adds its own. `outcome/1` says "started", "sent",
+"queued behind a run", the three skips above, "skipped: the thread is
+gone" for `"skipped_missing"`, "stopped after an error" for `"failed"`,
+and "ran" for an outcome it doesn't know (rule 75). `every/1` counts the
+largest whole unit, so 1440 is "every day" and 2160 "every 36 hours".
+`target/2` is left to K11, where the row's thread link decides its shape.
+
 ### 6.7 The schedule form
 
 `PhotonWeb.ScheduleLive`:
@@ -1220,6 +1240,11 @@ words for each state, above), and `target(schedule, thread_title)`. Times are re
 - (K6) The rows are a stream in `#schedule-list` (inside `#schedules`),
   with DOM IDs `#schedule-<id>` and the empty text as `#no-schedules`,
   shown only when the stream is empty.
+- (K8) Each row's when line is `#schedule-<id>-when` (the words of
+  `ScheduleText.state/2` and `local_time/1` of `next_at`), and once the
+  schedule has fired, `#schedule-<id>-last` says "Last ran <local
+  time>: <`ScheduleText.outcome/1`>", which is where the task's
+  `outcome/1` shows on this page.
 
 ### 6.9 The conversation view
 
@@ -1854,6 +1879,9 @@ K8. Times and schedule words. After K6.
 - Tests: `test/web/schedule_text_test.exs`,
   `test/web/components/time_components_test.exs`,
   `overview_live_test.exs`.
+- (K8) Done as listed, `local_datetime_input/1` included, so K12 only
+  uses it. The choices are recorded in sections 3.9, 6.6 and 6.8 under
+  "(K8)".
 
 K9. The Skills page and the skill editor. After K7.
 - Fill in `apps/hub/lib/photon_web/live/skills_live.ex` and

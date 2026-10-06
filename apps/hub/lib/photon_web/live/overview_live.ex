@@ -9,12 +9,15 @@ defmodule PhotonWeb.OverviewLive do
   are a stream (`#schedule-list`), read here and again on
   `{:schedules_changed, nil}` (`Photon.Schedules.subscribe/0`). A
   project's schedules are on its page, and their announcements carry the
-  project's ID, so they don't reload this list.
+  project's ID, so they don't reload this list. Times are shown in the
+  owner's time zone (`PhotonWeb.TimeComponents.local_time/1`), with the
+  words from `PhotonWeb.ScheduleText`.
   """
 
   use PhotonWeb, :live_view
 
   alias Photon.{Assistant, Schedules}
+  alias PhotonWeb.ScheduleText
 
   @impl true
   def mount(_params, _session, socket) do
@@ -100,6 +103,7 @@ defmodule PhotonWeb.OverviewLive do
                 class="hidden text-[14px] leading-relaxed text-ink-faint only:block"
               >
                 None yet. Ask Blip for something recurring, like "every morning, check my disks".
+                Project schedules are on each project's page.
               </p>
               <div
                 :for={{dom_id, item} <- @streams.schedules}
@@ -109,7 +113,18 @@ defmodule PhotonWeb.OverviewLive do
                 <.icon name="hero-clock" class="mt-0.5 size-4 shrink-0 text-ink-faint" />
                 <div class="min-w-0 flex-1">
                   <p class="leading-snug text-ink">{item.schedule.prompt}</p>
-                  <p class="mt-0.5 text-[12px] text-ink-faint">{schedule_text(item)}</p>
+                  <.schedule_when id={dom_id} item={item} />
+                  <p
+                    :if={item.schedule.last_run_at}
+                    id={"#{dom_id}-last"}
+                    class="mt-0.5 text-[12px] text-ink-faint"
+                  >
+                    Last ran
+                    <.local_time
+                      id={"#{dom_id}-last-at"}
+                      at={item.schedule.last_run_at}
+                    />: {ScheduleText.outcome(item.schedule.last_outcome)}
+                  </p>
                 </div>
                 <button
                   phx-click="cancel_schedule"
@@ -173,20 +188,24 @@ defmodule PhotonWeb.OverviewLive do
 
   defp machine_line(_node), do: "Not connected"
 
-  defp schedule_text(%{schedule: schedule, next_at: next_at}) do
-    next = Calendar.strftime(next_at, "%b %-d, %H:%M UTC")
+  attr :id, :string, required: true
+  attr :item, :map, required: true, doc: "a schedule from `Photon.Assistant.schedules/0`"
 
-    case schedule.every_minutes do
-      nil -> "Once, #{next}"
-      every -> "Every #{format_interval(every)} · next #{next}"
-    end
-  end
+  # When a schedule runs next: "Every day · next <local time>" or "Once ·
+  # <local time>" (`PhotonWeb.ScheduleText.state/2`). The list holds only
+  # waiting schedules, but the other states read right here too.
+  defp schedule_when(%{item: item} = assigns) do
+    {tone, words} = ScheduleText.state(item.state, item.schedule.every_minutes)
+    assigns = assign(assigns, tone: tone, words: words)
 
-  defp format_interval(minutes) do
-    cond do
-      rem(minutes, 1440) == 0 -> "#{div(minutes, 1440)}d"
-      rem(minutes, 60) == 0 -> "#{div(minutes, 60)}h"
-      true -> "#{minutes}m"
-    end
+    ~H"""
+    <p
+      id={"#{@id}-when"}
+      class={["mt-0.5 text-[12px]", if(@tone == :stopped, do: "text-bad", else: "text-ink-faint")]}
+    >
+      {@words}
+      <.local_time :if={@tone == :next && @item.next_at} id={"#{@id}-next"} at={@item.next_at} />
+    </p>
+    """
   end
 end

@@ -54,6 +54,7 @@ defmodule PhotonWeb.OverviewLiveTest do
 
   test "lists Blip's schedules, which can be cancelled", %{view: view} do
     assert has_element?(view, "#no-schedules", "None yet")
+    assert has_element?(view, "#no-schedules", "Project schedules are on each project's page.")
 
     schedule =
       blip_schedule!(
@@ -62,7 +63,15 @@ defmodule PhotonWeb.OverviewLiveTest do
       )
 
     assert has_element?(view, "#schedule-#{schedule.id}", "check disks")
-    assert has_element?(view, "#schedule-#{schedule.id}", "Every 1h · next Jan 1, 00:00 UTC")
+    assert has_element?(view, "#schedule-#{schedule.id}-when", "Every hour · next")
+
+    assert has_element?(
+             view,
+             ~s(#schedule-#{schedule.id}-when time[datetime="2100-01-01T00:00:00Z"]),
+             "Jan 1, 00:00 UTC"
+           )
+
+    refute has_element?(view, "#schedule-#{schedule.id}-last")
 
     view |> element("#schedule-#{schedule.id} button") |> render_click()
     assert Schedules.get(schedule.id) == nil
@@ -83,7 +92,27 @@ defmodule PhotonWeb.OverviewLiveTest do
 
     mine = blip_schedule!(%{"prompt" => "check disks", "in_minutes" => 60}, "schedule:t_mine")
 
-    assert has_element?(view, "#schedule-#{mine.id}", "Once, ")
+    assert has_element?(view, "#schedule-#{mine.id}-when", "Once ·")
+    assert has_element?(view, "#schedule-#{mine.id}-when time[datetime]")
     refute has_element?(view, "#schedule-#{theirs.id}")
+  end
+
+  test "says when a schedule last ran and what it did", %{view: view} do
+    schedule =
+      blip_schedule!(
+        %{"prompt" => "check disks", "at" => "2100-01-01T00:00:00Z", "every_minutes" => 1440},
+        "schedule:t_last"
+      )
+
+    {:ok, "sent"} = Schedules.run_now(schedule.id)
+    %{schedule: %{last_run_at: ran_at}} = Schedules.get(schedule.id)
+    _ = render(view)
+
+    assert has_element?(view, "#schedule-#{schedule.id}-when", "Every day · next")
+    assert has_element?(view, "#schedule-#{schedule.id}-last", "Last ran")
+    assert has_element?(view, "#schedule-#{schedule.id}-last", ": sent")
+
+    iso = ran_at |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+    assert has_element?(view, ~s(#schedule-#{schedule.id}-last time[datetime="#{iso}"]))
   end
 end

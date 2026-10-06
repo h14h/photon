@@ -96,6 +96,8 @@ defmodule PhotonWeb do
       # Core UI components
       import PhotonWeb.CoreComponents
       import PhotonWeb.Blip, only: [blip: 1]
+      # Times in the owner's time zone
+      import PhotonWeb.TimeComponents
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS
