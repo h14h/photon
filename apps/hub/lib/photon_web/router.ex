@@ -16,20 +16,31 @@ defmodule PhotonWeb.Router do
 
     live_session :gui, on_mount: [PhotonWeb.Auth, PhotonWeb.Shell] do
       live "/", OverviewLive
-      live "/sessions/:id", SessionLive
       live "/nodes", NodesLive
       live "/settings", SettingsLive
     end
   end
 
+  # Images Blip's page loads on their own; checked like the pages.
+  pipeline :gui_files do
+    plug :fetch_session
+    plug PhotonWeb.Auth
+    plug :put_secure_browser_headers
+  end
+
+  scope "/blip", PhotonWeb do
+    pipe_through :gui_files
+
+    get "/images/:entry_id/:index", BlipImageController, :show
+  end
+
   # For the platform's health checks; needs no password.
   get "/healthz", PhotonWeb.HealthPlug, []
 
-  # The node installer, packaged binaries, and the model relay nodes use (the
-  # node websocket itself is mounted in the endpoint at /node/websocket).
+  # The node installer and packaged binaries (the node websocket itself is
+  # mounted in the endpoint at /node/websocket).
   scope "/node", PhotonWeb do
     get "/install.sh", NodeInstallController, :script
     get "/download/:file", NodeInstallController, :download
-    post "/llm/stream", ModelRelayController, :stream
   end
 end

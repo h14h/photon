@@ -229,14 +229,14 @@ defmodule Photon.NodeInstallTest do
     assert_receive {:provision, %{"box" => %{log: ["Waiting for box-test" <> _ | _]}}}, 5_000
 
     {:ok, _} =
-      Registry.register(Photon.NodeRegistry, "box-test", %{
+      Registry.register(Photon.MachineRegistry, "box-test", %{
         "running" => MapSet.new(),
         "connected_at" => DateTime.utc_now(),
         "version" => "9.9.9-test",
         "platform" => "test"
       })
 
-    Photon.Nodes.broadcast()
+    Photon.Machines.broadcast()
 
     assert_receive {:provision, %{"box" => %{status: :ok, log: [done | _] = log}}}, 5_000
     assert done =~ "box-test is connected"

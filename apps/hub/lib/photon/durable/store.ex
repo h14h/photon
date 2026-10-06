@@ -21,8 +21,7 @@ defmodule Photon.Durable.Store do
   one line, which SQLite needs (one writer at a time) and the harness relies
   on (a commit reads what the previous one wrote). `commit/1` is a call, so
   a caller waits for its turn and writers get back pressure from the
-  database. The node-session mirror (`Photon.NodeSessions`) commits through
-  it too.
+  database. `Photon.Machines` commits its op rows through it too.
   """
 
   use GenServer

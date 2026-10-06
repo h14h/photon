@@ -1,19 +1,16 @@
 defmodule PhotonWeb.OverviewLive do
   @moduledoc """
-  The home page: everything the hub is running, at a glance. Your machines
-  and whether they're online, node work going now, work that finished
-  lately, and what's scheduled. Blip floats over it, as over every page.
+  The home page, at a glance: your machines and whether they're online, a
+  pointer to Blip for work on them, and what's scheduled. Blip floats over
+  it, as over every page.
 
-  Machines and sessions come from `@shell`, which keeps them current;
-  schedules are read here and again on `{:durable_tasks, _}`.
+  Machines come from `@shell`, which keeps them current; schedules are
+  read here and again on `{:durable_tasks, _}`.
   """
 
   use PhotonWeb, :live_view
 
   alias Photon.Assistant
-
-  # How many finished sessions "Recent work" shows.
-  @recent 8
 
   @impl true
   def mount(_params, _session, socket) do
@@ -37,16 +34,7 @@ defmodule PhotonWeb.OverviewLive do
 
   @impl true
   def render(assigns) do
-    {running, finished} =
-      Enum.split_with(assigns.shell.sessions, &(&1.status in ["running", "pending"]))
-
-    assigns =
-      assign(assigns,
-        running: running,
-        recent: Enum.take(finished, @recent),
-        online: Enum.count(assigns.shell.nodes, & &1.online),
-        now: DateTime.utc_now()
-      )
+    assigns = assign(assigns, online: Enum.count(assigns.shell.nodes, & &1.online))
 
     ~H"""
     <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={:overview}>
@@ -56,7 +44,7 @@ defmodule PhotonWeb.OverviewLive do
             Overview
             <:subtitle>
               <span id="overview-summary">
-                {summary(@online, length(@shell.nodes), length(@running))}
+                {summary(@online, length(@shell.nodes))}
               </span>
             </:subtitle>
           </.header>
@@ -68,38 +56,23 @@ defmodule PhotonWeb.OverviewLive do
               id="no-machines"
               class="mt-3 rounded-2xl border border-dashed border-line-strong px-5 py-6 text-[14px] text-ink-soft"
             >
-              No machines yet, so Blip has nowhere to send work.
-              <.link navigate={~p"/nodes"} class="text-accent-strong underline underline-offset-2">
-                Add one
-              </.link>
+              No machines yet. Add one from the <.link
+                navigate={~p"/nodes"}
+                class="text-accent-strong underline underline-offset-2"
+              >
+                Nodes page</.link>.
             </div>
             <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <.machine
-                :for={node <- @shell.nodes}
-                node={node}
-                sessions={Enum.filter(@shell.sessions, &(&1.node_id == node.id))}
-              />
+              <.machine :for={node <- @shell.nodes} node={node} />
             </div>
-          </section>
-
-          <section id="running" class="mt-9">
-            <.section_title>Running now</.section_title>
-            <p :if={@running == []} class="mt-3 text-[14px] text-ink-faint">
-              Nothing running on your machines.
+            <p
+              :if={@shell.nodes != []}
+              id="work-hint"
+              class="mt-4 flex items-center gap-2 text-[14px] text-ink-soft"
+            >
+              <.icon name="hero-chat-bubble-left-ellipsis" class="size-4 shrink-0 text-ink-faint" />
+              Work happens through Blip: ask it to run something on any of these.
             </p>
-            <div :if={@running != []} class="mt-3 space-y-2">
-              <.work :for={s <- @running} session={s} now={@now} />
-            </div>
-          </section>
-
-          <section id="recent" class="mt-9">
-            <.section_title>Recent work</.section_title>
-            <p :if={@recent == []} class="mt-3 text-[14px] text-ink-faint">
-              Nothing has finished yet.
-            </p>
-            <div :if={@recent != []} class="mt-3 space-y-2">
-              <.work :for={s <- @recent} session={s} now={@now} />
-            </div>
           </section>
 
           <section id="schedules" class="mt-9">
@@ -136,16 +109,8 @@ defmodule PhotonWeb.OverviewLive do
     """
   end
 
-  defp summary(_online, 0, _running), do: "Add a machine and Blip can start working on it."
-
-  defp summary(online, total, running) do
-    machines = "#{online} of #{total} #{plural(total, "machine")} online"
-
-    case running do
-      0 -> machines <> ". Nothing running."
-      n -> machines <> ". #{n} #{plural(n, "thing")} running."
-    end
-  end
+  defp summary(_online, 0), do: "Add a machine and Blip can start working on it."
+  defp summary(online, total), do: "#{online} of #{total} #{plural(total, "machine")} online."
 
   defp plural(1, word), do: word
   defp plural(_n, word), do: word <> "s"
@@ -161,100 +126,32 @@ defmodule PhotonWeb.OverviewLive do
   end
 
   attr :node, :map, required: true
-  attr :sessions, :list, required: true
 
   defp machine(assigns) do
-    assigns =
-      assign(assigns,
-        running: Enum.count(assigns.sessions, &(&1.status == "running")),
-        latest: List.first(assigns.sessions)
-      )
-
     ~H"""
     <div
       id={"machine-#{@node.id}"}
-      class={[
-        "rounded-2xl border bg-surface px-4 py-3.5 shadow-xs transition",
-        @running > 0 && "border-accent/40",
-        @running == 0 && "border-line"
-      ]}
+      class="rounded-2xl border border-line bg-surface px-4 py-3.5 shadow-xs transition"
     >
       <div class="flex items-center gap-2">
-        <.dot status={
-          cond do
-            !@node.online -> :off
-            @running > 0 -> :busy
-            true -> :ok
-          end
-        } />
+        <.dot status={if(@node.online, do: :ok, else: :off)} />
         <span class={["truncate font-medium", !@node.online && "text-ink-faint"]}>{@node.id}</span>
         <span class="ml-auto shrink-0 text-[12px] text-ink-faint">
-          {cond do
-            !@node.online -> "offline"
-            @running > 0 -> "#{@running} running"
-            true -> "online"
-          end}
+          {if(@node.online, do: "online", else: "offline")}
         </span>
       </div>
-      <.link
-        :if={@latest}
-        navigate={~p"/sessions/#{@latest.id}"}
-        class="mt-2 block truncate text-[13px] text-ink-soft hover:text-ink"
-      >
-        {@latest.title}
-      </.link>
-      <p :if={!@latest} class="mt-2 text-[13px] text-ink-faint">No work yet.</p>
+      <p class="mt-2 truncate text-[13px] text-ink-faint">{machine_line(@node)}</p>
     </div>
     """
   end
 
-  attr :session, :map, required: true
-  attr :now, DateTime, required: true
+  # What the card says under a machine's name: its host and platform while
+  # it's connected.
+  defp machine_line(%{online: true, info: info}),
+    do:
+      [info["hostname"], info["platform"]] |> Enum.reject(&(&1 in [nil, ""])) |> Enum.join(" · ")
 
-  defp work(assigns) do
-    assigns = assign(assigns, state: state(assigns.session))
-
-    ~H"""
-    <.link
-      navigate={~p"/sessions/#{@session.id}"}
-      id={"work-#{@session.id}"}
-      class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-2.5 text-[14px] shadow-xs transition hover:border-accent/40"
-    >
-      <span class="grid size-5 shrink-0 place-items-center">
-        <Layouts.session_badge status={@state} />
-        <.icon
-          :if={@state == "done"}
-          name="hero-check-circle-micro"
-          class="size-4 text-ok"
-        />
-      </span>
-      <span class="min-w-0 flex-1">
-        <span class="block truncate text-ink">{@session.title}</span>
-        <span class="text-[12px] text-ink-faint">
-          {@session.node_id} · {if(@session.origin == "assistant", do: "by Blip", else: "by you")}
-        </span>
-      </span>
-      <span class="shrink-0 text-[12px] text-ink-faint tabular-nums">{ago(@session.updated_at, @now)}</span>
-    </.link>
-    """
-  end
-
-  # A session's status as the list shows it: an idle session ended its last
-  # turn, well or not.
-  defp state(%{status: "idle", last_failure: failure}) when failure not in [nil, ""], do: "failed"
-  defp state(%{status: "idle"}), do: "done"
-  defp state(%{status: status}), do: status
-
-  defp ago(at, now) do
-    seconds = max(DateTime.diff(now, at), 0)
-
-    cond do
-      seconds < 60 -> "just now"
-      seconds < 3600 -> "#{div(seconds, 60)}m ago"
-      seconds < 86_400 -> "#{div(seconds, 3600)}h ago"
-      true -> "#{div(seconds, 86_400)}d ago"
-    end
-  end
+  defp machine_line(_node), do: "Not connected"
 
   defp schedule_text(task) do
     next = task.checkpoint["next_at"] || task.input["first_at"]

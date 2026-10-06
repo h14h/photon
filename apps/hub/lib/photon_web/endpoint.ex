@@ -11,10 +11,17 @@ defmodule PhotonWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  # Agent nodes dial in here; see PhotonNode for the protocol. Where a
+  # Nodes dial in here; see PhotonNode for the protocol. Where a
   # connection came from (peer and forwarded address) decides whose it is.
+  # Frames are capped at 8 MB on purpose: enough for a view_image snapshot
+  # (at most 5 MB of image data), and a node keeps every snapshot under
+  # 6 MB of JSON (docs/plans/step-1-machine-tools.md, node rule 9).
   socket "/node", PhotonWeb.NodeSocket,
-    websocket: [connect_info: [:x_headers, :peer_data], check_origin: false],
+    websocket: [
+      connect_info: [:x_headers, :peer_data],
+      check_origin: false,
+      max_frame_size: 8_000_000
+    ],
     longpoll: false
 
   # Websocket only: a long-poll transport carries its session in a token
@@ -46,11 +53,7 @@ defmodule PhotonWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
-  # The model relay checks a node's key before reading a byte of its body,
-  # and parses the (large) bodies it lets through itself.
-  plug PhotonWeb.NodeAuthPlug
-
-  # Everything else is small: forms and the LiveView long-poll fallback.
+  # Bodies are small: forms and the LiveView long-poll fallback.
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],

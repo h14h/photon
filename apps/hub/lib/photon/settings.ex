@@ -3,8 +3,7 @@ defmodule Photon.Settings do
   Hub settings, persisted as JSON (mode 0600) in the data directory.
 
   The model comes from the signed-in ChatGPT plan (`Photon.ChatGPT`); these
-  are the choices about it: which model Blip and the agents on nodes use and
-  how hard it reasons. The rest is what Blip should know about the user
+  are the choices about it: which model Blip uses and how hard it reasons. The rest is what Blip should know about the user
   (their name, time zone and standing instructions), and whether the user
   lets Photon use their plan for scheduled work that runs while they're
   away, which Sign in with ChatGPT asks an app to get express consent for.
@@ -118,13 +117,4 @@ defmodule Photon.Settings do
   @doc "Whether the user lets Photon use their plan for scheduled work."
   @spec scheduled_work?(t()) :: boolean()
   def scheduled_work?(settings), do: settings["scheduled_work"] == "true"
-
-  @doc "The model settings sent to a node with each input."
-  @spec node_config(t()) :: map()
-  def node_config(settings) do
-    %{"model" => model(settings), "reasoning" => blank_nil(settings["reasoning"])}
-  end
-
-  defp blank_nil(""), do: nil
-  defp blank_nil(value), do: value
 end

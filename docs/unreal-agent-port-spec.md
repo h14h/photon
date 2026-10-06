@@ -1,5 +1,17 @@
 # unreal-agent → Elixir/OTP porting spec
 
+> **Status in Photon (step 1, 2026-10-06).** Photon no longer ports the
+> agent loop. Step 1 of `docs/projects-and-blip.md` removed the node's
+> session parts: session identity, the inbox, the coordinator, the
+> session store, the context builder, skills and the node's model requests
+> (§3.1–3.4, §4–§7, §9.5, §11). Only the operation layer remains, on the
+> node as `PhotonNode.Ops` (§3.5, §9.1–9.4, §9.7), run for the hub by
+> Photon's own `PhotonNode.Executor`, which journals each operation. The
+> Bash and ViewImage translation and the output caps (§8.3–8.5) moved to
+> the hub as `Photon.MachineTools.Translate` and `PhotonCore.Output`, and
+> the only model client is the hub's `PhotonCore.LLM`. The rest of this
+> document describes the Go code as it was, and is kept for reference.
+
 Source: `github.com/unreallabsai/unreal-agent` at `1b9f778453f411c029b39b85102aaefb95e7e48d` (2026-09-23). Module `github.com/unreallabsai/unreal-agent`, Go 1.27, `encoding/json/v2`, stdlib `uuid`.
 
 This document describes what the Go code does, including its quirks, so an OTP port can match it on the wire, on disk, and in what the model sees. Paths below are relative to the upstream repo root. "OTP note" callouts mark places where the Go design comes from Go itself (goroutines, channels, `context`) and a port should do it differently.

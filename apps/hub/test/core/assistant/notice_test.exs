@@ -3,32 +3,18 @@ defmodule Photon.Assistant.NoticeTest do
 
   use Photon.Case, async: true
 
-  defp session(id, status, fields \\ %{}) do
-    Map.merge(
-      %{
-        id: id,
-        node_id: "kepler",
-        title: "Backup",
-        origin: "user",
-        status: status,
-        last_failure: nil
-      },
-      fields
-    )
-  end
-
   describe "from the conversation" do
     test "says each answer with words, and each failure" do
       entries = [
         user_entry("check disks"),
-        assistant_entry("", [call("list_nodes", %{}, "c1")]),
+        assistant_entry("", [call("list_machines", %{}, "c1")]),
         assistant_entry("## Disks\n\n**kepler** has 40 GB free."),
         entry("error", %{"message" => "HTTP 401"})
       ]
 
       assert Notice.from_entries(entries) == [
-               %{kind: :reply, text: "**kepler** has 40 GB free.", session_id: nil},
-               %{kind: :error, text: "HTTP 401", session_id: nil}
+               %{kind: :reply, text: "**kepler** has 40 GB free."},
+               %{kind: :error, text: "HTTP 401"}
              ]
     end
 
@@ -37,40 +23,6 @@ defmodule Photon.Assistant.NoticeTest do
                entry("error", %{"message" => "Stopped.", "stopped" => true}),
                entry("error", %{"message" => "Skipped.", "notice" => true})
              ]) == []
-    end
-  end
-
-  describe "the user's own node work" do
-    test "says it failed, once, when it was working before" do
-      before =
-        Notice.statuses([
-          session("a", "running"),
-          session("b", "pending"),
-          session("c", "idle"),
-          session("d", "running", %{origin: "assistant"})
-        ])
-
-      assert before == %{"a" => :active, "b" => :active, "c" => :other}
-
-      now = [
-        session("a", "idle", %{last_failure: "disk full"}),
-        session("b", "failed"),
-        session("c", "idle", %{last_failure: "old news"}),
-        session("d", "failed", %{origin: "assistant"})
-      ]
-
-      assert [
-               %{kind: :failed, session_id: "a", text: ~s(kepler couldn't finish "Backup".)},
-               %{kind: :failed, session_id: "b"}
-             ] = Notice.failures(before, now)
-
-      assert Notice.failures(Notice.statuses(now), now) == []
-    end
-
-    test "work that went fine is nothing to say" do
-      before = Notice.statuses([session("a", "running")])
-      assert Notice.failures(before, [session("a", "idle")]) == []
-      assert Notice.failures(before, [session("a", "stopped")]) == []
     end
   end
 

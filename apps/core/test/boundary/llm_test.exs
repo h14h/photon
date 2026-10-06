@@ -1,6 +1,6 @@
 defmodule PhotonCore.LLMTest do
   @moduledoc """
-  The boundary, tested the way the hub and nodes use it: `PhotonCore.LLM.stream/3`
+  The boundary, tested the way the hub uses it: `PhotonCore.LLM.stream/3`
   against a stub API over `Req.Test`. What the wire formats mean is covered
   by the core tests; these check the request that goes out, the events that
   come back, retries and errors.
@@ -170,52 +170,6 @@ defmodule PhotonCore.LLMTest do
 
       assert {:error, %Error{kind: :config}} = LLM.stream(request(), %{provider: "fireworks"})
       refute_received {:provider_request, _}
-    end
-  end
-
-  describe "the hub's relay" do
-    defp relay_config(overrides \\ []),
-      do: stub_config(__MODULE__, [provider: "relay", api_key: "node-token"] ++ overrides)
-
-    test "streams the hub's events into the result, and sends the node's token" do
-      body = [
-        Relay.event({:text, "Hel"}),
-        Relay.keep_alive(),
-        Relay.event({:tool_call, 0, "Bash", "{}"}),
-        Relay.done(%{"message" => Message.assistant("Hello"), "stop" => "end_turn"})
-      ]
-
-      StubProvider.streams(__MODULE__, IO.iodata_to_binary(body))
-
-      assert {{:ok, %{"stop" => "end_turn"}}, [{:text, "Hel"}, {:tool_call, 0, "Bash", "{}"}]} =
-               capture_events(&LLM.stream(request(), relay_config(), &1))
-
-      assert_received {:provider_request, %{body: body, headers: headers}}
-      assert body["system"] == "Be brief."
-      assert {"authorization", "Bearer node-token"} in headers
-    end
-
-    test "an error the hub reports isn't retried again" do
-      error = Error.new(:http, "not signed in", status: 503, retryable: true)
-      StubProvider.streams(__MODULE__, IO.iodata_to_binary(Relay.error(error)))
-
-      assert {{:error, %Error{message: "not signed in", retryable: false}}, []} =
-               capture_events(&LLM.stream(request(), relay_config(), &1))
-    end
-
-    test "the hub refusing the request keeps its reason" do
-      refusal = Jason.encode!(%{"error" => Relay.encode_error(Error.new(:config, "bad token"))})
-      StubProvider.answers(__MODULE__, [{401, refusal}])
-
-      assert {:error, %Error{status: 401, message: "bad token", retryable: false}} =
-               LLM.stream(request(), relay_config())
-    end
-
-    test "a hub that can't be reached is retried" do
-      StubProvider.answers(__MODULE__, [{502, ""}, :drop])
-
-      assert {{:error, %Error{kind: :transport}}, [{:retry, 1, _, %Error{status: 502}}]} =
-               capture_events(&LLM.stream(request(), relay_config(max_attempts: 2), &1))
     end
   end
 

@@ -47,12 +47,5 @@ defmodule Photon.SettingsTest do
       assert Settings.model_label("gpt-5.5") == "GPT-5.5"
       assert Settings.model_label("o9") == "o9"
     end
-
-    test "goes to nodes with the effort, blank as nil" do
-      assert Settings.node_config(settings()) ==
-               %{"model" => Settings.default_model(), "reasoning" => nil}
-
-      assert Settings.node_config(settings(%{"reasoning" => "low"}))["reasoning"] == "low"
-    end
   end
 end

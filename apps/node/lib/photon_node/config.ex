@@ -10,15 +10,11 @@ defmodule PhotonNode.Config do
   | `:node_id` | `PHOTON_NODE_ID` | the hostname |
   | `:data_dir` | `PHOTON_NODE_DATA` | `~/.photon-node` |
   | `:workspace` | `PHOTON_NODE_WORKSPACE` | `<data_dir>/workspace` |
-  | `:heartbeat_ms` | `PHOTON_HEARTBEAT_MS` | 600000 (ten minutes; 0 disables) |
   | `:link` | none | `PhotonNode.Connection` |
 
-  `:link` is the module the harness announces records and live data
-  through (`PhotonNode.Harness.Link`); only a host embedding the node
-  would change it.
-
-  Model requests go through the hub (`llm_base_url/1`), which holds the
-  provider credentials, so a node never needs an API key.
+  `:link` is the module the executor sends its snapshots and output
+  through (`PhotonNode.Executor.Link`); only a host embedding the node or a
+  test would change it.
   """
 
   use Boundary, type: :strict, deps: []
@@ -30,7 +26,6 @@ defmodule PhotonNode.Config do
     :node_id,
     :data_dir,
     :workspace,
-    heartbeat_ms: 600_000,
     link: PhotonNode.Connection
   ]
 
@@ -40,7 +35,6 @@ defmodule PhotonNode.Config do
           node_id: String.t(),
           data_dir: String.t(),
           workspace: String.t(),
-          heartbeat_ms: non_neg_integer(),
           link: module()
         }
 
@@ -49,8 +43,7 @@ defmodule PhotonNode.Config do
     token: "PHOTON_NODE_TOKEN",
     node_id: "PHOTON_NODE_ID",
     data_dir: "PHOTON_NODE_DATA",
-    workspace: "PHOTON_NODE_WORKSPACE",
-    heartbeat_ms: "PHOTON_HEARTBEAT_MS"
+    workspace: "PHOTON_NODE_WORKSPACE"
   }
 
   @doc """
@@ -73,38 +66,22 @@ defmodule PhotonNode.Config do
       node_id: get.(:node_id) || hostname(),
       data_dir: data_dir,
       workspace: Path.expand(get.(:workspace) || Path.join(data_dir, "workspace")),
-      heartbeat_ms: integer(get.(:heartbeat_ms), 600_000),
       link: Keyword.get(opts, :link, PhotonNode.Connection)
     }
   end
 
-  @doc "Session logs: `<id>.jsonl`, plus `operations/<id>/` for command output."
-  @spec sessions_dir(t()) :: String.t()
-  def sessions_dir(config), do: Path.join(config.data_dir, "sessions")
-
-  @doc "The hub's model relay, reached through the same host as the websocket."
-  @spec llm_base_url(t()) :: String.t()
-  def llm_base_url(config) do
-    uri = URI.parse(config.server)
-    scheme = if uri.scheme == "wss", do: "https", else: "http"
-    URI.to_string(%URI{scheme: scheme, host: uri.host, port: uri.port, path: "/node/llm"})
-  end
+  @doc """
+  The hub's operations: `<op_id>/`, holding the executor's journal entry
+  (`op.json`) and a shell command's files.
+  """
+  @spec ops_dir(t()) :: String.t()
+  def ops_dir(config), do: Path.join(config.data_dir, "ops")
 
   @doc "This machine's hostname."
   @spec hostname() :: String.t()
   def hostname do
     {:ok, name} = :inet.gethostname()
     to_string(name)
-  end
-
-  defp integer(nil, default), do: default
-  defp integer(value, _default) when is_integer(value), do: value
-
-  defp integer(value, default) do
-    case Integer.parse(to_string(value)) do
-      {n, ""} when n >= 0 -> n
-      _ -> default
-    end
   end
 
   defp blank_nil(""), do: nil

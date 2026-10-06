@@ -10,13 +10,14 @@ defmodule Photon.Case do
     * `test/core` - the functional core: no database, no processes, no
       files, so every file runs `async: true`
     * `test/boundary` - the contexts (`Photon.Durable`,
-      `Photon.NodeSessions`, `Photon.Assistant`, `Photon.Provision`)
+      `Photon.Machines`, `Photon.Assistant`, `Photon.Provision`)
       through their public API, the way the web layer and nodes call them,
       against a real database and the harness's processes
       (`Photon.DataCase`)
     * `test/web` - the outer boundary: the node channel, LiveViews,
       controllers and plugs (`PhotonWeb.ConnCase`)
     * `test/property` - StreamData properties of both
+    * `test/integration` - the hub with a real node over a websocket
   """
 
   # Test support sits outside the layering (compiled only for tests).
@@ -26,7 +27,7 @@ defmodule Photon.Case do
 
   using do
     quote do
-      alias Photon.Assistant.{Memory, Notice, Page, Prompt, Report, Transcript}
+      alias Photon.Assistant.{Memory, Notice, Prompt, Transcript}
 
       alias Photon.Durable.{
         Changes,
@@ -39,7 +40,6 @@ defmodule Photon.Case do
         Turn
       }
 
-      alias Photon.NodeSessions.Mirror
       alias Photon.Provision.{Jobs, Script}
       alias PhotonCore.Message
 

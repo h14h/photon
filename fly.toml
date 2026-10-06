@@ -18,11 +18,11 @@ kill_timeout = "30s"
 
 [env]
   PORT = "8080"
-  # Agents run on nodes, not on the hub's small VM. Set to "true" to also run
+  # Commands run on nodes, not on the hub's small VM. Set to "true" to also run
   # a node inside the hub.
   PHOTON_LOCAL_NODE = "false"
 
-# Sessions, settings, generated secrets and Tailscale state.
+# The database, settings, generated secrets and Tailscale state.
 [[mounts]]
   source = "photon_data"
   destination = "/data"

@@ -1,6 +1,6 @@
 defmodule PhotonWeb.NodeSocket do
   @moduledoc """
-  Websocket that agent nodes connect to. A node presents its own key
+  Websocket that nodes connect to. A node presents its own key
   (header `x-photon-token`), which `Photon.NodeKeys` checks against where
   the connection came from (`PhotonWeb.ClientIP`), requiring a tailnet
   device when the hub vouches for devices through its tailnet. The socket

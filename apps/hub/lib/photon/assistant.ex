@@ -3,51 +3,42 @@ defmodule Photon.Assistant do
   The assistant that lives on the hub: one long-running conversation the
   user talks to in the web UI, run by `Photon.Durable`.
 
-  It doesn't run commands itself. It hands work to nodes, each of which runs
-  its own agent (`PhotonNode.Harness`), and keeps a memory, a list of
-  schedules, and an eye on everything it started. Node work is
-  asynchronous: a `run_on_node` call waits briefly for the answer, and if the
-  work takes longer, a background watcher (`Photon.Assistant.NodeWatch`)
-  posts the node's report into the conversation when it finishes, which
-  wakes the assistant.
+  It runs commands and looks at images on the user's machines itself, with
+  the machine tools (`Photon.MachineTools`: `shell`, `view_image`,
+  `list_machines`), and keeps a memory and a list of schedules.
 
   This module is the assistant's API, which the web pages use, and its
   `Photon.Durable.Profile`. Behind it, by layer:
 
     * functional core (pure): `Photon.Assistant.Prompt` (system prompt and
-      model settings), `Photon.Assistant.Memory`, `Photon.Assistant.Report`
-      (how node work's outcome reads), `Photon.Assistant.Transcript` (what
-      the page shows), `Photon.Assistant.MockScript` (the mock model)
-    * boundary: the tools in `Photon.Assistant.Tools`, and
-      `Photon.Assistant.NodeWork`, what the node tools share
-    * workers: the task kinds `Photon.Assistant.NodeWatch` and
-      `Photon.Assistant.Routine`, run by the durable scheduler
+      model settings), `Photon.Assistant.Memory`,
+      `Photon.Assistant.Transcript` (what the page shows),
+      `Photon.Assistant.Notice` (what Blip says unasked),
+      `Photon.Assistant.MockScript` (the mock model)
+    * boundary: the tools in `Photon.Assistant.Tools`; the machine tools
+      are their own context, `Photon.MachineTools`
+    * workers: the task kind `Photon.Assistant.Routine`, run by the durable
+      scheduler
   """
 
   use Boundary,
     deps: [
       Photon.ChatGPT,
       Photon.Durable,
-      Photon.NodeSessions,
-      Photon.Nodes,
+      Photon.MachineTools,
       Photon.Settings,
       PhotonCore,
       PhotonCore.LLM
     ],
-    exports: [Notice, Page, Transcript]
+    exports: [Notice, Transcript]
 
   @behaviour Photon.Durable.Profile
 
-  alias Photon.Assistant.{Memory, Page, Prompt, Tools}
-  alias Photon.{Durable, Settings}
+  alias Photon.Assistant.{Memory, Prompt, Tools, Transcript}
+  alias Photon.{Durable, MachineTools, Settings}
   alias Photon.Durable.{Entry, Submission, TaskRecord}
 
   @tools [
-    Tools.ListNodes,
-    Tools.RunOnNode,
-    Tools.MessageNodeSession,
-    Tools.CheckNodeSession,
-    Tools.StopNodeSession,
     Tools.UpdateMemory,
     Tools.Schedule,
     Tools.ListSchedules,
@@ -80,27 +71,16 @@ defmodule Photon.Assistant do
     end
   end
 
-  @doc """
-  Sends the user's message. With `page:` (a `Photon.Assistant.Page`), the
-  model sees a note of the page the user had open in front of it. Other
-  options are `Photon.Durable.submit/3`'s.
-  """
+  @doc "Sends the user's message. The options are `Photon.Durable.submit/3`'s."
   @spec send(String.t(), keyword()) :: {:ok, Submission.t()} | {:error, :busy}
-  def send(text, opts \\ []) do
-    {page, opts} = Keyword.pop(opts, :page)
-    source = if page, do: %{"kind" => "user", "page" => page}, else: %{"kind" => "user"}
-
-    Durable.submit(
-      conversation_id(),
-      Page.note(text, page),
-      Keyword.put_new(opts, :source, source)
-    )
-  end
+  def send(text, opts \\ []),
+    do:
+      Durable.submit(conversation_id(), text, Keyword.put_new(opts, :source, %{"kind" => "user"}))
 
   @doc """
-  Stops the current run and withdraws the user's queued messages. Reports
-  from node work and scheduled prompts that are waiting stay, since they
-  come from background work the stop leaves running.
+  Stops the current run and withdraws the user's queued messages.
+  Scheduled prompts that are waiting stay, since they come from background
+  work the stop leaves running.
   """
   @spec stop() :: :ok
   def stop do
@@ -112,7 +92,7 @@ defmodule Photon.Assistant do
   # Input from the assistant's own background work, which a stop keeps.
   @spec background_input?(Submission.t()) :: boolean()
   def background_input?(submission),
-    do: get_in(submission.content, ["source", "kind"]) in ["node_report", "routine"]
+    do: get_in(submission.content, ["source", "kind"]) == "routine"
 
   @spec memory() :: String.t()
   def memory, do: Durable.doc("global", "memory", Memory.empty())["text"]
@@ -152,6 +132,19 @@ defmodule Photon.Assistant do
   @doc "The conversation's entries, in order."
   @spec entries(String.t()) :: [Entry.t()]
   def entries(conversation_id), do: Durable.entries(conversation_id)
+
+  @doc """
+  The image at `index` among a tool result's images in the assistant's
+  conversation, for the page to load on its own (`Transcript.image/2`):
+  `{:ok, mime, bytes}`, or `:error` if there is no such entry or image.
+  """
+  @spec image(String.t(), non_neg_integer()) :: {:ok, String.t(), binary()} | :error
+  def image(entry_id, index) do
+    case Durable.entry(conversation_id(), entry_id) do
+      nil -> :error
+      entry -> Transcript.image(entry, index)
+    end
+  end
 
   @doc "Whether the assistant is working on something."
   @spec busy?(String.t()) :: boolean()
@@ -196,7 +189,7 @@ defmodule Photon.Assistant do
   end
 
   @impl true
-  def tools(_conversation), do: @tools
+  def tools(_conversation), do: MachineTools.tools() ++ @tools
 
   @impl true
   def system_prompt(_conversation) do

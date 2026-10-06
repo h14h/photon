@@ -1,7 +1,6 @@
 defmodule PhotonWeb.SettingsLive do
   @moduledoc """
-  Sign in with ChatGPT, the model and effort Blip and the nodes use on the
-  user's plan, and what Blip should know about the user. Signing in is
+  Sign in with ChatGPT, the model and effort Blip uses on the user's plan, and what Blip should know about the user. Signing in is
   `Photon.ChatGPT`'s (the page shows its steps); the rest is a form that
   changes nothing until it is saved (`Photon.Settings.save/1`).
 
@@ -170,7 +169,7 @@ defmodule PhotonWeb.SettingsLive do
           <.header>
             Settings
             <:subtitle>
-              Blip and the agents on your machines run on your ChatGPT plan, through this hub. Your machines never see the sign-in.
+              Blip runs on your ChatGPT plan, through this hub. Your machines never see the sign-in.
             </:subtitle>
           </.header>
 

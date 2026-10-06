@@ -12,7 +12,7 @@
 #   PHOTON_NODE_ID     node name (default: short hostname)
 #   PHOTON_SERVER      hub websocket (default: <%= @server_url %>)
 #   PHOTON_ACTION      install (default) or uninstall
-#   PHOTON_PURGE       with uninstall, 1 also deletes sessions and the workspace
+#   PHOTON_PURGE       with uninstall, 1 also deletes the node's data and workspace
 #   PHOTON_BINARY      use this local binary instead of downloading one
 #   PHOTON_SERVICE     systemd, launchd or none (default: detected)
 set -eu
@@ -182,8 +182,8 @@ fi
 stop_existing
 mv "$BIN.new" "$BIN"
 
-# Services start with a bare PATH, so keep the login shell's, where the agent's
-# tools (git, brew, mise, ...) live.
+# Services start with a bare PATH, so keep the login shell's, where commands
+# find their tools (git, brew, mise, ...).
 shell="${SHELL:-/bin/sh}"
 login_path=$("$shell" -lc 'printf "%s" "$PATH"' 2>/dev/null </dev/null | tail -n 1) || login_path=""
 [ -n "$login_path" ] || login_path="$PATH"
@@ -204,7 +204,7 @@ case "$service" in
     mkdir -p "$(dirname "$UNIT")"
     cat >"$UNIT" <<UNIT
 [Unit]
-Description=Photon node (agent harness)
+Description=Photon node
 After=network-online.target
 Wants=network-online.target
 

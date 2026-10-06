@@ -39,8 +39,23 @@ defmodule Photon.Assistant.PromptTest do
     assert Prompt.system_prompt(settings(), "", @now) =~ "You can search the web yourself"
   end
 
-  test "says what a note of the page the user had open means" do
-    assert Prompt.system_prompt(settings(), "", @now) =~ ~s(may start with "[Looking at ...]")
+  test "runs work on machines itself, with no node agent to hand it to" do
+    prompt = Prompt.system_prompt(settings(), "", @now)
+    assert prompt =~ "You have shell and view_image on every machine"
+    assert prompt =~ "Background children are killed when the command exits, nohup or not."
+    assert prompt =~ "bash -c 'set -m; nohup CMD >CMD.log 2>&1 &'"
+    assert prompt =~ "Use list_machines"
+    refute prompt =~ "run_on_node"
+    refute prompt =~ "node_session"
+    refute prompt =~ "[Report from"
+  end
+
+  test "checks back on long work with a schedule rather than holding the conversation" do
+    prompt = Prompt.system_prompt(settings(), "", @now)
+    assert prompt =~ "A shell call holds the conversation until its command exits"
+    assert prompt =~ ~S[nohup sh -c "CMD; echo \$? >CMD.exit" >CMD.log 2>&1 &]
+    assert prompt =~ "use schedule with in_minutes to check the log and exit code later"
+    assert prompt =~ "Promise to report back only when you've scheduled that check."
   end
 
   test "asks for the reasoning effort only when one is set" do
@@ -51,13 +66,14 @@ defmodule Photon.Assistant.PromptTest do
   test "opens with Blip's voice, in the owner's name when it's set" do
     prompt = Prompt.system_prompt(settings(), "", @now)
     assert String.starts_with?(prompt, "You are Blip, the assistant in the user's Photon hub.")
-    assert prompt =~ "You hand work to the user's machines"
+    assert prompt =~ "You run commands on the user's machines yourself"
+    refute prompt =~ "You do not run commands yourself"
     assert prompt =~ "## How you work"
     refute prompt =~ "The user's name is"
 
     named = Prompt.system_prompt(settings(%{"user_name" => " Henry "}), "", @now)
     assert String.starts_with?(named, "You are Blip, the assistant in Henry's Photon hub.")
-    assert named =~ "You hand work to Henry's machines"
+    assert named =~ "You run commands on Henry's machines yourself"
     assert named =~ "The user's name is Henry."
   end
 end

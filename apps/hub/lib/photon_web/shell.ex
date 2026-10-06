@@ -1,26 +1,30 @@
 defmodule PhotonWeb.Shell do
   @moduledoc """
-  Keeps the app shell current on every page: connected nodes, recent node
-  sessions, the node work the assistant has running, the model in use, and
-  whether the hub is signed in with ChatGPT. Mounted for the whole
-  `live_session` and by `PhotonWeb.BlipLive`; pages get it as `@shell`.
+  Keeps the app shell current on every page: the machines the hub knows and
+  which are online, the model in use, and whether the hub is signed in with
+  ChatGPT. Mounted for the whole `live_session` and by `PhotonWeb.BlipLive`;
+  pages get it as `@shell`.
 
-  It rebuilds on `:nodes_changed`, `:node_sessions_changed`,
-  `{:settings_changed, _}`, `{:durable_tasks, _}` and `{:chatgpt_changed, _}`,
-  and lets each message continue to the page, which may want it too.
+  The machines are `Photon.Machines.roster/0`: the connected nodes, and
+  the known ones (a key that isn't revoked) offline. It rebuilds on
+  `:nodes_changed`, `{:node_keys_changed, _}`, `{:settings_changed, _}`
+  and `{:chatgpt_changed, _}`, and lets every message continue to the
+  page, which may want it too. It also subscribes to the assistant's tasks
+  (`{:durable_tasks, _}`) for the pages, though nothing in it depends on
+  them.
   """
 
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView
 
-  alias Photon.{Assistant, ChatGPT, Nodes, NodeSessions, Settings}
+  alias Photon.{Assistant, ChatGPT, Machines, NodeKeys, Settings}
 
   @spec on_mount(:default, map(), map(), Phoenix.LiveView.Socket.t()) ::
           {:cont, Phoenix.LiveView.Socket.t()}
   def on_mount(:default, _params, _session, socket) do
     if connected?(socket) do
-      Nodes.subscribe()
-      NodeSessions.subscribe()
+      Machines.subscribe()
+      NodeKeys.subscribe()
       Settings.subscribe()
       ChatGPT.subscribe()
       Assistant.subscribe_tasks()
@@ -31,9 +35,9 @@ defmodule PhotonWeb.Shell do
   end
 
   defp handle_info(message, socket)
-       when message in [:nodes_changed, :node_sessions_changed] or
+       when message == :nodes_changed or
               (is_tuple(message) and
-                 elem(message, 0) in [:settings_changed, :durable_tasks, :chatgpt_changed]) do
+                 elem(message, 0) in [:node_keys_changed, :settings_changed, :chatgpt_changed]) do
     {:cont, assign(socket, :shell, build())}
   end
 
@@ -42,15 +46,11 @@ defmodule PhotonWeb.Shell do
   @doc "The shell's data, read now."
   @spec build() :: map()
   def build do
-    online = Nodes.list()
     chatgpt = ChatGPT.status()
-    sessions = NodeSessions.list(nil, 60)
     settings = Settings.load()
 
     %{
-      nodes: Nodes.roster(online, sessions),
-      sessions: sessions,
-      working: Enum.filter(sessions, &(&1.origin == "assistant" and &1.status == "running")),
+      nodes: Machines.roster(),
       model: Settings.model_label(settings),
       chatgpt: chatgpt,
       model_ready: ChatGPT.ready?(chatgpt)

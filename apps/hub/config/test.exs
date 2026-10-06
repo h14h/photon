@@ -12,10 +12,8 @@ config :photon, Photon.Repo,
   database: Path.expand("../_build/test-data/photon-test.db", __DIR__),
   pool_size: 5
 
-config :photon_node, llm: %{provider: "mock", script: PhotonCore.LLM.MockAgent}
-
-# Blip and the node relay answer with the scripted models, not ChatGPT; the
-# account's requests to OpenAI go to a stub (Photon.ChatGPTStub).
+# Blip answers with the scripted model, not ChatGPT; the account's requests
+# to OpenAI go to a stub (Photon.ChatGPTStub).
 config :photon, :mock_model, true
 
 # Tests never run the machine's own tailscale; they name a stand-in with
@@ -44,7 +42,11 @@ config :phoenix_live_view,
 config :phoenix,
   sort_verified_routes_query_params: true
 
+# Machine tool calls check and give up in milliseconds; a test that needs a
+# call to stay parked longer sets its own limits.
+config :photon, Photon.MachineTools, check_ms: 200, offline_limit_ms: 500
+
 # Harness tests use their own conversation profile alongside the assistant's.
 config :photon, Photon.Durable,
   profiles: %{"assistant" => Photon.Assistant, "test" => Photon.TestProfile},
-  kinds: %{"node_watch" => Photon.Assistant.NodeWatch, "routine" => Photon.Assistant.Routine}
+  kinds: %{"routine" => Photon.Assistant.Routine}

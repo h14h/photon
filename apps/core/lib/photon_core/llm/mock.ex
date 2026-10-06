@@ -1,7 +1,7 @@
 defmodule PhotonCore.LLM.Mock do
   @moduledoc """
-  A scripted stand-in for a model, so harnesses run end to end without an API
-  key and tests are deterministic.
+  A scripted stand-in for a model, so the hub's assistant runs end to end
+  without a ChatGPT sign-in and tests are deterministic.
 
   The config's `:script` is a module with `respond(request)` returning an
   assistant message (see `PhotonCore.Message`), or `{:error, message}`. The

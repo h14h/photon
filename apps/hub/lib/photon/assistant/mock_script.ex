@@ -4,34 +4,31 @@ defmodule Photon.Assistant.MockScript do
   without a ChatGPT sign-in (`PHOTON_MOCK_MODEL=1` in development). It
   understands a few fixed phrasings:
 
-    * `nodes` lists nodes
-    * `on <node>: <task>` hands a task to a node (the node runs it with its
-      own mock model unless a real one is configured)
-    * `check <session id>` looks at a node session
+    * `machines` lists machines (`list_machines`)
+    * `on <machine>: $ <command>` runs a command (`shell`)
+    * `on <machine>: look at <path>` looks at an image (`view_image`)
     * `remember <fact>` adds to memory
     * `in <n> minutes: <prompt>` and `every <n> minutes: <prompt>` schedule
     * `schedules` lists schedules
 
-  After a tool result it relays the result, minus what's meant only for a
-  model (session IDs, "don't poll"). A node report gets a line saying how
-  the work went; the report itself is already on the page.
+  After a tool result it relays the result. An image result gets "Here it
+  is." and its dimensions line.
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM, Photon.Assistant.Page]
+  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]
 
   @behaviour PhotonCore.LLM.Mock
 
-  alias Photon.Assistant.Page
   alias PhotonCore.LLM.Mock
   alias PhotonCore.Message
 
   @help """
   I'm Blip, on the scripted model, so I only follow a few fixed phrasings:
 
-  - `nodes` lists your machines
-  - `on <node>: <task>` hands a task to a machine, like `on mp1: $ uptime`
-  - `check <session id>` looks in on a piece of node work
+  - `machines` lists your machines
+  - `on <machine>: $ <command>` runs a command there, like `on mp1: $ uptime`
+  - `on <machine>: look at <path>` shows me an image file there
   - `remember <fact>` saves something to memory
   - `in 2 minutes: <prompt>` or `every 30 minutes: <prompt>` schedules a prompt
   - `schedules` lists what's scheduled
@@ -45,7 +42,7 @@ defmodule Photon.Assistant.MockScript do
 
     case List.last(messages) do
       %{"role" => "tool"} = result ->
-        result |> Message.text_of() |> relay() |> Message.assistant()
+        result |> relay_result() |> Message.assistant()
 
       %{"role" => "user"} = message ->
         message |> Message.text_of() |> String.trim() |> plan()
@@ -55,12 +52,7 @@ defmodule Photon.Assistant.MockScript do
     end
   end
 
-  defp plan("[Report from " <> _ = report), do: Message.assistant(report_line(report))
-
   defp plan("[Scheduled] " <> prompt), do: plan(prompt)
-
-  # A message sent from a page reads as the user typed it.
-  defp plan("[Looking at " <> _ = text), do: text |> Page.strip() |> String.trim() |> plan()
 
   defp plan(text) do
     Enum.find_value(phrasings(), Message.assistant(@help), fn {pattern, reply} ->
@@ -75,9 +67,9 @@ defmodule Photon.Assistant.MockScript do
   # reply its captures make.
   defp phrasings do
     [
-      {~r/\A(?:nodes|list nodes|machines)\z/, &list_nodes/1},
-      {~r/\Aon\s+([\w.-]+)\s*:\s*(.+)\z/s, &run_on_node/1},
-      {~r/\Acheck\s+(\S+)/, &check_session/1},
+      {~r/\A(?:list )?machines\z/, &list_machines/1},
+      {~r/\Aon\s+([\w.-]+)\s*:\s*\$(.+)\z/s, &shell/1},
+      {~r/\Aon\s+([\w.-]+)\s*:\s*look at (.+)\z/s, &view_image/1},
       {~r/\Aremember\s+(.+)\z/s, &remember/1},
       {~r/\Ain\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("in_minutes", &1)},
       {~r/\Aevery\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("every_minutes", &1)},
@@ -85,18 +77,23 @@ defmodule Photon.Assistant.MockScript do
     ]
   end
 
-  defp list_nodes([]), do: call("list_nodes", %{}, "Checking your machines.")
+  defp list_machines([]), do: call("list_machines", %{}, "Checking your machines.")
 
-  defp run_on_node([node, task]) do
-    call(
-      "run_on_node",
-      %{"node" => node, "task" => task, "wait_seconds" => 5},
-      "Handing that to #{node}."
-    )
-  end
+  defp shell([machine, command]),
+    do:
+      call(
+        "shell",
+        %{"machine" => machine, "command" => String.trim(command)},
+        "Running that on #{machine}."
+      )
 
-  defp check_session([session_id]),
-    do: call("check_node_session", %{"session_id" => session_id}, "Looking.")
+  defp view_image([machine, path]),
+    do:
+      call(
+        "view_image",
+        %{"machine" => machine, "path" => String.trim(path)},
+        "Looking at it on #{machine}."
+      )
 
   defp remember([fact]), do: call("update_memory", %{"action" => "add", "text" => fact}, "Noted.")
 
@@ -108,22 +105,14 @@ defmodule Photon.Assistant.MockScript do
 
   defp call(tool, args, intro), do: Message.assistant(intro, [Mock.call(tool, args)])
 
-  # The report's header says which node and how it ended; see
-  # Photon.Assistant.Report.
-  defp report_line(report) do
-    case Regex.run(~r/\A\[Report from ([^\]]+)\][^\n]*? (finished|didn't finish)/, report) do
-      [_, node, "finished"] -> "#{node} finished. Its report is above."
-      [_, node, "didn't finish"] -> "#{node} didn't finish. The report above says why."
-      nil -> "A report came in. It's above."
+  # An image result has the image and a line with its size and path.
+  defp relay_result(result) do
+    case Message.images(result) do
+      [] -> result |> Message.text_of() |> relay()
+      _images -> "Here it is.\n\n" <> Message.text_of(result)
     end
   end
 
   defp relay("Error: " <> error), do: "That didn't work: " <> error
-
-  defp relay(text) do
-    case Regex.run(~r/\AStarted on (\S+) as session \S+ and still running/, text) do
-      [_, node] -> "#{node} is on it. I'll pass on its report when it's done."
-      nil -> String.replace(text, ~r/ \(session [^)\s]+\)/, "", global: false)
-    end
-  end
+  defp relay(text), do: text
 end

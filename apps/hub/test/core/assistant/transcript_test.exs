@@ -21,9 +21,8 @@ defmodule Photon.Assistant.TranscriptTest do
       result = tool_result_entry("c1", "went", id: "e_2", seq: 2)
 
       assert Transcript.index([asked, result]) == %{
-               results: %{"c1" => result.data},
-               calls: %{"c1" => asked},
-               settled: %{}
+               results: %{"c1" => Map.put(result.data, "entry_id", "e_2")},
+               calls: %{"c1" => asked}
              }
 
       assert Transcript.call_id(result) == "c1"
@@ -36,7 +35,35 @@ defmodule Photon.Assistant.TranscriptTest do
       second = tool_result_entry("c1", "two", id: "e_2", seq: 2)
 
       assert %{results: %{"c1" => data}} = Transcript.index([first, second])
-      assert data == second.data
+      assert data == Map.put(second.data, "entry_id", "e_2")
+    end
+
+    test "results keep no image data; image/2 gives it back from the entry" do
+      png = Base.encode64("png bytes")
+
+      shot =
+        tool_result_entry("c1", [Message.image("image/png", png), Message.text("1x1")], id: "e_7")
+
+      assert %{"c1" => data} = Transcript.add_result(%{}, shot)
+      assert data["entry_id"] == "e_7"
+
+      assert [%{"type" => "image", "mime" => "image/png"} = part] =
+               Message.images(data["message"])
+
+      refute Map.has_key?(part, "data")
+      assert Message.text_of(data["message"]) == "1x1"
+
+      assert Transcript.image(shot, 0) == {:ok, "image/png", "png bytes"}
+      assert Transcript.image(shot, 1) == :error
+      assert Transcript.image(user_entry("hi"), 0) == :error
+    end
+
+    test "image/2 serves only images of the types view_image returns, and valid data" do
+      html = tool_result_entry("c1", [Message.image("text/html", Base.encode64("<script>"))])
+      bad = tool_result_entry("c1", [Message.image("image/png", "not base64!")])
+
+      assert Transcript.image(html, 0) == :error
+      assert Transcript.image(bad, 0) == :error
     end
   end
 
@@ -99,79 +126,102 @@ defmodule Photon.Assistant.TranscriptTest do
     end
   end
 
-  describe "node work a call left running" do
-    defp left_running(call_id, session_id, seq) do
-      tool_result_entry(call_id, "still running",
-        id: "e_#{seq}",
-        seq: seq,
-        details: %{"status" => "running", "session_id" => session_id}
-      )
-    end
-
-    defp report(session_id, failed, seq) do
-      entry(
-        "user",
-        %{
-          "message" => PhotonCore.Message.user("[Report from box]"),
-          "source" => %{"kind" => "node_report", "session_id" => session_id, "failed" => failed}
-        },
-        id: "e_#{seq}",
-        seq: seq
-      )
-    end
-
-    test "is settled by the next report for its session, the way the report says" do
-      results = %{
-        "c1" => left_running("c1", "ns_1", 1).data,
-        "c2" => left_running("c2", "ns_2", 2).data,
-        "c3" => tool_result_entry("c3", "finished", details: %{"session_id" => "ns_1"}).data
-      }
-
-      assert Transcript.settle(%{}, results, report("ns_1", false, 3)) ==
-               {%{"c1" => :done}, ["c1"]}
-
-      assert Transcript.settle(%{}, results, report("ns_2", true, 3)) ==
-               {%{"c2" => :error}, ["c2"]}
-
-      assert Transcript.settle(%{}, results, user_entry("hi")) == {%{}, []}
-    end
-
-    test "a follow-up to the same session waits for the next report" do
-      first = left_running("c1", "ns_1", 1)
-      follow_up = left_running("c2", "ns_1", 3)
-
-      index = Transcript.index([first, report("ns_1", false, 2), follow_up])
-      assert index.settled == %{"c1" => :done}
-
-      results = Map.put(index.results, "c2", follow_up.data)
-
-      assert {settled, ["c2"]} =
-               Transcript.settle(index.settled, results, report("ns_1", true, 4))
-
-      assert settled == %{"c1" => :done, "c2" => :error}
-    end
-
-    test "shows as running until settled, then as the report says" do
-      result = left_running("c1", "ns_1", 1).data
-      assert Transcript.action_status(result, result["details"]) == :running
-      assert Transcript.action_status(result, result["details"], :done) == :done
-      assert Transcript.action_status(result, result["details"], :error) == :error
-    end
-  end
-
   describe "a tool call's status" do
-    test "follows its result and the node work's details" do
+    test "follows its result" do
       assert Transcript.action_status(nil, %{}) == :pending
-      assert Transcript.action_status(%{"status" => "ok"}, %{"status" => "running"}) == :running
       assert Transcript.action_status(%{"status" => "ok"}, %{"status" => "failed"}) == :error
       assert Transcript.action_status(%{"status" => "ok"}, %{}) == :done
       assert Transcript.action_status(%{"status" => "aborted"}, %{}) == :stopped
       assert Transcript.action_status(%{"status" => "interrupted"}, %{}) == :error
     end
+
+    test "a machine operation that failed is an error, and one that was canceled is stopped" do
+      ok = %{"status" => "ok"}
+      assert Transcript.action_status(ok, %{"kind" => "shell", "status" => "completed"}) == :done
+      assert Transcript.action_status(ok, %{"kind" => "shell", "status" => "failed"}) == :error
+
+      assert Transcript.action_status(ok, %{"kind" => "shell", "status" => "canceled"}) ==
+               :stopped
+    end
+  end
+
+  describe "a machine call's line" do
+    test "is in the present while the call runs, and in the past once it ends" do
+      args = %{"machine" => "mm1", "command" => "make test"}
+
+      assert Transcript.machine_action("shell", args, %{}, :pending) ==
+               %{verb: "Running", subject: "make test", machine: "mm1"}
+
+      for status <- [:done, :error, :stopped] do
+        assert %{verb: "Ran"} = Transcript.machine_action("shell", args, %{}, status)
+      end
+
+      image = %{"machine" => "mm1", "path" => "shot.png"}
+
+      assert Transcript.machine_action("view_image", image, %{}, :pending) ==
+               %{verb: "Looking at", subject: "shot.png", machine: "mm1"}
+
+      assert %{verb: "Looked at"} = Transcript.machine_action("view_image", image, %{}, :done)
+    end
+
+    test "always names the machine, the hub's own included" do
+      local = %{"machine" => "local", "command" => "uname -a"}
+      assert %{machine: "local"} = Transcript.machine_action("shell", local, %{}, :done)
+
+      # From the result when the arguments don't say.
+      details = %{"machine" => "local", "kind" => "shell"}
+
+      assert %{machine: "local"} =
+               Transcript.machine_action("shell", %{"command" => "uname -a"}, details, :done)
+
+      assert %{machine: nil} =
+               Transcript.machine_action("shell", %{"machine" => ""}, %{}, :pending)
+    end
+  end
+
+  describe "a running call's output" do
+    defp output(call_id, text, stream \\ "out"),
+      do: %{"type" => "tool_output", "call_id" => call_id, "stream" => stream, "text" => text}
+
+    test "is kept per call, both streams in the order they came" do
+      outputs =
+        [output("c1", "one\n"), output("c2", "other\n"), output("c1", "oops\n", "err")]
+        |> Enum.reduce(%{}, &Transcript.tool_output(&2, &1))
+
+      assert outputs == %{"c1" => "one\noops\n", "c2" => "other\n"}
+    end
+
+    test "keeps only the last 8,000 characters of a call" do
+      outputs = Transcript.tool_output(%{}, output("c1", String.duplicate("a", 7_990)))
+      outputs = Transcript.tool_output(outputs, output("c1", "0123456789abcdefghij"))
+
+      assert String.length(outputs["c1"]) == 8_000
+      assert String.ends_with?(outputs["c1"], "0123456789abcdefghij")
+
+      # Counted in characters, not bytes: one chunk far over the limit.
+      outputs = Transcript.tool_output(%{}, output("c1", String.duplicate("é", 70_000) <> "end"))
+      assert String.length(outputs["c1"]) == 8_000
+      assert String.ends_with?(outputs["c1"], "éend")
+
+      # Short multibyte text over 8,000 bytes is kept whole.
+      outputs = Transcript.tool_output(%{}, output("c1", String.duplicate("é", 5_000)))
+      assert String.length(outputs["c1"]) == 5_000
+    end
+
+    test "takes a tool's own output, which names no stream, and ignores other events" do
+      plain = %{"type" => "tool_output", "call_id" => "c1", "text" => "progress"}
+      assert Transcript.tool_output(%{}, plain) == %{"c1" => "progress"}
+
+      for event <- [
+            %{"type" => "text", "delta" => "hi"},
+            %{"type" => "tool_output", "text" => "x"}
+          ],
+          do: assert(Transcript.tool_output(%{"c1" => "a"}, event) == %{"c1" => "a"})
+    end
   end
 
   describe "Blip's mood" do
-    @quiet %{outcome: nil, live: nil, working: 0, busy: false}
+    @quiet %{outcome: nil, live: nil, busy: false}
     @live %{text: "", reasoning: "", tools: %{}, retry: nil}
 
     test "is idle when nothing is happening" do
@@ -183,36 +233,18 @@ defmodule Photon.Assistant.TranscriptTest do
       assert Transcript.mood(%{@quiet | busy: true}) == :thinking
     end
 
-    test "is working while node work it started runs, unless it's answering" do
-      assert Transcript.mood(%{@quiet | working: 1}) == :working
-      assert Transcript.mood(%{@quiet | working: 1, busy: true}) == :working
-      assert Transcript.mood(%{@quiet | working: 1, live: @live}) == :thinking
-    end
-
     test "shows an outcome it is holding over everything else" do
-      busy = %{@quiet | live: @live, working: 2, busy: true}
+      busy = %{@quiet | live: @live, busy: true}
       assert Transcript.mood(%{busy | outcome: :done}) == :done
       assert Transcript.mood(%{busy | outcome: :error}) == :error
     end
   end
 
   describe "the outcome of new entries" do
-    defp report(failed) do
-      entry("user", %{
-        "message" => PhotonCore.Message.user("[Report from box]"),
-        "source" => %{"kind" => "node_report", "node" => "box", "failed" => failed}
-      })
-    end
-
     test "a run that finishes is done" do
       assert Transcript.outcome([assistant_entry("Checked.")], true, false) == :done
       assert Transcript.outcome([assistant_entry("Checking.")], true, true) == nil
       assert Transcript.outcome([user_entry("hi")], false, true) == nil
-    end
-
-    test "a report is done if the node work went fine, an error if it failed" do
-      assert Transcript.outcome([report(false)], false, true) == :done
-      assert Transcript.outcome([report(true)], false, true) == :error
     end
 
     test "a failed run or tool call is an error, even as the run ends" do

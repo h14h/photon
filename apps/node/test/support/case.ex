@@ -6,11 +6,10 @@ defmodule PhotonNode.Case do
       use PhotonNode.Case, async: true
 
   Tests are laid out by layer: `test/core` for the functional core (no
-  processes, no files; sessions run through `PhotonNode.SessionDriver`),
-  `test/boundary` for the harness API, the coordinator, operation
-  processes and the hub connection, run as a node in a temporary directory
-  (`PhotonNode.HarnessCase`), and `test/property` for the StreamData
-  properties of both.
+  processes, no files), `test/boundary` for the executor, its journal,
+  operation processes and the hub connection, run as a node in a temporary
+  directory (`PhotonNode.NodeCase`, or the executor test's own setup),
+  and `test/property` for the StreamData properties.
   """
 
   # Test support sits outside the layering (compiled only for tests).
@@ -20,9 +19,7 @@ defmodule PhotonNode.Case do
 
   using do
     quote do
-      alias PhotonCore.Message
-      alias PhotonNode.Harness.{Context, Inbox, ModelRequest, Operation, Output, Session, Tools}
-      alias PhotonNode.SessionDriver, as: Driver
+      alias PhotonCore.{Operation, Output}
 
       import PhotonNode.Fixtures
     end
