@@ -10,14 +10,15 @@ defmodule PhotonWeb.OverviewLive do
   `{:schedules_changed, nil}` (`Photon.Schedules.subscribe/0`). A
   project's schedules are on its page, and their announcements carry the
   project's ID, so they don't reload this list. Times are shown in the
-  owner's time zone (`PhotonWeb.TimeComponents.local_time/1`), with the
-  words from `PhotonWeb.ScheduleText`.
+  owner's time zone, in the lines a schedule shows wherever it is listed
+  (`PhotonWeb.ScheduleComponents`).
   """
 
   use PhotonWeb, :live_view
 
+  import PhotonWeb.ScheduleComponents
+
   alias Photon.{Assistant, Schedules}
-  alias PhotonWeb.ScheduleText
 
   @impl true
   def mount(_params, _session, socket) do
@@ -114,17 +115,7 @@ defmodule PhotonWeb.OverviewLive do
                 <div class="min-w-0 flex-1">
                   <p class="leading-snug text-ink">{item.schedule.prompt}</p>
                   <.schedule_when id={dom_id} item={item} />
-                  <p
-                    :if={item.schedule.last_run_at}
-                    id={"#{dom_id}-last"}
-                    class="mt-0.5 text-[12px] text-ink-faint"
-                  >
-                    Last ran
-                    <.local_time
-                      id={"#{dom_id}-last-at"}
-                      at={item.schedule.last_run_at}
-                    />: {ScheduleText.outcome(item.schedule.last_outcome)}
-                  </p>
+                  <.last_run id={dom_id} schedule={item.schedule} class="mt-0.5" />
                 </div>
                 <button
                   phx-click="cancel_schedule"
@@ -187,25 +178,4 @@ defmodule PhotonWeb.OverviewLive do
       [info["hostname"], info["platform"]] |> Enum.reject(&(&1 in [nil, ""])) |> Enum.join(" · ")
 
   defp machine_line(_node), do: "Not connected"
-
-  attr :id, :string, required: true
-  attr :item, :map, required: true, doc: "a schedule from `Photon.Assistant.schedules/0`"
-
-  # When a schedule runs next: "Every day · next <local time>" or "Once ·
-  # <local time>" (`PhotonWeb.ScheduleText.state/2`). The list holds only
-  # waiting schedules, but the other states read right here too.
-  defp schedule_when(%{item: item} = assigns) do
-    {tone, words} = ScheduleText.state(item.state, item.schedule.every_minutes)
-    assigns = assign(assigns, tone: tone, words: words)
-
-    ~H"""
-    <p
-      id={"#{@id}-when"}
-      class={["mt-0.5 text-[12px]", if(@tone == :stopped, do: "text-bad", else: "text-ink-faint")]}
-    >
-      {@words}
-      <.local_time :if={@tone == :next && @item.next_at} id={"#{@id}-next"} at={@item.next_at} />
-    </p>
-    """
-  end
 end

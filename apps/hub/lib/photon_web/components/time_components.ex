@@ -38,13 +38,7 @@ defmodule PhotonWeb.TimeComponents do
     assigns = assign(assigns, :at, DateTime.truncate(assigns.at, :second))
 
     ~H"""
-    <time
-      id={@id}
-      datetime={DateTime.to_iso8601(@at)}
-      phx-hook=".LocalTime"
-      data-format="datetime"
-      class={["tabular-nums", @class]}
-    >{utc_text(@at)}</time>
+    <%!-- The hook comes first, so nothing follows the time: punctuation after it stays put. --%>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".LocalTime">
       // "Oct 8, 2:00 PM" in the browser's zone and locale, with the year
       // when it isn't this year. The server's text is the UTC fallback, and
@@ -65,6 +59,13 @@ defmodule PhotonWeb.TimeComponents do
         }
       }
     </script>
+    <time
+      id={@id}
+      datetime={DateTime.to_iso8601(@at)}
+      phx-hook=".LocalTime"
+      data-format="datetime"
+      class={["tabular-nums", @class]}
+    >{utc_text(@at)}</time>
     """
   end
 

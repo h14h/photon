@@ -28,6 +28,11 @@ defmodule PhotonWeb.ThreadLive do
       and the thread's title are in the header (the title changes when the
       model names the thread after its first run, or the owner renames it)
 
+  `Schedule` (`#thread-schedule`) beside the title opens a new schedule
+  for the project with this thread as its target
+  (`/projects/:slug/schedules/new?thread=<id>`), for a prompt that should
+  wake the thread at set times.
+
   The pencil by the title opens it in a small form in its place
   (`#thread-rename-form`): Enter saves (`Photon.Threads.rename/2`), Esc
   or Cancel puts the title back. With Blip's floating panel open on a
@@ -301,6 +306,17 @@ defmodule PhotonWeb.ThreadLive do
               <.title_line :if={is_nil(@title_form)} title={@thread.title} />
               <.title_editor :if={@title_form} form={@title_form} />
             </div>
+            <.button
+              id="thread-schedule"
+              size="sm"
+              variant="ghost"
+              navigate={~p"/projects/#{@project.slug}/schedules/new?#{[thread: @thread.id]}"}
+              title="Schedule a prompt for this thread"
+              class="shrink-0"
+            >
+              <.icon name="hero-clock-micro" class="size-4" />
+              <span class="hidden sm:inline">Schedule</span>
+            </.button>
             <.status busy={@busy} />
             <%!-- Without a model the composer, and its Stop, give way to the sign-in. --%>
             <.button

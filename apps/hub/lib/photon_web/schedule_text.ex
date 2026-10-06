@@ -1,9 +1,10 @@
 defmodule PhotonWeb.ScheduleText do
   @moduledoc """
   The words the pages use for schedules: how often one repeats ("every
-  day"), what its last firing did ("skipped: scheduled work is off"), and
-  its when line for each state ("Every day · next", "Done", "Stopped after
-  an error: ...").
+  day"), what its last firing did ("skipped: scheduled work is off"), its
+  when line for each state ("Every day · next", "Done", "Stopped after
+  an error: ..."), where it goes ("Starts a new thread each time", "Wakes
+  "Fix the pump""), and what Run now did ("Started a thread.").
 
   Pure: times are never formatted here. The browser knows the owner's time
   zone, so a page renders each time with `PhotonWeb.TimeComponents.local_time/1`
@@ -76,6 +77,53 @@ defmodule PhotonWeb.ScheduleText do
     do: {:stopped, stopped(reason) <> " Save it to start it again."}
 
   defp stopped(reason), do: "Stopped after an error: #{String.trim_trailing(reason, ".")}."
+
+  @doc ~S"""
+  Where a schedule's firings go, for its row: `{words, nil}` for a new
+  thread each time ("Starts a new thread each time"), or `{"Wakes",
+  ~s("Fix the pump")}` for one thread, whose quoted title the page links
+  to the thread. A thread that is gone reads `{"Wakes a thread that's
+  gone", nil}`.
+  """
+  @spec target(Schedule.t(), String.t() | nil) :: {String.t(), String.t() | nil}
+  def target(%Schedule{conversation_id: nil}, _title), do: {"Starts a new thread each time", nil}
+  def target(%Schedule{}, nil), do: {"Wakes a thread that's gone", nil}
+  def target(%Schedule{}, title), do: {"Wakes", quoted(title)}
+
+  @doc ~S"""
+  The last run's words (`outcome/1`) and what the page links with them:
+  `:thread` after "started" (the thread it started, by its title),
+  `:settings` for a skip because scheduled work is off (the words link to
+  Settings, where it is turned on), or nil.
+  """
+  @spec last(Schedule.outcome()) :: {String.t(), :thread | :settings | nil}
+  def last("started"), do: {outcome("started"), :thread}
+  def last("skipped_consent"), do: {outcome("skipped_consent"), :settings}
+  def last(other), do: {outcome(other), nil}
+
+  @doc ~S"""
+  The flash after Run now, from what the firing did and the title of the
+  thread it woke (nil for a new thread each time): "Started a thread.",
+  ~s(Sent to "Fix the pump".), ~s(Queued for "Fix the pump", behind its
+  run.), or a skip's reason as a sentence ("Skipped: the last thread was
+  still running.").
+  """
+  @spec ran(Schedule.outcome(), String.t() | nil) :: String.t()
+  def ran("started", _title), do: "Started a thread."
+  def ran("sent", title), do: "Sent to #{thread(title)}."
+  def ran("queued", title), do: "Queued for #{thread(title)}, behind its run."
+
+  def ran("skipped_" <> _ = skip, _title) do
+    {first, rest} = String.split_at(outcome(skip), 1)
+    String.upcase(first) <> rest <> "."
+  end
+
+  def ran(_unknown, _title), do: "Ran it."
+
+  defp thread(nil), do: "the thread"
+  defp thread(title), do: quoted(title)
+
+  defp quoted(title), do: ~s("#{title}")
 
   defp capitalize("every" <> rest), do: "Every" <> rest
 

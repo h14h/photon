@@ -3,6 +3,7 @@ defmodule PhotonWeb.ScheduleTextTest do
 
   use Photon.Case, async: true
 
+  alias Photon.Schedules.Schedule
   alias PhotonWeb.ScheduleText
 
   test "every/1 names the largest whole unit, or counts minutes" do
@@ -49,5 +50,41 @@ defmodule PhotonWeb.ScheduleTextTest do
 
     assert ScheduleText.state({:stopped, "it failed."}, nil) ==
              {:stopped, "Stopped after an error: it failed. Pick a time and save it to run it."}
+  end
+
+  test "target/2 says where firings go, with the title to link" do
+    assert ScheduleText.target(%Schedule{conversation_id: nil}, nil) ==
+             {"Starts a new thread each time", nil}
+
+    assert ScheduleText.target(%Schedule{conversation_id: "th_1"}, "Fix the pump") ==
+             {"Wakes", ~s("Fix the pump")}
+
+    assert ScheduleText.target(%Schedule{conversation_id: "th_1"}, nil) ==
+             {"Wakes a thread that's gone", nil}
+  end
+
+  test "last/1 says what a last run links to" do
+    assert ScheduleText.last("started") == {"started", :thread}
+    assert ScheduleText.last("skipped_consent") == {"skipped: scheduled work is off", :settings}
+
+    assert ScheduleText.last("skipped_running") ==
+             {"skipped: the last thread was still running", nil}
+
+    assert ScheduleText.last("sent") == {"sent", nil}
+  end
+
+  test "ran/2 says what Run now did" do
+    assert ScheduleText.ran("started", nil) == "Started a thread."
+    assert ScheduleText.ran("sent", "Fix the pump") == ~s(Sent to "Fix the pump".)
+
+    assert ScheduleText.ran("queued", "Fix the pump") ==
+             ~s(Queued for "Fix the pump", behind its run.)
+
+    assert ScheduleText.ran("sent", nil) == "Sent to the thread."
+
+    assert ScheduleText.ran("skipped_running", nil) ==
+             "Skipped: the last thread was still running."
+
+    assert ScheduleText.ran("something_new", nil) == "Ran it."
   end
 end

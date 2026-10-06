@@ -918,6 +918,9 @@ knows the owner's zone, so the pages convert there:
   changes (say, loading the saved version), `updated()` shows it again.
   Under the field, the hook names the browser's zone ("Your time zone:
   Europe/London."). `local_time/1`'s `datetime` is truncated to seconds.
+  (K11) `local_time/1` renders its hook's script before the `<time>`, so
+  no whitespace follows the time and a colon after it ("Last ran 09:00:
+  started") stays next to it.
 - A repeat is an interval on a UTC grid, as routines are today. "Every
   day" from 09:00 in winter fires at 10:00 local after the clocks go
   forward. The form says "Repeats every 1 day from the first time" so
@@ -1254,6 +1257,45 @@ and "ran" for an outcome it doesn't know (rule 75). `every/1` counts the
 largest whole unit, so 1440 is "every day" and 2160 "every 36 hours".
 `target/2` is left to K11, where the row's thread link decides its shape.
 
+(K11) The project page as built:
+
+- `ScheduleText.target(schedule, title)` returns the words and the
+  title to link: `{"Starts a new thread each time", nil}`, `{"Wakes",
+  ~s("Fix the pump")}` (the page links the quoted title to the thread,
+  `#schedule-<id>-thread`), or `{"Wakes a thread that's gone", nil}`.
+  Two more pure functions: `last(outcome)` gives `outcome/1`'s words and
+  what they link to (`:thread` after "started", `:settings` for
+  "skipped_consent", else nil), and `ran(outcome, title)` gives Run
+  now's flash: "Started a thread.", ~s(Sent to "Fix the pump".),
+  ~s(Queued for "Fix the pump", behind its run.), a skip's reason as a
+  sentence ("Skipped: the last thread was still running."), or "Ran
+  it." for an outcome it doesn't know.
+- The when and last-run lines are `PhotonWeb.ScheduleComponents`
+  (`schedule_when/1`, `last_run/1`), shared with the home page, which
+  K8 had them private in. `#schedule-<id>-when` carries `data-state`
+  (`next`, `done` or `stopped`). The skip link to Settings is
+  `#schedule-<id>-last-settings`. A last outcome of `"failed"` shows no
+  last-run line, since the when line already says the schedule stopped,
+  and saving it again doesn't clear the outcome (K5c).
+- More element IDs: `#schedule-<id>-prompt` and `-target`;
+  `#project-skill-<id>-link` (the name); in the picker
+  `#project-skill-options` (the stream), `#no-skill-options` ("Every
+  skill is on here already."), and `#project-skill-none` around the
+  "No skills yet." line; `#schedules-consent-settings` (the banner's
+  link).
+- `#project-add-skill` toggles the picker and reads "Done" while it is
+  open; the picker stays open after a skill is turned on, so several
+  can be turned on in a row. The picker's stream is read only while it
+  is open.
+- Run now and Delete act only on a schedule this page listed (the ID
+  comes from the browser); Delete flashes "Schedule deleted.", and a
+  schedule already gone reads "That schedule was deleted." on Run now.
+- The banner follows `{:settings_changed, _}` (through the shell), so
+  turning scheduled work on in another tab hides it.
+- A thread a schedule starts is titled by the prompt without the
+  `[Scheduled] ` in front (`Threads.Rules.title/1` drops it), as
+  section 3.2 says; until K11 the first title kept it.
+
 ### 6.7 The schedule form
 
 `PhotonWeb.ScheduleLive`:
@@ -1297,7 +1339,8 @@ largest whole unit, so 1440 is "every day" and 2160 "every 36 hours".
 
 - `ThreadLive` `:show` gets `Schedule` (`#thread-schedule`, a small
   button beside the title) linking to
-  `/projects/<slug>/schedules/new?thread=<id>`.
+  `/projects/<slug>/schedules/new?thread=<id>`. (K11) A clock icon, with
+  the word "Schedule" from the `sm` width up.
 - The scheduled prompt shows as the existing "Scheduled" bubble (source
   kind `"routine"`), and a skip notice as the existing notice line.
 - `OverviewLive` reads `Schedules.list(:blip)` (only those with a next
@@ -1342,6 +1385,7 @@ no note anywhere when skipped.
 - Hint: "Blip's schedules and your projects' schedules run on your plan
   without you there. Off, they skip their runs: Blip and threads say so
   in the conversation, and the project page shows it on the schedule."
+  (K11: `#scheduled-work-hint`.)
 
 ## 7. Module plan
 
@@ -1400,6 +1444,7 @@ deleted (the tests move to `test/core/schedules/rules_test.exs` and
 | `PhotonWeb.Layouts` | boundary (UI) | `#nav-skills`; `active` takes `:skills`. |
 | `PhotonWeb.TimeComponents` | boundary (UI components) | `local_time/1`, `local_datetime_input/1`, the colocated hooks `.LocalTime` and `.LocalDateTime` (section 3.9). Imported in `html_helpers`. |
 | `PhotonWeb.ScheduleText` | functional core (web formatting) | Section 6.6. |
+| `PhotonWeb.ScheduleComponents` | boundary (UI components) | (K11) `schedule_when/1` and `last_run/1`, a schedule's when and last-run lines, used by `OverviewLive` and `ProjectLive` (section 6.6). |
 | `PhotonWeb.SkillText` | functional core (web formatting) | (K9) Section 6.3: the scopes line, the origin, a link's place, the install notes as lines. |
 | `PhotonWeb.EditorComponents` | boundary (UI components) | (K9) `guarded_form/1` with the shared `.UnsavedGuard` hook, `editor_tab/1`, `banner/1`; used by `ContextFileLive` and `SkillLive` (section 6.4). |
 | `PhotonWeb.CoreComponents` | boundary (UI components) | (K9) `switch/1`, the on/off switch of the skills pages. |
@@ -1990,6 +2035,12 @@ Schedule link, and the Settings wording. After K7 and K8.
   (section 6.10).
 - Tests: `test/web/live/project_live_test.exs`, `thread_live_test.exs`,
   `settings_live_test.exs`.
+- (K11) Done as listed. The when and last-run lines moved into the
+  shared `PhotonWeb.ScheduleComponents`; `ScheduleText` gained
+  `target/2`, `last/1` and `ran/2`; a scheduled thread's first title
+  drops the `[Scheduled] ` prefix (`Threads.Rules.title/1`); and
+  `local_time/1` puts its hook's script first. Recorded in sections
+  3.9, 6.6, 6.8, 6.10 and 7.4 under "(K11)".
 
 K12. The schedule form. After K7 and K8.
 - Fill in `apps/hub/lib/photon_web/live/schedule_live.ex` (section 6.7:
