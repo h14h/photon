@@ -561,20 +561,25 @@ only finds entries in that thread's conversation.
   project called "Garden more" has slug `garden-more` and row ID
   `#side-project-garden-more`, which a `-more` suffix on `garden`'s row
   would also produce.
-- With no projects: "No projects yet. A project is a purpose and some
-  notes, for any body of work: a repo, a trip, a house." and a "Start
-  one" link.
+- With no projects (`#no-projects`): "No projects yet. A project is a
+  purpose and some notes, for any body of work: a repo, a trip, a house."
+  and a "Start one" link (`#start-first-project`).
 - `Machines` (`#nav-machines`, to `/nodes`) with "N online". This replaces
   both today's `Nodes` item and the per-machine list under the
   `Machines` heading, and the "+" next to that heading goes away (owner's
-  decision). The Nodes page itself is unchanged.
-- At the bottom, as today: the ChatGPT sign-in banner, `Settings`
-  (`#nav-settings`) with the model, the theme toggle.
+  decision). The Nodes page itself is unchanged. It sits at the bottom,
+  above `Settings`.
+- At the bottom, as today: the ChatGPT sign-in banner (above `Machines`),
+  `Settings` (`#nav-settings`) with the model, the theme toggle.
 
 The projects list takes the space the machine list had and scrolls. The
-current page is highlighted: `Layouts.app`'s `active` attr takes `:home`,
-`:nodes`, `:settings`, `{:project, slug}` or `{:thread, id}` (a thread
-also marks its project's row).
+current page is highlighted and carries `aria-current="page"`:
+`Layouts.app`'s `active` attr takes `:home`, `:nodes`, `:settings`,
+`{:project, slug}` or `{:thread, slug, id}`. A thread also marks its
+project's row, which is why the slug is in the tuple: the thread may not
+be among the listed ones, and the layout shouldn't have to look it up.
+The project page, a context file and the new-thread page pass
+`{:project, slug}`; `/projects/new` passes nothing.
 
 The data comes from `PhotonWeb.Shell`: `@shell.projects`, from
 `Threads.sidebar(5)`, a list of `%{project: %{id, slug, name}, threads:

@@ -20,7 +20,7 @@ defmodule PhotonWeb.OverviewLiveTest do
     assert has_element?(view, "#no-machines")
     assert has_element?(view, "#overview-summary", "Add a machine")
     refute has_element?(view, "#work-hint")
-    assert has_element?(view, "#nav-overview")
+    assert has_element?(view, "#nav-home[aria-current=page]")
     assert page_title(view) =~ "Overview"
   end
 

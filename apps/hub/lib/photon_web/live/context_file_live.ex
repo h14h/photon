@@ -48,7 +48,12 @@ defmodule PhotonWeb.ContextFileLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} shell={@shell} socket={@socket}>
+    <Layouts.app
+      flash={@flash}
+      shell={@shell}
+      socket={@socket}
+      active={{:project, @project.slug}}
+    >
       <div class="h-full overflow-y-auto">
         <div class="blip-clear-y mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">
           <.header>

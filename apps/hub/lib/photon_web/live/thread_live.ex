@@ -45,12 +45,15 @@ defmodule PhotonWeb.ThreadLive do
   defp title(project, nil), do: "New thread in #{project.name}"
   defp title(_project, thread), do: thread.title
 
+  defp active(project, nil), do: {:project, project.slug}
+  defp active(project, thread), do: {:thread, project.slug, thread.id}
+
   defp gone(socket, message), do: socket |> put_flash(:error, message) |> push_navigate(to: ~p"/")
 
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} shell={@shell} socket={@socket}>
+    <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={active(@project, @thread)}>
       <div class="h-full overflow-y-auto">
         <div class="blip-clear-y mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">
           <.header>

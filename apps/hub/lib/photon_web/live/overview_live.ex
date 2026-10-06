@@ -37,7 +37,7 @@ defmodule PhotonWeb.OverviewLive do
     assigns = assign(assigns, online: Enum.count(assigns.shell.nodes, & &1.online))
 
     ~H"""
-    <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={:overview}>
+    <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={:home}>
       <div class="h-full overflow-y-auto">
         <div class="blip-clear-y mx-auto w-full max-w-4xl px-4 py-8 sm:px-6">
           <.header>
