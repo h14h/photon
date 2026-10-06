@@ -25,7 +25,7 @@ defmodule PhotonNode.Harness.Ops do
   (`PhotonNode.Harness.Session.op_down/3`).
   """
 
-  alias PhotonNode.Harness.Operation
+  alias PhotonCore.Operation
   alias PhotonNode.Harness.Ops.{Job, Shell, SkillUse, ViewImage}
 
   @doc """

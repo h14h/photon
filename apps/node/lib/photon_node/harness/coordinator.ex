@@ -44,9 +44,9 @@ defmodule PhotonNode.Harness.Coordinator do
 
   require Logger
 
-  alias PhotonCore.LLM
+  alias PhotonCore.{LLM, Operation}
   alias PhotonNode.Config
-  alias PhotonNode.Harness.{Env, Link, ModelRequest, Operation, Ops, Session, Skills, Store}
+  alias PhotonNode.Harness.{Env, Link, ModelRequest, Ops, Session, Skills, Store}
 
   @slurp_idle_ms 1
   @slurp_max 100

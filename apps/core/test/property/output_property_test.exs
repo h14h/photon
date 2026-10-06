@@ -1,4 +1,4 @@
-defmodule PhotonNode.Property.OutputTest do
+defmodule PhotonCore.Property.OutputTest do
   @moduledoc """
   `Output.bound/3` caps what a tool result shows the model: at most `limit`
   code points unless it says it truncated, keeping the head and tail, and
@@ -8,7 +8,7 @@ defmodule PhotonNode.Property.OutputTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias PhotonNode.Harness.Output
+  alias PhotonCore.Output
 
   defp text do
     one_of([

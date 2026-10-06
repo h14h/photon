@@ -270,7 +270,7 @@ Rule numbers run through the whole document so they can be cited ("rule 72").
     - Enforce: credo (custom: `FunctionalCore`): the clock, randomness and ID
       generators in core modules, unless allow-listed for the module. The
       allow list is the decision made on purpose: `Harness.Session` and
-      `Harness.Operation` mint IDs (tests match on prefixes), and
+      `PhotonCore.Operation` mint IDs (tests match on prefixes), and
       `PhotonCore.ID` is the ID generator.
 
 30. Keep state handling and business logic in separate modules. A server
@@ -772,8 +772,8 @@ because it runs in the caller's process and both callers are tasks. Calling
 
 | Layer | Modules |
 | --- | --- |
-| Data | Session log records (`Harness.Store` moduledoc), inputs (`Harness.Inbox`), operation snapshots (`Harness.Operation`), `PhotonNode.Config`, the `%Harness.Session{}` token |
-| Functional core | `Harness.Session` (the session state machine: replay, inputs, turns, tool calls, stops, timers as effects), `Harness.Context`, `Harness.Inbox`, the `Harness.Tools.*` translators, `Harness.Output`, `Harness.Operation`, `Harness.Image`, `Harness.SkillPrompt` (the skills section of the system prompt) |
+| Data | Session log records (`Harness.Store` moduledoc), inputs (`Harness.Inbox`), operation snapshots (`PhotonCore.Operation`), `PhotonNode.Config`, the `%Harness.Session{}` token |
+| Functional core | `Harness.Session` (the session state machine: replay, inputs, turns, tool calls, stops, timers as effects), `Harness.Context`, `Harness.Inbox`, the `Harness.Tools.*` translators, `Harness.Image`, `Harness.SkillPrompt` (the skills section of the system prompt) |
 | Boundary | API: `PhotonNode.Harness` (`deliver`, `stop`, `delete`, `resume_all`, `records_from`). Servers: `Harness.Coordinator` (one per session; runs `Session` steps and their effects), `Harness.Ops` (API over operation processes), `Harness.Store` (log file I/O, owned by the coordinator). The hub link: `PhotonNode.Connection`, which implements `Harness.Link`, the contract the harness announces records and live output through, so the harness doesn't depend on the connection |
 | Lifecycle | `PhotonNode` supervisor with `:rest_for_one`: registries, task supervisor, the operation and session dynamic supervisors, the connection, then a one-shot resume task, with the plan in its moduledoc. `PhotonNode.Application` starts it. |
 | Workers | One process per operation (`Ops.Shell`, or `Ops.Job` for the one-shot `ViewImage` and `SkillUse` jobs) under `OpSupervisor`; model requests (`Harness.ModelRequest`) as tasks under `Harness.TaskSupervisor`; grace, heartbeat and idle-stop timers |

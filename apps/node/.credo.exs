@@ -34,8 +34,9 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                  allowed: []
                ]},
               # 28, 29: the harness's functional core does no I/O and touches no
-              # processes. New turns, settings inputs, heartbeats and operations get
-              # IDs from the clock and the RNG on purpose (tests match on prefixes).
+              # processes. New turns, settings inputs and heartbeats get IDs from the
+              # clock and the RNG on purpose (tests match on prefixes), and so do
+              # operations, through `PhotonCore.Operation.new/4` (core's allow list).
               {PhotonCredo.Check.FunctionalCore,
                [
                  files: lib_only,
@@ -43,16 +44,13 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "PhotonNode.Harness.Session",
                    "PhotonNode.Harness.Context",
                    "PhotonNode.Harness.Inbox",
-                   "PhotonNode.Harness.Operation",
-                   "PhotonNode.Harness.Output",
                    "PhotonNode.Harness.Image",
                    "PhotonNode.Harness.SkillPrompt",
                    "PhotonNode.Harness.Tools.*"
                  ],
                  nondeterministic_extra: ["PhotonCore.ID.new"],
                  allowed: [
-                   {"PhotonNode.Harness.Session", ["PhotonCore.ID.new"]},
-                   {"PhotonNode.Harness.Operation", ["PhotonCore.ID.new"]}
+                   {"PhotonNode.Harness.Session", ["PhotonCore.ID.new"]}
                  ]
                ]},
               # 30: server callbacks hand their message to the core and stay short.

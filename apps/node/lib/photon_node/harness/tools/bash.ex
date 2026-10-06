@@ -3,8 +3,8 @@ defmodule PhotonNode.Harness.Tools.Bash do
 
   @behaviour PhotonNode.Harness.Tools
 
-  alias PhotonCore.Message
-  alias PhotonNode.Harness.{Operation, Output, Tools}
+  alias PhotonCore.{Message, Operation, Output}
+  alias PhotonNode.Harness.Tools
 
   @impl true
   def name, do: "Bash"

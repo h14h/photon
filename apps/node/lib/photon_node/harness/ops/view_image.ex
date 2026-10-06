@@ -9,7 +9,8 @@ defmodule PhotonNode.Harness.Ops.ViewImage do
 
   @behaviour PhotonNode.Harness.Ops.Job
 
-  alias PhotonNode.Harness.{Image, Operation}
+  alias PhotonCore.Operation
+  alias PhotonNode.Harness.Image
 
   @source_limit 268_435_456
 

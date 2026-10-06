@@ -7,7 +7,8 @@ defmodule PhotonNode.Harness.JobsTest do
 
   use PhotonNode.HarnessCase, async: false
 
-  alias PhotonNode.Harness.{Operation, Ops}
+  alias PhotonCore.Operation
+  alias PhotonNode.Harness.Ops
   alias PhotonNode.Harness.Ops.{SkillUse, ViewImage}
 
   @png <<0x89, "PNG\r\n", 0x1A, "\n", 0, 0, 0, 13, "IHDR", 2::32, 3::32, 8, 6, 0, 0, 0>>

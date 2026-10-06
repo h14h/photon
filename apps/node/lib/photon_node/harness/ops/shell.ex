@@ -43,7 +43,8 @@ defmodule PhotonNode.Harness.Ops.Shell do
 
   require Logger
 
-  alias PhotonNode.Harness.{Coordinator, Env, Link, Operation, Ops, Output}
+  alias PhotonCore.{Operation, Output}
+  alias PhotonNode.Harness.{Coordinator, Env, Link, Ops}
 
   # Job control gives the command its own process group (pgid == pid).
   # bash honours `set -m` without a terminal; for shells that don't, setsid

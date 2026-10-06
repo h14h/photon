@@ -16,7 +16,8 @@ defmodule PhotonNode.Harness.Ops.Job do
 
   use GenServer, restart: :temporary
 
-  alias PhotonNode.Harness.{Coordinator, Operation, Ops}
+  alias PhotonCore.Operation
+  alias PhotonNode.Harness.{Coordinator, Ops}
 
   @doc "Does the operation's work and returns its terminal snapshot."
   @callback run(Operation.t()) :: Operation.t()

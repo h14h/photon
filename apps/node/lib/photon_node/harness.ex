@@ -11,8 +11,9 @@ defmodule PhotonNode.Harness do
       `PhotonNode.Harness.Session` (one session's state machine),
       `PhotonNode.Harness.Context` (model input), `PhotonNode.Harness.Inbox`
       (input validation and dedupe), the translators in
-      `PhotonNode.Harness.Tools`, `PhotonNode.Harness.Operation`,
-      `PhotonNode.Harness.Output` and `PhotonNode.Harness.Image`
+      `PhotonNode.Harness.Tools` and `PhotonNode.Harness.Image`, with the
+      operation snapshots and output bounds the hub shares
+      (`PhotonCore.Operation`, `PhotonCore.Output`)
     * boundary: `PhotonNode.Harness.Coordinator`, the server that runs a
       session; `PhotonNode.Harness.Store`, its append-only log;
       `PhotonNode.Harness.Ops`, the API over operation processes;

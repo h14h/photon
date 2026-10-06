@@ -6,8 +6,8 @@ defmodule PhotonNode.Harness.Tools.SkillUse do
 
   @behaviour PhotonNode.Harness.Tools
 
-  alias PhotonCore.Message
-  alias PhotonNode.Harness.{Operation, Tools}
+  alias PhotonCore.{Message, Operation}
+  alias PhotonNode.Harness.Tools
 
   @impl true
   def name, do: "SkillUse"

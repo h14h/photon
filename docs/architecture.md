@@ -71,6 +71,9 @@ and took the I/O out of `render/1`; see the refactor log.)
 | `PhotonCore.LLM.Responses.Request` | functional core (Responses API body; messages as input items, tools in a namespace, reasoning items handed back) | pure | `Message`, Jason |
 | `PhotonCore.LLM.Responses.Response` | data (the `%Response{}` stream token) and functional core (`feed/2` returns events, `finish/2`, `usage/1`) | pure (missing call IDs come from a function passed in) | `SSE`, `HTTPError`, `LLM.Error`, `Message`, Jason |
 | `PhotonCore.LLM.Relay.Wire` | functional core (the relay's stream format: the hub renders it, a node folds it) | pure | `SSE`, `LLM.Error`, Jason |
+| `PhotonCore.Operation` | data (operation snapshot, shared by the node and the hub) with pure `new/5`, `advance/3` and `fail/2` | pure, but `new/4` pure* (mints IDs) | `ID` |
+| `PhotonCore.Operation.Wire` | functional core (the `op.*` messages between the hub and a node: builders and parsers) | pure | `ID`, `Operation` |
+| `PhotonCore.Output` | functional core (`bound/3`, `truncated/5`) | pure | none |
 | `PhotonCore.LLM.MockAgent` | functional core (scripted node model) | pure* (call IDs) | `LLM.Mock`, `Message`, Jason |
 | `PhotonCore.LLM.Mock` | boundary (fake provider adapter and script behaviour) | pure*; calls the caller's `on_event` | `Message`, `LLM.Error`, `ID`, Jason |
 | `PhotonCore.LLM.Responses` | boundary (HTTP adapter for the Responses API, with a Sign in with ChatGPT token) | `stream/3` does I/O (HTTP), feeds `Response`, calls `on_event`, mints missing call IDs | Req, `Request`, `Response`, `HTTPError`, `LLM.Error` |
@@ -96,12 +99,10 @@ hotspots still refer to the original snapshot.
 | `PhotonNode.Harness.Store` | boundary (append-only JSONL log) | does I/O (files, fsync); `dir/0` reads `PhotonNode.config/0` | `Config`, `PhotonNode`, Jason |
 | `PhotonNode.Harness.Inbox` | functional core (with its data struct) | pure | none |
 | `PhotonNode.Harness.Context` | functional core | pure | `Message` |
-| `PhotonNode.Harness.Operation` | data (operation snapshot) with pure `advance/3` and `fail/2` | pure* (`new/4` mints IDs) | `PhotonCore.ID` |
-| `PhotonNode.Harness.Tools` | functional core (tool registry, translator behaviour, shared argument decoding) | pure | `Tools.Bash`, `Tools.ViewImage`, `Tools.SkillUse`, `Operation`, `Output`, Jason |
+| `PhotonNode.Harness.Tools` | functional core (tool registry, translator behaviour, shared argument decoding) | pure | `Tools.Bash`, `Tools.ViewImage`, `Tools.SkillUse`, `PhotonCore.Operation`, `PhotonCore.Output`, Jason |
 | `PhotonNode.Harness.Tools.Bash` | functional core (translator and formatter) | pure* (operation IDs) | `Operation`, `Output`, `Tools`, `Message` |
 | `PhotonNode.Harness.Tools.ViewImage` | functional core | pure* | `Operation`, `Tools`, `Message` |
 | `PhotonNode.Harness.Tools.SkillUse` | functional core | pure* | `Operation`, `Tools`, `Message` |
-| `PhotonNode.Harness.Output` | functional core (`bound/3`, `truncated/5`) | pure | none |
 | `PhotonNode.Harness.Image` | functional core | pure | none |
 | `PhotonNode.Harness.Env` | boundary (OS environment for commands) | `shell/0` and `overrides/0` read the environment; `overrides/1` with an explicit env and `to_port/1` are pure | none |
 | `PhotonNode.Harness.Skills` | boundary (skill discovery) | `discover/1` does I/O (glob, reads); `prompt/1` pure | Logger |
