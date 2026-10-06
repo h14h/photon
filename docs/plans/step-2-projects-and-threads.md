@@ -517,7 +517,8 @@ live "/settings", SettingsLive
 slug (section 2.2). File names end in `.md`, so `files/new` can't be a
 file. A project, file or thread that doesn't exist, or a thread under the
 wrong project's slug, redirects to `/` with a flash ("There's no project
-called garden.").
+called garden.", "There's no file called plan.md in Garden.", "There's no
+such thread in Garden.").
 
 Images in a thread's conversation get their own route, next to Blip's, in
 the `:gui_files` pipeline:

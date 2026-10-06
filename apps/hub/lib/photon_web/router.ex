@@ -16,6 +16,14 @@ defmodule PhotonWeb.Router do
 
     live_session :gui, on_mount: [PhotonWeb.Auth, PhotonWeb.Shell] do
       live "/", OverviewLive
+      # `/projects/new` before `/projects/:slug`; `new` is a reserved slug,
+      # and file names end in `.md`, so neither `new` below is a file or thread.
+      live "/projects/new", ProjectNewLive
+      live "/projects/:slug", ProjectLive
+      live "/projects/:slug/files/new", ContextFileLive, :new
+      live "/projects/:slug/files/:name", ContextFileLive, :edit
+      live "/projects/:slug/threads/new", ThreadLive, :new
+      live "/projects/:slug/threads/:id", ThreadLive, :show
       live "/nodes", NodesLive
       live "/settings", SettingsLive
     end
@@ -32,6 +40,12 @@ defmodule PhotonWeb.Router do
     pipe_through :gui_files
 
     get "/images/:entry_id/:index", ConversationImageController, :blip
+  end
+
+  scope "/threads", PhotonWeb do
+    pipe_through :gui_files
+
+    get "/:thread_id/images/:entry_id/:index", ConversationImageController, :thread
   end
 
   # For the platform's health checks; needs no password.
