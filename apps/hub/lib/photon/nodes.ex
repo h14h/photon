@@ -16,6 +16,12 @@ defmodule Photon.Nodes do
   dropping connection is recovered where it matters: inputs stay queued in
   `Photon.NodeSessions`'s outbox and are resent on the next join. A stop is
   not resent.
+
+  `push_op/2` is the same kind of send for operations: it asks the channel
+  to push an op, and the channel builds the `op.start` from the op's row
+  (`Photon.Machines.push_for/2`), so only `Photon.Machines` calls it. Ops
+  are rows, pushed again on every join and every minute while their call
+  waits on an online machine, so a lost request costs a delay, not the op.
   """
 
   use Boundary, deps: [Photon.Events]
@@ -125,10 +131,19 @@ defmodule Photon.Nodes do
 
   @doc "Pushes a command to a connected node; `{:error, :offline}` otherwise."
   @spec command(String.t(), String.t(), map()) :: :ok | {:error, :offline}
-  def command(node_id, event, payload) do
+  def command(node_id, event, payload), do: tell(node_id, {:command, event, payload})
+
+  @doc """
+  Asks a connected node's channel to push op `op_id`, built from its row as
+  it is then; `{:error, :offline}` if the node isn't connected.
+  """
+  @spec push_op(String.t(), String.t()) :: :ok | {:error, :offline}
+  def push_op(node_id, op_id), do: tell(node_id, {:push_op, op_id})
+
+  defp tell(node_id, message) do
     case Registry.lookup(Photon.NodeRegistry, node_id) do
       [{pid, _}] ->
-        send(pid, {:command, event, payload})
+        send(pid, message)
         :ok
 
       [] ->

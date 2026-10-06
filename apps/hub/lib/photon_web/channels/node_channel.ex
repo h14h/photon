@@ -12,6 +12,23 @@ defmodule PhotonWeb.NodeChannel do
   Events it doesn't know are logged and ignored, so either side can deploy
   first.
 
+  Operations (section 2 of `docs/plans/step-1-machine-tools.md`) go to
+  `Photon.Machines`, and the channel pushes what it returns: `op.snapshot`
+  answers with `op.ack` or `op.cancel` once the snapshot is recorded,
+  `op.output` is broadcast to the tool call's conversation, and a join
+  pushes `op.start` or `op.cancel` for every open op of the node. An
+  `op.start` is only ever built here, from the op's row as it is when it is
+  pushed: `{:push_op, op_id}` (from `Photon.Nodes.push_op/2`) asks for one,
+  and a `{:command, "op.start", _}` is dropped with a log line, so an
+  `op.start` decided elsewhere, before a result was recorded, can't reach a
+  node that has just forgotten the op. Failures from `Photon.Machines` are
+  not caught: the channel crashes, the node reconnects, and the join
+  resends everything.
+
+  The channel caches where each op's live output goes (`routes`, see
+  `Photon.Machines.output/3`), and drops an op from it with the op's
+  terminal snapshot.
+
   Two things happen in the process on purpose. A node that reconnects
   before its old connection timed out takes over in `join/3`: registering
   waits up to two seconds for the old process to go (then kills it), so a
@@ -24,7 +41,12 @@ defmodule PhotonWeb.NodeChannel do
 
   require Logger
 
-  alias Photon.{NodeKeys, Nodes, NodeSessions}
+  alias Photon.{Machines, NodeKeys, Nodes, NodeSessions}
+  alias PhotonCore.Operation.Wire
+
+  @op_start Wire.event(:start)
+  @op_snapshot Wire.event(:snapshot)
+  @op_output Wire.event(:output)
 
   # A node joins as the node its key belongs to (`PhotonWeb.NodeSocket`),
   # while that key is still current. It listens for key changes before it
@@ -42,7 +64,7 @@ defmodule PhotonWeb.NodeChannel do
       send(self(), :joined)
 
       {:ok, %{"sync" => NodeSessions.sync_for(node_id)},
-       socket |> assign(:pushed_inputs, MapSet.new()) |> assign(:sessions, MapSet.new())}
+       assign(socket, pushed_inputs: MapSet.new(), sessions: MapSet.new(), routes: %{})}
     else
       _replaced -> {:error, %{"reason" => "this key has been replaced"}}
     end
@@ -98,6 +120,16 @@ defmodule PhotonWeb.NodeChannel do
     {:noreply, socket}
   end
 
+  def handle_in(@op_snapshot, payload, socket) do
+    {pushes, routes} = Machines.snapshot(socket.assigns.node_id, payload, socket.assigns.routes)
+    {:noreply, socket |> push_all(pushes) |> assign(:routes, routes)}
+  end
+
+  def handle_in(@op_output, payload, socket) do
+    routes = Machines.output(socket.assigns.node_id, payload, socket.assigns.routes)
+    {:noreply, assign(socket, :routes, routes)}
+  end
+
   def handle_in(event, _payload, socket) do
     Logger.debug("node #{socket.assigns.node_id} sent unknown event #{event}")
     {:noreply, socket}
@@ -107,6 +139,15 @@ defmodule PhotonWeb.NodeChannel do
   def handle_info(:joined, socket) do
     Nodes.broadcast()
     NodeSessions.resend_queued(socket.assigns.node_id)
+    {:noreply, push_all(socket, Machines.joined(socket.assigns.node_id))}
+  end
+
+  def handle_info({:push_op, op_id}, socket),
+    do: {:noreply, push_all(socket, Machines.push_for(socket.assigns.node_id, op_id))}
+
+  # Only `{:push_op, id}` puts an `op.start` on the wire; see the moduledoc.
+  def handle_info({:command, @op_start, %{} = payload}, socket) do
+    Logger.warning("dropped an op.start for #{payload["id"]} that wasn't built by the channel")
     {:noreply, socket}
   end
 
@@ -143,6 +184,11 @@ defmodule PhotonWeb.NodeChannel do
   end
 
   def handle_info({:node_keys_changed, _other}, socket), do: {:noreply, socket}
+
+  defp push_all(socket, pushes) do
+    Enum.each(pushes, fn {event, payload} -> push(socket, event, payload) end)
+    socket
+  end
 
   @impl true
   def terminate(_reason, socket) do
