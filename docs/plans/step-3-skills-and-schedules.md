@@ -134,14 +134,16 @@ In code, a scope is `:blip | {:project, project_id}`; only
   single hyphens, not starting or ending with a hyphen
   (`~r/\A[a-z0-9]+(-[a-z0-9]+)*\z/`), which is the SKILL.md format's rule.
   Otherwise: `A skill's name uses lowercase letters, digits and hyphens,
-  like "pdf-forms".` `new` and `install` are reserved (the routes use
+  like "pdf-forms".`, or for a name over 64 characters "Keep the name to
+  64 characters or fewer." `new` and `install` are reserved (the routes use
   them): "That name is taken by the app; pick another." A name another
   skill has: "There's already a skill called pdf-forms." (checked inside
   the commit, backed by the unique index).
 - `suggest_name(text)`: what install prefills when a SKILL.md's name
   breaks the rule: NFD-normalized with combining marks dropped,
   downcased, every run outside `a-z0-9` replaced by one `-`, trimmed of
-  `-`, cut to 64; empty gives `skill`. "PDF Forms" becomes `pdf-forms`.
+  `-`, cut to 64; empty gives `skill`, and a reserved name gets `-skill`
+  after it. "PDF Forms" becomes `pdf-forms`.
 - `description`: trimmed; required ("Say when an agent should use this
   skill."); at most 1,024 characters ("Keep the description under 1,024
   characters; agents read it on every request."). Stored as written; the
@@ -158,7 +160,9 @@ In code, a scope is `:blip | {:project, project_id}`; only
   installed." With no folder listing (a paste), `left_out` is empty and
   `mentions/2` falls back to relative link targets and backticked paths
   under `scripts/`, `references/` or `assets/`, or ending in `.py`, `.sh`,
-  `.js` or `.ts`.
+  `.js` or `.ts`. In a fenced code block only the paths under those three
+  folders count, since examples there name the user's own files
+  (`python your_script.py`).
 - `enable_check(enabled_count)`: at most 30 skills per scope ("30 skills
   are on here already. Turn one off first: agents read every enabled
   skill's description on every request."). This bounds the prompt (rule
@@ -337,8 +341,13 @@ candidate the LiveView holds (not from form params), turned on nowhere.
 - `Skills.enable(skill_id, scope)` and `Skills.disable(skill_id, scope)`
   insert or delete one `skill_enablements` row in a commit and announce
   (section 5). Enabling checks the project exists (through
-  `Photon.Projects`), applies `Rules.enable_check/1` to the scope's count,
-  and is idempotent. Disabling a skill that isn't on does nothing.
+  `Photon.Projects`; "That project doesn't exist."), applies
+  `Rules.enable_check/1` to the scope's count, and is idempotent. Both
+  return `:ok`; enabling a missing skill is `{:error, :not_found}`.
+  Disabling a skill that isn't on does nothing, and a call that changes
+  nothing announces nothing.
+- `Skills.list/0` gives `%{id: skill_id, skill: skill, scopes: scopes}`
+  per skill, by name (the `id` lets the Skills page stream the rows).
 - `Skills.enabled(scope)` is the scope's skills, by name: one query,
   which both profiles run on every model request (section 2.6).
 - `Skills.scopes(skill_id)` is where a skill is on, for the Skills page
