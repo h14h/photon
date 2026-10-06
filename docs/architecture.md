@@ -1687,7 +1687,9 @@ Compatibility. None. Two new migrations add the `skills`,
 are not carried over, so the hub database is deleted. Nodes are
 unchanged.
 
-Results at the end of step 3: core 187 passed (12 properties, 175 tests;
-unchanged), node 105 passed (1 property, 104 tests; unchanged), hub 1027
-passed (12 properties, 1015 tests), with `mix precommit` clean in the
-hub.
+Results at the end of step 3, after the implementation review: core 187
+passed (12 properties, 175 tests; unchanged), node 105 passed (1
+property, 104 tests; unchanged), hub 1049 passed (12 properties, 1037
+tests). `mix precommit` and `mix dialyzer` are clean in all three apps;
+`mix test --cover` gives core 99.1%, node 85.9% and hub 94.7% (thresholds
+95, 85 and 85).
