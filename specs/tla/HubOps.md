@@ -35,7 +35,7 @@ Store line with this one, and none of the properties relate two machines.
 | Step process | `step[c]`: `ins` (the `Machines.start/1` commit), `send` (asking the channel to push), `park` (the `{:wait}` commit), `res` (`resume/2` reading whether the machine is online), `rc` (`resume/2`'s commit); `ron` (what it read); `skn` | the task's step under `Durable.TaskSupervisor` |
 | Orphaned step | `orph`, `okn` | a step left running by a Scheduler-only crash |
 | Store line | `pend[c]`: a commit that ends the call and may send `op.cancel` from inside (Stop, an error, the offline limit) has started and isn't visible yet, holding the result it records; `Busy` | `Durable.Store` |
-| Channel | `chan` (none, up, stale), `cq` (its mailbox of requests from other processes), `hpend` (ack-early bug only) | `PhotonWeb.NodeChannel`, `Photon.Nodes` registry |
+| Channel | `chan` (none, up, stale), `cq` (its mailbox of requests from other processes), `hpend` (ack-early bug only) | `PhotonWeb.NodeChannel`, `Photon.MachineRegistry` |
 | Wire | `h2n`, `n2h` | the websocket; FIFO per connection, lost when it drops |
 | Node connection | `conn` (down, joining, up), `fq` (snapshots the executor forwarded, in its mailbox) | `PhotonNode.Connection` |
 | Journal (durable) | `jr[c]`: `st` (none, ready, proc, completed, failed, canceled), `cx` | `<data_dir>/ops/<id>/op.json` |
@@ -505,7 +505,7 @@ still covers it:
   rules 2 and 7).
 - `Machines.start/1` asks for a push only when its commit inserted the
   row or found it there, not after `{:error, :stopped}`, and
-  `Photon.Nodes.push_op/2` sends to any registered channel, `stale` ones
+  `Photon.Machines.push_op/2` sends to any registered channel, `stale` ones
   included. `ExecSend` asks whenever the channel is `up`. A push request
   is only a read, so asking less often removes behaviors, and one sent to
   a channel whose socket is gone is lost, as in `ExecSend` with a `stale`

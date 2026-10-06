@@ -8,7 +8,7 @@ defmodule PhotonWeb.NodeChannelTest do
 
   import Photon.MachineOps, only: [live_task: 0, new_op: 2, snapshot: 2, snapshot: 3]
 
-  alias Photon.{Durable, Machines, Nodes}
+  alias Photon.{Durable, Machines}
 
   @endpoint PhotonWeb.Endpoint
 
@@ -38,7 +38,7 @@ defmodule PhotonWeb.NodeChannelTest do
     assert {:error, %{"reason" => "this key belongs to box, not other"}} =
              subscribe_and_join(socket, "node:other", %{})
 
-    refute Nodes.online?("other")
+    refute Machines.online?("other")
   end
 
   @tag capture_log: true
@@ -56,7 +56,7 @@ defmodule PhotonWeb.NodeChannelTest do
 
     assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: ^topic}
     assert_receive {:DOWN, ^ref, :process, _pid, {:shutdown, :key_replaced}}
-    refute Nodes.online?("box")
+    refute Machines.online?("box")
 
     assert {:error, %{"reason" => "this key has been replaced"}} =
              subscribe_and_join(socket, "node:box", %{})
@@ -83,22 +83,22 @@ defmodule PhotonWeb.NodeChannelTest do
   end
 
   test "joins as online, ignores events it doesn't know, and goes offline when it closes" do
-    Phoenix.PubSub.subscribe(Photon.PubSub, Nodes.topic())
+    :ok = Machines.subscribe()
 
     {:ok, reply, socket} = join("box")
     assert reply == %{}
     assert_receive :nodes_changed
-    assert %{"hostname" => "box"} = Nodes.get("box")
+    assert %{"hostname" => "box"} = Machines.get("box")
 
     # Session records, from a node that still runs sessions, are ignored.
     push(socket, "event", %{"session_id" => "ns_1", "offset" => 0, "event" => %{}})
     _ = :sys.get_state(socket.channel_pid)
-    assert Nodes.online?("box")
+    assert Machines.online?("box")
 
     Process.unlink(socket.channel_pid)
     close(socket)
     assert_receive :nodes_changed
-    refute Nodes.online?("box")
+    refute Machines.online?("box")
   end
 
   test "a reconnecting node replaces its stale connection" do
@@ -108,7 +108,7 @@ defmodule PhotonWeb.NodeChannelTest do
 
     {:ok, _, s2} = join("dup")
     assert_receive {:DOWN, ^ref, _, _, _}
-    assert [{pid, _}] = Registry.lookup(Photon.NodeRegistry, "dup")
+    assert [{pid, _}] = Registry.lookup(Photon.MachineRegistry, "dup")
     assert pid == s2.channel_pid
   end
 
@@ -184,7 +184,7 @@ defmodule PhotonWeb.NodeChannelTest do
       {:ok, _reply, socket} = join("box")
       %{id: id} = new_op(live_task(), "box")
 
-      Nodes.command("box", "op.start", %{
+      Machines.command("box", "op.start", %{
         "id" => id,
         "kind" => "shell",
         "args" => %{},

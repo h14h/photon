@@ -5,6 +5,17 @@ defmodule Photon.Machines do
   reports a machine's channel hands over. Section 2 of
   `docs/plans/step-1-machine-tools.md` has the protocol and its rules.
 
+  A machine is online exactly as long as its node's connection lives. Each
+  connection is a `PhotonWeb.NodeChannel` process, which registers itself
+  with `register/2`: an entry in `Photon.MachineRegistry` under the
+  machine's ID, with the node's info as the registry value. Nothing here
+  holds on to a pid; the registry is this module's, and callers name
+  machines by ID. `list/0`, `get/1` and `online?/1` read it, and
+  `subscribe/0` hears `:nodes_changed` whenever a node joins or leaves.
+  The machines the hub knows but can't reach are the IDs of node keys that
+  aren't revoked (`Photon.NodeKeys`), plus `local` when the hub runs its
+  own node; `roster/0` and `status/1` combine the two.
+
   An operation is a row (`Photon.Machines.Op`, table `machine_ops`), one per
   tool call, keyed by the op ID the call derives from its durable task. The
   row is the hub's record of the op; the parked tool call waits on the
@@ -18,8 +29,14 @@ defmodule Photon.Machines do
   they wait for a commit in progress and record `pushed` on the rows they
   return an `op.start` for. Only the machine's channel puts an `op.start` on
   the wire, built from the row as it is when the channel pushes it: `start/1`
-  and `repush/1` only ask the channel to push the op
-  (`Photon.Nodes.push_op/2`).
+  and `repush/1` only ask the channel to push the op (`push_op/2`).
+
+  Commands to a channel are plain sends, not calls: `push_op/2` and
+  `command/3` send the channel process a message, and results come back as
+  op snapshots. The caller (a tool step, or a commit) must not wait on a
+  node's connection, and every command is small. Ops are rows, pushed again
+  on every join and every minute while their call waits on an online
+  machine, so a lost command costs a delay, not the op.
 
   Pushes come back as plain `{event, payload}` data, and the channel sends
   them after the commit returns, so an `op.ack` never leaves before the
@@ -37,23 +54,30 @@ defmodule Photon.Machines do
   call an op belongs to is cached by the channel in a `t:routes/0` map, so
   a stream of output costs one read per op.
 
-  There is no process here: the rows hold the state, the durable harness
-  waits, and the channel (one per connected machine) is the transport.
+  There is no process here: the registry says who is connected, the rows
+  hold the state, the durable harness waits, and the channel (one per
+  connected machine) is the transport.
   """
 
   use Boundary,
-    deps: [Photon.Durable, Photon.NodeKeys, Photon.Nodes, Photon.Repo, PhotonCore, Ecto],
+    deps: [Photon.Durable, Photon.Events, Photon.NodeKeys, Photon.Repo, PhotonCore, Ecto],
     exports: []
 
   import Ecto.Query
 
   require Logger
 
-  alias Photon.{Durable, NodeKeys, Nodes, Repo}
+  alias Photon.{Durable, Events, NodeKeys, Repo}
   alias Photon.Durable.Tx
   alias Photon.Machines.{Op, Roster, Rules}
   alias PhotonCore.Operation
   alias PhotonCore.Operation.Wire
+
+  @topic "nodes"
+  @takeover_timeout 2_000
+
+  @typedoc "A connected machine's info, with its `\"id\"`."
+  @type info :: Roster.info()
 
   @typedoc """
   A new op: its ID (from `t_<suffix>` to `op_<suffix>`), the machine,
@@ -91,6 +115,99 @@ defmodule Photon.Machines do
 
   ## Machines
 
+  @doc "Subscribes to `:nodes_changed`, sent whenever a machine connects or disconnects."
+  @spec subscribe() :: :ok
+  def subscribe, do: Events.subscribe(@topic)
+
+  @doc "Tells every subscriber that the connected machines changed."
+  @spec broadcast() :: :ok
+  def broadcast, do: Events.broadcast(@topic, :nodes_changed)
+
+  @doc "Connected machines, `local` first, then by ID."
+  @spec list() :: [info()]
+  def list do
+    Photon.MachineRegistry
+    |> Registry.select([{{:"$1", :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.map(fn {id, info} -> Map.put(info, "id", id) end)
+    |> Roster.sort()
+  end
+
+  @doc "A connected machine's info, or nil if it isn't connected."
+  @spec get(String.t()) :: info() | nil
+  def get(id) do
+    case Registry.lookup(Photon.MachineRegistry, id) do
+      [{_pid, info}] -> Map.put(info, "id", id)
+      [] -> nil
+    end
+  end
+
+  @doc "Whether `id` is connected now."
+  @spec online?(String.t()) :: boolean()
+  def online?(id), do: get(id) != nil
+
+  @doc """
+  Registers the calling process as the connection for `machine`, with the
+  node's `info`. A previous connection still registered for the machine (it
+  reconnected before the old one timed out) is told to stop (`:replaced`)
+  and given two seconds before it is killed, so the registry never names two
+  connections for one machine.
+  """
+  @spec register(String.t(), info()) :: :ok
+  def register(machine, info) do
+    take_over(machine)
+    {:ok, _owner} = Registry.register(Photon.MachineRegistry, machine, info)
+    :ok
+  end
+
+  @doc "Removes the calling process's registration as `machine`'s connection."
+  @spec unregister(String.t()) :: :ok
+  def unregister(machine), do: Registry.unregister(Photon.MachineRegistry, machine)
+
+  defp take_over(machine) do
+    case Registry.lookup(Photon.MachineRegistry, machine) do
+      [{pid, _}] -> replace(machine, pid)
+      [] -> :ok
+    end
+  end
+
+  defp replace(machine, pid) do
+    Logger.warning("#{machine} reconnected; closing its previous connection")
+    ref = Process.monitor(pid)
+    send(pid, :replaced)
+
+    receive do
+      {:DOWN, ^ref, _, _, _} -> :ok
+    after
+      @takeover_timeout -> Process.exit(pid, :kill)
+    end
+  end
+
+  @doc """
+  Pushes a command to a connected machine's channel; `{:error, :offline}`
+  otherwise. Not for `op.start`, which only `push_op/2` asks for.
+  """
+  @spec command(String.t(), String.t(), map()) :: :ok | {:error, :offline}
+  def command(machine, event, payload), do: tell(machine, {:command, event, payload})
+
+  @doc """
+  Asks a connected machine's channel to push op `op_id`, built from its row
+  as it is then (`push_for/2`); `{:error, :offline}` if the machine isn't
+  connected.
+  """
+  @spec push_op(String.t(), String.t()) :: :ok | {:error, :offline}
+  def push_op(machine, op_id), do: tell(machine, {:push_op, op_id})
+
+  defp tell(machine, message) do
+    case Registry.lookup(Photon.MachineRegistry, machine) do
+      [{pid, _}] ->
+        send(pid, message)
+        :ok
+
+      [] ->
+        {:error, :offline}
+    end
+  end
+
   @doc """
   The state of `machine`: `:online` (connected and speaks the operation
   protocol), `:outdated` (connected, but an older photon-node), `:offline`
@@ -98,11 +215,11 @@ defmodule Photon.Machines do
   runs its own node (hub rule 12).
   """
   @spec status(String.t()) :: Roster.status()
-  def status(machine), do: Roster.status(machine, Nodes.get(machine), known_ids(), local_node?())
+  def status(machine), do: Roster.status(machine, get(machine), known_ids(), local_node?())
 
   @doc "Every machine the hub knows, `local` first, then connected ones, then offline ones."
   @spec roster() :: [Roster.machine()]
-  def roster, do: Roster.build(Nodes.list(), known_ids(), local_node?())
+  def roster, do: Roster.build(list(), known_ids(), local_node?())
 
   # Nodes with a key that hasn't been revoked.
   defp known_ids, do: for(%{node_id: id, revoked_at: nil} <- NodeKeys.list(), do: id)
@@ -124,7 +241,7 @@ defmodule Photon.Machines do
   def start(%{id: id, machine: machine} = new) do
     if Durable.commit(&start_tx(&1, new)) do
       # Offline is fine: the machine's join pushes every open row.
-      _ = Nodes.push_op(machine, id)
+      _ = push_op(machine, id)
       :ok
     else
       {:error, :stopped}
@@ -162,7 +279,7 @@ defmodule Photon.Machines do
   @spec repush(String.t()) :: :ok | {:error, :offline | :not_found}
   def repush(op_id) do
     case Repo.get(Op, op_id) do
-      %Op{machine: machine} -> Nodes.push_op(machine, op_id)
+      %Op{machine: machine} -> push_op(machine, op_id)
       nil -> {:error, :not_found}
     end
   end
@@ -200,7 +317,7 @@ defmodule Photon.Machines do
   @spec cancel_tx(Tx.t(), String.t()) :: :ok
   def cancel_tx(tx, op_id) do
     row = Repo.get(Op, op_id)
-    {write, pushes} = Rules.on_cancel(row, online?(row))
+    {write, pushes} = Rules.on_cancel(row, row_online?(row))
     :ok = apply_write(tx, row, write)
     send_all(row, pushes)
   end
@@ -216,7 +333,7 @@ defmodule Photon.Machines do
   def abandon_tx(tx, op_id) do
     row = Repo.get(Op, op_id)
 
-    case Rules.on_abandon(row, online?(row)) do
+    case Rules.on_abandon(row, row_online?(row)) do
       {:claimed, snapshot, write} ->
         :ok = apply_write(tx, row, write)
         {:claimed, snapshot}
@@ -228,17 +345,17 @@ defmodule Photon.Machines do
     end
   end
 
-  defp online?(%Op{machine: machine}), do: Nodes.online?(machine)
-  defp online?(nil), do: false
+  defp row_online?(%Op{machine: machine}), do: online?(machine)
+  defp row_online?(nil), do: false
 
   # Sends from inside a commit; see the moduledoc.
   defp send_all(_row, []), do: :ok
 
   defp send_all(%Op{machine: machine}, pushes) do
     Enum.each(pushes, fn {event, payload} ->
-      # Offline is fine: a machine that dropped since `online?/1` gets its
+      # Offline is fine: a machine that dropped since `row_online?/1` gets its
       # `op.cancel` from its next join, since the row keeps `cancel`.
-      _ = Nodes.command(machine, event, payload)
+      _ = command(machine, event, payload)
     end)
   end
 

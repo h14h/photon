@@ -17,13 +17,13 @@ defmodule PhotonWeb.Shell do
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView
 
-  alias Photon.{Assistant, ChatGPT, Machines, NodeKeys, Nodes, Settings}
+  alias Photon.{Assistant, ChatGPT, Machines, NodeKeys, Settings}
 
   @spec on_mount(:default, map(), map(), Phoenix.LiveView.Socket.t()) ::
           {:cont, Phoenix.LiveView.Socket.t()}
   def on_mount(:default, _params, _session, socket) do
     if connected?(socket) do
-      Nodes.subscribe()
+      Machines.subscribe()
       NodeKeys.subscribe()
       Settings.subscribe()
       ChatGPT.subscribe()

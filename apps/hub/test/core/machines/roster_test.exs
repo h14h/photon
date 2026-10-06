@@ -43,6 +43,13 @@ defmodule Photon.Machines.RosterTest do
     end
   end
 
+  describe "sort/1" do
+    test "puts the local machine first, then sorts by ID" do
+      infos = [online("zed"), online("local"), online("abe")]
+      assert Enum.map(Roster.sort(infos), & &1["id"]) == ["local", "abe", "zed"]
+    end
+  end
+
   describe "status/4" do
     test "a connected machine that speaks the op protocol is online" do
       assert Roster.status("mm1", online("mm1"), [], false) == :online

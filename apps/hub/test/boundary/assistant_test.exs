@@ -21,7 +21,7 @@ defmodule Photon.AssistantTest do
   # for it arrive here.
   defp fake_node(name) do
     {:ok, _} =
-      Registry.register(Photon.NodeRegistry, name, %{
+      Registry.register(Photon.MachineRegistry, name, %{
         "platform" => "test",
         "workspace" => "/w",
         "version" => "0",

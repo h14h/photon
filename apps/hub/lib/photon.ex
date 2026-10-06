@@ -8,9 +8,8 @@ defmodule Photon do
     * `Photon.Assistant`: the assistant's conversation, memory and
       schedules, and its profile for the durable harness
     * `Photon.Durable`: the durable agent harness the assistant runs on
-    * `Photon.Nodes`: which nodes are connected, and commands to them
-    * `Photon.Machines`: the machines the hub knows, and the operations
-      (shell commands, image reads) it runs on them
+    * `Photon.Machines`: the machines the hub knows, which are connected,
+      and the operations (shell commands, image reads) it runs on them
     * `Photon.Settings`: the model and the assistant's instructions
     * `Photon.Provision`, `Photon.NodeDist`, `Photon.Hub`,
       `Photon.Tailnet`: putting nodes on machines, and how they reach the hub
@@ -50,7 +49,6 @@ defmodule Photon do
       Markdown,
       NodeDist,
       NodeKeys,
-      Nodes,
       Paths,
       Provision,
       Settings,

@@ -2,7 +2,7 @@ defmodule PhotonWeb.NodeChannel do
   @moduledoc """
   The hub's end of one node's connection. See `PhotonNode` for the protocol.
   The channel process registers itself as the node's connection
-  (`Photon.Nodes.register/2`), so a node is online exactly as long as this
+  (`Photon.Machines.register/2`), so a node is online exactly as long as this
   process lives.
 
   It is the server layer for a node (Phoenix starts one per connection), so
@@ -11,13 +11,13 @@ defmodule PhotonWeb.NodeChannel do
   channel pushes what it returns: `op.snapshot` answers with `op.ack` or
   `op.cancel` once the snapshot is recorded, `op.output` is broadcast to the
   tool call's conversation, and a join pushes `op.start` or `op.cancel` for
-  every open op of the node. Commands arrive from `Photon.Nodes.command/3`
+  every open op of the node. Commands arrive from `Photon.Machines.command/3`
   as `{:command, event, payload}` messages and are pushed as they come.
   Events it doesn't know are logged and ignored, so either side can deploy
   first.
 
   An `op.start` is only ever built here, from the op's row as it is when it
-  is pushed: `{:push_op, op_id}` (from `Photon.Nodes.push_op/2`) asks for
+  is pushed: `{:push_op, op_id}` (from `Photon.Machines.push_op/2`) asks for
   one, and a `{:command, "op.start", _}` is dropped with a log line, so an
   `op.start` decided elsewhere, before a result was recorded, can't reach a
   node that has just forgotten the op. Failures from `Photon.Machines` are
@@ -37,7 +37,7 @@ defmodule PhotonWeb.NodeChannel do
 
   require Logger
 
-  alias Photon.{Machines, NodeKeys, Nodes}
+  alias Photon.{Machines, NodeKeys}
   alias PhotonCore.Operation.Wire
 
   @op_start Wire.event(:start)
@@ -55,7 +55,7 @@ defmodule PhotonWeb.NodeChannel do
     current? = fn -> NodeKeys.current?(node_id, socket.assigns.generation) end
 
     with true <- current?.(),
-         :ok <- Nodes.register(node_id, node_info(info)),
+         :ok <- Machines.register(node_id, node_info(info)),
          true <- still_current(current?, node_id) do
       send(self(), :joined)
 
@@ -70,7 +70,7 @@ defmodule PhotonWeb.NodeChannel do
 
   # If the key was replaced meanwhile, gives up the registration it just took.
   defp still_current(current?, node_id) do
-    current?.() or Nodes.unregister(node_id) != :ok
+    current?.() or Machines.unregister(node_id) != :ok
   end
 
   defp node_info(info) do
@@ -97,7 +97,7 @@ defmodule PhotonWeb.NodeChannel do
 
   @impl true
   def handle_info(:joined, socket) do
-    Nodes.broadcast()
+    Machines.broadcast()
     {:noreply, push_all(socket, Machines.joined(socket.assigns.node_id))}
   end
 
@@ -138,8 +138,8 @@ defmodule PhotonWeb.NodeChannel do
   @impl true
   def terminate(_reason, socket) do
     if node_id = socket.assigns[:node_id] do
-      Nodes.unregister(node_id)
-      Nodes.broadcast()
+      Machines.unregister(node_id)
+      Machines.broadcast()
     end
 
     :ok

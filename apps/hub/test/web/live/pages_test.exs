@@ -5,7 +5,7 @@ defmodule PhotonWeb.PagesTest do
 
   @moduletag :durable
 
-  alias Photon.{Durable, NodeKeys, Nodes}
+  alias Photon.{Durable, Machines, NodeKeys}
 
   test "the overview shows machines and schedules", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
@@ -51,7 +51,7 @@ defmodule PhotonWeb.PagesTest do
 
   test "no page links to node sessions, which are gone", %{conn: conn} do
     {:ok, _key} = NodeKeys.issue("nas")
-    :ok = Nodes.register("box", %{"hostname" => "box.lan", "platform" => "linux"})
+    :ok = Machines.register("box", %{"hostname" => "box.lan", "platform" => "linux"})
 
     for path <- [~p"/", ~p"/nodes", ~p"/settings"] do
       {:ok, view, _html} = live(conn, path)

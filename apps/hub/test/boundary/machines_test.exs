@@ -2,7 +2,7 @@ defmodule Photon.MachinesTest do
   @moduledoc """
   `Photon.Machines` through its API, against the real database and Store.
   A machine is "online" when the test process registers as its connection
-  (`Photon.Nodes.register/2`), so what the API sends a channel arrives in
+  (`Photon.Machines.register/2`), so what the API sends a channel arrives in
   the test's mailbox. The rules themselves are covered in
   `test/core/machines/rules_test.exs`.
   """

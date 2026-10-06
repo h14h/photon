@@ -652,7 +652,7 @@ Rule numbers run through the whole document so they can be cited ("rule 72").
       (registries, task supervisors, `Photon.PubSub`) is named only by the
       modules that own it, listed in `.credo.exs`, so callers go through the
       owner's API with IDs. The node channel now registers through
-      `Photon.Nodes.register/2`.
+      `Photon.Machines.register/2`.
 
 84. Order children by dependency and choose the strategy from that. Startup
     is about order, shutdown about timing, restart about dependencies; use
@@ -784,8 +784,8 @@ because it runs in the caller's process and both callers are tasks. Calling
 | --- | --- |
 | Data | Ecto schemas `Photon.Durable.{Conversation, Entry, TaskRecord, Submission, Signal, Doc}` and `Photon.Machines.Op`, each with `t/0`; messages from `PhotonCore.Message` |
 | Functional core | `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall, Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Transcript, MockScript}`, `Photon.Machines.{Rules, Roster}`, `Photon.MachineTools.{Translate, Wait}`, `Photon.Provision.{Jobs, Script}`, `Photon.Provision.Lines` (pure apart from the `log` function it's handed), `Photon.InstallScript` (the install script and the node socket URL), `Photon.Markdown`, `Photon.Tailnet.parse/1`, and `Photon.Settings`' functions of a settings map |
-| Boundary | APIs: `Photon.Durable`, `Photon.Machines`, `Photon.Assistant` (Blip's context), `Photon.Nodes`, `Photon.Settings`, `Photon.Provision`. Servers: `Durable.Store` (the single commit line, a lock with no state), `Durable.Scheduler` (applies `Durable.Policy`), `Photon.Provision` (the job table), `Photon.Tailnet` (owns its cache table). Framework callbacks (rule 11): `PhotonWeb.NodeChannel` and the LiveViews, which call the contexts and do no I/O in `render/1` |
-| Lifecycle | `Photon.Application` with `:one_for_one`, plan in its moduledoc: repo, migrator, PubSub, `Tailnet`, `NodeRegistry`, provisioning, `Photon.Durable.Supervisor` (`:one_for_one`: task supervisor, store, scheduler; plan in its moduledoc), endpoint, optional local node |
+| Boundary | APIs: `Photon.Durable`, `Photon.Machines`, `Photon.Assistant` (Blip's context), `Photon.Settings`, `Photon.Provision`. Servers: `Durable.Store` (the single commit line, a lock with no state), `Durable.Scheduler` (applies `Durable.Policy`), `Photon.Provision` (the job table), `Photon.Tailnet` (owns its cache table). Framework callbacks (rule 11): `PhotonWeb.NodeChannel` and the LiveViews, which call the contexts and do no I/O in `render/1` |
+| Lifecycle | `Photon.Application` with `:one_for_one`, plan in its moduledoc: repo, migrator, PubSub, `Tailnet`, `MachineRegistry`, provisioning, `Photon.Durable.Supervisor` (`:one_for_one`: task supervisor, store, scheduler; plan in its moduledoc), endpoint, optional local node |
 | Workers | Durable task steps under `Durable.TaskSupervisor` (`async_nolink`, monitored by the scheduler); the task kind `Assistant.Routine`, which does the job of the book's proctor (rule 95); provisioning jobs under `ProvisionTasks` (`async_nolink`, monitored by `Provision`); `NodesLive`'s `tailscale` task (`start_async`) |
 
 ### Where Photon already follows the book
@@ -863,8 +863,8 @@ because it runs in the caller's process and both callers are tasks. Calling
    `Ops`, `ModelRequest`, `Ops.Shell`); the client functions are now
    `Connection.event/3` and `Coordinator.report/2` (the coordinator's
    `Ops.Owner` callback). On the hub,
-   `Scheduler.notify/2`, `Nodes.command/3`, `Durable.live/2`,
-   `ToolAPI.output/2` and `NodeSessions.live/2` say the same in their docs.
+   `Scheduler.notify/2`, `Machines.command/3` and `push_op/2`,
+   `Durable.live/2` and `ToolAPI.output/2` say the same in their docs.
 5. `Ops.Shell` sleeps with backoff inside its GenServer while it waits for a
    killed process group to exit, for up to `@term_grace_ms` (5 seconds)
    (rule 96). The cost is one operation that can't answer `:resend` or
@@ -897,7 +897,8 @@ because it runs in the caller's process and both callers are tasks. Calling
    script and socket URL moved from `NodeDist` and `Hub` (which still
    delegate) to the pure `Photon.InstallScript`, so `Provision.Script`
    depends on no boundary module; and the node channel registers through
-   `Photon.Nodes.register/2` instead of naming `Photon.NodeRegistry`.
+   `Photon.Nodes.register/2` (now `Photon.Machines.register/2`) instead of
+   naming the registry.
 
 ### How the rules are enforced
 

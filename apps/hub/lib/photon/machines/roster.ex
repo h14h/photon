@@ -48,6 +48,10 @@ defmodule Photon.Machines.Roster do
     |> Enum.sort_by(&{&1.id != @local, not &1.online, &1.id})
   end
 
+  @doc "Connected machines' info in the order they are listed: `local` first, then by ID."
+  @spec sort([info()]) :: [info()]
+  def sort(online_infos), do: Enum.sort_by(online_infos, &{&1["id"] != @local, &1["id"]})
+
   @doc """
   The state of `machine`, given its info if it is connected (nil if not),
   the known IDs and whether the hub runs its own node.

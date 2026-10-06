@@ -7,7 +7,7 @@ defmodule PhotonWeb.NodesLiveTest do
 
   import Phoenix.LiveViewTest
 
-  alias Photon.Nodes
+  alias Photon.Machines
 
   @moduletag :durable
   @moduletag :tmp_dir
@@ -44,7 +44,7 @@ defmodule PhotonWeb.NodesLiveTest do
 
   defp connected_node(_context) do
     {:ok, _} =
-      Registry.register(Photon.NodeRegistry, "box", %{
+      Registry.register(Photon.MachineRegistry, "box", %{
         "version" => "0.1.0",
         "platform" => "linux",
         "workspace" => "/w"
@@ -75,8 +75,8 @@ defmodule PhotonWeb.NodesLiveTest do
     end
 
     test "update when a node leaves", %{view: view} do
-      Registry.unregister(Photon.NodeRegistry, "box")
-      Nodes.broadcast()
+      Registry.unregister(Photon.MachineRegistry, "box")
+      Machines.broadcast()
       _ = render(view)
       refute has_element?(view, "#node-box")
     end

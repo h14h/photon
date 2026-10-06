@@ -35,11 +35,11 @@ defmodule Photon.Provision do
   """
 
   use Boundary,
-    deps: [Photon.Events, Photon.InstallScript, Photon.NodeDist, Photon.NodeKeys, Photon.Nodes]
+    deps: [Photon.Events, Photon.InstallScript, Photon.Machines, Photon.NodeDist, Photon.NodeKeys]
 
   use GenServer
 
-  alias Photon.{Events, NodeDist, Nodes}
+  alias Photon.{Events, Machines, NodeDist}
   alias Photon.Provision.{Jobs, Script}
 
   @topic "provision"
@@ -217,13 +217,13 @@ defmodule Photon.Provision do
 
   # Waits in the job's task (not in the server) for the node to join.
   defp wait_for_node(node_id, since) do
-    Nodes.subscribe()
+    Machines.subscribe()
     deadline = System.monotonic_time(:millisecond) + @connect_timeout
     await_node(node_id, since, deadline)
   end
 
   defp await_node(node_id, since, deadline) do
-    case Nodes.get(node_id) do
+    case Machines.get(node_id) do
       %{"connected_at" => at} = node ->
         if DateTime.compare(at, since) != :lt do
           {:ok, "#{node_id} is connected (photon-node #{node["version"]}, #{node["platform"]})"}

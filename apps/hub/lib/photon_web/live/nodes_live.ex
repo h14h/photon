@@ -15,7 +15,7 @@ defmodule PhotonWeb.NodesLive do
 
   use PhotonWeb, :live_view
 
-  alias Photon.{NodeDist, NodeKeys, Nodes, Provision, Tailnet}
+  alias Photon.{Machines, NodeDist, NodeKeys, Provision, Tailnet}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -46,7 +46,7 @@ defmodule PhotonWeb.NodesLive do
 
   # Connected nodes, and which run an older build than this hub hands out.
   defp assign_nodes(socket) do
-    online = Nodes.list()
+    online = Machines.list()
 
     assign(socket,
       online: online,

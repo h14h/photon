@@ -7,7 +7,7 @@ defmodule PhotonWeb.OverviewLiveTest do
 
   import Phoenix.LiveViewTest
 
-  alias Photon.{Assistant, Durable, NodeKeys, Nodes}
+  alias Photon.{Assistant, Durable, Machines, NodeKeys}
 
   @moduletag :durable
 
@@ -26,8 +26,8 @@ defmodule PhotonWeb.OverviewLiveTest do
 
   test "shows connected machines and known offline ones, and points at Blip", %{view: view} do
     {:ok, _key} = NodeKeys.issue("nas")
-    :ok = Nodes.register("box", %{"hostname" => "box.lan", "platform" => "linux"})
-    Nodes.broadcast()
+    :ok = Machines.register("box", %{"hostname" => "box.lan", "platform" => "linux"})
+    Machines.broadcast()
     _ = render(view)
 
     assert has_element?(view, "#machine-box", "online")
