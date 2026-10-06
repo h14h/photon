@@ -17,7 +17,8 @@ defmodule PhotonWeb.ConversationView do
   - `outputs`: the end of each running `shell` call's output, by call ID,
     from the `tool_output` live events (the hub stores none of it, so a page
     opened mid-command shows output from then on), dropped when the result
-    comes;
+    comes, unless the call was stopped (then it stays, as all there is to
+    show of what it did; a page opened later has none of it);
   - `live` and `shown`: the in-flight answer, and its finished blocks;
   - `empty?`, `busy`, `queued`, and the composer's `mode` and `form`;
   - the `:entries` stream of what the conversation shows.
@@ -107,13 +108,15 @@ defmodule PhotonWeb.ConversationView do
     do: %{text: Markdown.settled(live.text), reasoning: Markdown.settled(live.reasoning)}
 
   # A tool result re-renders the assistant entry whose call it answers, in
-  # place of the output the call streamed while it ran.
+  # place of the output the call streamed while it ran (which a stopped
+  # call keeps).
   defp add_entry(socket, %{kind: "tool_result"} = entry) do
     call_id = Transcript.call_id(entry)
+    results = Transcript.add_result(socket.assigns.results, entry)
 
     socket
-    |> update(:results, &Transcript.add_result(&1, entry))
-    |> update(:outputs, &Map.delete(&1, call_id))
+    |> assign(results: results)
+    |> update(:outputs, &Transcript.settle_output(&1, call_id, results[call_id]))
     |> show_call(call_id)
   end
 

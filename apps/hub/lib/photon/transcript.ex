@@ -17,7 +17,8 @@ defmodule Photon.Transcript do
       committed
     * the output of calls still running (`tool_output/2`): the last 8,000
       characters of each, kept apart from the in-flight answer, since a
-      call runs after the answer that made it is committed
+      call runs after the answer that made it is committed; a stopped
+      call keeps it after its result lands (`settle_output/3`)
     * the web searches an answer ran (`searches/1`), and how each reads
       (`search_label/1`)
     * a tool call's status as the page shows it (`action_status/2`), and
@@ -217,6 +218,20 @@ defmodule Photon.Transcript do
 
   def tool_output(outputs, _event), do: outputs
 
+  @doc """
+  The running calls' output once call `call_id` has its result (the
+  result entry's data, as `add_result/2` keeps it): a call the user
+  stopped keeps what it printed before the stop, since its result says
+  only that it was stopped; any other call's output goes, as its result
+  holds it.
+  """
+  @spec settle_output(outputs(), String.t() | nil, map() | nil) :: outputs()
+  def settle_output(outputs, call_id, result) do
+    if result && action_status(result, result["details"] || %{}) == :stopped,
+      do: outputs,
+      else: Map.delete(outputs, call_id)
+  end
+
   # At most @tail characters fit in @tail bytes, so most texts skip the count.
   defp tail(text) when byte_size(text) <= @tail, do: text
 
@@ -283,25 +298,28 @@ defmodule Photon.Transcript do
   @doc """
   How a `shell` or `view_image` call's line reads, given its arguments, its
   result's details and its status (`action_status/2`): the verb, in the
-  present while the call runs ("Running", "Looking at") and in the past
-  once it has ended ("Ran", "Looked at"), the command or path, and the
-  machine. The machine is always named, `local` too: from the arguments,
+  present while the call runs ("Running", "Looking at"), in the past once
+  it has ended ("Ran", "Looked at"), or saying it was stopped ("Stopped",
+  "Stopped looking at"), the command or path, and the machine. The machine is always named, `local` too: from the arguments,
   or the result's details if the arguments have none (nil only when
   neither does).
   """
   @spec machine_action(String.t(), map(), map(), :pending | :done | :error | :stopped) ::
           %{verb: String.t(), subject: term(), machine: String.t() | nil}
   def machine_action("shell", args, details, status),
-    do: machine_line(verb(status, "Running", "Ran"), args["command"], args, details)
+    do: machine_line(verb(status, "Running", "Ran", "Stopped"), args["command"], args, details)
 
-  def machine_action("view_image", args, details, status),
-    do: machine_line(verb(status, "Looking at", "Looked at"), args["path"], args, details)
+  def machine_action("view_image", args, details, status) do
+    verb = verb(status, "Looking at", "Looked at", "Stopped looking at")
+    machine_line(verb, args["path"], args, details)
+  end
 
   defp machine_line(verb, subject, args, details),
     do: %{verb: verb, subject: subject, machine: machine_name(args) || machine_name(details)}
 
-  defp verb(:pending, running, _ran), do: running
-  defp verb(_status, _running, ran), do: ran
+  defp verb(:pending, running, _ran, _stopped), do: running
+  defp verb(:stopped, _running, _ran, stopped), do: stopped
+  defp verb(_status, _running, ran, _stopped), do: ran
 
   defp machine_name(%{"machine" => machine}) when is_binary(machine) and machine != "",
     do: machine

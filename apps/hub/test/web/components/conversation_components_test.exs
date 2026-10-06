@@ -60,6 +60,54 @@ defmodule PhotonWeb.ConversationComponentsTest do
     end
   end
 
+  describe "a machine call" do
+    defp action(call, result, prefix, tail) do
+      assigns = [
+        call: call,
+        result: result,
+        tail: tail,
+        id_prefix: prefix,
+        image_path: &image_path/2
+      ]
+
+      LazyHTML.from_fragment(render_component(&ConversationComponents.action/1, assigns))
+    end
+
+    defp classes(html, selector),
+      do: html |> LazyHTML.query(selector) |> LazyHTML.attribute("class") |> Enum.join(" ")
+
+    test "cuts a long command short, never the verb or the machine" do
+      command = "df -h /; for i in 1 2 3 4 5; do sleep 1; echo \"check $i ok\"; done"
+      html = action(call("shell", %{"machine" => "local", "command" => command}, "c1"), nil)
+
+      assert label(html) == "Running #{command} on local"
+      assert classes(html, "summary code") =~ "truncate"
+      assert html |> LazyHTML.query("summary code") |> LazyHTML.attribute("title") == [command]
+      assert classes(html, "summary [data-machine=local]") =~ "shrink-0"
+      refute classes(html, "summary [data-machine=local]") =~ "truncate"
+    end
+
+    test "a stopped call says so and keeps the output it printed before the stop" do
+      call = call("shell", %{"machine" => "local", "command" => "make test"}, "c1")
+
+      stopped = %{
+        "message" => Message.tool_result("c1", "Stopped by the user before it finished."),
+        "status" => "aborted",
+        "details" => %{},
+        "entry_id" => "e_1"
+      }
+
+      html = action(call, stopped, "", "tick 1\ntick 2\n")
+      assert label(html) == "Stopped make test on local"
+      assert html |> LazyHTML.query("#action-c1-tail pre") |> LazyHTML.text() =~ "tick 2"
+
+      done = ok("c1", "tick 1", %{"machine" => "local", "status" => "completed"})
+      html = action(call, done, "", "tick 1\n")
+      assert label(html) == "Ran make test on local"
+      assert Enum.empty?(LazyHTML.query(html, "#action-c1-tail"))
+    end
+  end
+
   describe "IDs and images" do
     test "a prefix goes on every ID, and an image loads from the page's route" do
       call = call("view_image", %{"machine" => "mm1", "path" => "shot.png"}, "c1")

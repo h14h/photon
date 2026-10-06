@@ -183,7 +183,7 @@ defmodule Photon.TranscriptTest do
       assert Transcript.machine_action("shell", args, %{}, :pending) ==
                %{verb: "Running", subject: "make test", machine: "mm1"}
 
-      for status <- [:done, :error, :stopped] do
+      for status <- [:done, :error] do
         assert %{verb: "Ran"} = Transcript.machine_action("shell", args, %{}, status)
       end
 
@@ -193,6 +193,18 @@ defmodule Photon.TranscriptTest do
                %{verb: "Looking at", subject: "shot.png", machine: "mm1"}
 
       assert %{verb: "Looked at"} = Transcript.machine_action("view_image", image, %{}, :done)
+    end
+
+    test "says so when the user stopped the call" do
+      args = %{"machine" => "mm1", "command" => "make test"}
+
+      assert Transcript.machine_action("shell", args, %{}, :stopped) ==
+               %{verb: "Stopped", subject: "make test", machine: "mm1"}
+
+      image = %{"machine" => "mm1", "path" => "shot.png"}
+
+      assert %{verb: "Stopped looking at"} =
+               Transcript.machine_action("view_image", image, %{}, :stopped)
     end
 
     test "always names the machine, the hub's own included" do
@@ -248,6 +260,24 @@ defmodule Photon.TranscriptTest do
             %{"type" => "tool_output", "text" => "x"}
           ],
           do: assert(Transcript.tool_output(%{"c1" => "a"}, event) == %{"c1" => "a"})
+    end
+
+    test "goes once the call has its result, unless the user stopped the call" do
+      outputs = %{"c1" => "tick 1\n", "c2" => "other"}
+
+      assert Transcript.settle_output(outputs, "c1", %{"status" => "ok", "details" => %{}}) ==
+               %{"c2" => "other"}
+
+      assert Transcript.settle_output(outputs, "c1", %{"status" => "error"}) == %{"c2" => "other"}
+      assert Transcript.settle_output(outputs, "c1", nil) == %{"c2" => "other"}
+
+      stopped = [
+        %{"status" => "aborted", "details" => %{}},
+        %{"status" => "ok", "details" => %{"status" => "canceled"}}
+      ]
+
+      for result <- stopped,
+          do: assert(Transcript.settle_output(outputs, "c1", result) == outputs)
     end
   end
 

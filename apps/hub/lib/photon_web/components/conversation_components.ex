@@ -16,7 +16,11 @@ defmodule PhotonWeb.ConversationComponents do
 
   A call on a machine names the machine, `local` included, and says what
   it is doing until it ends: "Running `uptime` on mm1", then "Ran `uptime`
-  on mm1" (`Photon.Transcript.machine_action/4`). The context-file calls
+  on mm1", or "Stopped `uptime` on mm1" if the user stopped it
+  (`Photon.Transcript.machine_action/4`). A long command is cut short on
+  screen; the verb and the machine never are. A stopped call keeps the
+  output it printed before the stop in view under its line, since its
+  result only says it was stopped. The context-file calls
   read "Checked the context files", "Read notes.md", "Wrote notes.md" and
   "Edited notes.md", in the present while they run.
 
@@ -153,8 +157,8 @@ defmodule PhotonWeb.ConversationComponents do
 
   @doc """
   One tool call: a line saying what it did, which opens to show the result.
-  Under the line, while it runs, the end of what it has printed; once it's
-  done, any image it returned.
+  Under the line, while it runs (and after the user stopped it), the end
+  of what it has printed; once it's done, any image it returned.
   """
   attr :call, :map, required: true
   attr :result, :map, default: nil
@@ -182,7 +186,8 @@ defmodule PhotonWeb.ConversationComponents do
         status: status,
         output: message && Message.text_of(message),
         images: Message.images(message),
-        tail: status == :pending && assigns.tail
+        # A stopped call keeps what it printed before the stop in view.
+        tail: status in [:pending, :stopped] && assigns.tail
       )
 
     ~H"""
@@ -292,10 +297,18 @@ defmodule PhotonWeb.ConversationComponents do
     %{verb: verb, subject: subject, machine: machine} =
       Transcript.machine_action(name, assigns.args, assigns.details, assigns.status)
 
-    assigns = assign(assigns, verb: verb, subject: truncate(subject), machine: machine)
+    assigns =
+      assign(assigns,
+        verb: verb,
+        subject: truncate(subject),
+        whole: truncate(subject, 300),
+        machine: machine
+      )
 
+    # Only the command or path gives way to a narrow card: the verb and the
+    # machine always show. The gap lays it out; the spaces keep the text whole.
     ~H"""
-    <span phx-no-format>{@verb} <code class="font-mono text-[12.5px] text-ink">{@subject}</code><span :if={@machine}> on <span class="font-medium text-ink">{@machine}</span></span></span>
+    <span class="flex min-w-0 items-baseline gap-x-1" phx-no-format><span class="shrink-0">{@verb}</span> <code class="min-w-0 truncate font-mono text-[12.5px] text-ink" title={@whole}>{@subject}</code><span :if={@machine} class="shrink-0" data-machine={@machine}> on <span class="font-medium text-ink">{@machine}</span></span></span>
     """
   end
 
@@ -353,12 +366,13 @@ defmodule PhotonWeb.ConversationComponents do
 
   defp action_icon(_), do: "hero-check-micro"
 
-  # One line of at most 90 characters; anything that isn't text is nothing.
-  defp truncate(text) when not is_binary(text), do: ""
+  # One line of at most `limit` characters; anything that isn't text is nothing.
+  defp truncate(text, limit \\ 90)
+  defp truncate(text, _limit) when not is_binary(text), do: ""
 
-  defp truncate(text) do
+  defp truncate(text, limit) do
     text = text |> String.replace(~r/\s+/, " ") |> String.trim()
-    if String.length(text) > 90, do: String.slice(text, 0, 87) <> "...", else: text
+    if String.length(text) > limit, do: String.slice(text, 0, limit - 3) <> "...", else: text
   end
 
   @doc """

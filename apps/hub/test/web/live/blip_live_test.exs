@@ -319,7 +319,7 @@ defmodule PhotonWeb.BlipLiveTest do
       answered(c, "c5", "list_machines", "mm1, online", %{})
 
       assert has_element?(blip, "#action-c3[data-status=error]", "Ran false on mm1")
-      assert has_element?(blip, "#action-c4[data-status=stopped]", "Ran sleep 99 on mm2")
+      assert has_element?(blip, "#action-c4[data-status=stopped]", "Stopped sleep 99 on mm2")
       assert has_element?(blip, "#action-c5[data-status=done]", "Checked your machines")
     end
   end

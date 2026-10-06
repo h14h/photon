@@ -172,6 +172,32 @@ defmodule PhotonWeb.ThreadLiveTest do
       assert has_element?(view, "#thread-status[data-state=idle]")
     end
 
+    test "Stop mid-command says the call was stopped and keeps what it printed", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, thread} = Threads.start(project.id, "on box: $ for i in 1 2 3; do echo tick; done")
+      :ok = Threads.subscribe(thread.id)
+      view = thread_page(conn, project, thread)
+
+      assert_receive {:push_op, op_id}, @wait
+
+      [%{"id" => call_id}] =
+        Message.tool_calls(await_entry(thread.id, &tool_calls?/1).data["message"])
+
+      action = "#thread-action-#{call_id}"
+      Machines.output("box", %{"id" => op_id, "stream" => "out", "text" => "tick 1\n"}, %{})
+      assert has_element?(view, "#{action}-tail pre", "tick 1")
+
+      view |> element("#thread-stop") |> render_click()
+      await_entry(thread.id, &(&1.kind == "tool_result"), @wait)
+      await_idle(thread.id)
+
+      assert has_element?(view, "#{action}[data-status=stopped] summary", "Stopped")
+      assert has_element?(view, "#{action} summary [data-machine=box]")
+      assert has_element?(view, "#{action}-tail pre", "tick 1")
+    end
+
     test "an image loads from the thread's own route", %{conn: conn, project: project} do
       thread = idle_thread!(project, "Look at the garden")
       view = thread_page(conn, project, thread)
