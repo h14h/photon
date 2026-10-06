@@ -13,17 +13,20 @@ layers from *Designing Elixir Systems with OTP* (Gray and Tate):
 Tests are the book's sixth layer; test support modules get a short table at
 the end of the module map.
 
-The module map and the supervision trees describe the code after step 2 of
+The module map and the supervision trees describe the code after step 3 of
 `docs/projects-and-blip.md` (2026-10-06). Step 1 made nodes executors for
 the hub's operations, gave Blip machine tools to run commands on them,
 and removed node sessions, the model relay and the node's agent loop
 (`docs/plans/step-1-machine-tools.md`). Step 2 added projects, their
 context files, and threads that work in a project's folder on any machine
-(`docs/plans/step-2-projects-and-threads.md`). The hotspots and the
-refactor log below were written against the `elixir-harness` worktree as
-of 2026-10-03, and their line numbers refer to that snapshot. Many of the
-modules they name were removed in step 1; the step 1 and step 2 entries
-at the end of the refactor log say what each step changed.
+(`docs/plans/step-2-projects-and-threads.md`). Step 3 added skills,
+which Blip and threads load when a task calls for them, and moved
+schedules into projects (`docs/plans/step-3-skills-and-schedules.md`).
+The hotspots and the refactor log below were written against the
+`elixir-harness` worktree as of 2026-10-03, and their line numbers refer
+to that snapshot. Many of the modules they name were removed in step 1;
+the step 1, 2 and 3 entries at the end of the refactor log say what each
+step changed.
 
 Purity column:
 
@@ -75,6 +78,20 @@ are announced from inside their commit (`Durable.Tx.announce/3`) and
 broadcast only after it. Blip's panel and a thread's page draw a
 conversation with the same pieces (`Photon.Transcript`,
 `PhotonWeb.ConversationComponents`, `PhotonWeb.ConversationView`).
+
+Skills and schedules add no process either. A skill is a row, and each
+place it is on (Blip, or one project) is an enablement row; the rules,
+the SKILL.md reader and what a link means are pure (`Skills.Rules`,
+`SkillMd`, `Source`), and only `Skills.Fetch` makes HTTP requests, in
+the install page's `start_async` task. Agents see the enabled skills in
+their prompt (`Skills.Prompt`) and load one with `load_skill`, which
+reads it inside the commit that records the result. A schedule is a row
+plus a durable `"routine"` task (`Schedules.Routine`) that waits for its
+next time; the task is only the timer, and every edit or delete replaces
+or retires it in the commit that changes the row, so the step fence
+keeps a firing from landing after its schedule changed. What a firing
+does (start a thread, wake one, post to Blip, or skip) is the pure
+`Schedules.Rules.fire/2`, decided inside the firing's commit.
 
 ## Module map
 
@@ -156,34 +173,50 @@ conversation with the same pieces (`Photon.Transcript`,
 | `Photon.Durable.Entry` | data | pure | Ecto |
 | `Photon.Durable.Doc` | data | pure | Ecto |
 | `Photon.Durable.Signal` | data | pure | Ecto |
-| `Photon.Durable.Submission` | data | pure | Ecto |
+| `Photon.Durable.Submission` | data (plus `background?/1`: input from a schedule, which Blip's Stop keeps) | pure | Ecto |
 | `Photon.Durable.TaskRecord` | data (plus `terminal?/1`) | pure | Ecto |
 | **Assistant** | | | |
-| `Photon.Assistant` | boundary (the assistant's API, which the web pages use, and its profile; its tools are its own four plus `MachineTools.tools/0`; `page_at/1` makes the page the user has open, and `send/2` sends a message with the page's facts read fresh) | does I/O (docs, settings file, clock, projects and threads); `conversation_id/0` may commit | `Durable`, `Settings`, `ChatGPT`, `Prompt`, `Memory`, `Page`, `MachineTools` (`tools/0`), `Projects`, `Threads`, `Transcript`, `Assistant.Tools.*` |
-| `Photon.Assistant.Prompt` | functional core (system prompt from settings, memory and time; Blip's voice; the shell lines from `MachineTools.Guide`; the line about page notes) | pure | `Memory`, `MachineTools.Guide` |
+| `Photon.Assistant` | boundary (the assistant's API, which the web pages use, and its profile; its tools are its own five plus `MachineTools.tools/0`; `page_at/1` makes the page the user has open, and `send/2` sends a message with the page's facts read fresh; `schedules/0` and `cancel_schedule/1` are Blip's own schedules through `Photon.Schedules`; `stop/0` keeps scheduled prompts (`Submission.background?/1`)) | does I/O (docs, settings file, clock, projects, threads, skills and schedules); `conversation_id/0` may commit | `Durable`, `Settings`, `ChatGPT`, `Prompt`, `Memory`, `Page`, `MachineTools` (`tools/0`), `Projects`, `Threads`, `Skills` (`enabled(:blip)` for the prompt), `Schedules`, `Transcript`, `Assistant.Tools.*` |
+| `Photon.Assistant.Prompt` | functional core (system prompt from settings, memory, time and Blip's enabled skills; Blip's voice; the shell lines from `MachineTools.Guide`; the line about page notes; the schedule line saying Blip's schedules post to its own conversation) | pure | `Memory`, `MachineTools.Guide`, `Skills.Prompt` |
 | `Photon.Assistant.Page` | functional core (the page the user has open under Blip: what a path is about (`at/1`), the page and its chip's label for a project, a file or a thread, and the bounded note the model sees in front of a message) | pure | none |
 | `Photon.Assistant.Memory` | functional core (editing the memory text) | pure | none |
 | `Photon.Assistant.Notice` | functional core (what Blip says unasked while its panel is closed: its own answers and failures) | pure | `Entry`, `Message`, `Transcript` |
-| `Photon.Assistant.MockScript` | functional core (mock model script: the machine phrasings from `MachineTools.MockPhrases`, memory, schedules and `here`; matches the last text part of the message) | pure* | `LLM.Mock`, `Message`, `MachineTools.MockPhrases` |
-| `Photon.Assistant.Routine` | worker logic (task kind) | does I/O (commit, clock); `first_wait/1`, `after_fire/2`, `next_after/3`, `prompt/1`, `request_id/1` pure | `Durable`, `Runtime` |
+| `Photon.Assistant.MockScript` | functional core (mock model script: the machine phrasings from `MachineTools.MockPhrases`, the skill phrasings from `Skills.MockPhrases`, memory, schedules and `here`; matches the last text part of the message) | pure* | `LLM.Mock`, `Message`, `MachineTools.MockPhrases`, `Skills.MockPhrases` |
 | `Photon.Assistant.Tools.UpdateMemory` | boundary (tool) | does I/O (commit); the editing is `Memory.edit/3` | `Durable`, `Memory` |
-| `Photon.Assistant.Tools.Schedule` | boundary (tool) | does I/O (creates a task, clock) | `Durable`, `ToolAPI` |
-| `Photon.Assistant.Tools.ListSchedules` | boundary (tool) | does I/O (DB, clock) | `Assistant` |
-| `Photon.Assistant.Tools.CancelSchedule` | boundary (tool) | does I/O | `Durable` |
+| `Photon.Assistant.Tools.Schedule` | boundary (tool: one of Blip's own schedules, made with `Schedules.blip_schedule_tx/5` inside the commit that records the result, with the call's task ID as its request ID) | does I/O (a commit, clock) | `Schedules`, `ToolAPI` |
+| `Photon.Assistant.Tools.ListSchedules` | boundary (tool: Blip's waiting schedules with their `sc_` IDs) | does I/O (DB) | `Assistant` |
+| `Photon.Assistant.Tools.CancelSchedule` | boundary (tool: `Schedules.delete_tx/3` with the scope `:blip`, so a project's schedule reads as unknown) | does I/O (a commit) | `Schedules` |
+| `Photon.Assistant.Tools.LoadSkill` | boundary (durable tool, `replay: :safe`: one of Blip's enabled skills, read with `Skills.load_tx/3` inside the commit that records the result) | does I/O (DB, in a commit) | `Skills`, `Skills.Prompt` |
 | **Projects and threads** | | | |
 | `Photon.Projects` | boundary (the projects context: projects, their slugs and their context files; every write is a Store commit that checks with `Rules` and announces with `Tx.announce/3`; `write_file_tx/5` and `edit_file_tx/6` are for thread tools inside their own commit; no process) | does I/O (DB through commits, PubSub through `Events`, clock, IDs) | `Durable`, `Tx`, `Repo`, `Events`, `Rules`, `Project`, `ContextFile` |
 | `Photon.Projects.Project` | data (Ecto schema, table `projects`: name, purpose, the slug fixed at creation) | pure | Ecto |
 | `Photon.Projects.ContextFile` | data (Ecto schema, table `project_files`: name, lookup key, content, version, who wrote it last) | pure | Ecto |
 | `Photon.Projects.Rules` | functional core (purpose and name, the name made from the purpose, slugs and their uniqueness, file names and lookup keys, the content limit, the user's version check, a thread's exactly-once edit) | pure | `Project`, `ContextFile` |
-| `Photon.Threads` | boundary (the threads context's API, which the pages use, and the `"thread"` profile: the model in Settings, the prompt, the machine tools and four context-file tools, and `workdir/1`, the project's slug; starting a thread makes the row, the conversation, the first message and the title task in one commit; `rename/2`; no process) | does I/O (DB, commits, settings file, clock) | `Durable`, `Tx`, `Repo`, `Projects`, `Settings`, `ChatGPT`, `MachineTools`, `Transcript`, `Thread`, `Rules`, `Prompt`, `Threads.Tools.*` |
+| `Photon.Threads` | boundary (the threads context's API, which the pages use, and the `"thread"` profile: the model in Settings, the prompt with the project's enabled skills, the machine tools, four context-file tools and `load_skill`, and `workdir/1`, the project's slug; starting a thread makes the row, the conversation, the first message and the title task in one commit; `start_tx/4` and `send_tx/4` do it inside a caller's commit, with a `:source` and a `:request_id`, for schedules; `rename/2`; no process) | does I/O (DB, commits, settings file, clock) | `Durable`, `Tx`, `Repo`, `Projects`, `Settings`, `Skills`, `ChatGPT`, `MachineTools`, `Transcript`, `Thread`, `Rules`, `Prompt`, `Threads.Tools.*` |
 | `Photon.Threads.Thread` | data (Ecto schema, table `threads`: the conversation's ID, its project, title and `active_at`) | pure | Ecto |
-| `Photon.Threads.Rules` | functional core (a thread's first title from its first message, the request for the model's short title and what of its answer is one, a renamed title; how the tools list a project's files and head a read, naming who changed each file from the reading thread's side) | pure | `Message` |
-| `Photon.Threads.Prompt` | functional core (a thread's system prompt from its project and the hour; nothing about the user) | pure | `MachineTools.Guide` |
-| `Photon.Threads.MockScript` | functional core (a thread's scripted model: the machine phrasings, and `files`, `read`, `write` and `edit` for context files) | pure* | `LLM.Mock`, `Message`, `MachineTools.MockPhrases` |
+| `Photon.Threads.Rules` | functional core (a thread's first title from its first message, without a leading `[Scheduled] `, the request for the model's short title and what of its answer is one, a renamed title; how the tools list a project's files and head a read, naming who changed each file from the reading thread's side) | pure | `Message` |
+| `Photon.Threads.Prompt` | functional core (a thread's system prompt from its project, the hour and the project's enabled skills, with the line saying what a `[Scheduled]` message is; nothing about the user) | pure | `MachineTools.Guide`, `Skills.Prompt` |
+| `Photon.Threads.MockScript` | functional core (a thread's scripted model: the machine and skill phrasings, and `files`, `read`, `write` and `edit` for context files; strips a leading `[Scheduled] `) | pure* | `LLM.Mock`, `Message`, `MachineTools.MockPhrases`, `Skills.MockPhrases` |
 | `Photon.Threads.MockTitle` | functional core (the scripted model's short title for a thread, from its first message) | pure* | `LLM.Mock`, `Message`, `Threads.Rules` |
 | `Photon.Threads.Titling` | boundary (the `"thread_title"` task kind: once a thread's first run ends, one model request for a short title, stored unless the owner renamed the thread meanwhile; background, so the thread isn't busy) | does I/O (one model request, a commit) | `Durable`, `Runtime`, `ChatGPT`, `Settings`, `Threads`, `Rules`, `MockTitle` |
 | `Photon.Threads.Tools.ListContextFiles`, `.ReadContextFile` | boundary (durable tools, `replay: :safe`: they change nothing) | does I/O (DB) | `Projects`, `Threads`, `Rules` |
 | `Photon.Threads.Tools.WriteContextFile`, `.EditContextFile` | boundary (durable tools, `replay: :safe`: the write is `Projects.write_file_tx/5` or `edit_file_tx/6` inside the commit that records the result) | does I/O (a commit) | `Projects`, `Threads`, `Rules` |
+| `Photon.Threads.Tools.LoadSkill` | boundary (durable tool, `replay: :safe`: one of the project's enabled skills, read with `Skills.load_tx/3` inside the commit that records the result) | does I/O (DB, in a commit) | `Skills`, `Skills.Prompt`, `Threads` |
+| **Skills** | | | |
+| `Photon.Skills` | boundary (the skills context: `list/0` with each skill's scopes, `get/1`, `get_by_name/1`, `create/1`, `install/2`, `update/3` against a version, `delete/1`, `enable/2` and `disable/2` per scope (`:blip` or `{:project, id}`, at most 30 each), `enabled/1` for the prompts, `load_tx/3` for the `load_skill` tools inside their commit, `read/1` for a pasted SKILL.md, `fetch/1` for a link; every write is a Store commit announced with `Tx.announce/3` on `"skills"`; no process) | does I/O (DB through commits, PubSub through `Events`, clock, IDs; HTTP through `Fetch`) | `Durable`, `Tx`, `Repo`, `Events`, `Projects`, `Rules`, `Source`, `Fetch`, `Skill`, `Enablement` |
+| `Photon.Skills.Skill` | data (Ecto schema, table `skills`: name, description, instructions, version, origin, source URL, install notes, the files install left out) | pure | Ecto |
+| `Photon.Skills.Enablement` | data (Ecto schema, table `skill_enablements`: one skill on in one scope; there is no "off" row) | pure | Ecto |
+| `Photon.Skills.Rules` | functional core (the name, description and instructions limits, name suggestions, the 30-per-scope limit, the version check, which paths the instructions mention) | pure | none |
+| `Photon.Skills.SkillMd` | functional core (reads a SKILL.md: the subset of YAML front matter SKILL.md files use, then the instructions) | pure | none |
+| `Photon.Skills.Source` | functional core (what a link is, the GitHub API and raw URLs, which folders of a tree hold a SKILL.md, a downloaded SKILL.md and its folder to a candidate with its notes and left-out files, and the messages for each failure) | pure | `Rules`, `SkillMd` |
+| `Photon.Skills.Fetch` | boundary (the only HTTP for skills: two GitHub API calls at most per link, then the SKILL.md downloads through `Task.async_stream/3`, six at a time; every request bounded in size, time and redirects) | does I/O (HTTP, in the caller's process) | Req, `Source` |
+| `Photon.Skills.Prompt` | functional core (what agents see: the prompt's Skills section, the text a load returns with its left-out files line, the load's error, and the `load_skill` tool's name, description and parameters) | pure | `Skill` |
+| `Photon.Skills.MockPhrases` | functional core (`skills` and `load skill <name>`, the phrasings both scripted models share) | pure* | `LLM.Mock`, `Message` |
+| **Schedules** | | | |
+| `Photon.Schedules` | boundary (the schedules context: `list/1` and `get/1` with each schedule's next time and state read from its task, `create/2`, `update/3` against a version, `delete/1`, `run_now/1`, `consent?/0`, the form's `new_params/1` and `edit_params/1`, and for Blip's tools `blip_schedule_tx/5`, `delete_tx/3` and `when_text/1`; every change writes the row and replaces or retires its routine task in one Store commit, announced on `"schedules"`; no process) | does I/O (DB through commits, PubSub through `Events`, settings file, clock, IDs) | `Durable`, `Tx`, `Repo`, `Events`, `Projects`, `Settings`, `Threads` (`start_tx/4`, `send_tx/4`), `Rules`, `Routine`, `Schedule` |
+| `Photon.Schedules.Schedule` | data (Ecto schema, table `schedules`: the prompt, the first time and the interval, the project and thread it targets (neither for Blip's), the version, its routine task, and the last firing's time, outcome and thread) | pure | Ecto |
+| `Photon.Schedules.Rules` | functional core (the form's and Blip's tool's input, the first time a new or edited schedule's task waits for (`arm/4`, from what the old task fired), the next time after a firing, where a schedule fires and what a firing does there from the consent and overlap facts (`fire/2`), the scheduled text, the skip notice and the request IDs) | pure (time passed in) | none |
+| `Photon.Schedules.Routine` | worker logic (the `"routine"` task kind, moved from `Photon.Assistant.Routine`: a background task that waits for the schedule's next time, fires it in one fenced commit (`fire_tx/3`, shared with run-now) and waits again; `on_fail/3` records a failed task on its row) | does I/O (commits, clock, the settings file through `Schedules.consent?/0`) | `Durable`, `Runtime`, `Tx`, `Repo`, `Schedules`, `Threads`, `Rules`, `Schedule` |
 | `Photon.Transcript` | functional core (what a conversation page shows, for Blip's panel and a thread's page: entry index without image data, what the user typed without the page note, the in-flight answer fold, running calls' output tails, a call's status and a machine call's line, Blip's mood, an image decoded from its entry) | pure | `Entry`, `Message` |
 | **Machines and machine tools** | | | |
 | `Photon.Machines` | boundary (the context for machines and their operations: the registry of connected nodes (`register/2`, `list/0`, `get/1`, `online?/1`, `subscribe/0`), status and roster, starting an op, the tool call's claim, cancel and give-up inside its commit, and the channel's join, push, snapshot and output, which push nothing to an outdated machine; `command/3` and `push_op/2` are plain sends to a channel, and its moduledoc says why; no process) | does I/O: every write and the channel's reads are `Durable.Store` commits; Registry, sends to channels (`op.cancel` from inside cancel commits), PubSub through `Events`, output broadcast with `Durable.live/2` | `Durable`, `Tx`, `Repo`, `Events`, `NodeKeys`, `Machines.Op`, `Machines.Rules`, `Machines.Roster`, `PhotonCore.Operation.Wire`, `Photon.MachineRegistry` |
@@ -208,7 +241,7 @@ conversation with the same pieces (`Photon.Transcript`,
 | `Photon.Provision.Lines` | functional core (Collectable line splitter) | pure apart from the `log` callback it calls | none |
 | `Photon.Tailnet` | boundary (`tailscale` CLI, ETS cache) and the cache table's owner (a GenServer that creates it in `init/1`) | does I/O; `parse/1`, `parse_whois/1`, `names/1`, `fresh?/2` pure | ETS |
 | **Settings and auth** | | | |
-| `Photon.Settings` | boundary (`load/0`, `save/1`) and pure functions of a settings map (`normalize/2`, `model/1`, `model_label/1`, `reasoning/1`, `scheduled_work?/1`), read by Blip's and the thread profile alike | `load/0`, `save/1` do I/O | `Paths`, `PrivateFile`, `Events` |
+| `Photon.Settings` | boundary (`load/0`, `save/1`) and pure functions of a settings map (`normalize/2`, `model/1`, `model_label/1`, `reasoning/1`, `scheduled_work?/1`), read by Blip's and the thread profile alike, and by `Photon.Schedules` for consent | `load/0`, `save/1` do I/O | `Paths`, `PrivateFile`, `Events` |
 | `Photon.ChatGPT` | boundary (API and server: the ChatGPT account; sign-in, tokens only while plan use is allowed, serialized refresh, models; `stream/3` runs a request in the caller and reports a refused token) | is a process; HTTP to OpenAI, the account file, PubSub; its state is redacted from crash reports (`format_status/1`) | `ChatGPT.OAuth`, `Paths`, `PrivateFile`, `Events`, `PhotonCore.LLM`, Req |
 | `Photon.ChatGPT.OAuth` | functional core (Sign in with ChatGPT's rules: the link, the pasted address, the token forms and claims, when to refresh) | pure (secrets and time passed in) | Jason |
 | `Photon.Auth` | boundary (who may open the GUI: `:tailscale`, `:password`, both, or `:off`) | the password does I/O (file, `:persistent_term`); `check_device/3` is pure | `Paths`, `Tailnet` |
@@ -221,9 +254,9 @@ conversation with the same pieces (`Photon.Transcript`,
 
 | Module | Layer | Purity | Depends on |
 | --- | --- | --- | --- |
-| `PhotonWeb` | boundary glue (`use` macros) | pure | Phoenix |
+| `PhotonWeb` | boundary glue (`use` macros; `html_helpers` imports `TimeComponents`) | pure | Phoenix |
 | `PhotonWeb.Endpoint` | boundary (HTTP and websocket entry) and lifecycle (supervises Bandit and sockets) | is a process | `Router`, `NodeSocket`, Phoenix |
-| `PhotonWeb.Router` | boundary (routing; every page in one `live_session`, the image routes of Blip and of each thread) | pure | controllers, LiveViews, `Auth`, `Shell` |
+| `PhotonWeb.Router` | boundary (routing; every page in one `live_session`, including a project's schedule form and the skills pages, the image routes of Blip and of each thread) | pure | controllers, LiveViews, `Auth`, `Shell` |
 | `PhotonWeb.Telemetry` | lifecycle | is a process (Supervisor) | telemetry_poller |
 | `PhotonWeb.Auth` | boundary (plug and `on_mount`; in the tailscale modes checks every request and LiveView connection, and rechecks open pages when node keys change and every minute through a `handle_info` hook) | does I/O (session, PubSub, a timer; `tailscale whois` through `ClientIP`, node devices from `NodeKeys`) | `Photon.Auth`, `ClientIP`, `NodeKeys` |
 | `PhotonWeb.ClientIP` | boundary (where a request came from, behind the hub's own TLS proxy) | `client/2` is pure; `identify/2` asks `Tailnet.whois/1` | `Tailnet` |
@@ -236,20 +269,29 @@ conversation with the same pieces (`Photon.Transcript`,
 | `PhotonWeb.ConversationImageController` | boundary (serves the images in a conversation, one per request, behind `PhotonWeb.Auth`: `blip/2` for Blip's, `thread/2` for a thread's, each finding entries only in its own conversation) | reads the database through `Assistant.image/2` and `Threads.image/3` | `Assistant`, `Threads` |
 | `PhotonWeb.ErrorHTML` | boundary (rendering) | pure | Phoenix |
 | `PhotonWeb.ErrorJSON` | boundary (rendering) | pure | Phoenix |
-| `PhotonWeb.CoreComponents` | boundary (UI components) | pure | Phoenix.Component |
+| `PhotonWeb.CoreComponents` | boundary (UI components, including `switch/1`, the on and off switch of the skills pages) | pure | Phoenix.Component |
+| `PhotonWeb.TimeComponents` | boundary (UI components: `local_time/1`, a UTC time the colocated `.LocalTime` hook shows in the browser's time zone, and `local_datetime_input/1`, a local-time input whose `.LocalDateTime` hook writes UTC into the field the server reads) | pure | Phoenix.Component |
+| `PhotonWeb.EditorComponents` | boundary (UI components the context file and skill editors and the schedule form share: `guarded_form/1` with the `.UnsavedGuard` hook that asks before leaving unsaved text, `editor_tab/1`, `banner/1`) | pure | Phoenix.Component, `CoreComponents` |
+| `PhotonWeb.ScheduleComponents` | boundary (UI components: a schedule's when line and last-run line, used by the home page, the project page and the schedule form) | pure | `ScheduleText`, `TimeComponents` |
+| `PhotonWeb.ScheduleText` | functional core (the pages' words for schedules: how often, what a firing did, the when line per state, where it goes, what Run now did; never formats a time) | pure | `Schedules.Schedule`, `Schedules` (types) |
+| `PhotonWeb.SkillText` | functional core (the skills pages' words: where a skill is on, how it arrived, a link's place, the install notes as lines) | pure | `Skills.Skill` |
 | `PhotonWeb.Blip` | boundary (UI component: Blip drawn from the brand kit's SVG, posed by `data-state`) | pure | Phoenix.Component |
-| `PhotonWeb.Layouts` | boundary (UI layout: the sidebar with Home, the projects and their threads, Machines with the online count linking to the Nodes page, and Settings; `active` marks the page on screen) | pure | `CoreComponents` |
-| `PhotonWeb.ConversationComponents` | boundary (UI components for a durable conversation, shared by Blip's panel and a thread's page: entries, tool call lines with the machine named, web searches, the in-flight answer, the composer, the sign-in panel; IDs take a prefix, images an image path function) | pure | `Transcript`, `Markdown`, `Message`, `CoreComponents` |
+| `PhotonWeb.Layouts` | boundary (UI layout: the sidebar with Home, the projects and their threads, Machines with the online count linking to the Nodes page, Skills, and Settings; `active` marks the page on screen) | pure | `CoreComponents` |
+| `PhotonWeb.ConversationComponents` | boundary (UI components for a durable conversation, shared by Blip's panel and a thread's page: entries, tool call lines with the machine named or the skill loaded, web searches, the in-flight answer, the composer, the sign-in panel; IDs take a prefix, images an image path function) | pure | `Transcript`, `Markdown`, `Message`, `CoreComponents` |
 | `PhotonWeb.ConversationView` | boundary (socket helpers for the two conversation pages: mount a conversation's assigns and stream, fold in commits and live events; not a process, and calls only `Transcript` and `Markdown`) | pure apart from the socket it's handed | `Transcript`, `Markdown` |
 | `PhotonWeb.ProjectText` | functional core (the project pages' words for times, file sizes and who changed a file, from a time and the thread titles passed in) | pure | `ContextFile` |
 | `PhotonWeb.BlipLive` | boundary (UI process; sticky, rendered once by `Layouts.app/1` over every page) | is a process; talks only to `Photon.Assistant`; draws with the shared conversation modules and `Assistant.Notice`; a hook reports the page under it, which a chip in the message box offers as context | `Assistant`, `Transcript`, `Assistant.Notice`, `ConversationComponents`, `ConversationView`, `Markdown`, `Message`, `Blip` |
 | `PhotonWeb.ProjectNewLive` | boundary (UI process; starts a project from a purpose and an optional name) | is a process; talks only to `Photon.Projects` | `Projects` |
-| `PhotonWeb.ProjectLive` | boundary (UI process; a project's page: name, folder and purpose (editable), its threads and context files as streams) | is a process; reads on mount and on `{:projects_changed, _}`, `{:project_files_changed, ...}` and its own threads' `{:durable_tasks, _}` | `Projects`, `Threads`, `Markdown`, `ProjectText` |
-| `PhotonWeb.ContextFileLive` | boundary (UI process; writes a new context file or edits one, with a preview, saves against the version it loaded, and a banner when a thread or another tab saves first) | is a process; reads on mount, on `{:project_files_changed, ...}` and on `{:projects_changed, _}` for the project's name | `Projects`, `Threads`, `Markdown`, `ProjectText` |
-| `PhotonWeb.ThreadLive` | boundary (UI process; `:new` starts a thread with its first message, `:show` is its conversation with a composer and Stop, drawn with the shared conversation modules under the ID prefix `thread-`) | is a process; subscribes to the thread's conversation | `Projects`, `Threads`, `Transcript`, `ConversationComponents`, `ConversationView` |
-| `PhotonWeb.OverviewLive` | boundary (UI process; the home page, Home in the sidebar until step 4 replaces it) | is a process; machines from the shell, schedules read on mount and on `{:durable_tasks, _}` | `Assistant` |
+| `PhotonWeb.ProjectLive` | boundary (UI process; a project's page: name, folder and purpose (editable), its threads and context files as streams, and in the second column its skills (turned on and off with a picker) and schedules (with Run now, Delete, and a banner when scheduled work is off)) | is a process; reads on mount and on `{:projects_changed, _}` (schedules too), `{:project_files_changed, ...}`, `{:skills_changed, _}`, its own `{:schedules_changed, id}`, settings changes and its own threads' `{:durable_tasks, _}` | `Projects`, `Threads`, `Skills`, `Schedules`, `Markdown`, `ProjectText`, `ScheduleText`, `ScheduleComponents` |
+| `PhotonWeb.ContextFileLive` | boundary (UI process; writes a new context file or edits one, with a preview, saves against the version it loaded, and a banner when a thread or another tab saves first) | is a process; reads on mount, on `{:project_files_changed, ...}` and on `{:projects_changed, _}` for the project's name | `Projects`, `Threads`, `Markdown`, `ProjectText`, `EditorComponents` |
+| `PhotonWeb.ScheduleLive` | boundary (UI process; a project's schedule form: `:new` makes one, `:edit` saves against the version it loaded, with a banner when another tab saves first, and shows the next and last run with Run now and Delete) | is a process; on `:edit` follows `{:schedules_changed, _}` and refreshes only the next and last run, never the form | `Schedules`, `Projects`, `Threads`, `ScheduleText`, `ScheduleComponents`, `EditorComponents` |
+| `PhotonWeb.SkillsLive` | boundary (UI process; the Skills page: every skill as a stream with where it is on and how it arrived, a switch for Blip, and links to write or install one) | is a process; re-reads on `{:skills_changed, _}`, and on `{:projects_changed, id}` only when a listed skill is on there | `Skills`, `Projects`, `SkillText` |
+| `PhotonWeb.SkillLive` | boundary (UI process; `:new` writes a skill, `:edit` edits one against the version it loaded and turns it on for Blip and each project; a toggle re-reads the switches, and only a new version touches the form) | is a process; follows `{:skills_changed, _}` and `{:projects_changed, _}` | `Skills`, `Projects`, `Markdown`, `SkillText`, `EditorComponents` |
+| `PhotonWeb.SkillInstallLive` | boundary (UI process; install from a link, fetched in a `start_async` task, or a pasted SKILL.md: one candidate opens an editable preview, several are a list to pick from) | is a process; the fetch's HTTP runs in its `start_async` task; follows `{:skills_changed, _}` while a list is open | `Skills`, `Markdown`, `SkillText`, `EditorComponents` |
+| `PhotonWeb.ThreadLive` | boundary (UI process; `:new` starts a thread with its first message, `:show` is its conversation with a composer, Stop and a Schedule link to a new schedule for the thread, drawn with the shared conversation modules under the ID prefix `thread-`) | is a process; subscribes to the thread's conversation | `Projects`, `Threads`, `Transcript`, `ConversationComponents`, `ConversationView` |
+| `PhotonWeb.OverviewLive` | boundary (UI process; the home page, Home in the sidebar until step 4 replaces it; lists Blip's schedules) | is a process; machines from the shell, Blip's schedules read on mount and on `{:schedules_changed, nil}` | `Assistant`, `Schedules`, `ScheduleComponents` |
 | `PhotonWeb.NodesLive` | boundary (UI process) | is a process; node data read on mount and on change messages, `tailscale` in a `start_async` task; `render/1` only derives from assigns | `Machines`, `NodeDist`, `NodeKeys`, `Provision`, `Tailnet`, `Hub` |
-| `PhotonWeb.SettingsLive` | boundary (UI process) | is a process; settings file, the ChatGPT account (sign-in steps; models in a `start_async` task), Blip's memory | `Settings`, `ChatGPT`, `Assistant` |
+| `PhotonWeb.SettingsLive` | boundary (UI process; the scheduled-work checkbox covers every schedule, Blip's and the projects') | is a process; settings file, the ChatGPT account (sign-in steps; models in a `start_async` task), Blip's memory | `Settings`, `ChatGPT`, `Assistant` |
 
 ### Test support
 
@@ -280,9 +322,10 @@ conversation with the same pieces (`Photon.Transcript`,
 
 The hub-plus-node test (`apps/hub/test/integration/machine_tools_e2e_test.exs`)
 runs a real node against the real channel over a Bandit listener on a free
-port, with the scripted models: Blip's machine tools, and a thread's
+port, with the scripted models: Blip's machine tools, a thread's
 commands in its project's folder, which the node makes and the project's
-threads share.
+threads share, and a project schedule that starts a thread whose command
+runs there and which loads a skill turned on for the project.
 
 ## Supervision trees
 
@@ -348,6 +391,7 @@ Photon.Supervisor  one_for_one                      (Photon.Application)
 ├── PhotonWeb.Endpoint                              Bandit
 │   ├── /node/websocket -> NodeSocket -> NodeChannel        one process per connected node
 │   ├── /live -> OverviewLive | ProjectNewLive | ProjectLive | ContextFileLive | ThreadLive
+│   │            | ScheduleLive | SkillsLive | SkillLive | SkillInstallLive
 │   │            | NodesLive | SettingsLive, each with BlipLive (sticky) over it
 │   └── HTTP -> Router -> NodeInstallController | ConversationImageController | HealthPlug
 └── PhotonNode  rest_for_one                        only with :local_node; the node tree above, dialing this Endpoint
@@ -371,6 +415,16 @@ Photon.Supervisor  one_for_one                      (Photon.Application)
   so its steps are tasks under `Durable.TaskSupervisor`. A crash loses
   nothing new: projects, files and threads are rows, and the
   announcements are hints that every page re-reads on mount.
+- Step 3 added no process and no registered name either. `Photon.Skills`
+  and `Photon.Schedules` are APIs over the database and the Store's
+  commit line. A schedule's timer is a `"routine"` durable task the
+  existing Scheduler wakes, so its steps run under
+  `Durable.TaskSupervisor` like any other, and a hub restart finds it
+  waiting. A skill fetch runs in the install page's `start_async` task,
+  with its downloads in `Task.async_stream/3` tasks linked to it, so
+  closing the page drops the fetch and nothing else. The new pages
+  (`ScheduleLive`, `SkillsLive`, `SkillLive`, `SkillInstallLive`) are
+  LiveViews under the endpoint like the others.
 - The durable trio is under its own `one_for_one` supervisor, so a
   `Scheduler` restart doesn't touch the steps already running under
   `Durable.TaskSupervisor`; their commits are fenced instead (H2). Its
@@ -1560,3 +1614,80 @@ once.
 Results at the end of step 2: core 187 passed (12 properties, 175 tests;
 unchanged), node 105 passed (1 property, 104 tests), hub 689 passed (12
 properties, 677 tests), with `mix precommit` clean in the node and the hub.
+
+### Step 3: skills and schedules (hub)
+
+2026-10-06. Step 3 of `docs/projects-and-blip.md`, planned in
+`docs/plans/step-3-skills-and-schedules.md`, added skills (instructions
+an agent loads when a task calls for them, turned on per project and for
+Blip) and moved schedules into projects (a project's schedule starts a
+new thread there each time or wakes one of its threads; Blip keeps its
+own). Only the hub changed. The module map and supervision trees above
+are the result.
+
+What was added:
+
+- Hub, skills: `Photon.Skills` with its schemas (`Skill`, `Enablement`),
+  the pure `Rules`, `SkillMd` (the SKILL.md subset), `Source` (links,
+  GitHub trees and candidates) and `Prompt` (the prompt section and what
+  a load returns), `Skills.Fetch` (the only HTTP), `MockPhrases`, and a
+  `load_skill` tool for each profile (`Assistant.Tools.LoadSkill`,
+  `Threads.Tools.LoadSkill`). Both profiles' prompts list the skills
+  enabled for them.
+- Hub, schedules: `Photon.Schedules` with its schema (`Schedule`) and
+  pure `Rules` (input, arming after an edit, the next time, and what a
+  firing does under the consent and overlap rules), and
+  `Schedules.Routine`, the `"routine"` task kind.
+- Hub, threads: `Threads.start_tx/4` and `send_tx/4` are public, with a
+  `:source` and a `:request_id`, so a firing starts or wakes a thread
+  inside its own commit; the thread prompt says what a `[Scheduled]`
+  message is.
+- Hub, web: the Skills page, a skill's page and the install page
+  (`SkillsLive`, `SkillLive`, `SkillInstallLive`), the schedule form
+  (`ScheduleLive`), the project page's Skills and Schedules sections, the
+  thread page's Schedule link, `#nav-skills` in the sidebar; the shared
+  `TimeComponents` (times in the browser's zone), `EditorComponents`
+  (the unsaved-text guard, tabs and banner, moved out of
+  `ContextFileLive`), `ScheduleComponents`, `CoreComponents.switch/1`,
+  and the pure `ScheduleText` and `SkillText`.
+- Specs: `specs/tla/Durable.tla` models repeating routines with edits
+  and deletes, with five new configs (`specs/tla/Durable.md`).
+
+What moved or changed:
+
+- `Photon.Assistant.Routine` became `Photon.Schedules.Routine`. Its task
+  is now only a schedule's timer: the definition and the last firing are
+  on the row, and every edit or delete replaces or retires the task in
+  the same commit, so the step fence keeps an old task from firing.
+- Blip's `schedule`, `list_schedules` and `cancel_schedule` work over
+  `Photon.Schedules` on Blip's schedules only. `Assistant.stop/0` keeps
+  scheduled prompts through `Durable.Submission.background?/1`;
+  `Threads.stop/1` still withdraws them.
+- The overlap rules are new and cover Blip's schedules too: a
+  new-thread schedule skips while its last thread runs, and a prompt
+  doesn't queue behind one of its own.
+- The Settings checkbox for scheduled work names every schedule, not only
+  Blip's. A scheduled thread's first title drops the `[Scheduled] `
+  prefix.
+
+Layers. No new process and no registered name: skills and schedules are
+rows written in Store commits, a schedule's timer is a durable task, and
+a fetch runs in the install page's `start_async` task (rules 2, 3, 31,
+61, 89). A skill load and a firing each read what they decide on inside
+the commit that applies it. `apps/hub/.credo.exs` lists the new core
+modules in `FunctionalCore` (with `PhotonWeb.ScheduleText` and
+`PhotonWeb.SkillText`) and adds `Photon.Skills` and `Photon.Schedules` to
+`ProcessNameOwnership`'s API modules. `Photon.Threads` is over
+`ModuleDependencies`' limit by one once it reads `Photon.Skills`, since it
+is both the context and the `"thread"` profile; the check is off for that
+module, with the reason above it.
+
+Compatibility. None. Two new migrations add the `skills`,
+`skill_enablements` and `schedules` tables, and Blip's old routine tasks
+are not carried over, so the hub database is deleted. Nodes are
+unchanged.
+
+Results at the end of step 3: core 187 passed (12 properties, 175 tests;
+unchanged), node 105 passed (1 property, 104 tests; unchanged), hub 1027
+passed (12 properties, 1015 tests), with `mix precommit` clean in the
+hub.

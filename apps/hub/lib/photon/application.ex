@@ -15,8 +15,9 @@ defmodule Photon.Application do
     * `Photon.ChatGPT`: the ChatGPT account (Sign in with ChatGPT), which
       holds the tokens and refreshes them one at a time
     * `Photon.Durable.Supervisor`: the durable harness Blip and threads
-      run on (left out with `config :photon, start_durable: false`, as in
-      tests); see its moduledoc for its own plan
+      run on, and whose waiting tasks are the schedules' timers (left out
+      with `config :photon, start_durable: false`, as in tests); see its
+      moduledoc for its own plan
     * `PhotonWeb.Endpoint`: HTTP, LiveViews and the node websocket. It
       starts after everything pages and channels call, and stops first.
     * `PhotonNode` (with `config :photon, local_node: true`): a node inside
@@ -32,6 +33,11 @@ defmodule Photon.Application do
   it was rather than restart the web layer with them. Shutdown runs in
   reverse: the local node and the endpoint stop before the durable harness,
   so nothing new arrives while it stops.
+
+  Projects, threads, skills and schedules add no process here: they are
+  rows behind their contexts' APIs, threads run on the durable harness,
+  and a schedule waits as a durable task, so a hub restart finds every
+  schedule where it was.
   """
 
   use Boundary, top_level?: true, deps: [Photon, PhotonWeb, PhotonNode]

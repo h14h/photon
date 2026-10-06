@@ -2111,6 +2111,15 @@ K13. End to end, docs and the final checks. After all of the above.
   pass.
 - Section 8.5. The PR description says to delete the hub database (Blip's
   old routines aren't carried over).
+- (K13) Done as listed, except that this task ran only `mix precommit`
+  (hub 1027 passed) and the core and node suites (unchanged); dialyzer
+  and `mix test --cover` are left to the final checks, and TLC ran in K1.
+  `docs/projects-and-blip.md` gained a **Schedule.** paragraph in
+  "Concepts" for the Stop and overlap words, since the design had no
+  place for them, and its step 2 status no longer lists renaming threads
+  as left out (the step 2 polish added `Threads.rename/2`). No PR is
+  opened here; whoever opens it puts the database note in its
+  description.
 
 ## 12. Decisions made in this plan
 

@@ -6,9 +6,9 @@ defmodule Photon do
 
   The contexts (the APIs the web layer and nodes use):
 
-    * `Photon.Assistant`: Blip's conversation, memory and schedules, the
-      page the user has open under it, and its `"assistant"` profile for
-      the durable harness
+    * `Photon.Assistant`: Blip's conversation and memory, its tools over
+      its own skills and schedules, the page the user has open under it,
+      and its `"assistant"` profile for the durable harness
     * `Photon.Projects`: projects (a purpose, for any body of work) and
       their context files, the Markdown notes the user and the project's
       threads share
@@ -50,7 +50,9 @@ defmodule Photon do
   `Photon.Provision.{Jobs, Script}`, and `Photon.Markdown`.
   `Photon.Application` holds the lifecycle plan. `PhotonWeb` is the
   boundary for browsers and nodes: its LiveViews, channel and controllers
-  call the contexts above and hold no business logic.
+  call the contexts above and hold no business logic; its pure
+  `PhotonWeb.{ProjectText, ScheduleText, SkillText}` only put the pages'
+  words together.
   """
 
   # The hub's contexts, each a boundary of its own; this root exports
