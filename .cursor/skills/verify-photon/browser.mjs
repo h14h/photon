@@ -305,6 +305,8 @@ async function handle(page, msg) {
       return { url: page.url() };
     case "text":
       return { text: await page.locator(msg.selector).innerText({ timeout: timeout ?? 15000 }) };
+    case "count":
+      return { text: String(await page.locator(msg.selector).count()) };
     case "title":
       return { text: await page.title() };
     case "url":

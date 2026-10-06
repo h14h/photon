@@ -15,7 +15,7 @@ Settings are the hub's ChatGPT sign-in, the name and instructions Blip should kn
 - The **ChatGPT** card says Blip needs a model and offers **Sign in with ChatGPT**. With the scripted model, Blip can already talk; this card is still signed out.
 - Under **Blip**, edit **Your name**, **Your time zone**, and **Standing instructions**. Click **Save settings**. There is no save-as-you-type.
 - Under **What Blip remembers**, click **Edit**, change the text, and click **Save**.
-- Click **Fresh context** and confirm **Start a fresh context? Blip stops seeing earlier messages (they stay in the chat). Memory is kept.**
+- Click **Fresh context** and confirm **Start a fresh context? Blip stops seeing earlier messages (they stay in the chat). Memory is kept.** The flash then says **Started a fresh context. Earlier messages stay in the chat, but Blip won't see them.**
 
 ## Driving it with verify-photon
 
@@ -26,10 +26,10 @@ Preconditions:
 - Start from a fresh launch so `<data>/settings.json` does not exist yet. Defaults apply without that file.
 
 - **Open the page.** If Blip is open, run `.cursor/skills/verify-photon/verify-photon browser click --selector '#blip-close'` first. Then `.cursor/skills/verify-photon/verify-photon browser click --selector '#nav-settings'`, then `.cursor/skills/verify-photon/verify-photon browser wait-selector --selector '#settings-form'`. The heading **Settings** is visible, `#begin-sign-in` is visible, and `#chatgpt` does not say `Signed in`. The model and reasoning fields are absent. The sidebar still shows **Photon**.
-- **Save.** Run `.cursor/skills/verify-photon/verify-photon browser fill --selector 'input[name="settings[user_name]"]' --value 'Ada'`, then the same for `input[name="settings[timezone]"]` with `UTC` and `textarea[name="settings[instructions]"]` with `Prefer the local machine.`, then `.cursor/skills/verify-photon/verify-photon browser click --selector '#save-settings'`. Wait for `Saved. The next message uses these settings.` Read `<data>/settings.json`: `user_name` is `Ada`, `timezone` is `UTC`, `instructions` is `Prefer the local machine.`, and `scheduled_work` is `false`. The file mode is `0600`.
+- **Save.** Run `.cursor/skills/verify-photon/verify-photon browser fill --selector 'input[name="settings[user_name]"]' --value 'Ada'`, then the same for `input[name="settings[timezone]"]` with `UTC` and `textarea[name="settings[instructions]"]` with `Prefer the local machine.`, then `.cursor/skills/verify-photon/verify-photon browser click --selector '#save-settings'`. Wait for `Saved. The next message uses these settings.` Read `<data>/settings.json`: `user_name` is `Ada`, `timezone` is `UTC`, `instructions` is `Prefer the local machine.`, and `scheduled_work` is the string `false`. The file mode is `0600`.
 - **Memory.** Run `.cursor/skills/verify-photon/verify-photon browser click --selector '#edit-memory'`, fill `#memory-form textarea` with `The local machine is the one to use.`, click `#memory-form button[type="submit"]`, and wait until `#memory-text` contains that sentence.
-- **Fresh context.** Run `.cursor/skills/verify-photon/verify-photon browser click --confirm --selector '#fresh-start'`. The page says `Started a fresh context.` Earlier Blip messages stay in the panel if you open it again.
-- **Proof.** Copy the saved `settings.json` to `$PHOTON_VERIFY_ROOT/evidence/settings/settings.json`. Screenshot `$PHOTON_VERIFY_ROOT/evidence/settings/saved.png` after save, with the Photon sidebar and **Saved.** visible. Record `feature=settings` in `summary.txt`.
+- **Fresh context.** Run `.cursor/skills/verify-photon/verify-photon browser click --confirm --selector '#fresh-start'`. The flash says `Started a fresh context. Earlier messages stay in the chat, but Blip won't see them.` Earlier Blip messages stay in the panel if you open it again, with a **Fresh context** divider.
+- **Proof.** Copy the saved `settings.json` to `$PHOTON_VERIFY_ROOT/evidence/settings/settings.json`. Screenshot `$PHOTON_VERIFY_ROOT/evidence/settings/saved.png` after save, with the Photon sidebar and `Saved. The next message uses these settings.` visible. Record `feature=settings` in `summary.txt`.
 
 ## Gotchas
 

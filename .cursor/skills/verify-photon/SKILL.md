@@ -1,17 +1,18 @@
 ---
 name: verify-photon
-description: "Drive the Photon hub's Phoenix LiveView (overview, Blip, sessions, settings, nodes) in a headless browser against an isolated PHOTON_DATA_DIR. Use to prove hub UI behavior, after LiveView changes, or when maintaining this verification skill."
+description: "Drive the Photon hub's Phoenix LiveView (overview, Blip, settings, nodes) in a headless browser against an isolated PHOTON_DATA_DIR. Use to prove hub UI behavior, after LiveView changes, or when maintaining this verification skill."
 ---
 
 # Verify Photon
 
-Photon is a Phoenix LiveView hub. This skill starts that hub the way the README does, drives it in Chrome, and keeps proof after the process is gone. The GUI is the shell in `PhotonWeb.Layouts` plus four pages and Blip:
+Photon is a Phoenix LiveView hub. This skill starts that hub the way the README does, drives it in Chrome, and keeps proof after the process is gone. The GUI is the shell in `PhotonWeb.Layouts` plus three pages and Blip:
 
-- `/` is `PhotonWeb.OverviewLive` (machines, running work, recent work, schedules).
-- `/sessions/:id` is `PhotonWeb.SessionLive` (one node session).
+- `/` is `PhotonWeb.OverviewLive` (machines and schedules). Work on a machine shows up in Blip, not as a row here.
 - `/nodes` is `PhotonWeb.NodesLive`.
 - `/settings` is `PhotonWeb.SettingsLive`.
-- `PhotonWeb.BlipLive` floats over every page. That is where you send a message.
+- `PhotonWeb.BlipLive` floats over every page. That is where you send a message, and where a machine's command output appears.
+
+`/sessions/:id` is not a route. A request there is a 404. Node sessions, the model relay, and the node's agent loop are gone.
 
 Remote node install, the `apps/node` CLI, and Fly deploy are not this harness. It drives one hub and the built-in `local` node.
 
@@ -108,6 +109,7 @@ The browser daemon keeps one Chrome window (1440×900, headless, `--no-sandbox`)
 | `wait-text` | `--text` `--within` (optional) `--timeout` ms | Visible text, substring, case-insensitive. Default timeout 60s |
 | `wait-url` | `--includes` | URL contains the substring |
 | `text` | `--selector` | Prints `innerText` |
+| `count` | `--selector` | Prints how many elements match, `0` when none do |
 | `title` / `url` | | Prints the document title or URL |
 | `screenshot` | `--path` | Viewport PNG |
 
@@ -132,13 +134,17 @@ Stable handles, from the LiveViews and their tests:
 | Nodes | `#nav-nodes` |
 | Settings | `#nav-settings` |
 | Sidebar | `#sidebar` |
+| Sign in banner | `#sign-in-banner` |
 | Built-in node | `#side-node-local` |
-| A session row | `#side-session-<id>` |
+| Overview summary | `#overview-summary` |
+| Machines section | `#machines` |
 | Overview machine | `#machine-local` |
-| Session page input | `#session-input` |
-| Session send | `#session-composer button[type="submit"]` |
-| Stop session | `#stop-session` |
-| Delete session | `#delete-session` |
+| Work hint | `#work-hint` |
+| Schedules | `#schedules` |
+| A schedule row | `#schedule-<id>` |
+| Cancel schedule | `#schedules button[title="Cancel"]` |
+| Dark theme | `button[title="Dark theme"]` |
+| Tool action | `#action-<call_id>` |
 | Settings form | `#settings-form` |
 | Save settings | `#save-settings` |
 | Your name | `input[name="settings[user_name]"]` |

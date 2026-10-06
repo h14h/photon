@@ -4,7 +4,8 @@ Nodes are the machines that run the agent. A local hub starts a built-in node na
 
 ## Sub-features
 
-- `nodes-local` shows the connected built-in node.
+- `nodes-local` shows the connected built-in node, with platform, workspace, and version.
+- `nodes-offline-absent` leaves **Not connected** off the page when every known machine is online.
 - `nodes-tailnet` explains why one-click install is or is not available.
 - `nodes-manual` reveals the curl install command for a named machine.
 - `nodes-leave` returns to Overview without changing nodes.
@@ -12,7 +13,8 @@ Nodes are the machines that run the agent. A local hub starts a built-in node na
 ## How to get to it (user POV)
 
 - Click **Nodes** in the sidebar, or the **+** next to **Machines** (tooltip **Add a node**). Both open `/nodes`.
-- Under **Connected**, a green dot and the name `local` mean the built-in node is connected. The card shows platform, workspace, version, and how many sessions it has.
+- Under **Connected**, a green dot and the name `local` mean the built-in node is connected. The card shows **Platform**, **Workspace**, and **Version**. It does not count sessions.
+- **Not connected** lists machines the hub already knows that are offline. On a fresh hub whose only machine is the connected `local` node, that section is absent.
 - Read **Add a node from your tailnet**. If tailscale is missing, the page says so and still offers the command below.
 - Under **Any other machine**, type a name and click **Make its command**. The command appears once and includes a key for that node alone.
 - Click **Overview** to leave. There is no dialog to close.
@@ -26,7 +28,8 @@ Preconditions:
 - Do not put a screenshot of `#install-command` in evidence. It includes a node key. Do not write that key into `summary.txt`.
 
 - **Open the page.** If Blip is open, run `.cursor/skills/verify-photon/verify-photon browser click --selector '#blip-close'` first. Then `.cursor/skills/verify-photon/verify-photon browser click --selector '#nav-nodes'`, then `.cursor/skills/verify-photon/verify-photon browser wait-selector --selector '#node-local'`. The card contains `local`. `#sidebar` contains `local` and does not contain `No machines yet`.
-- **Workspace.** Run `.cursor/skills/verify-photon/verify-photon browser text --selector '#node-local'`. The text contains the doctor `data_dir` (the workspace is `<data>/local-node/workspace`).
+- **Workspace.** Run `.cursor/skills/verify-photon/verify-photon browser text --selector '#node-local'`. The text contains `Platform`, `Workspace`, `Version`, and the doctor `data_dir` (the workspace is `<data>/local-node/workspace`). It does not contain a session count.
+- **Offline list.** Run `.cursor/skills/verify-photon/verify-photon browser count --selector '#offline-nodes'`. It prints `0`. A fresh hub has not issued a key for any other machine, and `local` is connected, so **Not connected** stays hidden.
 - **Capture the page before any key exists.** Run `.cursor/skills/verify-photon/verify-photon browser screenshot --path "$PHOTON_VERIFY_ROOT/evidence/nodes/page.png"`. The image shows **Nodes**, the `local` card, and the Photon sidebar. It must not contain `PHOTON_NODE_TOKEN=`.
 - **Tailnet branch.** Run `.cursor/skills/verify-photon/verify-photon browser text --selector '#add-node'`. On a hub without the `tailscale` binary, the text contains `tailscale isn't installed on the hub machine`. On a hub that is on a tailnet, it lists machine rows instead; leave **Install** alone. A dev server bound to `127.0.0.1` also shows `The hub only listens on this machine` and a `PHOTON_BIND=` hint. With nothing in `apps/node/dist`, the page contains `No node builds are on this hub yet`. None of those warnings mean `local` is down.
 - **Manual command, redacted.** Run `.cursor/skills/verify-photon/verify-photon browser fill --selector '#manual-node-id' --value 'vps-1'`, then `.cursor/skills/verify-photon/verify-photon browser click --selector '#make-install-command'`, then `.cursor/skills/verify-photon/verify-photon browser wait-selector --selector '#install-command'`. Read the text and assert it contains `/node/install.sh` and `PHOTON_NODE_TOKEN=`. In `summary.txt` record only that both substrings were present, plus `token_recorded=no`. Do not copy the token value and do not screenshot this state.
