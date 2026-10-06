@@ -1,9 +1,11 @@
 defmodule Photon.TestProfile do
   @moduledoc """
-  A conversation profile for harness tests: a scripted model and a `wait`
-  tool that parks durably until the signal `"go"` fires.
+  A conversation profile for harness tests: a scripted model, a `wait`
+  tool that parks durably until the signal `"go"` fires, and a `raise` tool
+  that raises.
 
     * `"wait"` calls the wait tool, then answers `"waited"`
+    * `"raise"` calls the raise tool, then answers `"waited"`
     * `"fail"` makes the model request fail
     * anything else is echoed as `"echo: <text>"`
   """
@@ -25,7 +27,7 @@ defmodule Photon.TestProfile do
   def system_prompt(_conversation), do: "test"
 
   @impl Photon.Durable.Profile
-  def tools(_conversation), do: [Photon.TestProfile.Wait]
+  def tools(_conversation), do: [Photon.TestProfile.Wait, Photon.TestProfile.Raise]
 
   @impl PhotonCore.LLM.Mock
   def respond(request) do
@@ -36,6 +38,7 @@ defmodule Photon.TestProfile do
   end
 
   defp reply("wait"), do: Message.assistant("", [Mock.call("wait", %{})])
+  defp reply("raise"), do: Message.assistant("", [Mock.call("raise", %{})])
   defp reply("fail"), do: {:error, "model down"}
   defp reply(text), do: Message.assistant("echo: " <> text)
 end

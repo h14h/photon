@@ -49,4 +49,74 @@ defmodule Photon.Durable.ContextTest do
   test "a result without its call is dropped" do
     assert Context.messages([tool_result_entry("c9", "stray")]) == []
   end
+
+  describe "tool results from earlier turns" do
+    @full_output "Full output: /data/ops/op_1/out and /data/ops/op_1/err on mm1, kept for 7 days."
+
+    defp image, do: Message.image("image/png", String.duplicate("A", 50_000))
+
+    # Two turns, each with a long shell result and an image result.
+    defp conversation do
+      long = String.duplicate("é", 3_000) <> String.duplicate("x", 6_000) <> "end"
+
+      [
+        user_entry("look", seq: 1),
+        assistant_entry("", [call("shell", %{}, "c1"), call("view_image", %{}, "c2")], seq: 2),
+        tool_result_entry("c1", long, details: %{"full_output" => @full_output}, seq: 3),
+        tool_result_entry("c2", [Message.text("1024x768"), image()], seq: 4),
+        assistant_entry("done", [], seq: 5),
+        user_entry("again", seq: 6),
+        assistant_entry("", [call("shell", %{}, "c3"), call("view_image", %{}, "c4")], seq: 7),
+        tool_result_entry("c3", long, details: %{"full_output" => @full_output}, seq: 8),
+        tool_result_entry("c4", [Message.text("1024x768"), image()], seq: 9)
+      ]
+    end
+
+    defp result(messages, id), do: Enum.find(messages, &(&1["tool_call_id"] == id))
+
+    test "keep the ends of long text, with the full_output hint" do
+      text = conversation() |> Context.messages() |> result("c1") |> Message.text_of()
+
+      assert String.starts_with?(text, String.duplicate("é", 2_000) <> "\n\n...")
+      assert String.ends_with?(text, "...\n\n" <> String.duplicate("x", 1_997) <> "end")
+      assert text =~ "5003 characters of this older result left out. " <> @full_output
+      assert length(String.to_charlist(text)) < 4_300
+    end
+
+    test "say so without a hint when the tool set none" do
+      long = String.duplicate("y", 5_000)
+
+      entries = [
+        assistant_entry("", [call("shell", %{}, "c1")], seq: 1),
+        tool_result_entry("c1", long, seq: 2),
+        user_entry("next", seq: 3)
+      ]
+
+      text = entries |> Context.messages() |> result("c1") |> Message.text_of()
+      assert text =~ "...1000 characters of this older result left out...\n\n"
+    end
+
+    test "drop images and keep their dimensions line" do
+      older = conversation() |> Context.messages() |> result("c2")
+
+      assert Message.images(older) == []
+      assert Message.text_of(older) =~ "1024x768"
+      assert Message.text_of(older) =~ "(image no longer shown; call view_image again to see it)"
+    end
+
+    test "leave the current turn whole" do
+      entries = conversation()
+      messages = Context.messages(entries)
+
+      assert result(messages, "c3") == Enum.at(entries, 7).data["message"]
+      assert result(messages, "c4") == Enum.at(entries, 8).data["message"]
+    end
+
+    test "still pair every call with its result" do
+      messages = Context.messages(conversation())
+
+      assert Enum.map(messages, &(&1["tool_call_id"] || &1["role"])) ==
+               ~w(user assistant c1 c2 assistant user assistant c3 c4)
+    end
+  end
 end
