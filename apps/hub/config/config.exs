@@ -78,10 +78,10 @@ config :tailwind,
 
 # Configure Elixir's Logger
 # Durable steps tag their lines with the task ID, and the embedded node's
-# coordinators with the session ID.
+# shell operations with the op ID.
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :durable_task, :session]
+  metadata: [:request_id, :durable_task, :op]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

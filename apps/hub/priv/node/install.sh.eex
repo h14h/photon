@@ -182,8 +182,8 @@ fi
 stop_existing
 mv "$BIN.new" "$BIN"
 
-# Services start with a bare PATH, so keep the login shell's, where the agent's
-# tools (git, brew, mise, ...) live.
+# Services start with a bare PATH, so keep the login shell's, where commands
+# find their tools (git, brew, mise, ...).
 shell="${SHELL:-/bin/sh}"
 login_path=$("$shell" -lc 'printf "%s" "$PATH"' 2>/dev/null </dev/null | tail -n 1) || login_path=""
 [ -n "$login_path" ] || login_path="$PATH"
@@ -204,7 +204,7 @@ case "$service" in
     mkdir -p "$(dirname "$UNIT")"
     cat >"$UNIT" <<UNIT
 [Unit]
-Description=Photon node (agent harness)
+Description=Photon node
 After=network-online.target
 Wants=network-online.target
 
