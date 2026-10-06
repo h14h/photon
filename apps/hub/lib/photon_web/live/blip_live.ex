@@ -22,7 +22,9 @@ defmodule PhotonWeb.BlipLive do
 
   Each tool call shows inside the answer that made it, as a line saying
   what it did; it opens to show the result. A call on a machine names the
-  machine: "Ran `uptime` on mm1", "Looked at shot.png on mm1". While a
+  machine, `local` included, and says what it is doing until it ends:
+  "Running `uptime` on mm1", then "Ran `uptime` on mm1"; "Looking at
+  shot.png on local", then "Looked at shot.png on local". While a
   `shell` call runs, the end of its output shows under it, as the node
   streams it (`@outputs`, by call ID, dropped when the result comes); the
   hub stores none of it, so a page opened mid-command shows output from
@@ -789,7 +791,7 @@ defmodule PhotonWeb.BlipLive do
             <.icon :if={@status == :stopped} name="hero-stop-micro" class="size-3.5" />
           </span>
           <span class="min-w-0 flex-1 truncate text-ink-soft">
-            <.action_label name={@call["name"]} args={@args} />
+            <.action_label name={@call["name"]} args={@args} details={@details} status={@status} />
           </span>
           <span
             :if={@details["exit_code"] not in [nil, 0]}
@@ -853,23 +855,16 @@ defmodule PhotonWeb.BlipLive do
 
   attr :name, :string, required: true
   attr :args, :map, required: true
+  attr :details, :map, default: %{}
+  attr :status, :atom, default: :done
 
   # What a call did, in a line. A machine call names its command or path,
-  # and the machine.
+  # and the machine, in the present while it runs.
   defp action_label(%{name: name} = assigns) when name in ~w(shell view_image) do
-    {verb, subject} =
-      if name == "shell",
-        do: {"Ran", assigns.args["command"]},
-        else: {"Looked at", assigns.args["path"]}
+    %{verb: verb, subject: subject, machine: machine} =
+      Transcript.machine_action(name, assigns.args, assigns.details, assigns.status)
 
-    machine = assigns.args["machine"]
-
-    assigns =
-      assign(assigns,
-        verb: verb,
-        subject: truncate(subject),
-        machine: is_binary(machine) && machine != "" && machine
-      )
+    assigns = assign(assigns, verb: verb, subject: truncate(subject), machine: machine)
 
     ~H"""
     <span phx-no-format>{@verb} <code class="font-mono text-[12.5px] text-ink">{@subject}</code><span :if={@machine}> on <span class="font-medium text-ink">{@machine}</span></span></span>

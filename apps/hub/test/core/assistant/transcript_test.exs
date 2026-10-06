@@ -145,6 +145,40 @@ defmodule Photon.Assistant.TranscriptTest do
     end
   end
 
+  describe "a machine call's line" do
+    test "is in the present while the call runs, and in the past once it ends" do
+      args = %{"machine" => "mm1", "command" => "make test"}
+
+      assert Transcript.machine_action("shell", args, %{}, :pending) ==
+               %{verb: "Running", subject: "make test", machine: "mm1"}
+
+      for status <- [:done, :error, :stopped] do
+        assert %{verb: "Ran"} = Transcript.machine_action("shell", args, %{}, status)
+      end
+
+      image = %{"machine" => "mm1", "path" => "shot.png"}
+
+      assert Transcript.machine_action("view_image", image, %{}, :pending) ==
+               %{verb: "Looking at", subject: "shot.png", machine: "mm1"}
+
+      assert %{verb: "Looked at"} = Transcript.machine_action("view_image", image, %{}, :done)
+    end
+
+    test "always names the machine, the hub's own included" do
+      local = %{"machine" => "local", "command" => "uname -a"}
+      assert %{machine: "local"} = Transcript.machine_action("shell", local, %{}, :done)
+
+      # From the result when the arguments don't say.
+      details = %{"machine" => "local", "kind" => "shell"}
+
+      assert %{machine: "local"} =
+               Transcript.machine_action("shell", %{"command" => "uname -a"}, details, :done)
+
+      assert %{machine: nil} =
+               Transcript.machine_action("shell", %{"machine" => ""}, %{}, :pending)
+    end
+  end
+
   describe "a running call's output" do
     defp output(call_id, text, stream \\ "out"),
       do: %{"type" => "tool_output", "call_id" => call_id, "stream" => stream, "text" => text}

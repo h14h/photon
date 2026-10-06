@@ -196,7 +196,7 @@ defmodule PhotonWeb.BlipLiveTest do
 
       assert has_element?(blip, "#action-c1[data-tool=shell][data-status=pending]")
       assert has_element?(blip, "#action-c1 summary code", "make test")
-      assert has_element?(blip, "#action-c1 summary", "Ran make test on mm1")
+      assert has_element?(blip, "#action-c1 summary", "Running make test on mm1")
       refute has_element?(blip, "#action-c1-tail")
 
       printed(c, "c1", "out", "compiling\n")
@@ -216,6 +216,8 @@ defmodule PhotonWeb.BlipLiveTest do
 
       refute has_element?(blip, "#action-c1-tail")
       assert has_element?(blip, "#action-c1[data-status=done]")
+      assert has_element?(blip, "#action-c1 summary", "Ran make test on mm1")
+      refute has_element?(blip, "#action-c1 summary", "Running")
       assert has_element?(blip, "#action-c1 summary", "exit 2")
       assert has_element?(blip, "#action-c1 details pre", "Exit code: 2")
 
@@ -230,7 +232,7 @@ defmodule PhotonWeb.BlipLiveTest do
       conversation: c
     } do
       asked(c, [{"c2", "view_image", %{"machine" => "mm1", "path" => "shot.png"}}])
-      assert has_element?(blip, "#action-c2", "Looked at shot.png on mm1")
+      assert has_element?(blip, "#action-c2 summary", "Looking at shot.png on mm1")
 
       result =
         answered(
@@ -249,6 +251,7 @@ defmodule PhotonWeb.BlipLiveTest do
           }
         )
 
+      assert has_element?(blip, "#action-c2 summary", "Looked at shot.png on mm1")
       src = "/blip/images/#{result.id}/0"
       assert has_element?(blip, ~s(#action-c2 img#action-c2-image-0[src="#{src}"]))
       # The page carries no image data, so a re-render of the answer sends none.
@@ -262,6 +265,33 @@ defmodule PhotonWeb.BlipLiveTest do
                blip,
                "#action-c2-image-0[alt='1x1 image/png, /home/me/shot.png on mm1']"
              )
+    end
+
+    test "a call on the hub's own machine names it too", %{blip: blip, conversation: c} do
+      asked(c, [{"c6", "shell", %{"machine" => "local", "command" => "uname -a"}}])
+      assert has_element?(blip, "#action-c6 summary", "Running uname -a on local")
+
+      answered(c, "c6", "shell", "Linux", %{
+        "machine" => "local",
+        "kind" => "shell",
+        "status" => "completed",
+        "command" => "uname -a",
+        "exit_code" => 0
+      })
+
+      assert has_element?(blip, "#action-c6[data-status=done] summary", "Ran uname -a on local")
+
+      # A call whose arguments don't name the machine takes it from the result.
+      asked(c, [{"c7", "view_image", %{"path" => "shot.png"}}])
+
+      answered(c, "c7", "view_image", "1x1 image/png", %{
+        "machine" => "local",
+        "kind" => "view_image",
+        "status" => "completed",
+        "path" => "shot.png"
+      })
+
+      assert has_element?(blip, "#action-c7 summary", "Looked at shot.png on local")
     end
 
     test "a failed or canceled operation shows as such, named from the call", %{

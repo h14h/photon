@@ -18,7 +18,8 @@ defmodule Photon.Assistant.Transcript do
       call runs after the answer that made it is committed
     * the web searches an answer ran (`searches/1`), and how each reads
       (`search_label/1`)
-    * a tool call's status as the page shows it (`action_status/2`)
+    * a tool call's status as the page shows it (`action_status/2`), and
+      how a machine call's line reads (`machine_action/4`)
     * Blip's mood (`mood/1`), and the outcome a batch of new entries is
       worth showing for a moment (`outcome/3`)
   """
@@ -257,6 +258,34 @@ defmodule Photon.Assistant.Transcript do
   def action_status(%{"status" => "ok"}, _details), do: :done
   def action_status(%{"status" => "aborted"}, _details), do: :stopped
   def action_status(_result, _details), do: :error
+
+  @doc """
+  How a `shell` or `view_image` call's line reads, given its arguments, its
+  result's details and its status (`action_status/2`): the verb, in the
+  present while the call runs ("Running", "Looking at") and in the past
+  once it has ended ("Ran", "Looked at"), the command or path, and the
+  machine. The machine is always named, `local` too: from the arguments,
+  or the result's details if the arguments have none (nil only when
+  neither does).
+  """
+  @spec machine_action(String.t(), map(), map(), :pending | :done | :error | :stopped) ::
+          %{verb: String.t(), subject: term(), machine: String.t() | nil}
+  def machine_action("shell", args, details, status),
+    do: machine_line(verb(status, "Running", "Ran"), args["command"], args, details)
+
+  def machine_action("view_image", args, details, status),
+    do: machine_line(verb(status, "Looking at", "Looked at"), args["path"], args, details)
+
+  defp machine_line(verb, subject, args, details),
+    do: %{verb: verb, subject: subject, machine: machine_name(args) || machine_name(details)}
+
+  defp verb(:pending, running, _ran), do: running
+  defp verb(_status, _running, ran), do: ran
+
+  defp machine_name(%{"machine" => machine}) when is_binary(machine) and machine != "",
+    do: machine
+
+  defp machine_name(_map), do: nil
 
   @doc """
   Blip's mood. An outcome the page is holding (see `outcome/3`) shows first,
