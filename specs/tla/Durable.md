@@ -190,7 +190,15 @@ Message loss and the node's side are `HubOps.tla`'s and `Executor.tla`'s.
   ID and doesn't touch the task, like `UserSubmit` of background input.
   An edit that keeps a one-off's time after it fired arms nothing
   (`arm/4` says `:finished`) and changes nothing modeled, so it is left
-  out; every other edit replaces the routine.
+  out. An edit that makes a repeating schedule a one-off at the slot it
+  just fired also arms nothing, but its old routine is still live: it is
+  marked for abort and the row names no routine. On the modeled
+  variables that is `OwnerDelete`'s step (the row's columns aren't
+  modeled), so `Durable-schedule.cfg`'s `OneCarrier` and
+  `NoFireAfterRetire` cover it through that action, and
+  `Durable-schedule-retire-live.cfg` (added with this case) checks that
+  a routine retired with no replacement ends `aborted`. The spec didn't
+  change. Every other edit replaces the routine.
 
 ### Fairness
 
@@ -291,6 +299,7 @@ step 3 configs ran the same day, under the same load:
 | `Durable-maxrounds.cfg` | F8: MaxRounds = 2 | `NoOrphanCalls` | 27 | 2s |
 | `Durable-schedcrash.cfg` | F10: 2 user inputs, 1 Scheduler crash | `PlacedTracked` `AtMostOneActiveRun` `ToolResultIffFinished`; `PlacedSettles` | 378 | 2s |
 | `Durable-schedule.cfg` | step 3: a routine firing twice into the conversation, 1 edit, 1 delete, no user input, 1 hub crash, 1 Scheduler crash, 1 step crash, 1 Stop | safety set and the schedule invariants | 7,283,126 | 5m17s (6 workers) |
+| `Durable-schedule-retire-live.cfg` | step 3 review: a routine firing twice, retired with no replacement (a delete, or an edit that makes a repeating schedule a one-off at the slot it just fired), 1 hub crash | `RetiredEnds` `PlacedSettles` `NoRunningForever` | 394 | 2s (4 workers, 2026-10-06) |
 | `Durable-schedule-thread.cfg` | step 3: the same, each firing starting a new thread, with 1 user input | safety set and the schedule invariants | 9,441,068 | 8m22s (4 workers) |
 | `Durable-schedule-live.cfg` | step 3: a routine firing twice into the conversation, 1 edit, 1 user input, 1 hub crash, 1 Stop | `RetiredEnds` `PlacedSettles` `NoRunningForever` | 1,151,648 | 43m27s (4 workers; 2m44s of it the temporal check) |
 | `Durable-bug-edit-keeps-old.cfg` | `Durable-schedule.cfg` with `BugEditKeepsOld` | fails `OneCarrier` (expected) | 2-state trace | 1s |

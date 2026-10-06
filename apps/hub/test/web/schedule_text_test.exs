@@ -52,6 +52,16 @@ defmodule PhotonWeb.ScheduleTextTest do
              {:stopped, "Stopped after an error: it failed. Pick a time and save it to run it."}
   end
 
+  test "state/3 says how to start one of Blip's again, which has no form" do
+    for every <- [60, nil] do
+      assert ScheduleText.state({:stopped, "boom"}, every, :blip) ==
+               {:stopped,
+                "Stopped after an error: boom. Cancel it, and ask Blip to schedule it again."}
+    end
+
+    assert ScheduleText.state(:waiting, 60, :blip) == {:next, "Every hour · next"}
+  end
+
   test "target/2 says where firings go, with the title to link" do
     assert ScheduleText.target(%Schedule{conversation_id: nil}, nil) ==
              {"Starts a new thread each time", nil}

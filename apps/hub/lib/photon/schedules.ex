@@ -264,9 +264,11 @@ defmodule Photon.Schedules do
   Saves project schedule `id` from its form, given the `version` the form
   loaded. In one commit it re-checks the params, retires the old task,
   bumps the version and arms a new task at the first time the old one
-  hadn't fired (none for a one-off that already fired at the time it
-  keeps). Errors: `:not_found` (no such project schedule), `:stale` (it
-  changed since the form loaded it), or a field map.
+  hadn't fired. When there is none (a one-off that already fired at the
+  time it keeps, or a repeating one made a one-off at the time it just
+  fired), the schedule is done and no timer is left running. Errors:
+  `:not_found` (no such project schedule), `:stale` (it changed since
+  the form loaded it), or a field map.
   """
   @spec update(String.t(), map(), pos_integer()) ::
           {:ok, Schedule.t()} | {:error, :not_found | :stale | field_errors()}
@@ -296,7 +298,11 @@ defmodule Photon.Schedules do
 
     schedule =
       schedule
-      |> Ecto.Changeset.change(Map.put(attrs, :version, schedule.version + 1))
+      |> Ecto.Changeset.change(
+        attrs
+        |> Map.put(:version, schedule.version + 1)
+        |> forget_woken(schedule)
+      )
       |> Repo.update!()
 
     schedule = arm_tx(tx, schedule, old, now)
@@ -304,21 +310,34 @@ defmodule Photon.Schedules do
     {:ok, schedule}
   end
 
+  # A schedule that woke a thread remembers it as its last thread. Made
+  # to start a new thread each time, it must not take that thread for one
+  # it started, or the overlap rule would skip every firing while the
+  # owner works there (`Photon.Schedules.Rules.fire/2`).
+  defp forget_woken(%{conversation_id: nil} = attrs, %Schedule{conversation_id: woken} = schedule)
+       when is_binary(woken) and schedule.last_thread_id == woken,
+       do: Map.put(attrs, :last_thread_id, nil)
+
+  defp forget_woken(attrs, _schedule), do: attrs
+
   defp not_stale(%Schedule{version: version}, version), do: :ok
   defp not_stale(%Schedule{}, _version), do: {:error, :stale}
 
   # Every edit replaces the task: the new one waits for the first time the
-  # old one hadn't fired. When there is none (a one-off edited after it
-  # fired, keeping its time), the old, finished task stays the row's, so
-  # the row still reads as done. A new schedule has no old task.
-  # Blip's tool names the task's request ID; otherwise it is the
-  # schedule's version (`Photon.Schedules.Routine.task/3`).
+  # old one hadn't fired. When there is none, the schedule is done: a
+  # one-off edited after it fired, keeping its time, or a repeating one
+  # made a one-off at the time it just fired. A finished old task stays
+  # the row's, so the row still reads as done (or stopped); a live one is
+  # retired like any replaced task and the row names none, which reads as
+  # done too. A new schedule has no old task. Blip's tool names the
+  # task's request ID; otherwise it is the schedule's version
+  # (`Photon.Schedules.Routine.task/3`).
   defp arm_tx(tx, schedule, old, now, request_id \\ nil) do
     fired_through = old && Rules.fired_through(old.input, old.checkpoint, old.status)
 
     case next_ms(schedule, now, fired_through) do
       :finished ->
-        schedule
+        finish_tx(tx, schedule, old)
 
       next_ms ->
         :ok = retire_tx(tx, old)
@@ -326,6 +345,17 @@ defmodule Photon.Schedules do
         schedule |> Ecto.Changeset.change(task_id: task.id) |> Repo.update!()
     end
   end
+
+  defp finish_tx(tx, schedule, %TaskRecord{} = old) do
+    if TaskRecord.terminal?(old) do
+      schedule
+    else
+      :ok = retire_tx(tx, old)
+      schedule |> Ecto.Changeset.change(task_id: nil) |> Repo.update!()
+    end
+  end
+
+  defp finish_tx(_tx, schedule, nil), do: schedule
 
   defp next_ms(schedule, now, fired_through) do
     Rules.arm(

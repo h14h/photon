@@ -61,19 +61,28 @@ defmodule PhotonWeb.ScheduleText do
     * `{:done, "Done"}` for a one-off that fired
     * `{:stopped, words}` when its task failed, said in the error colour:
       "Stopped after an error: <reason>. Save it to start it again." for a
-      repeating schedule, or "... Pick a time and save it to run it." for
-      a one-off, whose time has passed
+      project's repeating schedule, or "... Pick a time and save it to run
+      it." for a one-off, whose time has passed. One of Blip's can't be
+      saved from a page (`whose` is `:blip`): "... Cancel it, and ask Blip
+      to schedule it again."
   """
-  @spec state(Schedules.state(), pos_integer() | nil) ::
+  @spec state(Schedules.state(), pos_integer() | nil, :project | :blip) ::
           {:next | :done | :stopped, String.t()}
-  def state(:waiting, nil), do: {:next, "Once ·"}
-  def state(:waiting, every_minutes), do: {:next, capitalize(every(every_minutes)) <> " · next"}
-  def state(:done, _every_minutes), do: {:done, "Done"}
+  def state(state, every_minutes, whose \\ :project)
+  def state(:waiting, nil, _whose), do: {:next, "Once ·"}
 
-  def state({:stopped, reason}, nil),
+  def state(:waiting, every_minutes, _whose),
+    do: {:next, capitalize(every(every_minutes)) <> " · next"}
+
+  def state(:done, _every_minutes, _whose), do: {:done, "Done"}
+
+  def state({:stopped, reason}, _every_minutes, :blip),
+    do: {:stopped, stopped(reason) <> " Cancel it, and ask Blip to schedule it again."}
+
+  def state({:stopped, reason}, nil, :project),
     do: {:stopped, stopped(reason) <> " Pick a time and save it to run it."}
 
-  def state({:stopped, reason}, _every_minutes),
+  def state({:stopped, reason}, _every_minutes, :project),
     do: {:stopped, stopped(reason) <> " Save it to start it again."}
 
   defp stopped(reason), do: "Stopped after an error: #{String.trim_trailing(reason, ".")}."

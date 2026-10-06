@@ -31,6 +31,9 @@ defmodule Photon.Schedules.Rules do
   @grace_ms 60_000
   @min_minutes 5
   @max_minutes 52 * 10_080
+  # How far ahead a first time may be: ten years, so every time a schedule
+  # reaches stays a date the row and the pages can hold.
+  @horizon_ms 3_650 * 86_400_000
   @units %{"minutes" => 1, "hours" => 60, "days" => 1_440, "weeks" => 10_080}
 
   @prompt_required "Say what this schedule should ask for."
@@ -155,6 +158,9 @@ defmodule Photon.Schedules.Rules do
       {:ok, ms} when repeat == "once" and ms < now - @grace_ms ->
         {:error, "That time has passed."}
 
+      {:ok, ms} when ms > now + @horizon_ms ->
+        {:error, "Pick a time in the next 10 years."}
+
       {:ok, ms} ->
         {:ok, ms}
 
@@ -220,37 +226,50 @@ defmodule Photon.Schedules.Rules do
   `at`, `every_minutes`) with the tool's messages, at `now` (Unix
   milliseconds). An `at` more than a minute ago is refused, the same
   grace as the form's; without a time, a repeating schedule first fires
-  one interval from now.
+  one interval from now. The form's bounds apply: a first time at most
+  10 years ahead, and an interval from 5 minutes to 52 weeks.
   """
   @spec from_tool(map(), ms()) :: {:ok, tool_attrs()} | {:error, String.t()}
   def from_tool(args, now) do
     with {:ok, prompt} <- prompt(args["prompt"]),
-         {:ok, first_at} <- tool_first_at(args, now),
-         {:ok, every} <- tool_every(args["every_minutes"]) do
+         {:ok, every} <- tool_every(args["every_minutes"]),
+         {:ok, first_at} <- tool_first_at(args, every, now) do
       {:ok, %{prompt: prompt, first_at: datetime(first_at), every_minutes: every}}
     end
   end
 
-  defp tool_first_at(%{"in_minutes" => minutes}, now) when is_integer(minutes) and minutes >= 0,
-    do: {:ok, now + minutes * 60_000}
+  defp tool_first_at(%{"in_minutes" => minutes}, _every, now)
+       when is_integer(minutes) and minutes >= 0 do
+    if minutes * 60_000 > @horizon_ms,
+      do: {:error, "in_minutes must be at most #{div(@horizon_ms, 60_000)} (10 years)."},
+      else: {:ok, now + minutes * 60_000}
+  end
 
-  defp tool_first_at(%{"at" => at}, now) when is_binary(at) do
+  defp tool_first_at(%{"at" => at}, _every, now) when is_binary(at) do
     case DateTime.from_iso8601(at) do
       {:ok, datetime, _offset} ->
         ms = DateTime.to_unix(datetime, :millisecond)
-        if ms < now - @grace_ms, do: {:error, "#{at} is in the past."}, else: {:ok, ms}
+
+        cond do
+          ms < now - @grace_ms -> {:error, "#{at} is in the past."}
+          ms > now + @horizon_ms -> {:error, "#{at} is more than 10 years away."}
+          true -> {:ok, ms}
+        end
 
       {:error, _reason} ->
         {:error, "at must be ISO 8601 with a UTC offset, like 2026-10-04T09:00:00-05:00."}
     end
   end
 
-  defp tool_first_at(%{"every_minutes" => every}, now) when is_integer(every),
+  defp tool_first_at(_args, every, now) when is_integer(every),
     do: {:ok, now + every * 60_000}
 
-  defp tool_first_at(_args, _now), do: {:error, "Give in_minutes or at."}
+  defp tool_first_at(_args, _every, _now), do: {:error, "Give in_minutes or at."}
 
   defp tool_every(nil), do: {:ok, nil}
+
+  defp tool_every(minutes) when is_integer(minutes) and minutes > @max_minutes,
+    do: {:error, "every_minutes must be at most #{@max_minutes} (52 weeks)."}
 
   defp tool_every(minutes) when is_integer(minutes) and minutes >= @min_minutes,
     do: {:ok, minutes}

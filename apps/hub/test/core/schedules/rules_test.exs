@@ -97,6 +97,16 @@ defmodule Photon.Schedules.RulesTest do
       assert errors(%{"at" => "2026-10-08T14:04:29Z"}) == %{at: "That time has passed."}
     end
 
+    test "takes a first time up to 10 years ahead" do
+      assert {:ok, %{first_at: ~U[2036-10-01 09:00:00.000000Z]}} =
+               Rules.schedule(params(%{"at" => "2036-10-01T09:00:00Z"}), @ctx)
+
+      for repeat <- ["once", "every"] do
+        assert errors(%{"at" => "2036-10-07T09:00:00Z", "repeat" => repeat}) ==
+                 %{at: "Pick a time in the next 10 years."}
+      end
+    end
+
     test "takes a repeating schedule whose first time has passed" do
       assert {:ok, %{first_at: ~U[2026-10-01 09:00:00.000000Z], every_minutes: 1_440}} =
                Rules.schedule(
@@ -178,9 +188,9 @@ defmodule Photon.Schedules.RulesTest do
                   every_minutes: nil
                 }}
 
-      assert {:ok, %{first_at: ~U[2099-01-01 09:00:00.000000Z], every_minutes: 60}} =
+      assert {:ok, %{first_at: ~U[2027-01-01 09:00:00.000000Z], every_minutes: 60}} =
                Rules.from_tool(
-                 %{"prompt" => "ping", "at" => "2099-01-01T09:00:00Z", "every_minutes" => 60},
+                 %{"prompt" => "ping", "at" => "2027-01-01T09:00:00Z", "every_minutes" => 60},
                  @now
                )
 
@@ -212,6 +222,29 @@ defmodule Photon.Schedules.RulesTest do
       assert Rules.from_tool(%{"prompt" => "p"}, @now) == {:error, "Give in_minutes or at."}
     end
 
+    test "keeps the form's bounds, so every time it reaches is a date the row holds" do
+      assert Rules.from_tool(%{"prompt" => "p", "in_minutes" => 10_000_000_000}, @now) ==
+               {:error, "in_minutes must be at most 5256000 (10 years)."}
+
+      assert {:ok, %{first_at: ~U[2036-10-05 14:05:30.000000Z]}} =
+               Rules.from_tool(%{"prompt" => "p", "in_minutes" => 5_256_000}, @now)
+
+      assert Rules.from_tool(%{"prompt" => "p", "at" => "9999-12-31T00:00:00Z"}, @now) ==
+               {:error, "9999-12-31T00:00:00Z is more than 10 years away."}
+
+      for args <- [
+            %{"prompt" => "p", "every_minutes" => 4_300_000_000},
+            %{"prompt" => "p", "in_minutes" => 0, "every_minutes" => 4_300_000_000},
+            %{"prompt" => "p", "in_minutes" => 0, "every_minutes" => 524_161}
+          ] do
+        assert Rules.from_tool(args, @now) ==
+                 {:error, "every_minutes must be at most 524160 (52 weeks)."}
+      end
+
+      assert {:ok, %{every_minutes: 524_160}} =
+               Rules.from_tool(%{"prompt" => "p", "every_minutes" => 524_160}, @now)
+    end
+
     test "requires a prompt the row can hold" do
       assert Rules.from_tool(%{"in_minutes" => 1}, @now) ==
                {:error, "Say what this schedule should ask for."}
@@ -239,6 +272,16 @@ defmodule Photon.Schedules.RulesTest do
     test "a one-off that already fired at its time is finished, even inside the minute" do
       # Fired at 14:05:00, edited at 14:05:30 keeping the time.
       fired = @now - 30_000
+      assert Rules.arm(fired, nil, @now, fired) == :finished
+    end
+
+    test "a repeating one made a one-off at the slot it just fired is finished" do
+      # Every 5 minutes, fired at 14:05:00, edited at 14:05:30 to Once at 14:05.
+      fired = @now - 30_000
+      input = %{"first_at" => fired, "every_ms" => 5 * @minute}
+      checkpoint = %{"next_at" => fired + 5 * @minute, "runs" => 1}
+
+      assert Rules.fired_through(input, checkpoint, "waiting") == fired
       assert Rules.arm(fired, nil, @now, fired) == :finished
     end
 

@@ -42,7 +42,8 @@ defmodule Photon.Assistant.Tools.Schedule do
         "at" => %{"type" => "string", "description" => "When to run first, ISO 8601 with offset."},
         "every_minutes" => %{
           "type" => "integer",
-          "description" => "Repeat this often (at least 5). Omit for a one-off."
+          "description" =>
+            "Repeat this often (from 5 to 524160, which is 52 weeks). Omit for a one-off."
         }
       },
       "required" => ["prompt"]

@@ -639,7 +639,11 @@ With `lower = max(now - 60_000, fired_through + 1)` (`now - 60_000` when
 - once, otherwise: `:finished`. Only an edit of a one-off that already
   fired at that time gets here, since the rules refuse older times
   first. `update/3` then keeps the old, finished task and its `task_id`,
-  so the row still reads as done.
+  so the row still reads as done. (Review) A repeating schedule saved
+  as Once at the slot it just fired gets here too, with its old task
+  still live. `update/3` retires that task, as any edit does, and sets
+  `task_id` to nil, which reads as done; before, the old timer kept
+  firing every interval under a row that said Once.
 - repeating, `first_at >= lower`: `first_at`
 - repeating, otherwise: the first time on the grid at or after `lower`,
   `first_at + ceil((lower - first_at) / every) * every`
@@ -672,6 +676,10 @@ project_id}` on `"schedules"`.
   fires the slot the old task didn't (`fired_through`, section 3.3), so
   an edit made in the second a schedule is due neither skips nor repeats
   that firing.
+  (Review) An edit that turns a schedule that woke a thread into one that
+  starts a new thread each time clears `last_thread_id` when it names
+  that woken thread, so the overlap rule doesn't treat it as one the
+  schedule started and skip every firing while the owner works there.
 - `delete(id)`: in one commit, marks the task for abort and deletes the
   row.
 - `run_now(id)`: fires once now, outside the schedule's times: one commit
@@ -719,7 +727,10 @@ do. Three messages the table leaves out: a `repeat` that is neither is
 "Pick Once or Every."; an `every` that isn't a whole number, or a
 `unit` that isn't one of the four, is "Repeat every whole number of
 minutes, hours, days or weeks."; and an `at` that doesn't parse (or has
-no offset) gets "Pick a date and time." like a missing one.
+no offset) gets "Pick a date and time." like a missing one. (Review) An
+`at` more than 10 years ahead gets "Pick a time in the next 10 years.",
+so every time a schedule reaches stays a date the row and the pages
+can hold.
 
 `Rules.from_tool(args, now)` reads Blip's `schedule` tool's arguments
 (`prompt`, `in_minutes` or `at`, `every_minutes`) with today's messages
@@ -729,7 +740,13 @@ the same grace as the form's, which `arm/4` honours. It returns
 `{:ok, %{prompt, first_at, every_minutes}}` (a `DateTime` and minutes,
 as `schedule/2`) or `{:error, message}`. It also checks the prompt with
 the form's two prompt messages, which today's tool doesn't: the row's
-`prompt` is required and at most 4,000 characters (K5a).
+`prompt` is required and at most 4,000 characters (K5a). (Review) It
+keeps the form's bounds too: `every_minutes` at most 524160, 52 weeks
+("every_minutes must be at most 524160 (52 weeks)."), checked before
+the time, and a first time at most 10 years ahead ("in_minutes must be
+at most 5256000 (10 years)." or "<at> is more than 10 years away.").
+Without them a large value raised inside the tool's commit, or put a
+next time past year 9999 that broke `Schedules.list/1`.
 
 ### 3.5 Consent and overlap
 
@@ -838,7 +855,15 @@ and `cancel_schedule/1` become `Schedules.list(:blip)` and
 
 (K6) `Assistant.schedules/0` is `Schedules.list(:blip)` with only the
 waiting ones (a next time), for `list_schedules` and the home page, so
-the filter lives in one place. `Assistant.cancel_schedule/1` is
+the filter lives in one place. (Review) It leaves out only the one-offs
+that are done: a schedule stopped after an error stays listed. Before,
+it vanished from the home page and from `list_schedules`, so neither
+the owner nor Blip could see it or cancel it. `list_schedules` gives
+it as "stopped after an error (<reason>); it won't run again until you
+cancel it and schedule it anew", and the home page says "Stopped after
+an error: <reason>. Cancel it, and ask Blip to schedule it again." in
+the error colour (`ScheduleText.state/3` with `:blip`), with a warning
+icon and its cancel button (`#schedule-<id>-cancel`) always showing. `Assistant.cancel_schedule/1` is
 `Schedules.delete_tx(tx, id, :blip)` in a commit, returning `:ok` or
 `{:error, :not_found}`, so the home page's button can't delete a
 project's schedule by its ID. `OverviewLive` reads and cancels through
@@ -1840,6 +1865,7 @@ Configs:
 | `Durable-schedule.cfg` | no user input (K1: with one, TLC passed 160M states in two hours without finishing; the scheduled prompts queue behind each other instead), no tool calls, `Routines = {"r1"}`, `Spares = {"r2"}`, `MaxFires = 2`, `Target = "conv"`, 1 edit, 1 delete, 1 hub crash, 1 Scheduler crash, 1 step crash, 1 Stop | the safety set, `OneCarrier`, `NoFireAfterRetire`, `FireOncePerSlot`, `BackgroundNotWithdrawn` |
 | `Durable-schedule-thread.cfg` | the same with `Target = "thread"`, and 1 user input so the conversation isn't empty | the same |
 | `Durable-schedule-live.cfg` | 1 user input, `MaxFires = 2`, 1 edit, 1 hub crash, 1 Stop | `RetiredEnds`, `PlacedSettles`, `NoRunningForever` |
+| `Durable-schedule-retire-live.cfg` (review, section 14) | `MaxFires = 2`, 1 delete (or an edit that arms nothing), 1 hub crash | `RetiredEnds`, `PlacedSettles`, `NoRunningForever` |
 | `Durable-bug-edit-keeps-old.cfg` | `Durable-schedule.cfg` with `BugEditKeepsOld = TRUE` | expected to fail `OneCarrier` |
 | `Durable-bug-fire-after-retire.cfg` | `Durable-schedule.cfg` with `BugFireIgnoresAbort = TRUE` | expected to fail `NoFireAfterRetire` |
 

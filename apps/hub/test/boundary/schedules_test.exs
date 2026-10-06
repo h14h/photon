@@ -434,6 +434,47 @@ defmodule Photon.SchedulesTest do
       assert %Schedule{version: 2, prompt: "Check the pumps"} = Repo.get!(Schedule, schedule.id)
     end
 
+    test "a repeating schedule made a one-off at the time it just fired stops its timer", %{
+      project: project
+    } do
+      form = %{"at" => at(-10_000), "repeat" => "every", "every" => "5", "unit" => "minutes"}
+      schedule = create!(project, form)
+
+      assert %Schedule{last_outcome: "started", last_thread_id: thread_id} =
+               await_firing!(schedule)
+
+      assert %TaskRecord{status: "waiting"} = Durable.task(schedule.task_id)
+
+      assert {:ok, %Schedule{version: 2, every_minutes: nil, task_id: nil}} =
+               Schedules.update(schedule.id, params(Map.put(form, "repeat", "once")), 1)
+
+      assert %TaskRecord{abort_requested: true} = Durable.task(schedule.task_id)
+      :ok = Scheduler.sync()
+      assert Durable.live_tasks("routine") == []
+      assert %TaskRecord{status: "aborted"} = Durable.task(schedule.task_id)
+      assert %{state: :done, next_at: nil} = Schedules.get(schedule.id)
+      assert [%{id: ^thread_id}] = Threads.list(project.id)
+      idle!(thread_id)
+    end
+
+    test "a schedule that woke a thread, made to start new threads, doesn't wait on that thread",
+         %{project: project} do
+      thread_id = idle!(start!(project, "Fix the pump"))
+      schedule = create!(project, %{"target" => thread_id})
+      assert Schedules.run_now(schedule.id) == {:ok, "sent"}
+      assert %Schedule{last_thread_id: ^thread_id} = Repo.get!(Schedule, schedule.id)
+      busy!(idle!(thread_id))
+
+      assert {:ok, %Schedule{conversation_id: nil, last_thread_id: nil}} =
+               Schedules.update(schedule.id, params(%{}), 1)
+
+      assert Schedules.run_now(schedule.id) == {:ok, "started"}
+      assert %Schedule{last_thread_id: started_id} = Repo.get!(Schedule, schedule.id)
+      refute started_id == thread_id
+      :ok = Threads.stop(thread_id)
+      idle!(started_id)
+    end
+
     test "a firing step that commits after the update is ignored", %{project: project} do
       thread_id = idle!(start!(project, "Fix the pump"))
       stop_scheduler()

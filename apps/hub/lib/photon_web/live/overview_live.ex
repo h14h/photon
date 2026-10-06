@@ -5,8 +5,9 @@ defmodule PhotonWeb.OverviewLive do
   Blip floats over it, as over every page.
 
   Machines come from `@shell`, which keeps them current. Blip's schedules
-  that are waiting for their next time (`Photon.Assistant.schedules/0`)
-  are a stream (`#schedule-list`), read here and again on
+  that are waiting for their next time, and those that stopped after an
+  error (`Photon.Assistant.schedules/0`), which stay in sight with why and
+  their cancel button showing until the owner cancels them, are a stream (`#schedule-list`), read here and again on
   `{:schedules_changed, nil}` (`Photon.Schedules.subscribe/0`). A
   project's schedules are on its page, and their announcements carry the
   project's ID, so they don't reload this list. Times are shown in the
@@ -44,6 +45,8 @@ defmodule PhotonWeb.OverviewLive do
   def handle_info(_message, socket), do: {:noreply, socket}
 
   defp load_schedules(socket), do: stream(socket, :schedules, Assistant.schedules(), reset: true)
+
+  defp stopped?(%{state: state}), do: match?({:stopped, _reason}, state)
 
   @impl true
   def render(assigns) do
@@ -111,17 +114,27 @@ defmodule PhotonWeb.OverviewLive do
                 id={dom_id}
                 class="group flex items-start gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-[14px] shadow-xs"
               >
-                <.icon name="hero-clock" class="mt-0.5 size-4 shrink-0 text-ink-faint" />
+                <.icon
+                  name={if(stopped?(item), do: "hero-exclamation-triangle", else: "hero-clock")}
+                  class={[
+                    "mt-0.5 size-4 shrink-0",
+                    if(stopped?(item), do: "text-bad", else: "text-ink-faint")
+                  ]}
+                />
                 <div class="min-w-0 flex-1">
                   <p class="leading-snug text-ink">{item.schedule.prompt}</p>
-                  <.schedule_when id={dom_id} item={item} />
+                  <.schedule_when id={dom_id} item={item} whose={:blip} />
                   <.last_run id={dom_id} schedule={item.schedule} class="mt-0.5" />
                 </div>
                 <button
+                  id={"#{dom_id}-cancel"}
                   phx-click="cancel_schedule"
                   phx-value-id={item.id}
                   data-confirm="Cancel this schedule?"
-                  class="rounded-md p-1 text-ink-faint transition group-hover:opacity-100 hover:bg-bad-soft hover:text-bad sm:opacity-0"
+                  class={[
+                    "rounded-md p-1 text-ink-faint transition group-hover:opacity-100 hover:bg-bad-soft hover:text-bad",
+                    !stopped?(item) && "sm:opacity-0"
+                  ]}
                   title="Cancel"
                 >
                   <.icon name="hero-x-mark-micro" class="size-4" />

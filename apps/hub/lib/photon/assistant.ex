@@ -219,11 +219,13 @@ defmodule Photon.Assistant do
 
   @doc """
   Blip's own schedules that are waiting for their next time, soonest
-  first (`Photon.Schedules.list/1`), for the home page and Blip's
-  `list_schedules`. A project's schedules are on its page.
+  first, then any that stopped after an error, with why
+  (`Photon.Schedules.list/1`), for the home page and Blip's
+  `list_schedules`: a stopped one stays in sight until it is cancelled.
+  One-offs that fired are left out. A project's schedules are on its page.
   """
   @spec schedules() :: [Schedules.listed()]
-  def schedules, do: Enum.filter(Schedules.list(:blip), &(&1.state == :waiting))
+  def schedules, do: Enum.reject(Schedules.list(:blip), &(&1.state == :done))
 
   @doc """
   Deletes one of Blip's schedules (the home page's cancel button). A

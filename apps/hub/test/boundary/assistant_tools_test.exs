@@ -10,9 +10,9 @@ defmodule Photon.AssistantToolsTest do
   import Photon.Fixtures, only: [call: 2, tool_task: 2]
 
   alias Photon.Assistant.Tools
-  alias Photon.Durable.ToolAPI
+  alias Photon.Durable.{ToolAPI, Tx}
   alias Photon.{Projects, Schedules}
-  alias Photon.Schedules.Schedule
+  alias Photon.Schedules.{Routine, Schedule}
 
   @moduletag :durable
 
@@ -74,12 +74,12 @@ defmodule Photon.AssistantToolsTest do
       assert {:ok, text, _} =
                schedule(
                  ctx,
-                 %{"prompt" => "ping", "at" => "2099-01-01T09:00:00Z", "every_minutes" => 60},
+                 %{"prompt" => "ping", "at" => "2035-01-01T09:00:00Z", "every_minutes" => 60},
                  "t_s2"
                )
 
       assert text =~
-               ~r/\AScheduled sc_\w+: first at 2099-01-01 09:00 UTC, then every 60 minutes\.\z/
+               ~r/\AScheduled sc_\w+: first at 2035-01-01 09:00 UTC, then every 60 minutes\.\z/
 
       assert {:ok, _, _} = schedule(ctx, %{"prompt" => "p", "every_minutes" => 5}, "t_s3")
       assert length(Schedules.list(:blip)) == 3
@@ -146,6 +146,26 @@ defmodule Photon.AssistantToolsTest do
       assert {:ok, "No schedules. (Now: " <> _} = list.()
 
       assert cancel.("sc_nope") == {:error, "There is no schedule sc_nope."}
+    end
+
+    test "a stopped one stays listed with why, so it can be cancelled", ctx do
+      {:ok, _, %{"schedule_id" => id}} =
+        schedule(ctx, %{"prompt" => "ping", "in_minutes" => 5, "every_minutes" => 30}, "t_s5")
+
+      task = Durable.task(Repo.get!(Schedule, id).task_id)
+
+      :ok =
+        Durable.commit(fn tx ->
+          _failed = Tx.finish(tx, task, "failed", %{"status" => "failed", "reason" => "boom"})
+          Routine.on_fail(task, "boom", tx)
+        end)
+
+      assert {:ok, listed} = run(Tools.ListSchedules, %{}, api(ctx, "list"))
+      assert listed =~ "- #{id}: stopped after an error (boom); it won't run again until you"
+      assert listed =~ ~s(, every 30 min: "ping")
+
+      assert run(Tools.CancelSchedule, %{"schedule_id" => id}, api(ctx, "cancel")) ==
+               {:ok, "Cancelled #{id}."}
     end
 
     test "leave a project's schedules alone", ctx do

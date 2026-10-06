@@ -246,6 +246,16 @@ left out of the model, so `Rules.arm/4` and `fired_through/3` (an edit
 neither skips nor repeats a firing) are covered by ExUnit, not TLC.
 Per-config counts and traces: `specs/tla/Durable.md`.
 
+The implementation review found one case those tests missed: a repeating
+schedule saved as Once at the slot it had just fired got `:finished`
+from `arm/4`, and the edit left its old routine running. The fix retires
+the routine and arms none, which on the modeled variables is
+`OwnerDelete`'s step, so the spec didn't change. A new liveness config,
+`Durable-schedule-retire-live.cfg`, checks that a routine retired with
+no replacement ends `aborted` (394 distinct states, 2s), and
+`test/core/schedules/rules_test.exs` and
+`test/boundary/schedules_test.exs` now cover the edit.
+
 ### Step 1 review: E1 and K2 fixed (2026-10-06)
 
 `Executor.tla` models the two fixes (the `canceled` marker, and

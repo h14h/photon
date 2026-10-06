@@ -28,9 +28,14 @@ defmodule PhotonWeb.ScheduleComponents do
   attr :id, :string, required: true, doc: "the row's DOM ID"
   attr :item, :map, required: true, doc: "a schedule from `Photon.Schedules.list/1`"
 
+  attr :whose, :atom,
+    default: :project,
+    values: [:project, :blip],
+    doc: "whose schedule: `:blip` says how to fix a stopped one without a form"
+
   @spec schedule_when(map()) :: Phoenix.LiveView.Rendered.t()
   def schedule_when(%{item: item} = assigns) do
-    {tone, words} = ScheduleText.state(item.state, item.schedule.every_minutes)
+    {tone, words} = ScheduleText.state(item.state, item.schedule.every_minutes, assigns.whose)
     assigns = assign(assigns, tone: tone, words: words)
 
     ~H"""
