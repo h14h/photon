@@ -12,7 +12,6 @@ defmodule Photon.Assistant do
 
     * functional core (pure): `Photon.Assistant.Prompt` (system prompt and
       model settings), `Photon.Assistant.Memory`,
-      `Photon.Assistant.Transcript` (what the page shows),
       `Photon.Assistant.Notice` (what Blip says unasked),
       `Photon.Assistant.MockScript` (the mock model)
     * boundary: the tools in `Photon.Assistant.Tools`; the machine tools
@@ -27,15 +26,16 @@ defmodule Photon.Assistant do
       Photon.Durable,
       Photon.MachineTools,
       Photon.Settings,
+      Photon.Transcript,
       PhotonCore,
       PhotonCore.LLM
     ],
-    exports: [Notice, Transcript]
+    exports: [Notice]
 
   @behaviour Photon.Durable.Profile
 
-  alias Photon.Assistant.{Memory, Prompt, Tools, Transcript}
-  alias Photon.{Durable, MachineTools, Settings}
+  alias Photon.Assistant.{Memory, Prompt, Tools}
+  alias Photon.{Durable, MachineTools, Settings, Transcript}
   alias Photon.Durable.{Entry, Submission, TaskRecord}
 
   @tools [

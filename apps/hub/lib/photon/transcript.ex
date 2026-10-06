@@ -1,10 +1,12 @@
-defmodule Photon.Assistant.Transcript do
+defmodule Photon.Transcript do
   @moduledoc """
-  What the assistant page shows, as pure functions over the conversation's
-  entries and its `{:live, ...}` events. `PhotonWeb.BlipLive` drives
-  them.
+  What a conversation page shows, as pure functions over a durable
+  conversation's entries and its `{:live, ...}` events. Blip's panel
+  (`PhotonWeb.BlipLive`) drives them, and so does a thread's page.
 
-    * which entries are shown (`shown?/1`); tool results aren't shown on
+    * which entries are shown (`shown?/1`), and what the user typed in a
+      message (`typed/2`), without the note of the page Blip was told
+      about; tool results aren't shown on
       their own but inside the assistant entry whose call they answer, so
       the page keeps an index of results by call ID and of calls by ID
       (`index/1`, `add_result/2`, `add_calls/2`). The index leaves image
@@ -69,6 +71,25 @@ defmodule Photon.Assistant.Transcript do
   @doc "Whether an entry is shown in the conversation on its own."
   @spec shown?(Entry.t()) :: boolean()
   def shown?(%{kind: kind}), do: kind in @shown
+
+  @doc """
+  A user message's text as the user typed it, from the message (or its
+  content) and the `"source"` it was submitted with. A message sent with
+  a page (`source["page"]`) starts with a note of that page for the model,
+  so only its last text part was typed; any other message's text is all of
+  it.
+  """
+  @spec typed(Message.t() | Message.content(), map() | nil) :: String.t()
+  def typed(%{"content" => content}, source), do: typed(content, source)
+
+  def typed(parts, %{"page" => page}) when is_list(parts) and is_map(page) do
+    parts
+    |> Enum.filter(&match?(%{"type" => "text", "text" => text} when is_binary(text), &1))
+    |> List.last(%{"text" => ""})
+    |> Map.fetch!("text")
+  end
+
+  def typed(content, _source), do: Message.text_of(content)
 
   @doc "Whether a conversation has nothing to show yet (only tool results, or nothing)."
   @spec empty?([Entry.t()]) :: boolean()

@@ -27,7 +27,8 @@ defmodule Photon.Case do
 
   using do
     quote do
-      alias Photon.Assistant.{Memory, Notice, Prompt, Transcript}
+      alias Photon.Assistant.{Memory, Notice, Prompt}
+      alias Photon.Transcript
 
       alias Photon.Durable.{
         Changes,

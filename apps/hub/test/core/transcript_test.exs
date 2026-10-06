@@ -1,5 +1,5 @@
-defmodule Photon.Assistant.TranscriptTest do
-  @moduledoc "What the assistant page shows, from entries and live events."
+defmodule Photon.TranscriptTest do
+  @moduledoc "What a conversation page shows, from entries and live events."
 
   use Photon.Case, async: true
 
@@ -64,6 +64,37 @@ defmodule Photon.Assistant.TranscriptTest do
 
       assert Transcript.image(html, 0) == :error
       assert Transcript.image(bad, 0) == :error
+    end
+  end
+
+  describe "what the user typed" do
+    @page %{"kind" => "thread", "label" => "Garden / Fix the pump"}
+
+    test "a message sent with a page shows only its last text part" do
+      message = Message.user([Message.text("[Looking at the thread...]"), Message.text("why?")])
+
+      assert Transcript.typed(message, %{"kind" => "user", "page" => @page}) == "why?"
+      assert Transcript.typed(message["content"], %{"page" => @page}) == "why?"
+    end
+
+    test "a message sent without a page shows all of its text" do
+      message = Message.user([Message.text("one"), Message.text("two")])
+
+      assert Transcript.typed(message, %{"kind" => "user"}) == "one\n\ntwo"
+      assert Transcript.typed(message, %{"kind" => "user", "page" => nil}) == "one\n\ntwo"
+      assert Transcript.typed(message, nil) == "one\n\ntwo"
+      assert Transcript.typed("plain", %{"page" => @page}) == "plain"
+    end
+
+    test "images and other parts aren't text, and no text part reads as empty" do
+      image = Message.image("image/png", "cG5n")
+
+      assert Transcript.typed([Message.text("note"), Message.text("hi"), image], %{
+               "page" => @page
+             }) == "hi"
+
+      assert Transcript.typed([image], %{"page" => @page}) == ""
+      assert Transcript.typed([], %{"page" => @page}) == ""
     end
   end
 

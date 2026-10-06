@@ -35,7 +35,7 @@ defmodule PhotonWeb.BlipLive do
 
   What the conversation shows, how live events fold into the in-flight
   answer and the running calls' output, and Blip's mood are
-  `Photon.Assistant.Transcript`. The mood comes from what is happening
+  `Photon.Transcript`. The mood comes from what is happening
   now, except for an outcome (a finish or a failure), which is held for a
   moment so it can be seen: `@outcome`, cleared by a `{:blip_rest, ref}`
   timer.
@@ -43,8 +43,8 @@ defmodule PhotonWeb.BlipLive do
 
   use PhotonWeb, :live_view
 
-  alias Photon.{Assistant, Markdown}
-  alias Photon.Assistant.{Notice, Transcript}
+  alias Photon.{Assistant, Markdown, Transcript}
+  alias Photon.Assistant.Notice
   alias PhotonCore.Message
 
   on_mount PhotonWeb.Auth
@@ -652,7 +652,7 @@ defmodule PhotonWeb.BlipLive do
     assigns =
       assign(assigns,
         source: assigns.entry.data["source"] || %{},
-        text: Message.text_of(assigns.entry.data["message"])
+        text: Transcript.typed(assigns.entry.data["message"], assigns.entry.data["source"])
       )
 
     ~H"""
@@ -1009,7 +1009,7 @@ defmodule PhotonWeb.BlipLive do
           >
             <span class="font-medium text-ink-faint">{if(s.mode == "steer", do: "Steer", else: "Next")}</span>
             <span class="max-w-60 truncate">
-              {Message.text_of(s.content["parts"])}
+              {Transcript.typed(s.content["parts"], s.content["source"])}
             </span>
             <button
               phx-click="withdraw"

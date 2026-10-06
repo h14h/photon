@@ -62,7 +62,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Assistant.Prompt",
                    "Photon.ChatGPT.OAuth",
                    "Photon.Assistant.Memory",
-                   "Photon.Assistant.Transcript",
+                   "Photon.Transcript",
                    "Photon.Assistant.Notice",
                    "Photon.Assistant.MockScript",
                    "Photon.Machines.Op",

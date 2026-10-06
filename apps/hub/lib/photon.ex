@@ -20,7 +20,8 @@ defmodule Photon do
   moduledoc names its pure core and its processes. The pure modules are
   `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall,
   Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice,
-  Transcript, MockScript}`, `Photon.Machines.{Rules, Roster}`,
+  MockScript}`, `Photon.Transcript` (what a conversation page shows),
+  `Photon.Machines.{Rules, Roster}`,
   `Photon.MachineTools.{Translate, Wait}`, `Photon.Provision.{Jobs,
   Script}`, and
   `Photon.Markdown`. `Photon.Application` holds the lifecycle plan.
@@ -38,7 +39,6 @@ defmodule Photon do
     exports: [
       Assistant,
       Assistant.Notice,
-      Assistant.Transcript,
       Auth,
       ChatGPT,
       Durable,
@@ -52,6 +52,7 @@ defmodule Photon do
       Paths,
       Provision,
       Settings,
-      Tailnet
+      Tailnet,
+      Transcript
     ]
 end
