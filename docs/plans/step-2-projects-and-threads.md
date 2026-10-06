@@ -671,10 +671,20 @@ concerns it), and the edit form.
 - `phx-change="edit"` keeps the text in the form and marks it dirty.
 - When `{:project_files_changed, id, key}` names this file: a clean
   editor reloads it; a dirty one shows `#file-changed` ("A thread changed
-  this file while you were editing.") with `Load the new version`
-  (`#file-reload`, discards your text). A save with an old version gets
-  the same banner and keeps your text in the box. A file deleted
-  meanwhile shows `#file-deleted`, and `Save` creates it again.
+  this file while you were editing.", or "This file was saved somewhere
+  else while you were editing." when the user saved it in another tab)
+  with `Load the new version` (`#file-reload`, discards your text) and
+  `Keep my text` (`#file-keep`, takes the new version's number so the
+  next save writes over it; without it the user could never save their
+  text over a thread's change). A save with an old version gets the same
+  banner and keeps your text in the box. A file deleted meanwhile shows
+  `#file-deleted`, and `Save` creates it again.
+- The `:new` form has the `Write` and `Preview` tabs too. A dirty editor
+  says "Unsaved changes" (`#file-dirty`) next to `Save`. When the server
+  replaces the text (a clean reload, `#file-reload`), the editor's
+  wrapper gets a new DOM ID (`#file-editor-<n>`), because LiveView leaves
+  a focused textarea's value alone and the user would otherwise see, and
+  save over, the old text.
 
 ### 5.6 New thread
 
