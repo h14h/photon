@@ -1133,6 +1133,42 @@ between `Machines` and `Settings`. `Layouts.app`'s `active` takes
 - The candidates live in the socket (`assigns.candidates`), and install
   takes `origin`, `source_url` and the notes from there, not from the
   form.
+- (K10) Choices the plan left open:
+  - The two forms stay on the page and the inactive one is hidden, so
+    switching tabs keeps what was typed. Their params are `link[url]`
+    and `paste[text]`; the preview form's are `install[...]`. `Fetch`
+    is disabled while `#install-fetching` shows. A read's error shows
+    as `#install-error` under the paste field. A fetch task that exits
+    shows "The fetch stopped. Try again."
+  - The preview's source line is `#install-source` ("From
+    github.com/..." linking the source, or "From a pasted SKILL.md").
+    The instructions have the skill editor's `Write` and `Preview` tabs
+    (`#install-tab-write`, `#install-tab-preview`,
+    `#install-instructions-preview`). A name another skill has shows its
+    message under `#install-name` as soon as the preview opens and as
+    it is typed, through `Skills.get_by_name/1`; `install/2` checks it
+    again.
+  - The list is a stream inside the form `#install-pick-form`
+    (checkboxes `picked[]`, each `#install-candidate-<n>-pick`). Nothing
+    is picked at first; `#install-picked` counts the picks and
+    `#install-selected` is disabled with none. A row's reason is
+    `#install-candidate-<n>-reason`, its notes
+    `#install-candidate-<n>-notes`.
+  - Besides a failed download or a taken name, a candidate whose
+    SKILL.md has no name or no description can't be picked ("Its
+    SKILL.md has no description. Install it on its own to add one."),
+    since the list has no fields to fill in. Every row that can't be
+    picked but was read has `Install on its own`
+    (`#install-candidate-<n>-alone`): it opens that candidate in the
+    preview form, with `#install-back-to-list` returning to the list.
+  - Installing one pick flashes "Installed skill-a. It's off everywhere
+    until you turn it on." When some picks fail, the page stays: the
+    ones that went in are marked `#install-candidate-<n>-installed`
+    (linking the skill), the failed ones keep their message, and the
+    flashes say "Installed 1 skill. ..." and "1 skill couldn't be
+    installed; see why below."
+  - While a list is open, the page follows `Skills.subscribe/0`, so a
+    name taken elsewhere becomes unpickable.
 
 ### 6.6 The project page: skills and schedules
 
@@ -1940,6 +1976,10 @@ K10. Installing from the app. After K3 and K7.
 - Fill in `apps/hub/lib/photon_web/live/skill_install_live.ex` (section
   6.5).
 - Tests: `test/web/live/skill_install_live_test.exs`.
+- (K10) Done as listed. A candidate without a name or description
+  can't be picked from a list, and any row that was read can be
+  installed on its own through the preview form; the other choices are
+  recorded in section 6.5 under "(K10)".
 
 K11. The project page's skills and schedules, the thread page's
 Schedule link, and the Settings wording. After K7 and K8.
