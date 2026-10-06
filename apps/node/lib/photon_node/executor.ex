@@ -27,7 +27,13 @@ defmodule PhotonNode.Executor do
   that can't be written is answered with `Request.unrecorded/2` and starts
   no process, and a `process` checkpoint that can't be written is
   `{:error, reason}`, which fails the operation. A later snapshot that
-  can't be written is logged and forwarded anyway.
+  can't be written is logged and forwarded anyway. A result (a terminal
+  snapshot) forwarded that way is held in memory (`unjournaled`) until its
+  `op.ack`, and every decision reads it in place of the journal's older
+  entry, so nothing starts or restarts the operation meanwhile. If that
+  older entry is `ready`, it is removed as well (`Rules.on_unjournaled/1`):
+  the scan after a restart would otherwise start an operation the hub was
+  told had ended.
 
   An operation process never dies because of its owner. `checkpoint/2` and
   `report/2` call this process with no timeout and catch every exit,
@@ -79,17 +85,19 @@ defmodule PhotonNode.Executor do
   @sweep_ms 24 * 60 * 60 * 1000
 
   @enforce_keys [:facts]
-  defstruct [:facts, monitors: %{}, restarted: MapSet.new()]
+  defstruct [:facts, monitors: %{}, restarted: MapSet.new(), unjournaled: %{}]
 
   @typedoc """
   The process state: what operations need to know about this node
-  (`Request.facts/0`), the monitors of operation processes, and the
-  operations restarted once after a clean exit.
+  (`Request.facts/0`), the monitors of operation processes, the
+  operations restarted once after a clean exit, and the results forwarded
+  without being journaled, by operation ID, until their `op.ack`.
   """
   @type t :: %__MODULE__{
           facts: Request.facts(),
           monitors: %{reference() => {String.t(), pid()}},
-          restarted: MapSet.t(String.t())
+          restarted: MapSet.t(String.t()),
+          unjournaled: %{String.t() => Operation.t()}
         }
 
   ## API
@@ -195,7 +203,7 @@ defmodule PhotonNode.Executor do
   ## op.start
 
   defp start_op(state, %{"id" => id, "known" => known} = start) do
-    case Journal.read(ops_dir(state), id) do
+    case read(state, id) do
       {:ok, entry} ->
         on_start(state, start, entry, Rules.on_start(entry, known, Ops.running?(id)))
 
@@ -235,7 +243,8 @@ defmodule PhotonNode.Executor do
         revive(state, entry(op, false), false)
 
       {{:error, reason}, _op} ->
-        answer(state, Request.unrecorded(op, reason))
+        unrecorded = Request.unrecorded(op, reason)
+        state |> hold(unrecorded) |> answer(unrecorded)
     end
   end
 
@@ -250,7 +259,7 @@ defmodule PhotonNode.Executor do
   ## op.cancel
 
   defp cancel_op(state, id) do
-    case Journal.read(ops_dir(state), id) do
+    case read(state, id) do
       {:ok, nil} ->
         cancel_unstarted(state, id)
 
@@ -295,7 +304,7 @@ defmodule PhotonNode.Executor do
   # Node rule 6. An unreadable entry was answered with a failed snapshot
   # (unless a process runs it), and the hub has recorded that.
   defp ack_op(state, id) do
-    case Journal.read(ops_dir(state), id) do
+    case read(state, id) do
       {:ok, nil} -> state
       {:ok, %{"op" => op}} -> if Operation.terminal?(op), do: forget(state, id), else: state
       {:error, _reason} -> if Ops.running?(id), do: state, else: forget(state, id)
@@ -306,7 +315,11 @@ defmodule PhotonNode.Executor do
     with {:error, reason} <- Journal.forget(ops_dir(state), id),
          do: Logger.warning("couldn't forget operation #{id}: #{reason}")
 
-    %{state | restarted: MapSet.delete(state.restarted, id)}
+    %{
+      state
+      | restarted: MapSet.delete(state.restarted, id),
+        unjournaled: Map.delete(state.unjournaled, id)
+    }
   end
 
   ## Owner callbacks
@@ -314,7 +327,7 @@ defmodule PhotonNode.Executor do
   # Node rule 4: the command spawns only once this is journaled, and only
   # if the journal doesn't say canceled.
   defp checkpoint_op(state, %{"id" => id} = op) do
-    case Journal.read(ops_dir(state), id) do
+    case read(state, id) do
       {:ok, %{"op" => journaled, "cancel" => cancel}} -> confirm(state, op, journaled, cancel)
       {:ok, nil} -> :ignored
       {:error, reason} -> {:error, reason}
@@ -335,7 +348,7 @@ defmodule PhotonNode.Executor do
   # A snapshot after a finished one (nothing should send one) changes
   # nothing, so the journal keeps the result.
   defp report_op(state, %{"id" => id} = op) do
-    case Journal.read(ops_dir(state), id) do
+    case read(state, id) do
       {:ok, %{"op" => journaled, "cancel" => cancel}} ->
         if Operation.terminal?(journaled), do: state, else: record(state, op, cancel)
 
@@ -345,7 +358,7 @@ defmodule PhotonNode.Executor do
 
       {:error, reason} ->
         log_unjournaled(state, id, "its snapshot is forwarded anyway", reason)
-        answer(state, op)
+        state |> hold(op) |> answer(op)
     end
   end
 
@@ -410,7 +423,7 @@ defmodule PhotonNode.Executor do
   end
 
   defp readable_entry(state, id) do
-    case Journal.read(ops_dir(state), id) do
+    case read(state, id) do
       {:ok, entry} ->
         entry
 
@@ -422,7 +435,26 @@ defmodule PhotonNode.Executor do
 
   ## Journal
 
-  defp journaled(state), do: state |> ops_dir() |> Journal.list() |> Enum.map(& &1["op"])
+  # The operation's entry as the executor knows it: a result it forwarded
+  # without journaling stands in for whatever the journal still holds.
+  defp read(state, id) do
+    case Map.fetch(state.unjournaled, id) do
+      {:ok, op} -> {:ok, entry(op, false)}
+      :error -> Journal.read(ops_dir(state), id)
+    end
+  end
+
+  # Every snapshot the hub should have, the held results in place of what
+  # the journal holds for them.
+  defp journaled(state) do
+    state
+    |> ops_dir()
+    |> Journal.list()
+    |> Map.new(&{&1["op"]["id"], &1["op"]})
+    |> Map.merge(state.unjournaled)
+    |> Enum.sort_by(fn {id, _op} -> id end)
+    |> Enum.map(fn {_id, op} -> op end)
+  end
 
   # Node rule 9: fitted to the frame budget, then journaled. Returns the
   # write's result and the fitted snapshot.
@@ -440,7 +472,32 @@ defmodule PhotonNode.Executor do
 
       {{:error, reason}, op} ->
         log_unjournaled(state, op["id"], "its snapshot is forwarded anyway", reason)
-        answer(state, op)
+        state |> hold(op) |> answer(op)
+    end
+  end
+
+  # Node rule 8: a result the journal couldn't take is held until its
+  # `op.ack` (see `read/2`), and a `ready` entry it leaves behind is
+  # removed, so neither this process nor a restarted one starts the
+  # operation after the hub was told how it ended.
+  defp hold(state, %{"id" => id} = op) do
+    if Operation.terminal?(op) do
+      :ok = remove_runnable(state, id)
+      %{state | unjournaled: Map.put(state.unjournaled, id, op)}
+    else
+      state
+    end
+  end
+
+  defp remove_runnable(state, id) do
+    with {:ok, entry} <- Journal.read(ops_dir(state), id),
+         :remove <- Rules.on_unjournaled(entry),
+         {:error, reason} <- Journal.discard(ops_dir(state), id) do
+      Logger.error(
+        "couldn't remove operation #{id}'s ready entry, so a restart may run it: #{reason}"
+      )
+    else
+      _removed_kept_or_unreadable -> :ok
     end
   end
 

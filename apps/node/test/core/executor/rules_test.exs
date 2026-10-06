@@ -1,7 +1,7 @@
 defmodule PhotonNode.Executor.RulesTest do
   @moduledoc """
-  The executor's decisions: every case of `on_start/3`, `on_scan/2` and
-  `down/3`, each with the journal entry's `cancel` flag false and true.
+  The executor's decisions: every case of `on_start/3`, `on_scan/2`,
+  `down/3` and `on_unjournaled/1`, each with the journal entry's `cancel` flag false and true.
   """
 
   use PhotonNode.Case, async: true
@@ -104,6 +104,21 @@ defmodule PhotonNode.Executor.RulesTest do
         assert {:fail, "the operation process exited: " <> _} =
                  Rules.down(entry("awaiting", cancel), {:badarg, []}, restarted)
       end
+    end
+  end
+
+  describe "on_unjournaled/1" do
+    test "a ready entry is removed, since a resume would start the operation" do
+      for cancel <- [false, true],
+          do: assert(Rules.on_unjournaled(entry("ready", cancel)) == :remove)
+    end
+
+    test "a later entry, or none, is kept" do
+      for status <- ~w(awaiting canceling completed failed canceled),
+          cancel <- [false, true],
+          do: assert(Rules.on_unjournaled(entry(status, cancel)) == :keep)
+
+      assert Rules.on_unjournaled(nil) == :keep
     end
   end
 end

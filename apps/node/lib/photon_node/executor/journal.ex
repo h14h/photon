@@ -19,6 +19,9 @@ defmodule PhotonNode.Executor.Journal do
   failed directory sync is logged rather than returned. The executor
   relies on this: an error means nothing changed (node rule 8).
 
+  `discard/2` deletes the entry alone, for a `ready` entry that a result
+  the executor couldn't journal has left behind (node rule 8).
+
   After `op.ack`, `forget/2` deletes the entry and the files only a running
   command needs. `out` and `err` stay, since a truncated result names
   them, until `sweep/3` removes directories without an entry that are
@@ -201,6 +204,23 @@ defmodule PhotonNode.Executor.Journal do
     case File.ls(ops_dir) do
       {:ok, names} -> names |> Enum.sort() |> Enum.filter(&File.dir?(Path.join(ops_dir, &1)))
       {:error, _} -> []
+    end
+  end
+
+  @doc """
+  Deletes the operation's entry alone and syncs its directory, so the
+  entry stays gone after a power loss. An entry that is already gone is
+  fine. `{:error, reason}` means the entry is still in place.
+  """
+  @spec discard(String.t(), String.t()) :: :ok | {:error, String.t()}
+  def discard(ops_dir, id) do
+    dir = op_dir(ops_dir, id)
+    path = Path.join(dir, @entry)
+
+    case File.rm(path) do
+      :ok -> sync_dirs([dir])
+      {:error, :enoent} -> :ok
+      {:error, reason} -> file_error("remove", path, reason)
     end
   end
 

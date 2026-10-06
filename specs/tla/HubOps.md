@@ -449,7 +449,10 @@ writes are fsynced before they are acted on); journal write failures
 (node rule 8: they answer `failed` or forward without journaling, and run
 nothing; a `canceled` entry for an `op.cancel` with no journal that can't
 be written is answered with nothing, and the next join's `op.cancel`
-tries again); journal entries that exist but can't be read (the executor
+tries again; a result forwarded without journaling is held in the
+executor's memory until `op.ack`, and a `ready` entry it leaves behind is
+deleted, so neither a resume nor a restart starts an op the hub was told
+had ended); journal entries that exist but can't be read (the executor
 answers `op.start` for one with an unjournaled `failed` snapshot, "It may
 or may not have run.", unless a process runs the op, and `op.ack` then
 forgets it); message sizes and the frame limit (node rule 9); a second hub;
@@ -467,7 +470,14 @@ action by action (task A14 in the plan). No rule in the plan's section
 a comment, and the results above stand without a rerun. One rule's text
 grew: node rule 8 now says that a `canceled` entry for an `op.cancel` with
 no journal that can't be written is answered with nothing (see "Not
-modeled"). The function names in the tables above are the code's.
+modeled"). A review then found that a result forwarded without journaling
+over a `ready` entry left the op runnable: a restart, or the op process's
+clean exit, started it after the hub was told it hadn't run. Node rule 8
+now holds such a result in memory until `op.ack` and deletes the `ready`
+entry. That too is a journal write failure, so the spec is unchanged:
+without one, every terminal snapshot the node sends is journaled first
+or answers an op it has no entry for, and no reachable state differs.
+The function names in the tables above are the code's.
 
 Where the code is shaped differently from the actions, and why the spec
 still covers it:

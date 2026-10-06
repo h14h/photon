@@ -1,7 +1,7 @@
 defmodule PhotonNode.JournalTest do
   @moduledoc """
-  The executor's journal on disk: listing entries, forgetting one after
-  its acknowledgement, the sweep of old output, and failures that leave
+  The executor's journal on disk: listing entries, discarding one,
+  forgetting one after its acknowledgement, the sweep of old output, and failures that leave
   the old entry in place. Torn writes are covered by
   `test/property/journal_property_test.exs`.
   """
@@ -72,6 +72,18 @@ defmodule PhotonNode.JournalTest do
     # Forgetting again, or an operation that never had files, is fine.
     assert Journal.forget(ops_dir, "op_a") == :ok
     assert Journal.forget(ops_dir, "op_none") == :ok
+  end
+
+  test "discard/2 deletes the entry alone", %{ops_dir: ops_dir} do
+    :ok = Journal.write(ops_dir, "op_a", entry("op_a"))
+    for name <- ~w(out err pid), do: File.write!(file(ops_dir, "op_a", name), name)
+
+    assert Journal.discard(ops_dir, "op_a") == :ok
+    assert Journal.read(ops_dir, "op_a") == {:ok, nil}
+    assert ops_dir |> Journal.op_dir("op_a") |> File.ls!() |> Enum.sort() == ["err", "out", "pid"]
+
+    assert Journal.discard(ops_dir, "op_a") == :ok
+    assert Journal.discard(ops_dir, "op_none") == :ok
   end
 
   test "sweep/3 removes old directories without an entry and nothing else",

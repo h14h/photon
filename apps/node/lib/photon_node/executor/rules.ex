@@ -21,6 +21,9 @@ defmodule PhotonNode.Executor.Rules do
     * `:lost`: the hub has seen the operation but there is no journal for
       it. Run nothing and answer with `Request.lost/2`.
 
+  `on_unjournaled/1` says what happens to an entry when a result for its
+  operation couldn't be journaled and was forwarded anyway (node rule 8).
+
   `cancel?` is true when the entry says canceled and the operation is
   unfinished: the executor follows `Ops.add/2` with `Ops.cancel/1`. A
   resume never starts in `canceling` instead, because `Ops.Shell` started
@@ -86,6 +89,18 @@ defmodule PhotonNode.Executor.Rules do
       true -> {:fail, "the operation process exited: #{Exception.format_exit(reason)}"}
     end
   end
+
+  @doc """
+  What happens to an operation's journal entry (or nil) when a terminal
+  snapshot for it couldn't be journaled and was forwarded anyway (node
+  rule 8). A `ready` entry is removed: resumed, it would start the
+  operation after the hub was told how it ended. Any later entry is kept,
+  since a resume from it only reports the outcome again (`Ops.Shell`
+  recovers a started command from its files and never starts it twice).
+  """
+  @spec on_unjournaled(entry() | nil) :: :remove | :keep
+  def on_unjournaled(%{"op" => %{"status" => "ready"}}), do: :remove
+  def on_unjournaled(_entry), do: :keep
 
   defp journaled(entry, running) do
     cond do

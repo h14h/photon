@@ -544,6 +544,65 @@ defmodule PhotonNode.ExecutorTest do
     refute File.exists?(Path.join(workspace, "ran"))
   end
 
+  # Node rule 8: a result the journal can't take over a `ready` entry.
+  # While `op.json.tmp` is a directory, every write of the entry fails, so
+  # the shell can't record its command's start and fails without running it.
+  defp journal_unwritable_ready(dir, ops_dir, id) do
+    {:ok, ready} = Request.operation(shell_start(id, "touch ran"), facts(dir))
+    :ok = Journal.write(ops_dir, id, %{"op" => ready, "cancel" => false})
+    blocker = Path.join(Journal.op_dir(ops_dir, id), "op.json.tmp")
+    File.mkdir_p!(blocker)
+
+    start_node(dir)
+
+    assert {%{"state" => %{"terminal_error" => error}} = failed, nil} =
+             await_snapshot(id, "failed")
+
+    assert error =~ "couldn't record the command's start, so it didn't run"
+    # The ready entry is gone, so nothing can start the command from it.
+    refute File.exists?(entry_file(ops_dir, id))
+    File.rm_rf!(blocker)
+    failed
+  end
+
+  test "a result the journal can't take is held until the ack, and the command never runs", %{
+    dir: dir,
+    ops_dir: ops_dir,
+    workspace: workspace
+  } do
+    id = new_id()
+    failed = journal_unwritable_ready(dir, ops_dir, id)
+
+    # The hub asks again (its copy was lost, say): it gets the same result.
+    :ok = Executor.start(shell_start(id, "touch ran", true))
+    assert {^failed, nil} = await_snapshot(id, "failed")
+    assert Executor.snapshots() == [failed]
+    assert op_pid(id) == nil
+
+    :ok = Executor.ack(id)
+    assert Executor.snapshots() == []
+    refute File.exists?(Path.join(workspace, "ran"))
+  end
+
+  test "a result the journal couldn't take doesn't run the command after a restart", %{
+    dir: dir,
+    ops_dir: ops_dir,
+    workspace: workspace
+  } do
+    id = new_id()
+    _failed = journal_unwritable_ready(dir, ops_dir, id)
+
+    # The disk takes writes again, and the executor restarts and scans.
+    kill_executor()
+    assert Executor.snapshots() == []
+
+    :ok = Executor.start(shell_start(id, "touch ran", true))
+    assert {%{"state" => %{"terminal_error" => error}}, nil} = await_snapshot(id, "failed")
+    assert error =~ "The machine has no record of this operation"
+    assert op_pid(id) == nil
+    refute File.exists?(Path.join(workspace, "ran"))
+  end
+
   test "an entry that can't be read is answered as failed, and the ack removes it", %{
     dir: dir,
     ops_dir: ops_dir
