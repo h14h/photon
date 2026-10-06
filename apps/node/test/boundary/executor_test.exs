@@ -16,7 +16,7 @@ defmodule PhotonNode.ExecutorTest do
   alias PhotonCore.Operation
   alias PhotonNode.Executor
   alias PhotonNode.Executor.{Journal, Request}
-  alias PhotonNode.Harness.Env
+  alias PhotonNode.Ops.Env
   alias PhotonNode.TestLink
 
   @stopped "photon-node stopped while the command was running, so the command was killed."

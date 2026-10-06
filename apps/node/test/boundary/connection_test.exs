@@ -4,12 +4,12 @@ defmodule PhotonNode.ConnectionTest do
   connection process that answers pushes and forwards them to the test.
 
   The test process is registered as `PhotonNode.Connection` (see
-  `PhotonNode.HarnessCase`), so what the executor sends the hub link
+  `PhotonNode.NodeCase`), so what the executor sends the hub link
   arrives here as `{:op_snapshot, op}` and `{:op_output, id, stream,
   text}`, and a test hands it to `handle_info/2` to see what is pushed.
   """
 
-  use PhotonNode.HarnessCase, async: false
+  use PhotonNode.NodeCase, async: false
 
   alias PhotonCore.Operation.Wire
   alias PhotonNode.{Connection, Executor}

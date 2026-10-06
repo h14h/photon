@@ -1,10 +1,10 @@
-defmodule PhotonNode.Harness.Image do
+defmodule PhotonNode.Ops.Image do
   @moduledoc """
   Recognises image formats from their first bytes and reads dimensions from
   their headers, without decoding pixels: PNG, JPEG, GIF and WebP.
   """
 
-  # Functional core (see PhotonNode.Harness): no processes, no I/O.
+  # Functional core (see PhotonNode.Ops): no processes, no I/O.
   use Boundary, type: :strict, deps: []
 
   @typedoc "An image's format and size; width and height are nil when the header doesn't say."

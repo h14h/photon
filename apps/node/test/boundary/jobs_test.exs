@@ -1,15 +1,15 @@
-defmodule PhotonNode.Harness.JobsTest do
+defmodule PhotonNode.Ops.JobsTest do
   @moduledoc """
   The one-shot operation: `view_image` reads a file as a plain function,
-  and `Ops.Job` runs it off its owner. The test process is
-  the owner (`PhotonNode.TestOwner`).
+  and `Ops.Job` runs it off its owner. The test process is the owner
+  (`PhotonNode.TestOwner`).
   """
 
-  use PhotonNode.HarnessCase, async: false
+  use PhotonNode.NodeCase, async: false
 
   alias PhotonCore.Operation
-  alias PhotonNode.Harness.Ops
-  alias PhotonNode.Harness.Ops.ViewImage
+  alias PhotonNode.Ops
+  alias PhotonNode.Ops.ViewImage
   alias PhotonNode.TestOwner
 
   @png <<0x89, "PNG\r\n", 0x1A, "\n", 0, 0, 0, 13, "IHDR", 2::32, 3::32, 8, 6, 0, 0, 0>>
@@ -19,8 +19,10 @@ defmodule PhotonNode.Harness.JobsTest do
     :ok
   end
 
-  defp view_op(path, max_size \\ 4_999_000),
-    do: Operation.new("view_image", 1, %{"path" => path, "max_size" => max_size, "result" => nil})
+  defp view_op(path, max_size \\ 4_999_000) do
+    state = %{"path" => path, "max_size" => max_size, "result" => nil}
+    Operation.new("op_view", "view_image", 1, state, nil)
+  end
 
   describe "view_image" do
     setup :in_workspace
@@ -77,7 +79,7 @@ defmodule PhotonNode.Harness.JobsTest do
 
     test "an operation of a type nobody runs can't be added" do
       assert {:error, "unsupported operation type \"teleport\""} =
-               Ops.add(Operation.new("teleport", 1, %{}), TestOwner.owner())
+               Ops.add(Operation.new("op_teleport", "teleport", 1, %{}, nil), TestOwner.owner())
     end
   end
 end

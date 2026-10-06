@@ -1,4 +1,4 @@
-defmodule PhotonNode.Harness.Ops.Shell do
+defmodule PhotonNode.Ops.Shell do
   @moduledoc """
   The `shell` operation: runs one command, in the workspace, in its own
   process group, with stdout and stderr going straight to files in
@@ -10,7 +10,7 @@ defmodule PhotonNode.Harness.Ops.Shell do
   the command exits, the whole group gets SIGTERM, then SIGKILL after five
   seconds, so background children don't outlive it. There is no timeout.
 
-  Snapshots go to the operation's owner (`PhotonNode.Harness.Ops.Owner`).
+  Snapshots go to the operation's owner (`PhotonNode.Ops.Owner`).
   Checkpoints: `awaiting` in phase `process` (files ready), then with the
   process group ID once started, phase `read` with the exit code, and
   finally `completed` with the bounded output. The command starts only once
@@ -58,8 +58,8 @@ defmodule PhotonNode.Harness.Ops.Shell do
   require Logger
 
   alias PhotonCore.{Operation, Output}
-  alias PhotonNode.Harness.{Env, Ops}
-  alias PhotonNode.Harness.Ops.Owner
+  alias PhotonNode.Ops
+  alias PhotonNode.Ops.{Env, Owner}
 
   # Job control gives the command its own process group (pgid == pid).
   # bash honours `set -m` without a terminal; for shells that don't, setsid

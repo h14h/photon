@@ -1,6 +1,6 @@
 defmodule PhotonNode.TestOwner do
   @moduledoc """
-  An operation owner (`PhotonNode.Harness.Ops.Owner`) for boundary tests.
+  An operation owner (`PhotonNode.Ops.Owner`) for boundary tests.
   Its owner ID is a test process, which gets what an operation sends:
 
     * `{:checkpoint, op}` as a `GenServer.call`, answered by the test
@@ -15,7 +15,7 @@ defmodule PhotonNode.TestOwner do
   # Test support sits outside the layering (compiled only for tests).
   use Boundary, top_level?: true, check: [in: false, out: false]
 
-  @behaviour PhotonNode.Harness.Ops.Owner
+  @behaviour PhotonNode.Ops.Owner
 
   import ExUnit.Assertions
 

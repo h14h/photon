@@ -1,12 +1,12 @@
-defmodule PhotonNode.Harness.Ops.Job do
+defmodule PhotonNode.Ops.Job do
   @moduledoc """
   The worker for operations that do one piece of work and finish
-  (`view_image`). It runs the job off its owner
-  (`PhotonNode.Harness.Ops.Owner`), since a job can read a large file,
-  reports the terminal snapshot the job returns to the owner, and stops.
+  (`view_image`). It runs the job off its owner (`PhotonNode.Ops.Owner`),
+  since a job can read a large file, reports the terminal snapshot the job
+  returns to the owner, and stops.
 
   It is registered by operation ID like every operation process, so
-  `PhotonNode.Harness.Ops.add/2` finds it while it runs. It has nothing to
+  `PhotonNode.Ops.add/2` finds it while it runs. It has nothing to
   resend or cancel, so it ignores those requests.
 
   A job is a module with `run/1`: it takes the operation and returns its
@@ -17,8 +17,8 @@ defmodule PhotonNode.Harness.Ops.Job do
   use GenServer, restart: :temporary
 
   alias PhotonCore.Operation
-  alias PhotonNode.Harness.Ops
-  alias PhotonNode.Harness.Ops.Owner
+  alias PhotonNode.Ops
+  alias PhotonNode.Ops.Owner
 
   @doc "Does the operation's work and returns its terminal snapshot."
   @callback run(Operation.t()) :: Operation.t()

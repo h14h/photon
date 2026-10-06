@@ -397,7 +397,7 @@ Rule numbers run through the whole document so they can be cited ("rule 72").
     modules under test and imports the builders. (pp. 78-80)
     - Why: it removes the same alias block from every test file.
     - Enforce: test convention (Photon has `Photon.Case`, `Photon.DataCase`,
-      `PhotonNode.Case` and `PhotonNode.HarnessCase`).
+      `PhotonNode.Case` and `PhotonNode.NodeCase`).
 
 47. Name preconditions with named setups inside `describe` blocks
     (`setup [:quiz]`, each taking the context and returning `{:ok, context}`),
@@ -773,8 +773,8 @@ because it runs in the caller's process and both callers are tasks. Calling
 | Layer | Modules |
 | --- | --- |
 | Data | Operation snapshots (`PhotonCore.Operation`) and their messages (`PhotonCore.Operation.Wire`), journal entries (`Executor.Journal` moduledoc), `PhotonNode.Config` |
-| Functional core | `Executor.Request` (an `op.start` to an operation, the snapshots for operations it won't run, `fit/2`), `Executor.Rules` (every start, scan and crash decision), `Harness.Image` |
-| Boundary | API: `PhotonNode.Executor` (`start`, `cancel`, `ack`, `snapshots`; one server that owns the journal and monitors the operations), `Harness.Ops` (API over operation processes, with the `Ops.Owner` contract the executor implements), `Executor.Journal` (file I/O, called only from the executor). The hub link: `PhotonNode.Connection`, which implements `Executor.Link`, the contract the executor sends snapshots and output through, so the executor doesn't depend on the connection |
+| Functional core | `Executor.Request` (an `op.start` to an operation, the snapshots for operations it won't run, `fit/2`), `Executor.Rules` (every start, scan and crash decision), `Ops.Image` |
+| Boundary | API: `PhotonNode.Executor` (`start`, `cancel`, `ack`, `snapshots`; one server that owns the journal and monitors the operations), `PhotonNode.Ops` (API over operation processes, with the `Ops.Owner` contract the executor implements), `Executor.Journal` (file I/O, called only from the executor). The hub link: `PhotonNode.Connection`, which implements `Executor.Link`, the contract the executor sends snapshots and output through, so the executor doesn't depend on the connection |
 | Lifecycle | `PhotonNode` supervisor with `:rest_for_one`: the operation registry, the operation dynamic supervisor, the executor, then the connection, with the plan in its moduledoc. `PhotonNode.Application` starts it. |
 | Workers | One process per operation (`Ops.Shell`, or `Ops.Job` for the one-shot `ViewImage` job) under `OpSupervisor`; the executor's daily sweep timer |
 
@@ -961,7 +961,7 @@ The layering it encodes:
   `Retry` and the wire format (`ChatCompletions.Request`, `.Response`,
   `.Wire`) are strict, pure sub-boundaries.
 - `apps/node`: `PhotonNode` (the supervisor) holds `Config`, `CLI`,
-  `Connection`, `Executor` and `Harness` (the operation layer). The
+  `Connection`, `Executor` and `Ops` (the operation layer). The
   connection depends on the executor, and the executor on the operation
   layer, reaching the hub only through `Executor.Link`; the operation layer
   depends only on `PhotonCore`. Each functional-core module is a strict

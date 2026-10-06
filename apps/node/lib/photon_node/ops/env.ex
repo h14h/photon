@@ -1,4 +1,4 @@
-defmodule PhotonNode.Harness.Env do
+defmodule PhotonNode.Ops.Env do
   @moduledoc """
   The environment commands run with: the node's own, minus its launch
   plumbing (release scripts, or the Burrito wrapper of a packaged binary),

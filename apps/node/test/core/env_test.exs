@@ -1,7 +1,7 @@
-defmodule PhotonNode.Harness.EnvTest do
+defmodule PhotonNode.Ops.EnvTest do
   use PhotonNode.Case, async: true
 
-  alias PhotonNode.Harness.Env
+  alias PhotonNode.Ops.Env
 
   @burrito_paths "/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/lib:/usr/lib"
 

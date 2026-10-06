@@ -1,16 +1,16 @@
-defmodule PhotonNode.Harness.Ops.ViewImage do
+defmodule PhotonNode.Ops.ViewImage do
   @moduledoc """
-  The `view_image` job (run by `PhotonNode.Harness.Ops.Job`): reads an
+  The `view_image` job (run by `PhotonNode.Ops.Job`): reads an
   image and returns it base64-encoded.
 
   Unlike upstream it doesn't resize: an image over the size limit fails with
   a note on making a smaller copy. Formats: PNG, JPEG, GIF, WebP.
   """
 
-  @behaviour PhotonNode.Harness.Ops.Job
+  @behaviour PhotonNode.Ops.Job
 
   alias PhotonCore.Operation
-  alias PhotonNode.Harness.Image
+  alias PhotonNode.Ops.Image
 
   @source_limit 268_435_456
 

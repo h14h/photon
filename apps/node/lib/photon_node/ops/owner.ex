@@ -1,4 +1,4 @@
-defmodule PhotonNode.Harness.Ops.Owner do
+defmodule PhotonNode.Ops.Owner do
   @moduledoc """
   The contract between an operation process and whatever owns it: the
   process that persists its snapshots, forwards them, and decides what a
@@ -8,14 +8,14 @@ defmodule PhotonNode.Harness.Ops.Owner do
   An operation process is started with `{op, owner}`, where `owner` is
   `{owner_module, owner_id}`. The module is named in data, so the
   operation processes never call their owners by name, and Boundary sees no
-  dependency from `PhotonNode.Harness.Ops` on them.
+  dependency from `PhotonNode.Ops` on them.
 
   What every implementation must keep: an operation process never dies
   because of its owner. `checkpoint/2` and `report/2` catch every exit
   from the owner, not only `:noproc` (a timeout, or an owner that dies
   while the call waits), and return `:ignored` and `:down`. An uncaught
-  exit would stop `PhotonNode.Harness.Ops.Shell`, and its `terminate/2`
-  kills the running command.
+  exit would stop `PhotonNode.Ops.Shell`, and its `terminate/2` kills the
+  running command.
   """
 
   alias PhotonCore.Operation

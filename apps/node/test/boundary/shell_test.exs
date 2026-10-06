@@ -1,17 +1,18 @@
-defmodule PhotonNode.Harness.ShellTest do
+defmodule PhotonNode.Ops.ShellTest do
   @moduledoc """
   Regression tests for the shell operation, with the test process as its
   owner (`PhotonNode.TestOwner`): it gets the snapshots and answers the
   checkpoints.
   """
 
-  use PhotonNode.HarnessCase, async: false
+  use PhotonNode.NodeCase, async: false
 
   import PhotonNode.TestOwner,
     only: [owner: 0, owner: 1, await_status: 1, await_status: 2, await_pgid: 0]
 
   alias PhotonNode.Executor.Request
-  alias PhotonNode.Harness.{Env, Ops}
+  alias PhotonNode.Ops
+  alias PhotonNode.Ops.Env
 
   # A shell operation as the executor builds it from the hub's `op.start`,
   # running in the workspace with its files under the node's ops directory.
@@ -246,7 +247,7 @@ defmodule PhotonNode.Harness.ShellTest do
     {:ok, pid} = Ops.add(op, owner())
     running = await_pgid()
 
-    :ok = DynamicSupervisor.terminate_child(PhotonNode.Harness.OpSupervisor, pid)
+    :ok = DynamicSupervisor.terminate_child(PhotonNode.OpSupervisor, pid)
     assert gone?(pattern)
     assert File.exists?(Path.join(dir, "stopped"))
 

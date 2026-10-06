@@ -1,19 +1,20 @@
-defmodule PhotonNode.Harness.Ops do
+defmodule PhotonNode.Ops do
   @moduledoc """
-  The API over operation processes: one process per operation under
-  `PhotonNode.Harness.OpSupervisor`, registered by operation ID in
-  `PhotonNode.OpRegistry`. A `shell` operation runs in
-  `PhotonNode.Harness.Ops.Shell`; `view_image` is a job
-  (`PhotonNode.Harness.Ops.ViewImage`) run once by
-  `PhotonNode.Harness.Ops.Job`.
+  The node's operation layer: the processes that run the hub's operations
+  on this machine, and this module, the API over them.
 
-  Every operation has an owner (`PhotonNode.Harness.Ops.Owner`), given to
-  `add/2` as `{owner_module, owner_id}`: `PhotonNode.Executor` for the
-  hub's operations, or a stand-in in tests. Each process reports its
-  snapshots to the owner, which persists them before acting on them. A checkpoint the
+  One process per operation under `PhotonNode.OpSupervisor`, registered by
+  operation ID in `PhotonNode.OpRegistry`. A `shell` operation runs in
+  `PhotonNode.Ops.Shell`; `view_image` is a job
+  (`PhotonNode.Ops.ViewImage`) run once by `PhotonNode.Ops.Job`.
+
+  Every operation has an owner (`PhotonNode.Ops.Owner`), given to `add/2`
+  as `{owner_module, owner_id}`: `PhotonNode.Executor` for the hub's
+  operations, or a stand-in in tests. Each process reports its snapshots to
+  the owner, which persists them before acting on them. A checkpoint the
   operation must not act on until it is stored (a shell command's start)
   goes through the owner's `checkpoint/2`, a call. An operation process
-  never dies because of its owner (see `PhotonNode.Harness.Ops.Owner`).
+  never dies because of its owner (see `PhotonNode.Ops.Owner`).
 
   `add/2` is idempotent per ID. Adding an operation that is already running
   asks it to resend its latest snapshot instead, which is how a restarted
@@ -24,13 +25,33 @@ defmodule PhotonNode.Harness.Ops do
   plain sends to a local, registered process; if that process exits
   instead of answering, the owner's monitor sees it.
 
-  Lifecycle: operation processes are `:temporary`. A crash isn't restarted
-  by the supervisor; the owner monitors the process and decides (the
-  executor applies `PhotonNode.Executor.Rules.down/3`).
+  The layers:
+
+    * boundary: this module and `PhotonNode.Ops.Owner`, the contract for
+      whatever owns operations (the executor); `PhotonNode.Ops.Env`, the
+      environment commands run with
+    * workers: `PhotonNode.Ops.Shell` and `PhotonNode.Ops.Job`, one process
+      per operation, which no restart can help (a lost process is the
+      owner's to judge)
+    * functional core: `PhotonNode.Ops.Image` (image formats and sizes),
+      and the snapshots and output bounds the hub shares
+      (`PhotonCore.Operation`, `PhotonCore.Output`)
+
+  Lifecycle: operation processes are `:temporary`, under the `PhotonNode`
+  supervisor's `PhotonNode.OpSupervisor`. A crash isn't restarted by the
+  supervisor; the owner monitors the process and decides (the executor
+  applies `PhotonNode.Executor.Rules.down/3`).
   """
 
+  # The operation layer. `Owner` and `Env` are for the executor, which runs
+  # the hub's operations: it starts, finds and cancels them through this
+  # module, owns them, and reads the shell to run commands with.
+  use Boundary,
+    deps: [PhotonCore],
+    exports: [Owner, Env]
+
   alias PhotonCore.Operation
-  alias PhotonNode.Harness.Ops.{Job, Owner, Shell, ViewImage}
+  alias PhotonNode.Ops.{Job, Owner, Shell, ViewImage}
 
   @doc """
   Starts (or resumes, from its checkpoint) an operation for its owner.
@@ -78,7 +99,7 @@ defmodule PhotonNode.Harness.Ops do
 
   defp start(op, owner) do
     with {:ok, child} <- child_spec(op, owner) do
-      case DynamicSupervisor.start_child(PhotonNode.Harness.OpSupervisor, child) do
+      case DynamicSupervisor.start_child(PhotonNode.OpSupervisor, child) do
         {:ok, pid} -> {:ok, pid}
         {:error, {:already_started, pid}} -> resend(pid)
         {:error, reason} -> {:error, reason}

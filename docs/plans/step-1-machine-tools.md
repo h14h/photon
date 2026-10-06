@@ -740,11 +740,17 @@ PR B:
 - node: drop `Session`, `Context`, `Inbox`, `SkillPrompt`, `Tools.*` from
   `FunctionalCore`; drop `SessionRegistry`, `TaskSupervisor`,
   `SessionSupervisor` from `ProcessNameOwnership`, rename the op names to
-  `PhotonNode.Ops*`; set `api_modules` to `PhotonNode.Ops` and
-  `PhotonNode.Executor`; drop the Coordinator `PreferCall` entry; re-justify
-  `PhotonNode.Ops` (":resend and :cancel to a local op process, which the
-  executor monitors"); move the `NoSleep` entry to `PhotonNode.Ops.Shell`;
-  drop the `PhotonCore.ID.new` allowances.
+  `PhotonNode.Ops*`; set `api_modules` to `PhotonNode.Executor` (as
+  built in B6, not `PhotonNode.Ops`: its `add/2` returns the operation's
+  pid so the owner can monitor it, rule 87, and `via/1` names its own
+  workers, both of which the check flags; a comment there says so, and
+  `names` still keeps its registry and supervisor its own); drop the
+  Coordinator `PreferCall` entry; re-justify `PhotonNode.Ops` (":resend
+  and :cancel to a local op process, which the executor monitors"); move
+  the `NoSleep` entry to `PhotonNode.Ops.Shell`; drop the
+  `PhotonCore.ID.new` allowance for `PhotonCore.Operation` in core (the
+  node's `nondeterministic_extra: ["PhotonCore.ID.new"]` stays: it keeps
+  its core from minting IDs).
 - hub: drop `Assistant.Report`, `Assistant.Page`, `NodeSessions.*`, `NodeTranscript` from
   `FunctionalCore`; drop `Photon.NodeSessions` and `Photon.Nodes` from
   `api_modules`; rename the registry entry; replace the `Photon.Nodes`
@@ -1492,6 +1498,16 @@ B6. Rename the operation layer. After B5.
 - `PhotonNode.Executor` deps; remove `Operation.new/4` from core and its
   credo allowance.
 - `.credo.exs` in node and core (section 4.4).
+- As built: `PhotonNode.Ops` (`ops.ex`) is the boundary root and takes
+  the moduledoc `harness.ex` had, and `harness.ex` is deleted; `Image`
+  becomes `PhotonNode.Ops.Image`, still a strict sub-boundary. The test
+  case `PhotonNode.HarnessCase` becomes `PhotonNode.NodeCase`
+  (`test/support/node_case.ex`; it runs a whole node), and the test
+  modules `PhotonNode.Harness.{ShellTest,JobsTest,EnvTest,ImageTest}`
+  become `PhotonNode.Ops.*`. `jobs_test.exs` builds its operations with
+  `Operation.new/5`, and core's `operation_test.exs` loses the `new/4`
+  test. `docs/otp-design-guide.md`'s rule 46 and node lines name the new
+  modules.
 
 B7. Specs. After B1 and B5 (they describe the deleted code).
 - Section 5.2 "Specs": delete NodeSync, `Coordinator` to `Executor`,

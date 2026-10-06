@@ -1,4 +1,4 @@
-defmodule PhotonNode.HarnessCase do
+defmodule PhotonNode.NodeCase do
   @moduledoc """
   The case for the operation layer's and the connection's boundary tests:
   it runs a whole node with no hub connection in a temporary data

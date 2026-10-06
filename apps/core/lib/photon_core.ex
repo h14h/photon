@@ -22,8 +22,7 @@ defmodule PhotonCore do
       response maps typed in `PhotonCore.LLM`
     * functional core, pure: `LLM.SSE`, `LLM.Retry`, `LLM.HTTPError`,
       `LLM.Responses.Request`, `LLM.Responses.Response`, `Message`,
-      `Operation` (but `new/4`, which mints an ID), `Operation.Wire`,
-      `Output` and `ID.encode/3`
+      `Operation`, `Operation.Wire`, `Output` and `ID.encode/3`
     * boundary: `PhotonCore.LLM` is the API. Behind it, `LLM.Responses`
       does the HTTP and `LLM.Mock` answers with a script; both report events
       through the caller's `on_event`. `ID.new/1` reads the clock and RNG.

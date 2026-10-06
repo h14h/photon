@@ -23,7 +23,7 @@ defmodule PhotonNode.MixProject do
         ignore_modules: [
           PhotonNode.Case,
           PhotonNode.Fixtures,
-          PhotonNode.HarnessCase,
+          PhotonNode.NodeCase,
           PhotonNode.CLI,
           Mix.Tasks.Photon.Package,
           Mix.Tasks.Photon.Package.QuietStream,

@@ -42,12 +42,12 @@ defmodule PhotonNode do
 
     * `PhotonNode.OpRegistry`: a unique registry that names operation
       processes by ID, so nothing holds on to their pids
-    * `PhotonNode.Harness.OpSupervisor`: one `:temporary` process per
-      running operation, started by `PhotonNode.Harness.Ops.add/2` for its
-      owner (`PhotonNode.Harness.Ops.Owner`), the executor. A crash is not
-      restarted here; the executor monitors its operations and decides. A
-      shell stopped here while its command runs kills the command and
-      leaves a `stopped` marker, so a resumed operation says so.
+    * `PhotonNode.OpSupervisor`: one `:temporary` process per running
+      operation, started by `PhotonNode.Ops.add/2` for its owner
+      (`PhotonNode.Ops.Owner`), the executor. A crash is not restarted
+      here; the executor monitors its operations and decides. A shell
+      stopped here while its command runs kills the command and leaves a
+      `stopped` marker, so a resumed operation says so.
     * `PhotonNode.Executor` (`:permanent`): the hub's operations, one
       process for all of them, with their journal in `<data_dir>/ops`. On
       start it scans the journal: operations still running are monitored
@@ -97,7 +97,7 @@ defmodule PhotonNode do
 
     children = [
       {Registry, keys: :unique, name: PhotonNode.OpRegistry},
-      {DynamicSupervisor, name: PhotonNode.Harness.OpSupervisor, strategy: :one_for_one},
+      {DynamicSupervisor, name: PhotonNode.OpSupervisor, strategy: :one_for_one},
       PhotonNode.Executor,
       connection(opts)
     ]

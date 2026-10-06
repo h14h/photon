@@ -1,7 +1,7 @@
-defmodule PhotonNode.Harness.ImageTest do
+defmodule PhotonNode.Ops.ImageTest do
   use PhotonNode.Case, async: true
 
-  alias PhotonNode.Harness.Image
+  alias PhotonNode.Ops.Image
 
   describe "inspect_bytes/1" do
     test "reads the size from PNG, GIF and JPEG headers" do

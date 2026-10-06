@@ -8,7 +8,7 @@ defmodule PhotonNode.Case do
   Tests are laid out by layer: `test/core` for the functional core (no
   processes, no files), `test/boundary` for the executor, its journal,
   operation processes and the hub connection, run as a node in a temporary
-  directory (`PhotonNode.HarnessCase`, or the executor test's own setup),
+  directory (`PhotonNode.NodeCase`, or the executor test's own setup),
   and `test/property` for the StreamData properties.
   """
 
