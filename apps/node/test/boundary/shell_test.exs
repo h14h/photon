@@ -22,12 +22,13 @@ defmodule PhotonNode.Ops.ShellTest do
   alias PhotonNode.Ops.Env
 
   # A shell operation as the executor builds it from the hub's `op.start`,
-  # running in the workspace with its files under the node's ops directory.
-  defp shell(command, %{ops_dir: ops_dir, workspace: workspace}) do
+  # running in `directory` (the workspace when nil) with its files under
+  # the node's ops directory.
+  defp shell(command, %{ops_dir: ops_dir, workspace: workspace}, directory \\ nil) do
     start = %{
       "id" => PhotonCore.ID.new("op_"),
       "kind" => "shell",
-      "args" => %{"command" => command, "directory" => nil, "max_output_length" => 10_000}
+      "args" => %{"command" => command, "directory" => directory, "max_output_length" => 10_000}
     }
 
     {:ok, op} =
@@ -49,6 +50,48 @@ defmodule PhotonNode.Ops.ShellTest do
   end
 
   defp kill_all(pattern), do: System.cmd("pkill", ["-KILL", "-f", pattern])
+
+  # Step 2 (ops:2): a project's folder on a machine is made on first use,
+  # so a thread's first command doesn't fail with "start process: enoent".
+  test "a missing working directory is created and the command runs in it",
+       %{workspace: workspace} = context do
+    project = Path.join(workspace, "proj")
+    refute File.exists?(project)
+
+    {:ok, _pid} = Ops.add(shell("pwd", context, "proj"), owner())
+
+    assert %{"state" => %{"result" => %{"out" => out, "exit_code" => 0}}} =
+             await_status("completed")
+
+    assert String.trim(out) == project
+    assert File.dir?(project)
+
+    # A second operation there finds it.
+    {:ok, _pid} = Ops.add(shell("echo again", context, "proj"), owner())
+
+    assert %{"state" => %{"result" => %{"out" => "again\n", "exit_code" => 0}}} =
+             await_status("completed")
+  end
+
+  test "a working directory blocked by a file fails the operation before the command runs",
+       %{workspace: workspace} = context do
+    File.mkdir_p!(workspace)
+    blocked = Path.join(workspace, "proj")
+    File.write!(blocked, "")
+    marker = Path.join(workspace, "ran")
+
+    {:ok, pid} = Ops.add(shell("touch #{marker}", context, "proj/sub"), owner())
+    ref = Process.monitor(pid)
+
+    assert %{"state" => %{"terminal_error" => error}} = await_status("failed")
+
+    assert error ==
+             "couldn't create the working directory #{blocked}/sub: not a directory. " <>
+               "The command didn't run."
+
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+    refute File.exists?(marker)
+  end
 
   # Coordinator F3: the command started before its "process" checkpoint was
   # stored, so a coordinator that was down could later start it again.

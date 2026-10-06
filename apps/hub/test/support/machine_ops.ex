@@ -67,7 +67,7 @@ defmodule Photon.MachineOps do
   end
 
   @doc "Registers the calling process as `machine`'s connection, speaking the op protocol."
-  def connect(machine, capabilities \\ ["ops:1"]),
+  def connect(machine, capabilities \\ ["ops:2"]),
     do:
       Photon.Machines.register(machine, %{"hostname" => machine, "capabilities" => capabilities})
 end

@@ -14,17 +14,23 @@ defmodule Photon.MachineToolsE2ETest do
   node's key (`Photon.NodeKeys.local_token/0`), which loopback may use, as
   machine `local`.
 
-  Blip is driven with the scripted model (`config :photon, :mock_model`):
-  `on local: $ <command>` calls `shell`, and `on local: look at <path>`
-  calls `view_image`. The offline limit is raised to a minute, so a node
-  that is restarted on purpose comes back long before a call gives up.
+  Blip and threads are driven with their scripted models (`config
+  :photon, :mock_model`): `on local: $ <command>` calls `shell`, and `on
+  local: look at <path>` calls `view_image`. The offline limit is raised to
+  a minute, so a node that is restarted on purpose comes back long before a
+  call gives up.
+
+  The thread test (`docs/plans/step-2-projects-and-threads.md`, section
+  7.5) checks what only a real node shows: a thread's commands run in its
+  project's folder, `<workspace>/<slug>`, which the node makes on first
+  use, and the project's threads share it.
   """
 
   use Photon.DataCase, async: false
 
   import Photon.Eventually
 
-  alias Photon.{Assistant, Machines}
+  alias Photon.{Assistant, Machines, Projects, Threads}
   alias Photon.Machines.Op
   alias PhotonCore.Message
   alias PhotonNode.Executor.Journal
@@ -84,6 +90,25 @@ defmodule Photon.MachineToolsE2ETest do
   defp results(c), do: for(%{kind: "tool_result"} = e <- Durable.entries(c), do: e.data)
 
   defp reply(c), do: List.last(texts(c, "assistant"))
+
+  # Starts a thread in `project` and waits until its run is over, which
+  # with the scripted model is after it relays its one tool result.
+  defp run_thread!(project, text) do
+    {:ok, thread} = Threads.start(project.id, text)
+
+    assert eventually(
+             fn -> results(thread.id) != [] and not Threads.busy?(thread.id) end,
+             @wait
+           )
+
+    thread.id
+  end
+
+  # The output of the thread's one shell call.
+  defp output(thread_id) do
+    assert [%{"status" => "ok", "message" => message}] = results(thread_id)
+    Message.text_of(message)
+  end
 
   # The op of the call in flight: the test runs one call at a time.
   defp the_op, do: eventually(fn -> Repo.one(Op) end, @wait)
@@ -249,5 +274,28 @@ defmodule Photon.MachineToolsE2ETest do
 
     await_forgotten(ops_dir, id)
     refute File.exists?(runs)
+  end
+
+  test "a thread's commands run in its project's folder, made on first use and shared by the project's threads",
+       %{node: node} do
+    start_node(node)
+
+    {:ok, project} =
+      Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+
+    folder = Path.join(workspace(node), project.slug)
+    refute File.exists?(folder)
+
+    first = run_thread!(project, "on local: $ pwd; echo hi > from-first.txt")
+
+    assert String.ends_with?(String.trim(output(first)), "/workspace/#{project.slug}")
+    assert File.dir?(folder)
+    assert File.read!(Path.join(folder, "from-first.txt")) == "hi\n"
+    assert reply(first) =~ "/workspace/#{project.slug}"
+
+    second = run_thread!(project, "on local: $ ls")
+
+    assert output(second) =~ "from-first.txt"
+    refute File.exists?(Path.join(workspace(node), "from-first.txt"))
   end
 end

@@ -5,7 +5,7 @@ defmodule Photon.Machines.RosterTest do
 
   alias Photon.Machines.Roster
 
-  @ops ["ops:1"]
+  @ops ["ops:2"]
 
   defp online(id, capabilities \\ @ops),
     do: %{"id" => id, "platform" => "linux", "capabilities" => capabilities}
@@ -53,10 +53,11 @@ defmodule Photon.Machines.RosterTest do
   describe "status/4" do
     test "a connected machine that speaks the op protocol is online" do
       assert Roster.status("mm1", online("mm1"), [], false) == :online
-      assert Roster.status("local", online("local", ["x", "ops:1"]), [], true) == :online
+      assert Roster.status("local", online("local", ["x", "ops:2"]), [], true) == :online
     end
 
-    test "a connected machine without ops:1 is outdated" do
+    test "a connected machine without ops:2 is outdated, even with ops:1" do
+      assert Roster.status("mm1", online("mm1", ["ops:1"]), ["mm1"], false) == :outdated
       assert Roster.status("mm1", online("mm1", ["sessions"]), ["mm1"], false) == :outdated
       assert Roster.status("mm1", %{"id" => "mm1"}, ["mm1"], false) == :outdated
     end

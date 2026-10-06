@@ -1,0 +1,84 @@
+defmodule Photon.Threads.MockScriptTest do
+  @moduledoc "A thread's scripted model: its fixed phrasings (section 3.5)."
+
+  use Photon.Case, async: true
+
+  alias Photon.Threads.MockScript
+
+  defp ask(text), do: MockScript.respond(%{messages: [Message.user(text)]})
+
+  defp calls(message), do: Enum.map(Message.tool_calls(message), &{&1["name"], args(&1)})
+
+  defp args(call) do
+    {:ok, args} = Message.arguments(call)
+    args
+  end
+
+  test "understands Blip's machine phrasings" do
+    assert calls(ask("machines")) == [{"list_machines", %{}}]
+
+    assert calls(ask("on box: $ ls -la")) ==
+             [{"shell", %{"machine" => "box", "command" => "ls -la"}}]
+
+    assert calls(ask("on box: look at shot.png")) ==
+             [{"view_image", %{"machine" => "box", "path" => "shot.png"}}]
+  end
+
+  test "lists the context files" do
+    assert calls(ask("files")) == [{"list_context_files", %{}}]
+    assert calls(ask("list files")) == [{"list_context_files", %{}}]
+  end
+
+  test "reads a context file" do
+    assert calls(ask("read notes.md")) == [{"read_context_file", %{"name" => "notes.md"}}]
+  end
+
+  test "writes a context file, over several lines" do
+    assert calls(ask("write notes.md: hello")) ==
+             [{"write_context_file", %{"name" => "notes.md", "content" => "hello"}}]
+
+    assert calls(ask("write plan.md: # Plan\n\n- water zone 1\n- check zone 2")) ==
+             [
+               {"write_context_file",
+                %{"name" => "plan.md", "content" => "# Plan\n\n- water zone 1\n- check zone 2"}}
+             ]
+  end
+
+  test "edits a context file" do
+    assert calls(ask("edit notes.md: hello => bye")) ==
+             [
+               {"edit_context_file",
+                %{"name" => "notes.md", "old_text" => "hello", "new_text" => "bye"}}
+             ]
+
+    assert calls(ask("edit notes.md: zone 2 =>")) ==
+             [
+               {"edit_context_file",
+                %{"name" => "notes.md", "old_text" => "zone 2", "new_text" => ""}}
+             ]
+  end
+
+  test "reads the last text part of the message" do
+    message = Message.user([Message.text("[Looking at the project]"), Message.text("files")])
+    assert calls(MockScript.respond(%{messages: [message]})) == [{"list_context_files", %{}}]
+  end
+
+  test "relays a tool's result, and an error" do
+    assert relay("Wrote notes.md (5 characters).") == "Wrote notes.md (5 characters)."
+
+    assert relay("Error: old_text wasn't found in notes.md.") ==
+             "That didn't work: old_text wasn't found in notes.md."
+  end
+
+  defp relay(content),
+    do: Message.text_of(MockScript.respond(%{messages: [Message.tool_result("c1", content)]}))
+
+  test "answers anything else with its help" do
+    help = Message.text_of(ask("tidy the shed"))
+    assert help =~ "scripted model"
+    assert help =~ "`write <name>: <text>`"
+    assert help =~ "Sign in with ChatGPT"
+    assert calls(ask("tidy the shed")) == []
+    assert Message.text_of(MockScript.respond(%{messages: []})) =~ "scripted model"
+  end
+end

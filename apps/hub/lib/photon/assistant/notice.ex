@@ -9,10 +9,10 @@ defmodule Photon.Assistant.Notice do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, Photon.Assistant.Transcript]
+  use Boundary, type: :strict, deps: [PhotonCore, Photon.Transcript]
 
-  alias Photon.Assistant.Transcript
   alias Photon.Durable.Entry
+  alias Photon.Transcript
   alias PhotonCore.Message
 
   @typedoc "One thing Blip says: `:reply` (its answer) or `:error` (the conversation failed)."

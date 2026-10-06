@@ -69,6 +69,28 @@ defmodule Photon.Assistant.MockScriptTest do
   defp relay(content),
     do: Message.text_of(MockScript.respond(%{messages: [Message.tool_result("c1", content)]}))
 
+  test "reads the last text part, what the user typed, past a page's note" do
+    note =
+      ~s([Looking at the project "Garden", folder "garden" in each machine's workspace]\nPurpose: water)
+
+    message = Message.user([Message.text(note), Message.text("machines")])
+
+    assert calls(MockScript.respond(%{messages: [message]})) == [{"list_machines", %{}}]
+  end
+
+  test "here says the first line of the page's note, or that it doesn't know the page" do
+    note =
+      ~s([Looking at notes.md in the project "Garden", folder "garden" in each machine's workspace]\nPurpose: water)
+
+    message = Message.user([Message.text(note), Message.text("here")])
+
+    assert Message.text_of(MockScript.respond(%{messages: [message]})) ==
+             ~s([Looking at notes.md in the project "Garden", folder "garden" in each machine's workspace])
+
+    assert Message.text_of(ask("here")) == "I don't know which page you're on."
+    assert Message.text_of(ask("Here?")) == "I don't know which page you're on."
+  end
+
   test "answers anything else with its help" do
     assert Message.text_of(ask("hello")) =~ "I'm Blip, on the scripted model"
 

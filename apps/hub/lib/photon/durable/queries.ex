@@ -11,6 +11,7 @@ defmodule Photon.Durable.Queries do
   use Boundary,
     type: :strict,
     deps: [
+      Photon.Durable.Conversation,
       Photon.Durable.Entry,
       Photon.Durable.Signal,
       Photon.Durable.Submission,
@@ -20,7 +21,7 @@ defmodule Photon.Durable.Queries do
 
   import Ecto.Query
 
-  alias Photon.Durable.{Entry, Signal, Submission, TaskRecord}
+  alias Photon.Durable.{Conversation, Entry, Signal, Submission, TaskRecord}
 
   @doc "A conversation's entries after `after_seq`, in order."
   @spec entries(String.t(), non_neg_integer()) :: Ecto.Query.t()
@@ -35,6 +36,16 @@ defmodule Photon.Durable.Queries do
   @spec last_seq(String.t()) :: Ecto.Query.t()
   def last_seq(conversation_id) do
     from(e in Entry, where: e.conversation_id == ^conversation_id, select: max(e.seq))
+  end
+
+  @doc "A conversation's newest `limit` entries of `kind`, newest first."
+  @spec last_entries(String.t(), String.t(), pos_integer()) :: Ecto.Query.t()
+  def last_entries(conversation_id, kind, limit) do
+    from(e in Entry,
+      where: e.conversation_id == ^conversation_id and e.kind == ^kind,
+      order_by: [desc: e.seq],
+      limit: ^limit
+    )
   end
 
   @doc "Unfinished tasks, oldest first."
@@ -80,6 +91,37 @@ defmodule Photon.Durable.Queries do
         t.conversation_id == ^conversation_id and is_nil(t.owner_task_id) and
           t.background == false and t.status not in ^TaskRecord.terminal_statuses(),
       limit: 1
+    )
+  end
+
+  @doc """
+  Which of `conversation_ids` are busy, as `conversation_id`s: those with a
+  current run (as `active_run/1` defines it).
+  """
+  @spec busy([String.t()]) :: Ecto.Query.t()
+  def busy(conversation_ids) do
+    from(t in runs(), where: t.conversation_id in ^conversation_ids)
+  end
+
+  @doc "Which conversations with `profile` are busy, as `conversation_id`s."
+  @spec busy_in_profile(String.t()) :: Ecto.Query.t()
+  def busy_in_profile(profile) do
+    from(t in runs(),
+      join: c in Conversation,
+      on: c.id == t.conversation_id,
+      where: c.profile == ^profile
+    )
+  end
+
+  # Current runs (unfinished, conversation-owned, foreground), one row per
+  # conversation that has one.
+  defp runs do
+    from(t in TaskRecord,
+      where:
+        is_nil(t.owner_task_id) and t.background == false and
+          t.status not in ^TaskRecord.terminal_statuses(),
+      select: t.conversation_id,
+      distinct: true
     )
   end
 

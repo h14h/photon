@@ -2,14 +2,14 @@ defmodule Photon.AssistantTest do
   @moduledoc """
   The assistant through its API (`Photon.Assistant`) with its mock model:
   its tools (a connected node is played by the test process, which
-  registers under the node's name), and schedules.
+  registers under the node's name), schedules, and the page under Blip.
   """
 
   use Photon.DataCase, async: false
 
   @moduletag :durable
 
-  alias Photon.Assistant
+  alias Photon.{Assistant, Projects, Threads}
 
   setup do
     conversation = Assistant.conversation_id()
@@ -25,7 +25,7 @@ defmodule Photon.AssistantTest do
         "platform" => "test",
         "workspace" => "/w",
         "version" => "0",
-        "capabilities" => ["ops:1"]
+        "capabilities" => ["ops:2"]
       })
   end
 
@@ -79,5 +79,111 @@ defmodule Photon.AssistantTest do
       assert note.data["message"] =~ ~s{Skipped "check disks"}
       refute Enum.any?(Durable.entries(c), &(&1.data["source"]["kind"] == "routine"))
     end
+  end
+
+  describe "the page under Blip" do
+    setup do
+      {:ok, garden} =
+        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+
+      {:ok, shed} = Projects.create(%{"name" => "Shed", "purpose" => "Fix the shed roof."})
+
+      {:ok, _file} =
+        Projects.create_file(garden.id, %{"name" => "notes.md", "content" => "Zone 2."})
+
+      thread = idle_thread!(garden, "Fix the pump")
+      %{garden: garden, shed: shed, thread: thread}
+    end
+
+    test "page_at/1 gives a project's page, a file's and a thread's", %{garden: g, thread: t} do
+      assert %{"kind" => "project", "project_id" => id, "label" => "Garden"} =
+               Assistant.page_at("/projects/garden")
+
+      assert id == g.id
+      assert Assistant.page_at("/projects/garden/threads/new")["label"] == "Garden"
+      assert Assistant.page_at("/projects/garden/files/new")["label"] == "Garden"
+
+      # Found case-insensitively, labelled with its own name.
+      assert %{"kind" => "file", "file" => "notes.md", "label" => "Garden / notes.md"} =
+               Assistant.page_at("/projects/garden/files/NOTES.md")
+
+      assert %{"kind" => "thread", "thread_id" => thread_id, "label" => "Garden / Fix the pump"} =
+               Assistant.page_at("/projects/garden/threads/#{t.id}")
+
+      assert thread_id == t.id
+    end
+
+    test "page_at/1 gives nil for what doesn't exist, and outside projects", %{thread: t} do
+      assert Assistant.page_at("/projects/garden/files/missing.md") == nil
+      assert Assistant.page_at("/projects/shed/threads/#{t.id}") == nil
+      assert Assistant.page_at("/projects/nowhere") == nil
+      assert Assistant.page_at("/projects/nowhere/threads/#{t.id}") == nil
+      assert Assistant.page_at("/projects/new") == nil
+      assert Assistant.page_at("/nodes") == nil
+    end
+
+    test "send/2 with a page sends its note, then the message, with the page in source", %{
+      conversation: c,
+      thread: t
+    } do
+      page = Assistant.page_at("/projects/garden/threads/#{t.id}")
+      {:ok, s} = Assistant.send("here", page: page)
+      await_settled(c, s.id)
+
+      user = Enum.find(Durable.entries(c), &(&1.kind == "user"))
+      assert [%{"text" => note}, %{"text" => "here"}] = user.data["message"]["content"]
+      assert user.data["source"] == %{"kind" => "user", "page" => page}
+
+      [first | rest] = String.split(note, "\n")
+
+      assert first ==
+               ~s([Looking at the thread "Fix the pump" in the project "Garden", folder "garden" in each machine's workspace])
+
+      assert "Purpose: Keep the garden watered." in rest
+      assert "Context files: notes.md" in rest
+      assert Enum.any?(rest, &String.starts_with?(&1, "The thread is idle. Its latest answer:"))
+
+      # The scripted model reads only what was typed, and says the note's first line.
+      assert texts(c, "assistant") == [first]
+    end
+
+    test "send/2 reads a file's page fresh, with the content as last saved", %{
+      conversation: c,
+      garden: g
+    } do
+      page = Assistant.page_at("/projects/garden/files/notes.md")
+      {:ok, _} = Projects.save_file(g.id, "notes.md", "Zone 2 valve: replaced.", 1)
+      {:ok, _} = Projects.update(g.id, %{"name" => "Back garden", "purpose" => g.purpose})
+
+      {:ok, s} = Assistant.send("what's missing?", page: page)
+      await_settled(c, s.id)
+
+      user = Enum.find(Durable.entries(c), &(&1.kind == "user"))
+      assert [%{"text" => note}, %{"text" => "what's missing?"}] = user.data["message"]["content"]
+      assert note =~ "-----\nZone 2 valve: replaced.\n-----"
+      assert note =~ ~s(in the project "Back garden")
+      assert user.data["source"]["page"]["label"] == "Back garden / notes.md"
+    end
+
+    test "send/2 without a page sends the message alone", %{conversation: c} do
+      {:ok, s} = Assistant.send("here", page: nil)
+      await_settled(c, s.id)
+
+      user = Enum.find(Durable.entries(c), &(&1.kind == "user"))
+      assert [%{"text" => "here"}] = user.data["message"]["content"]
+      assert user.data["source"] == %{"kind" => "user"}
+      assert texts(c, "assistant") == ["I don't know which page you're on."]
+    end
+  end
+
+  # Starts a thread and waits until it has answered, so no run outlives the test.
+  defp idle_thread!(project, text) do
+    {:ok, thread} = Threads.start(project.id, text)
+    :ok = Threads.subscribe(thread.id)
+
+    if Threads.busy?(thread.id),
+      do: await_change(thread.id, fn _changes -> not Threads.busy?(thread.id) end)
+
+    thread
   end
 end

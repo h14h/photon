@@ -46,8 +46,10 @@ defmodule PhotonWeb.NodeChannel do
 
   # Today's node ignores the join reply. A node built before step 1's PR B
   # requires "sync" in it and crashes without it, so it couldn't stay
-  # joined; with an empty one it stays connected and is shown as outdated,
-  # or runs ops if it speaks ops:1 (rule 75).
+  # joined; with an empty one it stays connected and is shown as outdated
+  # (rule 75). Only a node that speaks ops:2 runs ops: one with ops:1
+  # alone is outdated too, and `Machines.joined/1` and `push_for/2` send
+  # it nothing, since it wouldn't create a project's working directory.
   @join_reply %{"sync" => %{}}
 
   # A node joins as the node its key belongs to (`PhotonWeb.NodeSocket`),

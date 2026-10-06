@@ -1,12 +1,15 @@
 defmodule Photon.MachineTools.Translate do
   @moduledoc """
-  Translates between Blip's machine tools and operations, as pure
-  functions (sections 3.1 and 3.4 of `docs/plans/step-1-machine-tools.md`).
-  Ported from the node's `Tools.Bash` and `Tools.ViewImage`.
+  Translates between the machine tools and operations, as pure functions
+  (sections 3.1 and 3.4 of `docs/plans/step-1-machine-tools.md`). Ported
+  from the node's `Tools.Bash` and `Tools.ViewImage`.
 
-  Arguments one way: `shell_args/1` and `view_image_args/1` check a tool
-  call's arguments and return the op's `args` for `op.start`, with
-  `directory` null (commands run in the machine's workspace in step 1).
+  Arguments one way: `shell_args/2` and `view_image_args/2` check a tool
+  call's arguments and return the op's `args` for `op.start`, with the
+  conversation's working directory as `directory`: relative to the
+  machine's workspace (a project's slug, for a thread), or nil for the
+  workspace itself (Blip). The node resolves it and makes it on first use
+  (section 3.4 of `docs/plans/step-2-projects-and-threads.md`).
 
   Snapshots the other way: `result/3` turns a terminal snapshot into the
   content the model sees, and `details/3` into what the UI keeps with it.
@@ -62,14 +65,15 @@ defmodule Photon.MachineTools.Translate do
 
   @doc """
   The `args` of a `shell` op for a `shell` call's arguments: `command`,
-  `directory` (null) and `max_output_length` (40,000 if not given), or the
+  `directory` (`workdir`, relative to the machine's workspace, or nil for
+  the workspace) and `max_output_length` (40,000 if not given), or the
   reason the call can't run.
   """
-  @spec shell_args(tool_args()) :: {:ok, op_args()} | {:error, String.t()}
-  def shell_args(args) do
+  @spec shell_args(tool_args(), String.t() | nil) :: {:ok, op_args()} | {:error, String.t()}
+  def shell_args(args, workdir) do
     with {:ok, limit} <- limit(args["max_output_length"]),
          {:ok, command} <- command(Map.fetch(args, "command")) do
-      {:ok, %{"command" => command, "directory" => nil, "max_output_length" => limit}}
+      {:ok, %{"command" => command, "directory" => workdir, "max_output_length" => limit}}
     end
   end
 
@@ -112,11 +116,12 @@ defmodule Photon.MachineTools.Translate do
 
   @doc """
   The `args` of a `view_image` op for a `view_image` call's arguments:
-  `path` (absolute, or relative to the machine's workspace), `directory`
-  (null) and `max_size`, or the reason the call can't run.
+  `path` (absolute, or relative to the working directory), `directory`
+  (`workdir`, as for `shell_args/2`) and `max_size`, or the reason the
+  call can't run.
   """
-  @spec view_image_args(tool_args()) :: {:ok, op_args()} | {:error, String.t()}
-  def view_image_args(%{"path" => path}) when is_binary(path) do
+  @spec view_image_args(tool_args(), String.t() | nil) :: {:ok, op_args()} | {:error, String.t()}
+  def view_image_args(%{"path" => path}, workdir) when is_binary(path) do
     cond do
       String.trim(path) == "" ->
         {:error, ~s(view_image argument "path" must be set)}
@@ -125,14 +130,15 @@ defmodule Photon.MachineTools.Translate do
         {:error, ~s(view_image argument "path" contains a NUL byte)}
 
       true ->
-        {:ok, %{"path" => path, "directory" => nil, "max_size" => @max_size}}
+        {:ok, %{"path" => path, "directory" => workdir, "max_size" => @max_size}}
     end
   end
 
-  def view_image_args(%{"path" => path}) when not is_nil(path),
+  def view_image_args(%{"path" => path}, _workdir) when not is_nil(path),
     do: {:error, ~s(view_image argument "path" must be a string)}
 
-  def view_image_args(_args), do: {:error, ~s(view_image argument "path" must be set)}
+  def view_image_args(_args, _workdir),
+    do: {:error, ~s(view_image argument "path" must be set)}
 
   @doc """
   The content the model sees for an op's terminal snapshot: for `shell`,
@@ -329,7 +335,10 @@ defmodule Photon.MachineTools.Translate do
       "There is no machine called #{inspect(machine)}. The machines this hub knows are " <>
         Enum.join(known_ids, ", ") <> "."
 
-  @doc "The error for a call on a machine whose photon-node predates the operation protocol."
+  @doc """
+  The error for a call on a machine whose photon-node is older than the
+  operation protocol this hub speaks (`ops:2`).
+  """
   @spec outdated_machine(String.t()) :: String.t()
   def outdated_machine(machine),
     do:

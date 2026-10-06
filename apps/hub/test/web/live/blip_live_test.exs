@@ -2,7 +2,8 @@ defmodule PhotonWeb.BlipLiveTest do
   @moduledoc """
   Blip, floating over the pages, driven as a user would: the conversation
   (sending, the in-flight answer, the inbox while the assistant is busy),
-  the panel, what Blip says while it's closed, and its mood.
+  the panel, what Blip says while it's closed, its mood, and the page under
+  it.
   """
 
   use PhotonWeb.ConnCase, async: false
@@ -10,7 +11,7 @@ defmodule PhotonWeb.BlipLiveTest do
   import Phoenix.LiveViewTest
   import Photon.Fixtures, only: [call: 3]
 
-  alias Photon.{Assistant, Durable}
+  alias Photon.{Assistant, Durable, Projects, Threads}
   alias PhotonCore.Message
 
   @moduletag :durable
@@ -318,7 +319,7 @@ defmodule PhotonWeb.BlipLiveTest do
       answered(c, "c5", "list_machines", "mm1, online", %{})
 
       assert has_element?(blip, "#action-c3[data-status=error]", "Ran false on mm1")
-      assert has_element?(blip, "#action-c4[data-status=stopped]", "Ran sleep 99 on mm2")
+      assert has_element?(blip, "#action-c4[data-status=stopped]", "Stopped sleep 99 on mm2")
       assert has_element?(blip, "#action-c5[data-status=done]", "Checked your machines")
     end
   end
@@ -490,6 +491,100 @@ defmodule PhotonWeb.BlipLiveTest do
       Durable.commit(&Durable.Tx.finish(&1, run, "done", %{}))
 
       assert has_element?(blip, "#blip-avatar[data-state=error]")
+    end
+  end
+
+  describe "the page under it" do
+    setup do
+      {:ok, project} =
+        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+
+      {:ok, _file} =
+        Projects.create_file(project.id, %{"name" => "notes.md", "content" => "Zone 2."})
+
+      {:ok, thread} = Threads.start(project.id, "Fix the pump")
+      :ok = Threads.subscribe(thread.id)
+
+      if Threads.busy?(thread.id),
+        do: await_change(thread.id, fn _changes -> not Threads.busy?(thread.id) end)
+
+      %{project: project, thread: thread}
+    end
+
+    # Opens `path` with Blip over it, and has the hook report the page.
+    defp blip_on(conn, path) do
+      {:ok, view, _html} = live(conn, path)
+      blip = find_live_child(view, "blip")
+      render_hook(blip, "page", %{"path" => path})
+      blip
+    end
+
+    test "offers each page inside a project as context, and nothing on the new-project page", %{
+      conn: conn,
+      thread: thread
+    } do
+      for {path, label} <- [
+            {~p"/projects/garden", "About Garden"},
+            {~p"/projects/garden/files/notes.md", "About Garden / notes.md"},
+            {~p"/projects/garden/threads/new", "About Garden"},
+            {~p"/projects/garden/threads/#{thread.id}", "About Garden / Fix the pump"}
+          ] do
+        assert has_element?(blip_on(conn, path), "#page-chip", label), path
+      end
+
+      refute has_element?(blip_on(conn, ~p"/projects/new"), "#page-chip")
+      refute has_element?(blip_on(conn, ~p"/"), "#page-chip")
+    end
+
+    test "follows the page as the user moves on, and the × leaves it out", %{
+      conn: conn,
+      thread: thread
+    } do
+      blip = blip_on(conn, ~p"/projects/garden")
+      blip |> element("#page-chip-dismiss") |> render_click()
+      refute has_element?(blip, "#page-chip")
+
+      # A new page brings the chip back.
+      render_hook(blip, "page", %{"path" => ~p"/projects/garden/threads/#{thread.id}"})
+      assert has_element?(blip, "#page-chip", "About Garden / Fix the pump")
+
+      render_hook(blip, "page", %{"path" => ~p"/nodes"})
+      refute has_element?(blip, "#page-chip")
+    end
+
+    test "a message sent with the page shows what was typed, and what it was about", %{
+      conn: conn,
+      thread: thread
+    } do
+      conversation = Assistant.conversation_id()
+      Durable.subscribe(conversation)
+      blip = blip_on(conn, ~p"/projects/garden/threads/#{thread.id}")
+
+      blip |> form("#composer", message: %{text: "here"}) |> render_submit()
+      answer = await_entry(conversation, &(&1.kind == "assistant"))
+      user = Enum.find(Durable.entries(conversation), &(&1.kind == "user"))
+
+      assert Message.text_of(answer.data["message"]) ==
+               ~s([Looking at the thread "Fix the pump" in the project "Garden", folder "garden" in each machine's workspace])
+
+      _ = render(blip)
+      assert has_element?(blip, "#message-#{user.id}", ~r/\Ahere\z/)
+      assert has_element?(blip, "#message-#{user.id}-about", "About Garden / Fix the pump")
+    end
+
+    test "without the page, Blip doesn't know where the user is", %{conn: conn} do
+      conversation = Assistant.conversation_id()
+      Durable.subscribe(conversation)
+      blip = blip_on(conn, ~p"/projects/garden")
+      blip |> element("#page-chip-dismiss") |> render_click()
+
+      blip |> form("#composer", message: %{text: "here"}) |> render_submit()
+      answer = await_entry(conversation, &(&1.kind == "assistant"))
+      user = Enum.find(Durable.entries(conversation), &(&1.kind == "user"))
+
+      assert Message.text_of(answer.data["message"]) == "I don't know which page you're on."
+      _ = render(blip)
+      refute has_element?(blip, "#message-#{user.id}-about")
     end
   end
 

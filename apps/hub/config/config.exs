@@ -27,8 +27,11 @@ config :photon, Photon.Repo,
 
 # What runs the assistant's conversation, and its own task kinds.
 config :photon, Photon.Durable,
-  profiles: %{"assistant" => Photon.Assistant},
-  kinds: %{"routine" => Photon.Assistant.Routine}
+  profiles: %{"assistant" => Photon.Assistant, "thread" => Photon.Threads},
+  kinds: %{
+    "routine" => Photon.Assistant.Routine,
+    "thread_title" => Photon.Threads.Titling
+  }
 
 # How a machine tool call waits for its operation: it checks once a minute
 # (asking an online machine to push the op again), and gives up once the

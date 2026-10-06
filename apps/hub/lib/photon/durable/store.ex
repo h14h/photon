@@ -12,6 +12,9 @@ defmodule Photon.Durable.Store do
       `{:durable, conversation_id, changes}` with the new `:entries`, changed
       `:docs`, `:submissions` and `:tasks`
     * on topic `"durable:global"` for global docs and every task change
+    * each `Tx.announce/3` of the commit, on its own topic, in commit order
+      (how `Photon.Projects` and `Photon.Threads` announce writes made inside
+      a commit)
     * to `Photon.Durable.Scheduler`, so it can start or wake tasks
 
   So nothing is shown before it is stored. Commit functions run serially and
@@ -76,6 +79,8 @@ defmodule Photon.Durable.Store do
 
     if changes.tasks != [],
       do: Events.broadcast("durable:global", {:durable_tasks, changes.tasks})
+
+    Enum.each(changes.announcements, fn {topic, message} -> Events.broadcast(topic, message) end)
 
     if Changes.wakes_scheduler?(changes), do: Scheduler.notify(changes.tasks, changes.signals)
     :ok

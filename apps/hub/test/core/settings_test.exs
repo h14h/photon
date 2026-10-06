@@ -35,6 +35,14 @@ defmodule Photon.SettingsTest do
     end
   end
 
+  describe "the reasoning effort" do
+    test "is the setting, or nil for the model's default when none is set" do
+      assert Settings.reasoning(settings()) == nil
+      assert Settings.reasoning(settings(%{"reasoning" => "high"})) == "high"
+      assert Settings.reasoning(settings(%{"reasoning" => "ultra"})) == nil
+    end
+  end
+
   describe "the model" do
     test "is the setting, else the default" do
       assert Settings.model(settings()) == Settings.default_model()

@@ -1,22 +1,38 @@
 defmodule Photon.Durable.ToolAPI do
-  @moduledoc "What a running tool call can use: its task, conversation and call, and live output."
+  @moduledoc """
+  What a running tool call can use: its task, conversation and call, the
+  working directory its conversation's profile names (`workdir`, relative
+  to each machine's workspace, or nil for the workspace itself; see
+  `Photon.Durable.Profile`), and live output.
+  """
 
   alias Photon.Durable
   alias Photon.Durable.TaskRecord
 
   @enforce_keys [:task, :conversation_id, :call]
-  defstruct [:task, :conversation_id, :call]
+  defstruct [:task, :conversation_id, :call, workdir: nil]
 
   @type t :: %__MODULE__{
           task: TaskRecord.t(),
           conversation_id: String.t(),
-          call: PhotonCore.Message.tool_call()
+          call: PhotonCore.Message.tool_call(),
+          workdir: String.t() | nil
         }
 
-  @doc "The API for the call a tool task runs."
+  @doc "The API for the call a tool task runs, in the machine's workspace."
   @spec new(TaskRecord.t()) :: t()
-  def new(%TaskRecord{} = task),
-    do: %__MODULE__{task: task, conversation_id: task.conversation_id, call: task.input["call"]}
+  def new(%TaskRecord{} = task), do: new(task, nil)
+
+  @doc "The API for the call a tool task runs, working in `workdir`."
+  @spec new(TaskRecord.t(), String.t() | nil) :: t()
+  def new(%TaskRecord{} = task, workdir) when is_binary(workdir) or is_nil(workdir) do
+    %__MODULE__{
+      task: task,
+      conversation_id: task.conversation_id,
+      call: task.input["call"],
+      workdir: workdir
+    }
+  end
 
   @spec task_id(t()) :: String.t()
   def task_id(%__MODULE__{task: task}), do: task.id

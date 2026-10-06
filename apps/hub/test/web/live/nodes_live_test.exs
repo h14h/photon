@@ -92,8 +92,8 @@ defmodule PhotonWeb.NodesLiveTest do
 
     setup [:page]
 
-    test "are listed, so the sidebar's offline link lands on them", %{view: view} do
-      assert has_element?(view, "#side-node-box[href='/nodes']", "offline")
+    test "are listed, so the sidebar's Machines link lands on them", %{view: view} do
+      assert has_element?(view, "#nav-machines[href='/nodes'][aria-current=page]", "0 online")
       assert has_element?(view, "#offline-box", "box")
       refute has_element?(view, "#node-box")
       assert has_element?(view, "#no-connected-nodes")

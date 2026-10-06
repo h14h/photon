@@ -10,16 +10,27 @@ defmodule Photon.Assistant.MockScript do
     * `remember <fact>` adds to memory
     * `in <n> minutes: <prompt>` and `every <n> minutes: <prompt>` schedule
     * `schedules` lists schedules
+    * `here` says the first line of the page note the message came with
+      (`Photon.Assistant.Page.note/2`), or that it doesn't know the page
+
+  It reads the last text part of the user's message, which is what the
+  user typed: a message sent from a page has the page's note in front of
+  it, as a part of its own.
 
   After a tool result it relays the result. An image result gets "Here it
   is." and its dimensions line.
+
+  The three machine phrasings and the relay are
+  `Photon.MachineTools.MockPhrases`, which a thread's scripted model uses
+  too.
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]
+  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM, Photon.MachineTools]
 
   @behaviour PhotonCore.LLM.Mock
 
+  alias Photon.MachineTools.MockPhrases
   alias PhotonCore.LLM.Mock
   alias PhotonCore.Message
 
@@ -32,6 +43,7 @@ defmodule Photon.Assistant.MockScript do
   - `remember <fact>` saves something to memory
   - `in 2 minutes: <prompt>` or `every 30 minutes: <prompt>` schedules a prompt
   - `schedules` lists what's scheduled
+  - `here` tells you which page you're on, as I see it
 
   Sign in with ChatGPT and I can do the rest.
   """
@@ -42,17 +54,35 @@ defmodule Photon.Assistant.MockScript do
 
     case List.last(messages) do
       %{"role" => "tool"} = result ->
-        result |> relay_result() |> Message.assistant()
+        result |> MockPhrases.relay_result() |> Message.assistant()
 
-      %{"role" => "user"} = message ->
-        message |> Message.text_of() |> String.trim() |> plan()
+      %{"role" => "user", "content" => content} ->
+        {note, typed} = split(content)
+        typed |> String.trim() |> plan(note)
 
       _ ->
         Message.assistant(@help)
     end
   end
 
-  defp plan("[Scheduled] " <> prompt), do: plan(prompt)
+  # The note of the page (nil without one) and what the user typed: the
+  # last text part.
+  defp split(content) when is_list(content) do
+    case for(%{"type" => "text", "text" => text} <- content, do: text) do
+      [] -> {nil, ""}
+      [typed] -> {nil, typed}
+      ["[Looking at" <> _ = note | _] = texts -> {note, List.last(texts)}
+      texts -> {nil, List.last(texts)}
+    end
+  end
+
+  defp split(content), do: {nil, Message.text_of(content)}
+
+  defp plan("[Scheduled] " <> prompt, note), do: plan(prompt, note)
+
+  defp plan(text, note) do
+    if Regex.match?(~r/\Ahere\??\z/i, text), do: here(note), else: plan(text)
+  end
 
   defp plan(text) do
     Enum.find_value(phrasings(), Message.assistant(@help), fn {pattern, reply} ->
@@ -64,36 +94,19 @@ defmodule Photon.Assistant.MockScript do
   end
 
   # The phrasings it understands, in the order it tries them, each with the
-  # reply its captures make.
+  # reply its captures make: the shared machine ones first.
   defp phrasings do
-    [
-      {~r/\A(?:list )?machines\z/, &list_machines/1},
-      {~r/\Aon\s+([\w.-]+)\s*:\s*\$(.+)\z/s, &shell/1},
-      {~r/\Aon\s+([\w.-]+)\s*:\s*look at (.+)\z/s, &view_image/1},
-      {~r/\Aremember\s+(.+)\z/s, &remember/1},
-      {~r/\Ain\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("in_minutes", &1)},
-      {~r/\Aevery\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("every_minutes", &1)},
-      {~r/\A(?:schedules|list schedules)\z/, &list_schedules/1}
-    ]
+    MockPhrases.phrasings() ++
+      [
+        {~r/\Aremember\s+(.+)\z/s, &remember/1},
+        {~r/\Ain\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("in_minutes", &1)},
+        {~r/\Aevery\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("every_minutes", &1)},
+        {~r/\A(?:schedules|list schedules)\z/, &list_schedules/1}
+      ]
   end
 
-  defp list_machines([]), do: call("list_machines", %{}, "Checking your machines.")
-
-  defp shell([machine, command]),
-    do:
-      call(
-        "shell",
-        %{"machine" => machine, "command" => String.trim(command)},
-        "Running that on #{machine}."
-      )
-
-  defp view_image([machine, path]),
-    do:
-      call(
-        "view_image",
-        %{"machine" => machine, "path" => String.trim(path)},
-        "Looking at it on #{machine}."
-      )
+  defp here(nil), do: Message.assistant("I don't know which page you're on.")
+  defp here(note), do: note |> String.split("\n", parts: 2) |> hd() |> Message.assistant()
 
   defp remember([fact]), do: call("update_memory", %{"action" => "add", "text" => fact}, "Noted.")
 
@@ -104,15 +117,4 @@ defmodule Photon.Assistant.MockScript do
   defp list_schedules([]), do: call("list_schedules", %{}, "Here's what's scheduled.")
 
   defp call(tool, args, intro), do: Message.assistant(intro, [Mock.call(tool, args)])
-
-  # An image result has the image and a line with its size and path.
-  defp relay_result(result) do
-    case Message.images(result) do
-      [] -> result |> Message.text_of() |> relay()
-      _images -> "Here it is.\n\n" <> Message.text_of(result)
-    end
-  end
-
-  defp relay("Error: " <> error), do: "That didn't work: " <> error
-  defp relay(text), do: text
 end

@@ -1,8 +1,10 @@
 defmodule PhotonWeb.Layouts do
   @moduledoc """
-  The app shell: a sidebar with the overview, the nodes page, every machine
-  and whether it is online, and settings; the page fills the rest. On small
-  screens the sidebar folds into a drawer behind a top bar.
+  The app shell: a sidebar with Home (the overview), the projects, each
+  with its most recently active threads and any running one, Machines (how
+  many are online, linking to the nodes page) and Settings; the page fills
+  the rest. On small screens the sidebar folds into a drawer behind a top
+  bar. The sidebar's data is `@shell`, kept current by `PhotonWeb.Shell`.
 
   Blip floats over all of it: `PhotonWeb.BlipLive`, rendered here once and
   sticky, so it and its conversation stay put while you move between pages.
@@ -14,7 +16,11 @@ defmodule PhotonWeb.Layouts do
   attr :flash, :map, required: true
   attr :shell, :map, required: true
   attr :socket, Phoenix.LiveView.Socket, required: true, doc: "the page's, to render Blip"
-  attr :active, :atom, default: nil, doc: ":overview, :nodes or :settings"
+
+  attr :active, :any,
+    default: nil,
+    doc:
+      "the page in the sidebar: `:home`, `:nodes`, `:settings`, `{:project, slug}` or `{:thread, slug, id}` (which marks its project's row too)"
 
   slot :inner_block, required: true
 
@@ -75,7 +81,7 @@ defmodule PhotonWeb.Layouts do
   end
 
   attr :shell, :map, required: true
-  attr :active, :atom, default: nil
+  attr :active, :any, default: nil
 
   defp sidebar(assigns) do
     ~H"""
@@ -90,64 +96,46 @@ defmodule PhotonWeb.Layouts do
     </div>
 
     <nav class="space-y-0.5 px-2.5">
-      <.nav_item
-        navigate={~p"/"}
-        icon="hero-squares-2x2"
-        active={@active == :overview}
-        id="nav-overview"
-      >
-        Overview
-      </.nav_item>
-      <.nav_item
-        navigate={~p"/nodes"}
-        icon="hero-server-stack"
-        active={@active == :nodes}
-        id="nav-nodes"
-      >
-        Nodes
-        <:trailing>
-          <span class="text-[11px] tabular-nums text-ink-faint">
-            {Enum.count(@shell.nodes, & &1.online)} online
-          </span>
-        </:trailing>
+      <.nav_item navigate={~p"/"} icon="hero-home" active={@active == :home} id="nav-home">
+        Home
       </.nav_item>
     </nav>
 
     <div class="mt-5 flex min-h-0 flex-1 flex-col">
       <div class="flex items-center justify-between px-5 pb-1.5">
-        <span class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">Machines</span>
+        <span class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">Projects</span>
         <.link
-          navigate={~p"/nodes"}
+          navigate={~p"/projects/new"}
+          id="new-project"
           class="rounded p-0.5 text-ink-faint transition hover:bg-sunken hover:text-ink"
-          title="Add a node"
+          title="Start a project"
         >
           <.icon name="hero-plus-micro" class="size-4" />
         </.link>
       </div>
-      <div class="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pb-4">
-        <p :if={@shell.nodes == []} class="px-2.5 py-2 text-[13px] leading-relaxed text-ink-faint">
-          No machines yet.
-          <.link navigate={~p"/nodes"} class="text-accent-strong underline underline-offset-2">Add one</.link>
-          so Blip has somewhere to send work.
-        </p>
-        <.link
-          :for={node <- @shell.nodes}
-          navigate={~p"/nodes"}
-          id={"side-node-#{node.id}"}
-          class="flex items-center gap-2 rounded-lg px-2.5 py-1 text-[13px] transition hover:bg-sunken"
+      <div id="side-projects" class="min-h-0 flex-1 space-y-1 overflow-y-auto px-2.5 pb-4">
+        <p
+          :if={@shell.projects == []}
+          id="no-projects"
+          class="px-2.5 py-2 text-[13px] leading-relaxed text-ink-faint"
         >
-          <.dot status={if(node.online, do: :ok, else: :off)} />
-          <span class={["min-w-0 flex-1 truncate font-medium", !node.online && "text-ink-faint"]}>
-            {node.id}
-          </span>
-          <span :if={!node.online} class="shrink-0 text-[11px] text-ink-faint">offline</span>
-        </.link>
+          No projects yet. A project is a purpose and some notes, for any body of work: a repo, a trip, a house.
+          <.link
+            navigate={~p"/projects/new"}
+            id="start-first-project"
+            class="text-accent-strong underline underline-offset-2"
+          >
+            Start one
+          </.link>
+        </p>
+        <.side_project :for={entry <- @shell.projects} entry={entry} active={@active} />
       </div>
     </div>
 
     <div class="shrink-0 border-t border-line p-2.5">
+      <%!-- Only while no model can answer: the scripted model counts. --%>
       <.link
-        :if={@shell.chatgpt.state != :signed_in}
+        :if={!@shell.model_ready and @shell.chatgpt.state != :signed_in}
         navigate={~p"/settings"}
         id="sign-in-banner"
         class="mb-2 flex items-center gap-2 rounded-lg bg-warn-soft px-3 py-2 text-[12.5px] text-ink transition hover:brightness-95"
@@ -158,18 +146,118 @@ defmodule PhotonWeb.Layouts do
           else: "Sign in with ChatGPT"
         )}
       </.link>
-      <.nav_item
-        navigate={~p"/settings"}
-        icon="hero-cog-6-tooth"
-        active={@active == :settings}
-        id="nav-settings"
-      >
-        Settings
-        <:trailing>
-          <span class="max-w-28 truncate text-[11px] text-ink-faint">{@shell.model}</span>
-        </:trailing>
-      </.nav_item>
+      <div class="space-y-0.5">
+        <.nav_item
+          navigate={~p"/nodes"}
+          icon="hero-server-stack"
+          active={@active == :nodes}
+          id="nav-machines"
+        >
+          Machines
+          <:trailing>
+            <span class="flex items-center gap-1.5 text-[11px] tabular-nums text-ink-faint">
+              <.dot :if={Enum.any?(@shell.nodes, & &1.online)} status={:ok} class="size-1.5" />
+              {Enum.count(@shell.nodes, & &1.online)} online
+            </span>
+          </:trailing>
+        </.nav_item>
+        <.nav_item
+          navigate={~p"/settings"}
+          icon="hero-cog-6-tooth"
+          active={@active == :settings}
+          id="nav-settings"
+        >
+          Settings
+          <:trailing>
+            <span class="max-w-28 truncate text-[11px] text-ink-faint">{@shell.model}</span>
+          </:trailing>
+        </.nav_item>
+      </div>
       <div class="mt-1 flex justify-end px-1"><.theme_toggle /></div>
+    </div>
+    """
+  end
+
+  attr :entry, :map, required: true, doc: "one of `Photon.Threads.sidebar/1`'s projects"
+  attr :active, :any, default: nil
+
+  # A project's row, with a "+" that starts a thread in it, then its
+  # listed threads and how many more it has.
+  defp side_project(assigns) do
+    slug = assigns.entry.project.slug
+
+    assigns =
+      assign(assigns,
+        slug: slug,
+        here: assigns.active == {:project, slug},
+        within: match?({:thread, ^slug, _id}, assigns.active)
+      )
+
+    ~H"""
+    <div>
+      <div class={[
+        "group/project flex items-center rounded-lg transition",
+        @here && "bg-sunken",
+        !@here && "hover:bg-sunken"
+      ]}>
+        <.link
+          navigate={~p"/projects/#{@slug}"}
+          id={"side-project-#{@slug}"}
+          aria-current={@here && "page"}
+          class={[
+            "flex min-w-0 flex-1 items-center gap-2.5 py-1.5 pl-2.5 text-sm transition",
+            (@here or @within) && "font-medium text-ink",
+            !(@here or @within) && "text-ink-soft group-hover/project:text-ink"
+          ]}
+        >
+          <.icon
+            name="hero-folder"
+            class={[
+              "size-[18px] shrink-0",
+              if(@here or @within,
+                do: "text-accent-strong",
+                else: "text-ink-faint group-hover/project:text-ink-soft"
+              )
+            ]}
+          />
+          <span class="truncate">{@entry.project.name}</span>
+        </.link>
+        <.link
+          navigate={~p"/projects/#{@slug}/threads/new"}
+          id={"new-thread-#{@slug}"}
+          title="Start a thread"
+          aria-label={"Start a thread in #{@entry.project.name}"}
+          class="mr-1 shrink-0 rounded p-1 text-ink-faint opacity-50 transition group-hover/project:opacity-100 hover:bg-line/60 hover:text-ink focus-visible:opacity-100"
+        >
+          <.icon name="hero-plus-micro" class="size-4" />
+        </.link>
+      </div>
+      <div :if={@entry.threads != [] or @entry.more > 0} class="mt-0.5 space-y-px">
+        <.link
+          :for={thread <- @entry.threads}
+          navigate={~p"/projects/#{@slug}/threads/#{thread.id}"}
+          id={"side-thread-#{thread.id}"}
+          data-running={thread.running? && "true"}
+          aria-current={@active == {:thread, @slug, thread.id} && "page"}
+          class={[
+            "flex items-center gap-2 rounded-lg py-1 pr-2.5 pl-9 text-[13px] transition",
+            @active == {:thread, @slug, thread.id} && "bg-sunken font-medium text-ink",
+            @active != {:thread, @slug, thread.id} && "text-ink-soft hover:bg-sunken hover:text-ink"
+          ]}
+          title={thread.title}
+        >
+          <span class="min-w-0 flex-1 truncate">{thread.title}</span>
+          <.dot :if={thread.running?} status={:busy} class="size-1.5" />
+        </.link>
+        <.link
+          :if={@entry.more > 0}
+          navigate={~p"/projects/#{@slug}"}
+          id={"side-more-#{@slug}"}
+          class="block rounded-lg py-1 pr-2.5 pl-9 text-[12px] text-ink-faint transition hover:bg-sunken hover:text-ink-soft"
+        >
+          {@entry.more} more
+        </.link>
+      </div>
     </div>
     """
   end
@@ -186,6 +274,7 @@ defmodule PhotonWeb.Layouts do
     <.link
       navigate={@navigate}
       id={@id}
+      aria-current={@active && "page"}
       class={[
         "group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition",
         @active && "bg-sunken font-medium text-ink",

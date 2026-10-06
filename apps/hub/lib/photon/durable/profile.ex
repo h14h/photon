@@ -9,6 +9,11 @@ defmodule Photon.Durable.Profile do
     * `system_prompt/1` - kept stable between requests so provider prompt
       caches stay warm
     * `tools/1` - `Photon.Durable.Tool` modules
+    * `workdir/1` (optional) - the directory its tool calls work in on
+      each machine, relative to the machine's workspace; nil (or no
+      callback) for the workspace itself. Tools see it as
+      `Photon.Durable.ToolAPI`'s `workdir`. It must not change while a
+      call runs, since a call rerun after a restart asks again.
   """
 
   alias Photon.Durable.Conversation
@@ -23,4 +28,7 @@ defmodule Photon.Durable.Profile do
             }
   @callback system_prompt(Conversation.t()) :: String.t()
   @callback tools(Conversation.t()) :: [module()]
+  @callback workdir(Conversation.t()) :: String.t() | nil
+
+  @optional_callbacks workdir: 1
 end

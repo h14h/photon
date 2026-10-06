@@ -145,6 +145,8 @@ Message loss and the node's side are `HubOps.tla`'s and `Executor.tla`'s.
   record", and a rescued raise all record an error and run `cancel_tx/2`,
   and differ only in their text. Unknown and outdated machines (an error
   before the row exists) are left out; they are the same with no row.
+  Since step 2, a parked call whose machine has come back outdated ends
+  the same way (an error and `cancel_tx/2`), so it is this action too.
 * Recurring routines, `cancel_schedule`, `when_busy: "reject"`,
   `withdraw/1`, documents, entry ordering, PubSub, live events and
   `on_fail/3` returning `:retry` are left out. Nothing returns `:retry`

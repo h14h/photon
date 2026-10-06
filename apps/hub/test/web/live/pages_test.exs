@@ -11,7 +11,7 @@ defmodule PhotonWeb.PagesTest do
     {:ok, view, _html} = live(conn, ~p"/")
     assert has_element?(view, "#no-machines")
     assert has_element?(view, "#schedules")
-    assert has_element?(view, "#nav-overview")
+    assert has_element?(view, "#nav-home")
   end
 
   test "Blip answers in the conversation over the page", %{conn: conn} do
@@ -55,8 +55,7 @@ defmodule PhotonWeb.PagesTest do
 
     for path <- [~p"/", ~p"/nodes", ~p"/settings"] do
       {:ok, view, _html} = live(conn, path)
-      assert has_element?(view, "#side-node-box")
-      assert has_element?(view, "#side-node-nas")
+      assert has_element?(view, "#nav-machines[href='/nodes']", "1 online")
       refute has_element?(view, ~s(a[href^="/sessions"]))
       refute has_element?(find_live_child(view, "blip"), ~s(a[href^="/sessions"]))
     end

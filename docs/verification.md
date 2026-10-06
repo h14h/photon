@@ -95,8 +95,9 @@ results are dropped on the node, and every row closes.
 
 Its `-bug-*` configs are expected to fail: each puts back one defect with
 a switch in `Bugs` and shows the property that catches it. A node that
-doesn't list `"ops:1"` in its capabilities is reported as outdated and
-gets no operations.
+doesn't list `"ops:2"` in its capabilities (step 2; `"ops:1"` before it)
+is reported as outdated and gets no operations, and a call parked on it
+ends with the outdated message; the spec doesn't model capabilities.
 
 Details, the action-to-code map, per-config results and how the built
 code compares with the spec: `specs/tla/HubOps.md`.
@@ -416,14 +417,16 @@ were reported; they went with those specs (in git history).
 
 - **Wire protocol**: build step 1 replaced the hub-node protocol with the
   operation protocol (`op.*` events, plan section 2), and PR B removed the
-  session messages and the model relay. A node without `"ops:1"` is
-  reported as outdated. Nothing is migrated: the hub database and node
-  installs are replaced.
+  session messages and the model relay. Build step 2 moved the
+  capability to `"ops:2"`: a `shell` operation creates its missing working
+  directory. A node without `"ops:2"` is reported as outdated. Nothing is
+  migrated: the hub database and node installs are replaced.
 - **Node journal**: one entry per operation, `<data_dir>/ops/<op_id>/op.json`,
   next to the shell's `out`, `err`, `pid`, `exit` and `stopped` files.
 - **Hub database**: `machine_ops` is new in step 1; the node session
   tables are gone in PR B, with no drop migration (the database is
-  deleted).
+  deleted). Step 2 adds `projects`, `project_files` and `threads` in new
+  migrations, and the database is deleted again.
 
 ## Limits
 

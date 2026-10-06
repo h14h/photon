@@ -1,7 +1,7 @@
 defmodule PhotonWeb.OverviewLive do
   @moduledoc """
   The home page, at a glance: your machines and whether they're online, a
-  pointer to Blip for work on them, and what's scheduled. Blip floats over
+  pointer to Blip and to projects for work on them, and what's scheduled. Blip floats over
   it, as over every page.
 
   Machines come from `@shell`, which keeps them current; schedules are
@@ -37,7 +37,7 @@ defmodule PhotonWeb.OverviewLive do
     assigns = assign(assigns, online: Enum.count(assigns.shell.nodes, & &1.online))
 
     ~H"""
-    <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={:overview}>
+    <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={:home}>
       <div class="h-full overflow-y-auto">
         <div class="blip-clear-y mx-auto w-full max-w-4xl px-4 py-8 sm:px-6">
           <.header>
@@ -71,7 +71,15 @@ defmodule PhotonWeb.OverviewLive do
               class="mt-4 flex items-center gap-2 text-[14px] text-ink-soft"
             >
               <.icon name="hero-chat-bubble-left-ellipsis" class="size-4 shrink-0 text-ink-faint" />
-              Work happens through Blip: ask it to run something on any of these.
+              <span>
+                Ask Blip to run something on any of these, or
+                <.link
+                  id="work-hint-new-project"
+                  navigate={~p"/projects/new"}
+                  class="text-accent-strong underline underline-offset-2"
+                >start a project</.link>
+                for longer work.
+              </span>
             </p>
           </section>
 

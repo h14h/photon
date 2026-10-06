@@ -4,8 +4,11 @@ defmodule Photon.MachineTools do
   `view_image` shows the model an image file, and `list_machines` says
   which machines there are (section 3 of
   `docs/plans/step-1-machine-tools.md`). They live outside
-  `Photon.Assistant` because more than one profile will use them; a
-  profile lists `tools/0` among its own.
+  `Photon.Assistant` because more than one profile uses them (Blip's and
+  a thread's); a profile lists `tools/0` among its own. Each call runs in
+  the conversation's working directory on the machine it names
+  (`api.workdir`, from the profile): the machine's workspace for Blip, the
+  project's folder for a thread.
 
   Each `shell` or `view_image` call is one operation on one machine
   (`Photon.Machines`). The call derives the op ID from its durable task,
@@ -20,14 +23,22 @@ defmodule Photon.MachineTools do
     * functional core (pure): `Photon.MachineTools.Translate` (arguments
       to an operation, a snapshot to a tool result) and
       `Photon.MachineTools.Wait` (the op ID, when to check, when to give
-      up, and the offline message)
+      up, and the offline message); and, exported for other contexts'
+      pure modules, `Photon.MachineTools.Guide` (the prompt lines about
+      `shell` that Blip's prompt and a thread's share) and
+      `Photon.MachineTools.MockPhrases` (the machine phrasings and result
+      relay that Blip's scripted model and a thread's share). A pure
+      module elsewhere lists `Photon.MachineTools` in its Boundary deps
+      to reach them.
     * boundary: the `Photon.Durable.Tool` modules
       `Photon.MachineTools.Shell`, `Photon.MachineTools.ViewImage` and
       `Photon.MachineTools.ListMachines`, and `Photon.MachineTools.Call`,
       which the first two share
   """
 
-  use Boundary, deps: [Photon.Durable, Photon.Machines, PhotonCore], exports: []
+  use Boundary,
+    deps: [Photon.Durable, Photon.Machines, PhotonCore, PhotonCore.LLM],
+    exports: [Guide, MockPhrases]
 
   alias Photon.Machines
   alias Photon.MachineTools.{ListMachines, Shell, ViewImage}

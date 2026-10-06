@@ -1,6 +1,7 @@
 # Projects, threads and Blip
 
-Status: draft for discussion, 2026-10-05. Nothing here is built yet.
+Status: written 2026-10-05. Steps 1 and 2 of the build order are built
+(2026-10-06); the rest is still a design. See "Build order".
 
 Photon is meant to be a self-hostable replacement for two things at once:
 
@@ -104,6 +105,14 @@ The home page shows the state layer directly ("needs you", "running",
 > says goes away (`docs/plans/step-1-machine-tools.md`). The node's
 > operation layer is now `PhotonNode.Ops`, run by `PhotonNode.Executor`;
 > the paragraph below describes the code before step 1.
+>
+> Status: step 2 built threads and their working directories
+> (`docs/plans/step-2-projects-and-threads.md`). A thread is a
+> conversation under the `"thread"` profile, and its machine tools work in
+> `<node workspace>/<project slug>`, which the node creates the first time
+> a command runs there. That is a protocol change: nodes join with the
+> capability `ops:2` instead of `ops:1`, and the hub sends no operations
+> to a node without it, so every node needs reinstalling once.
 
 Today each node runs a whole agent loop (`PhotonNode.Harness`: session
 state machine, context, tools, its own log) and calls the model through the
@@ -173,6 +182,15 @@ looking at.
 ## Build order
 
 Each step leaves a working app.
+
+> Status: steps 1 and 2 are built (`docs/plans/step-1-machine-tools.md`,
+> `docs/plans/step-2-projects-and-threads.md`). Step 2 left out, for
+> later: deleting or archiving projects and threads, renaming or moving
+> threads (context files can be deleted), a model per thread, and skills
+> and schedules on the project page, whose second column is kept for
+> them. Blip sees projects and threads
+> only through a note about the page on screen until step 4 gives it
+> tools.
 
 1. **Machine tools on the hub.** Make nodes executors and give Blip shell
    and view_image on any machine, replacing `run_on_node` and node

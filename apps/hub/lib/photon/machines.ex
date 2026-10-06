@@ -365,9 +365,17 @@ defmodule Photon.Machines do
   What to send a machine that has just joined: `op.start` for each of its
   open rows without `cancel`, and `op.cancel` for each canceled one (hub
   rules 2 and 7). The rows it starts are marked `pushed` in the same commit.
+
+  An `:outdated` machine (connected without `ops:2`) gets nothing and no
+  row is written: its rows stay open, so the same node reinstalled with a
+  current build gets them on its next join, and the calls waiting on them
+  end with the outdated message at their next check
+  (`Photon.MachineTools.Call`).
   """
   @spec joined(String.t()) :: [Wire.push()]
-  def joined(machine), do: Durable.commit(&joined_tx(&1, machine))
+  def joined(machine) do
+    if status(machine) == :outdated, do: [], else: Durable.commit(&joined_tx(&1, machine))
+  end
 
   defp joined_tx(tx, machine) do
     rows =
@@ -389,10 +397,15 @@ defmodule Photon.Machines do
   @doc """
   The `op.start` for op `op_id` on `machine`, built from its row as it is
   now, or nothing if the row isn't open, is canceled, or isn't the
-  machine's (hub rule 2). The channel calls it when asked to push an op.
+  machine's (hub rule 2), or the machine is `:outdated` (see `joined/1`).
+  The channel calls it when asked to push an op.
   """
   @spec push_for(String.t(), String.t()) :: [Wire.push()]
-  def push_for(machine, op_id), do: Durable.commit(&push_for_tx(&1, machine, op_id))
+  def push_for(machine, op_id) do
+    if status(machine) == :outdated,
+      do: [],
+      else: Durable.commit(&push_for_tx(&1, machine, op_id))
+  end
 
   defp push_for_tx(tx, machine, op_id) do
     row =

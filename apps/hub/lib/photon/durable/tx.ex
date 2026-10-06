@@ -29,6 +29,7 @@ defmodule Photon.Durable.Tx do
           | {:submission, Submission.t()}
           | {:task, TaskRecord.t()}
           | {:signal, String.t()}
+          | {:announce, String.t(), term()}
 
   @typedoc "A step's transition; see `transition/4`."
   @type transition ::
@@ -389,6 +390,22 @@ defmodule Photon.Durable.Tx do
 
   @spec get_signal(t(), String.t()) :: Signal.t() | nil
   def get_signal(%__MODULE__{}, key), do: Repo.get(Signal, key)
+
+  ## Announcements
+
+  @doc """
+  Announces `message` on `topic` (through `Photon.Events`) once the commit is
+  stored, after its `durable:*` announcements. A commit that rolls back or
+  raises announces nothing. For contexts whose writes go through this
+  commit line (a thread's file write lands in its tool call's commit), so
+  pages hear of a change only when it is stored.
+  """
+  @spec announce(t(), String.t(), term()) :: :ok
+  def announce(%__MODULE__{} = tx, topic, message) when is_binary(topic) do
+    open!(tx)
+    record(tx, {:announce, topic, message})
+    :ok
+  end
 
   @doc false
   # Stored maps use string keys, so values read back the way they were written.

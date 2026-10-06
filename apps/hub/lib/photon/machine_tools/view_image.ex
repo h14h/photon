@@ -29,7 +29,8 @@ defmodule Photon.MachineTools.ViewImage do
         },
         "path" => %{
           "type" => "string",
-          "description" => "The image's path: absolute, or relative to the machine's workspace."
+          "description" =>
+            "The image's path: absolute, or relative to your working directory on that machine."
         }
       },
       "required" => ["machine", "path"]

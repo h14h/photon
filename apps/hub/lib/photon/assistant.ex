@@ -10,15 +10,22 @@ defmodule Photon.Assistant do
   This module is the assistant's API, which the web pages use, and its
   `Photon.Durable.Profile`. Behind it, by layer:
 
-    * functional core (pure): `Photon.Assistant.Prompt` (system prompt and
-      model settings), `Photon.Assistant.Memory`,
-      `Photon.Assistant.Transcript` (what the page shows),
+    * functional core (pure): `Photon.Assistant.Prompt` (the system
+      prompt), `Photon.Assistant.Memory`, `Photon.Assistant.Page` (the
+      page the user has open, and the note of it the model sees),
       `Photon.Assistant.Notice` (what Blip says unasked),
       `Photon.Assistant.MockScript` (the mock model)
     * boundary: the tools in `Photon.Assistant.Tools`; the machine tools
       are their own context, `Photon.MachineTools`
     * workers: the task kind `Photon.Assistant.Routine`, run by the durable
       scheduler
+
+  Blip floats over every page, so it knows which project, context file or
+  thread is on screen: `page_at/1` makes the page from its path, and
+  `send/2` with `page:` reads the page's facts through `Photon.Projects`
+  and `Photon.Threads` and puts a note of them in front of the message.
+  Blip has no tools over projects and threads yet; the note is how it sees
+  them.
   """
 
   use Boundary,
@@ -26,17 +33,22 @@ defmodule Photon.Assistant do
       Photon.ChatGPT,
       Photon.Durable,
       Photon.MachineTools,
+      Photon.Projects,
       Photon.Settings,
+      Photon.Threads,
+      Photon.Transcript,
       PhotonCore,
       PhotonCore.LLM
     ],
-    exports: [Notice, Transcript]
+    exports: [Notice]
 
   @behaviour Photon.Durable.Profile
 
-  alias Photon.Assistant.{Memory, Prompt, Tools, Transcript}
-  alias Photon.{Durable, MachineTools, Settings}
+  alias Photon.Assistant.{Memory, Page, Prompt, Tools}
+  alias Photon.{Durable, MachineTools, Projects, Settings, Threads, Transcript}
   alias Photon.Durable.{Entry, Submission, TaskRecord}
+  alias Photon.Projects.Project
+  alias PhotonCore.Message
 
   @tools [
     Tools.UpdateMemory,
@@ -71,11 +83,112 @@ defmodule Photon.Assistant do
     end
   end
 
-  @doc "Sends the user's message. The options are `Photon.Durable.submit/3`'s."
+  @doc """
+  Sends the user's message. With `page:` (from `page_at/1`), the page's
+  facts are read now and the message goes as two text parts, the note of
+  the page (`Photon.Assistant.Page.note/2`) and then `text`, with the page,
+  as it is now, in its `source`. The conversation shows only `text`
+  (`Photon.Transcript.typed/2`). A page whose project is gone is left out.
+  Other options are `Photon.Durable.submit/3`'s.
+  """
   @spec send(String.t(), keyword()) :: {:ok, Submission.t()} | {:error, :busy}
-  def send(text, opts \\ []),
+  def send(text, opts \\ []) do
+    {page, opts} = Keyword.pop(opts, :page)
+    {content, source} = with_page(text, page && page_now(page))
+    Durable.submit(conversation_id(), content, Keyword.put_new(opts, :source, source))
+  end
+
+  defp with_page(text, nil), do: {text, %{"kind" => "user"}}
+
+  defp with_page(text, {page, facts}),
     do:
-      Durable.submit(conversation_id(), text, Keyword.put_new(opts, :source, %{"kind" => "user"}))
+      {[Message.text(Page.note(page, facts)), Message.text(text)],
+       %{"kind" => "user", "page" => page}}
+
+  ## The page under Blip
+
+  @doc """
+  The page at `path` (`Photon.Assistant.Page.t/0`), when it is inside a
+  project: the project's page, a context file's or a thread's. Nil for any
+  other path, and for a project, file or thread that doesn't exist (a
+  thread under another project's slug included).
+  """
+  @spec page_at(String.t()) :: Page.t() | nil
+  def page_at(path) do
+    case Page.at(path) do
+      nil ->
+        nil
+
+      {:project, slug} ->
+        with %Project{} = p <- Projects.get_by_slug(slug), do: Page.of_project(p)
+
+      {:file, slug, name} ->
+        file_page(slug, name)
+
+      {:thread, slug, id} ->
+        thread_page(slug, id)
+    end
+  end
+
+  defp file_page(slug, name) do
+    with %Project{} = project <- Projects.get_by_slug(slug),
+         %{name: name} <- Projects.get_file(project.id, name) do
+      Page.of_file(project, name)
+    end
+  end
+
+  defp thread_page(slug, id) do
+    with %Project{} = project <- Projects.get_by_slug(slug),
+         %{project_id: project_id} = thread when project_id == project.id <- Threads.get(id) do
+      Page.of_thread(project, thread)
+    else
+      _missing -> nil
+    end
+  end
+
+  # The page as it is at send time, with its facts, or nil when its project
+  # is gone. The project's name or the thread's title may have changed
+  # since the page was read, so the page is made again.
+  defp page_now(%{"project_id" => project_id} = page) do
+    case Projects.get(project_id) do
+      nil -> nil
+      project -> page_now(page, project, project_facts(project))
+    end
+  end
+
+  defp page_now(%{"kind" => "file", "file" => name}, project, facts) do
+    file = Projects.get_file(project.id, name)
+    file_facts = file && %{content: file.content}
+    {Page.of_file(project, (file && file.name) || name), Map.put(facts, :file, file_facts)}
+  end
+
+  defp page_now(%{"kind" => "thread", "thread_id" => id}, project, facts) do
+    case Enum.find(facts.threads, &(&1.id == id)) do
+      nil ->
+        {Page.of_project(project), facts}
+
+      thread ->
+        state = %{running?: thread.running?, answer: Threads.latest_answer(id)}
+        {Page.of_thread(project, thread), Map.put(facts, :thread, state)}
+    end
+  end
+
+  defp page_now(_page, project, facts), do: {Page.of_project(project), facts}
+
+  defp project_facts(project) do
+    threads = Threads.list(project.id)
+    running = Threads.running(Enum.map(threads, & &1.id))
+
+    %{
+      purpose: project.purpose,
+      files: Enum.map(Projects.list_files(project.id), & &1.name),
+      threads:
+        Enum.map(
+          threads,
+          &%{id: &1.id, title: &1.title, running?: MapSet.member?(running, &1.id)}
+        )
+    }
+  end
 
   @doc """
   Stops the current run and withdraws the user's queued messages.
@@ -183,7 +296,7 @@ defmodule Photon.Assistant do
         |> Map.put(:hosted_tools, [%{"type" => "web_search"}]),
       stream: &Photon.ChatGPT.stream/3,
       model: Settings.model(settings),
-      reasoning: Prompt.reasoning(settings),
+      reasoning: Settings.reasoning(settings),
       cache_key: conversation.id
     }
   end

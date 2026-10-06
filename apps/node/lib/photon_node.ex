@@ -7,7 +7,9 @@ defmodule PhotonNode do
   The node dials the hub (so it works behind NAT) and joins the channel
   `"node:<node_id>"` with static info about itself (`hostname`,
   `platform`, `workspace`, `version`, `capabilities`); `capabilities` is
-  `["ops:1"]`, the operation protocol.
+  `["ops:2"]`: the operation protocol, where a `shell` operation creates
+  its working directory when it is missing (`ops:1` didn't). The hub
+  sends no operations to a node that doesn't list `ops:2`.
 
   Start it with `{PhotonNode, opts}` in a supervision tree, or let the
   `:photon_node` application start it from config (see `PhotonNode.Config`).

@@ -48,5 +48,18 @@ config :photon, Photon.MachineTools, check_ms: 200, offline_limit_ms: 500
 
 # Harness tests use their own conversation profile alongside the assistant's.
 config :photon, Photon.Durable,
-  profiles: %{"assistant" => Photon.Assistant, "test" => Photon.TestProfile},
-  kinds: %{"routine" => Photon.Assistant.Routine}
+  profiles: %{
+    "assistant" => Photon.Assistant,
+    "thread" => Photon.Threads,
+    "test" => Photon.TestProfile,
+    "test_workdir" => Photon.TestProfile.Workdir
+  },
+  kinds: %{
+    "routine" => Photon.Assistant.Routine,
+    "thread_title" => Photon.Threads.Titling
+  }
+
+# Threads aren't named by the model after their first run, so no title task
+# outlives a test or retitles a thread under it; the tests of titling turn
+# it on.
+config :photon, Photon.Threads, auto_title: false

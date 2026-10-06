@@ -54,40 +54,46 @@ defmodule Photon.MachineTools.TranslateTest do
 
   defp text(parts), do: Message.text_of(parts)
 
-  describe "shell_args/1" do
+  describe "shell_args/2" do
     test "gives the op's args, with the default limit and no directory" do
-      assert Translate.shell_args(%{"machine" => "mm1", "command" => "ls -la"}) ==
+      assert Translate.shell_args(%{"machine" => "mm1", "command" => "ls -la"}, nil) ==
                {:ok, %{"command" => "ls -la", "directory" => nil, "max_output_length" => 40_000}}
 
       assert {:ok, %{"max_output_length" => 1}} =
-               Translate.shell_args(%{"command" => "ls", "max_output_length" => 1})
+               Translate.shell_args(%{"command" => "ls", "max_output_length" => 1}, nil)
 
       assert {:ok, %{"max_output_length" => 1_000_000}} =
-               Translate.shell_args(%{"command" => "ls", "max_output_length" => 1_000_000})
+               Translate.shell_args(%{"command" => "ls", "max_output_length" => 1_000_000}, nil)
+    end
+
+    test "puts the working directory in the op's args" do
+      assert {:ok, %{"directory" => "garden"}} =
+               Translate.shell_args(%{"command" => "ls"}, "garden")
     end
 
     test "refuses a limit out of range" do
-      assert Translate.shell_args(%{"command" => "ls", "max_output_length" => 1_000_001}) ==
+      assert Translate.shell_args(%{"command" => "ls", "max_output_length" => 1_000_001}, nil) ==
                {:error, "shell argument: max_output_length must not exceed 1000000"}
 
-      assert Translate.shell_args(%{"command" => "ls", "max_output_length" => 0}) ==
+      assert Translate.shell_args(%{"command" => "ls", "max_output_length" => 0}, nil) ==
                {:error, "shell argument: max_output_length must be a positive integer"}
 
-      assert Translate.shell_args(%{"command" => "ls", "max_output_length" => "9"}) ==
+      assert Translate.shell_args(%{"command" => "ls", "max_output_length" => "9"}, nil) ==
                {:error, "shell argument: max_output_length must be an integer"}
     end
 
     test "refuses a missing, blank or mistyped command" do
       for args <- [%{}, %{"command" => nil}, %{"command" => " "}] do
-        assert Translate.shell_args(args) == {:error, ~s(shell argument "command" must be set)}
+        assert Translate.shell_args(args, nil) ==
+                 {:error, ~s(shell argument "command" must be set)}
       end
 
-      assert Translate.shell_args(%{"command" => 3}) ==
+      assert Translate.shell_args(%{"command" => 3}, nil) ==
                {:error, ~s(shell argument "command" must be a string)}
     end
 
     test "refuses a NUL byte" do
-      assert Translate.shell_args(%{"command" => "a\0b"}) ==
+      assert Translate.shell_args(%{"command" => "a\0b"}, nil) ==
                {:error, ~s(shell argument "command" contains a NUL byte at offset 1)}
     end
 
@@ -95,33 +101,38 @@ defmodule Photon.MachineTools.TranslateTest do
       assert Translate.max_command_bytes() == 100_000
 
       assert {:ok, %{"command" => _}} =
-               Translate.shell_args(%{"command" => String.duplicate("a", 100_000)})
+               Translate.shell_args(%{"command" => String.duplicate("a", 100_000)}, nil)
 
       assert {:error, message} =
-               Translate.shell_args(%{"command" => String.duplicate("é", 50_001)})
+               Translate.shell_args(%{"command" => String.duplicate("é", 50_001)}, nil)
 
       assert message =~ ~s(shell argument "command" is 100002 bytes; the limit is 100000.)
     end
   end
 
-  describe "view_image_args/1" do
+  describe "view_image_args/2" do
     test "gives the op's args, with the size limit and no directory" do
-      assert Translate.view_image_args(%{"machine" => "mm1", "path" => "a.png"}) ==
+      assert Translate.view_image_args(%{"machine" => "mm1", "path" => "a.png"}, nil) ==
                {:ok, %{"path" => "a.png", "directory" => nil, "max_size" => 4_999_000}}
 
       assert Translate.max_size() == 4_999_000
     end
 
+    test "puts the working directory in the op's args, for a relative path to resolve against" do
+      assert Translate.view_image_args(%{"path" => "shots/a.png"}, "garden") ==
+               {:ok, %{"path" => "shots/a.png", "directory" => "garden", "max_size" => 4_999_000}}
+    end
+
     test "refuses a missing, blank, mistyped or NUL path" do
       for args <- [%{}, %{"path" => nil}, %{"path" => " "}] do
-        assert Translate.view_image_args(args) ==
+        assert Translate.view_image_args(args, nil) ==
                  {:error, ~s(view_image argument "path" must be set)}
       end
 
-      assert Translate.view_image_args(%{"path" => 3}) ==
+      assert Translate.view_image_args(%{"path" => 3}, nil) ==
                {:error, ~s(view_image argument "path" must be a string)}
 
-      assert Translate.view_image_args(%{"path" => "a\0.png"}) ==
+      assert Translate.view_image_args(%{"path" => "a\0.png"}, nil) ==
                {:error, ~s(view_image argument "path" contains a NUL byte)}
     end
   end
