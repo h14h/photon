@@ -12,7 +12,7 @@
 #   PHOTON_NODE_ID     node name (default: short hostname)
 #   PHOTON_SERVER      hub websocket (default: <%= @server_url %>)
 #   PHOTON_ACTION      install (default) or uninstall
-#   PHOTON_PURGE       with uninstall, 1 also deletes sessions and the workspace
+#   PHOTON_PURGE       with uninstall, 1 also deletes the node's data and workspace
 #   PHOTON_BINARY      use this local binary instead of downloading one
 #   PHOTON_SERVICE     systemd, launchd or none (default: detected)
 set -eu

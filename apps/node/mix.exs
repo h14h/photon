@@ -24,8 +24,6 @@ defmodule PhotonNode.MixProject do
           PhotonNode.Case,
           PhotonNode.Fixtures,
           PhotonNode.HarnessCase,
-          PhotonNode.SessionDriver,
-          PhotonNode.TestScript,
           PhotonNode.CLI,
           Mix.Tasks.Photon.Package,
           Mix.Tasks.Photon.Package.QuietStream,

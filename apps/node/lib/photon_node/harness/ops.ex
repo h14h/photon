@@ -3,14 +3,14 @@ defmodule PhotonNode.Harness.Ops do
   The API over operation processes: one process per operation under
   `PhotonNode.Harness.OpSupervisor`, registered by operation ID in
   `PhotonNode.OpRegistry`. A `shell` operation runs in
-  `PhotonNode.Harness.Ops.Shell`; `view_image` and `skill_use` are jobs
-  (`PhotonNode.Harness.Ops.ViewImage`, `PhotonNode.Harness.Ops.SkillUse`)
-  run once by `PhotonNode.Harness.Ops.Job`.
+  `PhotonNode.Harness.Ops.Shell`; `view_image` is a job
+  (`PhotonNode.Harness.Ops.ViewImage`) run once by
+  `PhotonNode.Harness.Ops.Job`.
 
   Every operation has an owner (`PhotonNode.Harness.Ops.Owner`), given to
-  `add/2` as `{owner_module, owner_id}`: a session's coordinator for the
-  operations its session runs, and `PhotonNode.Executor` for the hub's. Each process reports its snapshots to the
-  owner, which persists them before acting on them. A checkpoint the
+  `add/2` as `{owner_module, owner_id}`: `PhotonNode.Executor` for the
+  hub's operations, or a stand-in in tests. Each process reports its
+  snapshots to the owner, which persists them before acting on them. A checkpoint the
   operation must not act on until it is stored (a shell command's start)
   goes through the owner's `checkpoint/2`, a call. An operation process
   never dies because of its owner (see `PhotonNode.Harness.Ops.Owner`).
@@ -25,13 +25,12 @@ defmodule PhotonNode.Harness.Ops do
   instead of answering, the owner's monitor sees it.
 
   Lifecycle: operation processes are `:temporary`. A crash isn't restarted
-  by the supervisor; the owner monitors the process and decides (for a
-  session, `PhotonNode.Harness.Session.op_down/3`; for the hub's,
-  `PhotonNode.Executor.Rules.down/3`).
+  by the supervisor; the owner monitors the process and decides (the
+  executor applies `PhotonNode.Executor.Rules.down/3`).
   """
 
   alias PhotonCore.Operation
-  alias PhotonNode.Harness.Ops.{Job, Owner, Shell, SkillUse, ViewImage}
+  alias PhotonNode.Harness.Ops.{Job, Owner, Shell, ViewImage}
 
   @doc """
   Starts (or resumes, from its checkpoint) an operation for its owner.
@@ -91,9 +90,6 @@ defmodule PhotonNode.Harness.Ops do
 
   defp child_spec(%{"type" => "view_image"} = op, owner),
     do: {:ok, {Job, {ViewImage, op, owner}}}
-
-  defp child_spec(%{"type" => "skill_use"} = op, owner),
-    do: {:ok, {Job, {SkillUse, op, owner}}}
 
   defp child_spec(op, _owner),
     do: {:error, "unsupported operation type #{inspect(op["type"])}"}

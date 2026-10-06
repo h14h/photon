@@ -1,7 +1,7 @@
 defmodule PhotonNode.Harness.Ops.Job do
   @moduledoc """
   The worker for operations that do one piece of work and finish
-  (`view_image`, `skill_use`). It runs the job off its owner
+  (`view_image`). It runs the job off its owner
   (`PhotonNode.Harness.Ops.Owner`), since a job can read a large file,
   reports the terminal snapshot the job returns to the owner, and stops.
 

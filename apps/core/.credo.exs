@@ -56,7 +56,6 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "PhotonCore.LLM.HTTPError",
                    "PhotonCore.LLM.Responses.Request",
                    "PhotonCore.LLM.Responses.Response",
-                   "PhotonCore.LLM.MockAgent",
                    "PhotonCore.Output",
                    "PhotonCore.Operation",
                    "PhotonCore.Operation.Wire"

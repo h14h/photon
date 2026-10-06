@@ -12,7 +12,7 @@ config :photon,
   ecto_repos: [Photon.Repo],
   # Settings, the database, secrets, and the local node's data.
   data_dir: Path.expand("../.photon", __DIR__),
-  # Start an agent node named "local" inside the hub. Remote nodes run the
+  # Start a node named "local" inside the hub. Remote nodes run the
   # `apps/node` project on their own machines.
   local_node: true
 

@@ -65,7 +65,7 @@ Rule numbers run through the whole document so they can be cited ("rule 72").
    module (`Mastery`). (pp. 47, 108, 121)
    - Why: the path tells a reader which rules apply to a file.
    - Enforce: boundary. Photon's namespaces mix layers
-     (`PhotonNode.Harness.Session` sits next to `Harness.Coordinator`), and
+     (`PhotonNode.Executor.Rules` sits next to `PhotonNode.Executor`), and
      the TLA+ specs, `docs/verification.md` and the config cite the current
      module names, so instead of moving modules under layer prefixes each
      functional-core module is a `type: :strict` sub-boundary whose `deps:`
@@ -80,7 +80,7 @@ Rule numbers run through the whole document so they can be cited ("rule 72").
      data and contracts callers need: `Photon` exports the contexts,
      `Photon.Durable` its API, schemas, `Tx`, `Runtime` and the tool and
      task-kind contracts (not `Store`, `Scheduler` or the core),
-     `PhotonNode.Harness` only `Link`, `PhotonCore.LLM` its adapters.
+     `PhotonNode.Executor` only `Link`, `PhotonCore.LLM` its adapters.
 
 7. Design structs and the core before database schemas, and hold off on
    persistence until the domain's state transitions settle. (pp. 50, 173-174)
@@ -132,7 +132,7 @@ Rule numbers run through the whole document so they can be cited ("rule 72").
       (`@persistence_fn Application.get_env(...)`, p. 182), which freezes the
       value at compile time; the check flags exactly this, so config is read
       at runtime. Choosing what to wire through config is review (the node's
-      hub link is one, `PhotonNode.Harness.Link`).
+      hub link is one, `PhotonNode.Executor.Link`).
 
 ## Data
 
@@ -149,7 +149,7 @@ Rule numbers run through the whole document so they can be cited ("rule 72").
     - Enforce: credo (custom: `DeepAccessPath`): `get_in`, `put_in`,
       `update_in`, `pop_in` and `get_and_update_in` paths deeper than two
       levels. Stored formats that are nested already (operation snapshots in
-      the session log) are read with pattern matches.
+      the node's journal) are read with pattern matches.
 
 15. Model change as new facts: keep an initial value and a log of changes, and
     compute current state from them. (pp. 42-44)
@@ -269,9 +269,9 @@ Rule numbers run through the whole document so they can be cited ("rule 72").
       `Enum.random` in its core and shows the test cost.
     - Enforce: credo (custom: `FunctionalCore`): the clock, randomness and ID
       generators in core modules, unless allow-listed for the module. The
-      allow list is the decision made on purpose: `Harness.Session` and
-      `PhotonCore.Operation` mint IDs (tests match on prefixes), and
-      `PhotonCore.ID` is the ID generator.
+      allow list is the decision made on purpose: `PhotonCore.Operation`
+      mints IDs (tests match on prefixes), and `PhotonCore.ID` is the ID
+      generator.
 
 30. Keep state handling and business logic in separate modules. A server
     callback calls the core and shapes the reply. (pp. 11-12, 113)
@@ -772,11 +772,11 @@ because it runs in the caller's process and both callers are tasks. Calling
 
 | Layer | Modules |
 | --- | --- |
-| Data | Session log records (`Harness.Store` moduledoc), inputs (`Harness.Inbox`), operation snapshots (`PhotonCore.Operation`), `PhotonNode.Config`, the `%Harness.Session{}` token |
-| Functional core | `Harness.Session` (the session state machine: replay, inputs, turns, tool calls, stops, timers as effects), `Harness.Context`, `Harness.Inbox`, the `Harness.Tools.*` translators, `Harness.Image`, `Harness.SkillPrompt` (the skills section of the system prompt) |
-| Boundary | API: `PhotonNode.Harness` (`deliver`, `stop`, `delete`, `resume_all`, `records_from`). Servers: `Harness.Coordinator` (one per session; runs `Session` steps and their effects), `Harness.Ops` (API over operation processes), `Harness.Store` (log file I/O, owned by the coordinator). The hub link: `PhotonNode.Connection`, which implements `Harness.Link`, the contract the harness announces records and live output through, so the harness doesn't depend on the connection |
-| Lifecycle | `PhotonNode` supervisor with `:rest_for_one`: registries, task supervisor, the operation and session dynamic supervisors, the connection, then a one-shot resume task, with the plan in its moduledoc. `PhotonNode.Application` starts it. |
-| Workers | One process per operation (`Ops.Shell`, or `Ops.Job` for the one-shot `ViewImage` and `SkillUse` jobs) under `OpSupervisor`; model requests (`Harness.ModelRequest`) as tasks under `Harness.TaskSupervisor`; grace, heartbeat and idle-stop timers |
+| Data | Operation snapshots (`PhotonCore.Operation`) and their messages (`PhotonCore.Operation.Wire`), journal entries (`Executor.Journal` moduledoc), `PhotonNode.Config` |
+| Functional core | `Executor.Request` (an `op.start` to an operation, the snapshots for operations it won't run, `fit/2`), `Executor.Rules` (every start, scan and crash decision), `Harness.Image` |
+| Boundary | API: `PhotonNode.Executor` (`start`, `cancel`, `ack`, `snapshots`; one server that owns the journal and monitors the operations), `Harness.Ops` (API over operation processes, with the `Ops.Owner` contract the executor implements), `Executor.Journal` (file I/O, called only from the executor). The hub link: `PhotonNode.Connection`, which implements `Executor.Link`, the contract the executor sends snapshots and output through, so the executor doesn't depend on the connection |
+| Lifecycle | `PhotonNode` supervisor with `:rest_for_one`: the operation registry, the operation dynamic supervisor, the executor, then the connection, with the plan in its moduledoc. `PhotonNode.Application` starts it. |
+| Workers | One process per operation (`Ops.Shell`, or `Ops.Job` for the one-shot `ViewImage` job) under `OpSupervisor`; the executor's daily sweep timer |
 
 ### apps/hub (`:photon`)
 
@@ -790,27 +790,26 @@ because it runs in the caller's process and both callers are tasks. Calling
 
 ### Where Photon already follows the book
 
-- Both harnesses store facts, not mutable state (rule 15). The node's session
-  log is append-only, and the coordinator rebuilds its state by replaying the
-  log through the same `apply` path it uses live. The hub commits entries and
-  task transitions before anything is shown.
-- The node's tools are pure translators and `Harness.Context` does no I/O
-  (rule 28). `PhotonNode.Config` uses `@enforce_keys` (rule 18).
-- `PhotonNode.Harness.deliver/3` validates the session ID and input at the
-  entry point and composes the steps with `with` (rules 64, 66).
-- Sessions and operations are found through `Registry` via tuples, not pids
-  (rule 83). Restart policies are chosen per type: coordinators are
-  `:transient`, operations `:temporary` (rule 82). `PhotonNode` uses
-  `:rest_for_one` because the connection and the resume task depend on the
-  registries and supervisors started before them (rule 84).
-- Model requests run under a `Task.Supervisor` with `async_nolink` and are
-  monitored (rule 92).
+- Both sides store facts, not mutable state (rule 15). The node journals
+  each operation's snapshot before it acts on it or sends it, and the
+  executor rebuilds what it tracks from the journal on start. The hub
+  commits entries and task transitions before anything is shown.
+- The node's decisions are pure (`Executor.Request`, `Executor.Rules`;
+  rule 28). `PhotonNode.Config` uses `@enforce_keys` (rule 18).
+- The node's `Connection` parses every hub message once with
+  `PhotonCore.Operation.Wire`, and `Executor.Request` judges an `op.start`
+  before anything runs (rule 64).
+- Operations are found through `Registry` via tuples, not pids (rule 83).
+  Operation processes are `:temporary`, and the executor, which monitors
+  them, decides about restarts (rule 82). `PhotonNode` uses `:rest_for_one`
+  because the executor and the connection depend on the registry and
+  supervisor started before them (rule 84).
 - `Durable.Store.commit/1` is a `GenServer.call` through a single writer, so
   writers get back pressure from the database (rule 72). Nothing in the repo
   uses `GenServer.cast`.
-- `PhotonWeb.NodeChannel` is thin: it hands everything to `Machines` and
-  `Nodes`, and ignores events it doesn't know (rules 11, 75). The coordinator
-  and operations also drop unknown messages. No web module touches the repo.
+- `PhotonWeb.NodeChannel` is thin: it hands everything to `Machines`, and
+  ignores events it doesn't know (rules 11, 75). The node's connection and
+  operations also drop unknown messages. No web module touches the repo.
 - Hub tests wait on PubSub (`DataCase.await_change/3`, `await_entry/3`)
   instead of sleeping, and start the durable processes with
   `start_supervised!` (rule 55).
@@ -962,12 +961,13 @@ The layering it encodes:
   `Retry` and the wire format (`ChatCompletions.Request`, `.Response`,
   `.Wire`) are strict, pure sub-boundaries.
 - `apps/node`: `PhotonNode` (the supervisor) holds `Config`, `CLI`,
-  `Connection` and `Harness`. The connection depends on the harness; the
-  harness only on `Config` and the node's config accessor, and reaches the
-  hub through `Harness.Link`. Each functional-core module of the harness is
-  a strict sub-boundary that may name only other core modules.
+  `Connection`, `Executor` and `Harness` (the operation layer). The
+  connection depends on the executor, and the executor on the operation
+  layer, reaching the hub only through `Executor.Link`; the operation layer
+  depends only on `PhotonCore`. Each functional-core module is a strict
+  sub-boundary that may name only other core modules.
 - `apps/hub`: each context (`Durable`, `Machines`, `Assistant`,
-  `Nodes`, `Settings`, `Provision`, `Repo`, and so on) is a sub-boundary of
+  `Settings`, `Provision`, `Repo`, and so on) is a sub-boundary of
   `Photon` with explicit `deps:`; `Photon` exports the contexts; `PhotonWeb`
   depends only on those exports and never on Ecto; `Photon.Application`
   sits above both, and is the only hub module that may use the node app

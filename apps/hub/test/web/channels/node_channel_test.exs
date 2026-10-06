@@ -90,8 +90,7 @@ defmodule PhotonWeb.NodeChannelTest do
     assert_receive :nodes_changed
     assert %{"hostname" => "box"} = Machines.get("box")
 
-    # Session records, from a node that still runs sessions, are ignored.
-    push(socket, "event", %{"session_id" => "ns_1", "offset" => 0, "event" => %{}})
+    push(socket, "teleport", %{"id" => "x"})
     _ = :sys.get_state(socket.channel_pid)
     assert Machines.online?("box")
 

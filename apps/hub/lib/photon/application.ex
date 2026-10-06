@@ -70,9 +70,9 @@ defmodule Photon.Application do
       else: []
   end
 
-  # An agent node inside this BEAM, connecting over the same websocket as
-  # remote nodes: handy in development. Its sessions resume when the hub
-  # restarts, since they live in the data directory.
+  # A node inside this BEAM, connecting over the same websocket as remote
+  # nodes: handy in development. Its operation journal lives in the data
+  # directory, so its operations resume when the hub restarts.
   defp local_node do
     if Application.get_env(:photon, :local_node) do
       http = Application.get_env(:photon, PhotonWeb.Endpoint)[:http]

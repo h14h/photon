@@ -2,8 +2,8 @@ defmodule PhotonCore do
   @moduledoc """
   Code the Photon hub and nodes share:
 
-    * `PhotonCore.Message`: the provider-neutral conversation format both
-      harnesses persist.
+    * `PhotonCore.Message`: the provider-neutral conversation format the
+      hub's harness persists.
     * `PhotonCore.LLM`: one streamed model request, with retries: to the
       OpenAI Responses API with a Sign in with ChatGPT token (the hub), or
       to the scripted mock (tests).
@@ -23,7 +23,7 @@ defmodule PhotonCore do
     * functional core, pure: `LLM.SSE`, `LLM.Retry`, `LLM.HTTPError`,
       `LLM.Responses.Request`, `LLM.Responses.Response`, `Message`,
       `Operation` (but `new/4`, which mints an ID), `Operation.Wire`,
-      `Output`, `ID.encode/3`, and the mock script `LLM.MockAgent`
+      `Output` and `ID.encode/3`
     * boundary: `PhotonCore.LLM` is the API. Behind it, `LLM.Responses`
       does the HTTP and `LLM.Mock` answers with a script; both report events
       through the caller's `on_event`. `ID.new/1` reads the clock and RNG.

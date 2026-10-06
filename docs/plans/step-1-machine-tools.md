@@ -822,7 +822,9 @@ Hub UI, left coherent:
   `working` assigns; `nodes` comes from `Machines.roster/0`, rebuilt on
   `:nodes_changed` and `{:node_keys_changed, _}`.
 
-Node deletions: `harness.ex`, `harness/{session,coordinator,store,context,inbox,model_request,link,skills,skill_prompt,tools}.ex`,
+Node deletions: `harness.ex` (as built, B5 keeps it as a code-free module
+naming the operation layer's boundary, and B6 deletes it with the rename),
+`harness/{session,coordinator,store,context,inbox,model_request,link,skills,skill_prompt,tools}.ex`,
 `harness/tools/`, `harness/ops/skill_use.ex`, `priv/prompts/`; the session
 handlers in `connection.ex`; `SessionRegistry`, `TaskSupervisor`,
 `SessionSupervisor` and the `:resume` task in `photon_node.ex`;
@@ -1107,7 +1109,19 @@ apps/hub
   into `executor_test.exs` if they duplicate it; `test/support/` loses
   `session_driver.ex`, `test_script.ex` and the session parts of
   `harness_case.ex` and `fixtures.ex` (keep `shell_op/1`, `running/2`,
-  `completed/2`).
+  `completed/2`). As built in B5: `recovery_test.exs` is deleted. Its
+  crashed-operation test (F9) and its `:noproc` test are covered by
+  `executor_test.exs` and `executor/rules_test.exs`; the one op test
+  nothing else covers (`Ops.add/2` starting again an operation whose old
+  process has just exited but is still registered) moves to
+  `shell_test.exs`, which drives `Ops.add/2` with `TestOwner`.
+  `shell_test.exs` builds its operations with `Executor.Request.operation/2`
+  instead of the deleted Bash translator; `jobs_test.exs` loses its
+  `skill_use` tests; `connection_test.exs` loses the session replay,
+  delivery and forwarding tests and gains one that session messages are
+  ignored as unknown events, and checks the join's capabilities are
+  exactly `["ops:1"]`; `config_test.exs` loses the heartbeat and relay URL
+  tests.
 - Hub test support: remove `node_sessions`, `node_events`, `node_inputs`
   from `data_case.ex`'s `@tables`, the `Mirror` alias in `case.ex`, the
   `Session` and `Input` fixtures in `fixtures.ex`.
@@ -1447,6 +1461,27 @@ with it).
   Boundary deps without `PhotonCore.LLM`.
 - `config.ex`, `cli.ex`, `apps/node/config/{config,test}.exs`.
 - Tests and support per section 6.2.
+- As built: `harness.ex` stays, as a module with no code that names the
+  operation layer's Boundary (`deps: [PhotonCore]`, `exports: [Ops,
+  Ops.Owner, Env]`) and describes it, because `Harness.Ops*`, `Env` and
+  `Image` still live under that name until B6 gives them their own
+  `PhotonNode.Ops` boundary; B6 deletes it. `Ops.Shell` sets the `:op`
+  logger metadata that `config/config.exs` now lists. In
+  `apps/node/.credo.exs` the `FunctionalCore` allow list is empty, the
+  `Connection` `PreferCall` reason drops log records, and the
+  `Harness.Ops` reason names the executor; `api_modules` and the op names
+  wait for B6's rename. In core, the `session/0` generator becomes
+  `conversation/0`, built from plain `Message` values, and the
+  `Message`, `LLM.Mock` and `LLM` (`:cache_key`) docs stop naming node
+  sessions. Copy outside the list that described the node's agent: the
+  hub's `local_node` comment in `application.ex`, `Paths.local_node_dir/0`'s
+  comment, the endpoint and `NodeSocket` docs, the `local_node` comment in
+  `config/config.exs`, the install script's `PHOTON_PURGE` line, the node
+  rows of `README.md`, and the node tables, the 'already follows' bullets,
+  the Boundary list and the examples in rules 5, 6, 12, 14 and 29 of
+  `docs/otp-design-guide.md` (with two `Nodes` mentions B4 left in the hub
+  lines). `node_channel_test.exs`'s ignored-event step pushes an unknown
+  event instead of a session record.
 
 B6. Rename the operation layer. After B5.
 - `PhotonNode.Harness.Ops*`, `Env`, `Image` to `PhotonNode.Ops*`

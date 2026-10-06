@@ -1,7 +1,7 @@
 defmodule PhotonNode.Harness.JobsTest do
   @moduledoc """
-  The one-shot operations: `view_image` and `skill_use` read files as plain
-  functions, and `Ops.Job` runs them off their owner. The test process is
+  The one-shot operation: `view_image` reads a file as a plain function,
+  and `Ops.Job` runs it off its owner. The test process is
   the owner (`PhotonNode.TestOwner`).
   """
 
@@ -9,7 +9,7 @@ defmodule PhotonNode.Harness.JobsTest do
 
   alias PhotonCore.Operation
   alias PhotonNode.Harness.Ops
-  alias PhotonNode.Harness.Ops.{SkillUse, ViewImage}
+  alias PhotonNode.Harness.Ops.ViewImage
   alias PhotonNode.TestOwner
 
   @png <<0x89, "PNG\r\n", 0x1A, "\n", 0, 0, 0, 13, "IHDR", 2::32, 3::32, 8, 6, 0, 0, 0>>
@@ -21,9 +21,6 @@ defmodule PhotonNode.Harness.JobsTest do
 
   defp view_op(path, max_size \\ 4_999_000),
     do: Operation.new("view_image", 1, %{"path" => path, "max_size" => max_size, "result" => nil})
-
-  defp skill_op(path),
-    do: Operation.new("skill_use", 1, %{"path" => path, "content" => nil, "terminal_error" => ""})
 
   describe "view_image" do
     setup :in_workspace
@@ -60,28 +57,6 @@ defmodule PhotonNode.Harness.JobsTest do
     end
 
     defp error(%{"status" => "failed", "state" => %{"result" => %{"error" => error}}}), do: error
-  end
-
-  describe "skill_use" do
-    setup :in_workspace
-
-    test "returns the skill's instructions", %{workspace: workspace} do
-      path = Path.join(workspace, "SKILL.md")
-      File.write!(path, "---\nname: deploy\n---\nRun make.")
-
-      assert %{
-               "status" => "completed",
-               "state" => %{"content" => "---\nname: deploy\n---\nRun make."}
-             } =
-               SkillUse.run(skill_op(path))
-    end
-
-    test "fails when the file is gone", %{workspace: workspace} do
-      assert %{"status" => "failed", "state" => %{"terminal_error" => error}} =
-               SkillUse.run(skill_op(Path.join(workspace, "SKILL.md")))
-
-      assert error == "read skill: no such file or directory"
-    end
   end
 
   describe "the job worker" do

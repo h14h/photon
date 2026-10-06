@@ -4,38 +4,40 @@ A personal assistant that lives on an always-on hub and gets real work done on
 your machines. Everything is Elixir.
 
 ```
-browser ──▶ hub: assistant + web UI ◀──websocket── node ──▶ agent harness on that machine
-              (durable harness)     ◀──websocket── node ──▶ agent harness on that machine
+browser ──▶ hub: assistant + web UI ◀──websocket── node ──▶ commands on that machine
+              (durable harness)     ◀──websocket── node ──▶ commands on that machine
 ```
 
-- **The hub** runs one assistant you talk to in the web UI. It doesn't run
-  commands itself: it hands work to your machines, keeps a memory, runs
-  schedules, and tells you when work finishes. Its harness is durable, after
+- **The hub** runs one assistant you talk to in the web UI. It runs
+  commands and reads images on your machines through their nodes, keeps a
+  memory, runs schedules, and tells you when work finishes. Its harness is
+  durable, after
   Earendil's [pi-durable](https://github.com/earendil-works/pi/tree/main/packages/durable):
   every turn, tool call and schedule is committed to SQLite before it's shown,
   so if the hub restarts mid-turn it picks up where it stopped.
-- **Nodes** run an agent on each machine, with a shell and the files there.
-  Its harness is an Elixir port of Unreal Labs'
-  [unreal-agent](https://github.com/unreallabsai/unreal-agent): asynchronous
-  tool calls, an append-only session log, crash recovery, and each command in
-  its own process group. Nodes dial the hub, so they work behind NAT, keep
-  working while the hub is away, and catch up when it's back.
+- **Nodes** run the assistant's commands on each machine, each in its own
+  process group, and journal every operation, so a command runs at most
+  once and its result survives a dropped connection or a restart. The
+  operation layer comes from an Elixir port of Unreal Labs'
+  [unreal-agent](https://github.com/unreallabsai/unreal-agent). Nodes dial
+  the hub, so they work behind NAT, keep running commands while the hub is
+  away, and report back when it's back.
 - **The model** is your ChatGPT plan: you sign in with ChatGPT once, on the
-  hub. Nodes reach the model through the hub, so they never hold the
-  sign-in.
+  hub. Only the hub talks to the model; nodes never hold the sign-in.
 
 > [!WARNING]
-> Node agents run shell commands **without a sandbox**, as the node's user.
-> Install nodes on machines, VMs or containers you're happy for an agent to use.
+> Nodes run the assistant's shell commands **without a sandbox**, as the
+> node's user. Install nodes on machines, VMs or containers you're happy for
+> an agent to use.
 
 ## The code
 
 | Path | What |
 | --- | --- |
 | `apps/core` | Shared: the streaming model client (ChatGPT through the Responses API), the message format, the scripted models tests use |
-| `apps/node` | The node: the agent harness (`PhotonNode.Harness`) and the hub connection, packaged as one self-contained binary |
-| `apps/hub` | The hub: the durable harness (`Photon.Durable`), the assistant (`Photon.Assistant`), node sessions, installer, web UI |
-| `docs/unreal-agent-port-spec.md` | What the node harness ports from unreal-agent, and where it differs |
+| `apps/node` | The node: the executor that runs the hub's operations (`PhotonNode.Executor`) and the hub connection, packaged as one self-contained binary |
+| `apps/hub` | The hub: the durable harness (`Photon.Durable`), the assistant (`Photon.Assistant`), its machine tools (`Photon.MachineTools`), installer, web UI |
+| `docs/unreal-agent-port-spec.md` | What the node's operation layer ports from unreal-agent, and where it differs |
 
 ## Try it locally
 
@@ -52,8 +54,8 @@ below). The hub starts a built-in node called `local`, so you can try
 `on local, what's my uptime?` right away.
 
 To work on the hub without signing in, start it with
-`PHOTON_MOCK_MODEL=1 mix phx.server`: Blip and nodes then answer with scripted
-models (type `help`, or `on local: $ uname -a`). That's for development only.
+`PHOTON_MOCK_MODEL=1 mix phx.server`: Blip then answers with a scripted model
+(type `help`, or `on local: $ uname -a`). That's for development only.
 
 ## Sign in with ChatGPT
 
@@ -69,8 +71,8 @@ open-source apps. It's the only way to give it a model.
    whole address and paste it into Settings.
 
 The hub keeps the tokens in its data directory (`chatgpt.json`, readable by
-the hub only) and refreshes them itself. Nodes never see them: their
-requests go through the hub. Usage counts against your plan and Photon's
+the hub only) and refreshes them itself. Nodes never see them, since only
+the hub calls the model. Usage counts against your plan and Photon's
 share of it, which you can see and limit at
 [chatgpt.com/settings/usage](https://chatgpt.com/settings/usage).
 Schedules run while you're away, so they only use your plan once you allow
@@ -121,8 +123,8 @@ sudo tailscale serve --bg 8000
 With `PHOTON_AUTH=tailscale` the hub asks Tailscale which device each
 request comes from (the address the proxy forwards) and lets in only your
 own devices: ones that belong to you (or to `PHOTON_TAILSCALE_USERS`),
-aren't tagged, and don't run a node, so an agent on a node can't drive the
-hub as you.
+aren't tagged, and don't run a node, so a command run on a node can't drive
+the hub as you.
 
 ## Add nodes
 
@@ -153,16 +155,14 @@ running an older build at once.
 ## Using the assistant
 
 Ask in plain language. The assistant picks a machine (or uses the one you
-name), writes the node's agent a self-contained task, and waits briefly for a
-quick answer. Longer work keeps running and reports back into the
-conversation when it's done. You can keep talking meanwhile: by default a new
+name) and runs commands there itself, showing each command and its output as
+it runs. A command keeps running while the machine is briefly offline, and
+its result comes back into the conversation when it's done. You can keep talking meanwhile: by default a new
 message waits for the current answer, or choose **Steer** to fold it into the
 work in progress. **Stop** cancels the run and its tools.
 
 It also keeps a **memory** (shown and editable on the right) and runs
-**schedules** ("every morning at 8, check my disks"). Each piece of node work
-has its own page with every command and its output, where you can message
-that agent directly.
+**schedules** ("every morning at 8, check my disks").
 
 ## Configuration
 
@@ -188,7 +188,7 @@ Node (set by the installer in `~/.config/photon-node/env`):
 | `PHOTON_SERVER` | The hub's websocket, e.g. `wss://hub.example.ts.net/node/websocket` |
 | `PHOTON_NODE_TOKEN` | The node's own key, made by the hub (required) |
 | `PHOTON_NODE_ID` | Node name (default: hostname) |
-| `PHOTON_NODE_WORKSPACE` | Where agents work (default: `~/.photon-node/workspace`) |
+| `PHOTON_NODE_WORKSPACE` | Where commands run (default: `~/.photon-node/workspace`) |
 
 ## Development
 
@@ -209,6 +209,7 @@ Packaging uses [Burrito](https://github.com/burrito-elixir/burrito) and needs
 from source with a key from the Nodes page:
 `cd apps/node && PHOTON_SERVER=... PHOTON_NODE_ID=... PHOTON_NODE_TOKEN=... mix run --no-halt`.
 
-The hub–node protocol, including how sessions survive reconnects, is documented
-in `apps/node/lib/photon_node.ex`; the durable harness in
+The hub–node protocol, including how operations survive reconnects, is
+documented in `apps/node/lib/photon_node.ex` and
+`apps/core/lib/photon_core/operation/wire.ex`; the durable harness in
 `apps/hub/lib/photon/durable.ex`.

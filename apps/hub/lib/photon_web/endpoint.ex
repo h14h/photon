@@ -11,7 +11,7 @@ defmodule PhotonWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  # Agent nodes dial in here; see PhotonNode for the protocol. Where a
+  # Nodes dial in here; see PhotonNode for the protocol. Where a
   # connection came from (peer and forwarded address) decides whose it is.
   # Frames are capped at 8 MB on purpose: enough for a view_image snapshot
   # (at most 5 MB of image data), and a node keeps every snapshot under

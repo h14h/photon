@@ -12,7 +12,7 @@ defmodule PhotonNode.CLI do
   use Boundary, deps: []
 
   @usage """
-  photon-node: runs Photon agent sessions on this machine for a Photon hub.
+  photon-node: runs commands on this machine for a Photon hub.
 
   Usage: photon-node [--version | --help]
 
@@ -21,7 +21,7 @@ defmodule PhotonNode.CLI do
     PHOTON_NODE_TOKEN      the node's own key, made by the hub (required)
     PHOTON_NODE_ID         this node's name (default: the hostname)
     PHOTON_NODE_DATA       data directory (default: ~/.photon-node)
-    PHOTON_NODE_WORKSPACE  agent workspace (default: <data>/workspace)
+    PHOTON_NODE_WORKSPACE  where commands run (default: <data>/workspace)
   """
 
   @doc "Whether the node runs as a packaged executable."

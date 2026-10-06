@@ -100,6 +100,8 @@ defmodule PhotonNode.Harness.Ops.Shell do
   @impl true
   def init({op, owner}) do
     Process.flag(:trap_exit, true)
+    # Log lines carry the operation ID (`config :logger` lists `:op`).
+    Logger.metadata(op: op["id"])
 
     state = %{
       op: op,

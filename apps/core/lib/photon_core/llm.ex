@@ -11,8 +11,8 @@ defmodule PhotonCore.LLM do
     * `:tools` - `[%{"name", "description", "parameters" (JSON Schema)}]`
     * `:reasoning` - thinking level, sent only when the config allows it
     * `:max_tokens` - optional output cap (ChatGPT doesn't accept one)
-    * `:cache_key` - what the request continues (a conversation or session
-      ID), so the provider can cache its history between turns
+    * `:cache_key` - what the request continues (a conversation ID), so
+      the provider can cache its history between turns
 
   A config says where to send it:
 
@@ -59,7 +59,7 @@ defmodule PhotonCore.LLM do
     top_level?: true,
     type: :strict,
     deps: [PhotonCore, PhotonCore.LLM.Error, Jason, Req],
-    exports: [Mock, MockAgent, Responses]
+    exports: [Mock, Responses]
 
   alias PhotonCore.LLM.{Error, Mock, Responses, Retry}
   alias PhotonCore.Message

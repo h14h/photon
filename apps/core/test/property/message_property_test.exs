@@ -1,7 +1,7 @@
 defmodule PhotonCore.Property.MessageTest do
   @moduledoc """
-  Properties of `PhotonCore.Message`, and of the conversations the mock
-  agent makes as Responses input.
+  Properties of `PhotonCore.Message`, and of conversations as Responses
+  input.
   """
 
   use PhotonCore.Case, async: true
@@ -65,50 +65,58 @@ defmodule PhotonCore.Property.MessageTest do
     end
   end
 
-  ## The mock agent's conversations as Responses input
+  ## Conversations as Responses input
 
-  # A node session's conversation with the mock agent: prompts, the calls it
-  # makes, and their results (sometimes with an image, as ViewImage returns).
-  defp session do
-    gen all(
-          prompts <-
-            list_of(member_of(["$ echo hi", "view a.png", "hello", "help"]),
-              min_length: 1,
-              max_length: 3
-            ),
-          images <- list_of(boolean(), length: 3),
-          running <- list_of(boolean(), length: 3)
-        ) do
-      prompts
+  # A conversation with machine tools: prompts, answers that make a call or
+  # only talk, and the calls' results (text, text with an image, as
+  # view_image returns, or a note that the call still runs), sometimes
+  # followed by an answer that reports the result.
+  defp conversation do
+    gen all(rounds <- list_of(round(), min_length: 1, max_length: 3)) do
+      rounds
       |> Enum.with_index()
-      |> Enum.reduce([], fn {prompt, i}, messages ->
-        messages = messages ++ [Message.user(prompt)]
-
-        case MockAgent.respond(%{messages: messages}) do
-          %{"tool_calls" => [call]} = reply ->
-            parts =
-              cond do
-                Enum.at(running, i) ->
-                  [Message.text("Tool call is still running.")]
-
-                Enum.at(images, i) ->
-                  [Message.text("an image"), Message.image("image/png", "QUJD")]
-
-                true ->
-                  [Message.text("output #{i}")]
-              end
-
-            messages ++ [reply, Message.tool_result(call["id"], parts)]
-
-          reply ->
-            messages ++ [reply]
-        end
-      end)
+      |> Enum.flat_map(fn {round, i} -> messages(round, i) end)
     end
   end
 
+  defp round do
+    fixed_map(%{
+      prompt: member_of(["$ echo hi", "view a.png", "hello", "help"]),
+      call?: boolean(),
+      tool: member_of(["shell", "view_image"]),
+      result: member_of([:text, :image, :running]),
+      report?: boolean()
+    })
+  end
+
+  defp messages(%{call?: false} = round, _i),
+    do: [Message.user(round.prompt), Message.assistant("Hello.")]
+
+  defp messages(round, i) do
+    call = %{
+      "id" => "call_#{i}",
+      "name" => round.tool,
+      "arguments" => Jason.encode!(%{"machine" => "local", "command" => round.prompt})
+    }
+
+    report = if round.report?, do: [Message.assistant("Done: output #{i}.")], else: []
+
+    [
+      Message.user(round.prompt),
+      Message.assistant("On it.", [call]),
+      Message.tool_result(call["id"], result_parts(round.result, i))
+    ] ++ report
+  end
+
+  defp result_parts(:text, i), do: [Message.text("output #{i}")]
+
+  defp result_parts(:image, _i),
+    do: [Message.text("an image"), Message.image("image/png", "QUJD")]
+
+  defp result_parts(:running, _i), do: [Message.text("Tool call is still running.")]
+
   property "every conversation encodes as Responses input without raising" do
-    check all(messages <- session(), max_runs: 150) do
+    check all(messages <- conversation(), max_runs: 150) do
       assert is_list(Request.encode_messages(messages))
     end
   end
