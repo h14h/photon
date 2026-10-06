@@ -1021,6 +1021,14 @@ between `Machines` and `Settings`. `Layouts.app`'s `active` takes
   link."
 - On `{:skills_changed, _}` it resets the stream. Project names for the
   scopes line come from `Projects.list/0`, read with the rows.
+- (K9) The row also has `#skill-<id>-origin`. The switch is
+  `PhotonWeb.CoreComponents.switch/1` (new: a `role="switch"` button with
+  `aria-checked`), and it sends the state it should end in, so a double
+  click can't flip it back. `{:projects_changed, id}` resets the stream
+  only when a listed skill is on in that project (a rename shows; thread
+  traffic doesn't re-read the list). The words come from
+  `PhotonWeb.SkillText` (new, pure, in `FunctionalCore`): `scopes/2`,
+  `origin/1`, `place/1` (a link without its scheme) and `notes/1`.
 
 ### 6.4 A skill
 
@@ -1065,6 +1073,32 @@ between `Machines` and `Settings`. `Layouts.app`'s `active` takes
   colocated hook out of `ContextFileLive` into a shared function component
   (`PhotonWeb.CoreComponents.unsaved_guard/1` or a new
   `PhotonWeb.EditorComponents`) so both editors use it.
+- (K9) The shared component is `PhotonWeb.EditorComponents.guarded_form/1`:
+  the `<.form>` itself carries the hook, because a colocated hook's name
+  belongs to the module whose template names it
+  (`PhotonWeb.EditorComponents.UnsavedGuard`). It takes `dirty` and
+  `leave`, the question each editor asks ("Your changes to this skill
+  will be lost."). The editors' `Write`/`Preview` tab and banner moved
+  there too (`editor_tab/1`, `banner/1`). Other choices:
+  - `#skill-stale` also has `Keep my text` (`#skill-keep`), as the context
+    file editor's banner does: it takes the stored version's number so
+    the next save writes over it. Without it a stale form could never
+    be saved.
+  - The meta line's time is `local_time/1` (date and time in the
+    browser's zone). A pasted skill reads "Installed from a pasted
+    SKILL.md on ...", and a fetched one links its source
+    (`#skill-source`, without the scheme).
+  - `#skill-install-notes` lists the notes one `<li>` per stored line.
+  - The project switches are rows `#skill-scope-row-<project id>`, with
+    `#skill-no-projects` as the stream's empty state; Blip's switch sits
+    beside them, outside the stream. The page re-reads them on every
+    `{:projects_changed, _}`, so a new or renamed project shows.
+  - `Delete` flashes "Deleted pdf-forms." on `/skills`. A clean form
+    that loads a rename made elsewhere patches the URL too, and
+    `handle_params/3` opens whichever skill a changed URL names (the
+    browser's back button after a rename).
+  - K7's `#skill-summary` placeholder is gone; `pages_test.exs` checks
+    the description field instead.
 
 ### 6.5 Install
 
@@ -1330,6 +1364,9 @@ deleted (the tests move to `test/core/schedules/rules_test.exs` and
 | `PhotonWeb.Layouts` | boundary (UI) | `#nav-skills`; `active` takes `:skills`. |
 | `PhotonWeb.TimeComponents` | boundary (UI components) | `local_time/1`, `local_datetime_input/1`, the colocated hooks `.LocalTime` and `.LocalDateTime` (section 3.9). Imported in `html_helpers`. |
 | `PhotonWeb.ScheduleText` | functional core (web formatting) | Section 6.6. |
+| `PhotonWeb.SkillText` | functional core (web formatting) | (K9) Section 6.3: the scopes line, the origin, a link's place, the install notes as lines. |
+| `PhotonWeb.EditorComponents` | boundary (UI components) | (K9) `guarded_form/1` with the shared `.UnsavedGuard` hook, `editor_tab/1`, `banner/1`; used by `ContextFileLive` and `SkillLive` (section 6.4). |
+| `PhotonWeb.CoreComponents` | boundary (UI components) | (K9) `switch/1`, the on/off switch of the skills pages. |
 | `PhotonWeb.SkillsLive`, `SkillLive`, `SkillInstallLive` | server (LiveViews) | Sections 6.3 to 6.5. Talk only to `Photon.Skills` and `Photon.Projects`. `SkillInstallLive` fetches in `start_async`. |
 | `PhotonWeb.ScheduleLive` | server (LiveView) | Section 6.7. Talks to `Photon.Schedules`, `Photon.Projects`, `Photon.Threads`. |
 | `PhotonWeb.ProjectLive` | server (LiveView) | Section 6.6. Adds `Photon.Skills` and `Photon.Schedules`. |
@@ -1350,7 +1387,8 @@ Every `handle_event`, `handle_info`, `handle_params` and
   `Photon.Skills.Enablement`, `Photon.Skills.Rules`,
   `Photon.Skills.SkillMd`, `Photon.Skills.Source`, `Photon.Skills.Prompt`,
   `Photon.Skills.MockPhrases`, `Photon.Schedules.Schedule`,
-  `Photon.Schedules.Rules`, `PhotonWeb.ScheduleText`.
+  `Photon.Schedules.Rules`, `PhotonWeb.ScheduleText`, and (K9)
+  `PhotonWeb.SkillText`.
 - `ProcessNameOwnership` `api_modules`: add `"Photon.Schedules"` and
   `"Photon.Skills"`. No new `names`.
 - No `PreferCall`, `NoSleep` or `DiscardNeedsReason` entries.
@@ -1892,6 +1930,11 @@ K9. The Skills page and the skill editor. After K7.
   must still pass).
 - Tests: `test/web/live/skills_live_test.exs`,
   `test/web/live/skill_live_test.exs`.
+- (K9) Done as listed. The shared component is
+  `PhotonWeb.EditorComponents` (`guarded_form/1`, with the editors' tab
+  and banner); new `CoreComponents.switch/1` and the pure
+  `PhotonWeb.SkillText` (`test/web/skill_text_test.exs`); `#skill-keep`
+  next to `#skill-reload`. Recorded in sections 6.3 and 6.4 under "(K9)".
 
 K10. Installing from the app. After K3 and K7.
 - Fill in `apps/hub/lib/photon_web/live/skill_install_live.ex` (section

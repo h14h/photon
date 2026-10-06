@@ -111,10 +111,10 @@ defmodule PhotonWeb.PagesTest do
       assert has_element?(view, "#install-skill[href='/skills/install']")
     end
 
-    test "a skill's page shows its description; the schedule page its prompt and project",
+    test "a skill's page opens it in the editor; the schedule page shows its prompt and project",
          %{conn: conn, schedule: schedule} do
       {:ok, view, _html} = live(conn, ~p"/skills/pdf-forms")
-      assert has_element?(view, "#skill-summary", "Fill in PDF forms.")
+      assert view |> element("#skill-description") |> render() =~ "Fill in PDF forms."
       assert has_element?(view, "#skill-back[href='/skills']")
 
       {:ok, view, _html} = live(conn, ~p"/projects/garden/schedules/#{schedule.id}")
