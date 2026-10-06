@@ -62,6 +62,21 @@ defmodule PhotonWeb.ContextFileLiveTest do
       assert content(view) =~ "Water daily."
     end
 
+    test "saved from Preview, it opens on its page in Preview", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/projects/garden/files/new")
+      view |> form("#file-form", file: %{name: "plan", content: "# Plan"}) |> render_change()
+      view |> element("#file-tab-preview") |> render_click()
+
+      {:ok, view, _html} =
+        view
+        |> form("#file-form", file: %{name: "plan", content: "# Plan"})
+        |> render_submit()
+        |> follow_redirect(conn, ~p"/projects/garden/files/plan.md?tab=preview")
+
+      assert has_element?(view, ~s(#file-tab-preview[aria-selected="true"]))
+      assert has_element?(view, "#file-preview h1", "Plan")
+    end
+
     test "a bad name shows the rule and keeps the text", %{conn: conn, project: project} do
       {:ok, view, _html} = live(conn, ~p"/projects/garden/files/new")
 
@@ -167,6 +182,17 @@ defmodule PhotonWeb.ContextFileLiveTest do
       view |> element("#file-tab-write") |> render_click()
       refute has_element?(view, "#file-preview")
       assert content(view) =~ "**Two** of them."
+    end
+
+    test "saving from Preview stays in Preview", %{conn: conn} do
+      {:ok, view, _html} = open_notes(conn)
+      view |> form("#file-form", file: %{content: "# Zones"}) |> render_change()
+      view |> element("#file-tab-preview") |> render_click()
+      view |> form("#file-form", file: %{content: "# Zones"}) |> render_submit()
+
+      assert view |> element("#file-meta") |> render() =~ "Version 2,"
+      assert has_element?(view, ~s(#file-tab-preview[aria-selected="true"]))
+      assert has_element?(view, "#file-preview h1", "Zones")
     end
 
     test "deleting it returns to the project", %{conn: conn, notes: notes} do

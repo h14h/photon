@@ -8,7 +8,8 @@ defmodule PhotonWeb.ContextFileLive do
   The editor is a form over a plain map (`name`, `content` and, when
   editing, the hidden `version` it loaded), with `Write` and `Preview`
   tabs. Saving hands the text to `Photon.Projects`, which checks it and the
-  version; its errors show under their fields.
+  version; its errors show under their fields. Saving keeps the tab the
+  owner is on, a new file's too (its page opens with `?tab=preview`).
 
   Threads in the project write the same files, so the page listens on
   `Projects.subscribe_files/1` for the open file:
@@ -43,19 +44,26 @@ defmodule PhotonWeb.ContextFileLive do
   def mount(%{"slug" => slug} = params, _session, socket) do
     with {:ok, project} <- project(slug),
          {:ok, file} <- file(project, params, socket.assigns.live_action) do
-      if file && connected?(socket) do
-        :ok = Projects.subscribe_files(project.id)
-        tick()
-      end
+      :ok = follow(socket, project, file)
 
       {:ok,
        socket
-       |> assign(project: project, tab: "write", revision: 0)
+       |> assign(project: project, tab: opening_tab(params), revision: 0)
        |> assign(page_title: title(project, file))
        |> load(file)}
     else
       {:error, message} -> {:ok, gone(socket, message)}
     end
+  end
+
+  # An open file is followed: its changes, and the clock on its meta line.
+  defp follow(socket, project, file) do
+    if file && connected?(socket) do
+      :ok = Projects.subscribe_files(project.id)
+      tick()
+    end
+
+    :ok
   end
 
   defp project(slug) do
@@ -73,6 +81,11 @@ defmodule PhotonWeb.ContextFileLive do
       nil -> {:error, "There's no file called #{name} in #{project.name}."}
     end
   end
+
+  # The tab to open on: Preview when the page was asked for it (a new file
+  # saved from Preview opens its page there), otherwise Write.
+  defp opening_tab(%{"tab" => "preview"}), do: "preview"
+  defp opening_tab(_params), do: "write"
 
   defp title(project, nil), do: "New file in #{project.name}"
   defp title(project, file), do: "#{file.name} in #{project.name}"
@@ -154,7 +167,7 @@ defmodule PhotonWeb.ContextFileLive do
     params = clean(params)
 
     case Projects.create_file(socket.assigns.project.id, params) do
-      {:ok, file} -> {:noreply, push_navigate(socket, to: file_path(socket, file))}
+      {:ok, file} -> {:noreply, push_navigate(socket, to: saved_path(socket, file))}
       {:error, reason} -> {:noreply, refused(socket, params, reason)}
     end
   end
@@ -194,8 +207,12 @@ defmodule PhotonWeb.ContextFileLive do
      |> push_navigate(to: ~p"/projects/#{project.slug}")}
   end
 
-  defp file_path(socket, file),
-    do: ~p"/projects/#{socket.assigns.project.slug}/files/#{file.name}"
+  # A new file's page, on the tab the owner saved it from.
+  defp saved_path(%{assigns: %{tab: "preview", project: project}}, file),
+    do: ~p"/projects/#{project.slug}/files/#{file.name}?tab=preview"
+
+  defp saved_path(%{assigns: %{project: project}}, file),
+    do: ~p"/projects/#{project.slug}/files/#{file.name}"
 
   # A save that didn't happen: the text stays in the box, with what to do.
   defp refused(socket, params, :stale) do
@@ -232,8 +249,11 @@ defmodule PhotonWeb.ContextFileLive do
 
   def handle_info({:projects_changed, id}, %{assigns: %{project: %{id: id}}} = socket) do
     case Projects.get(id) do
-      %Project{} = project -> {:noreply, assign(socket, project: project)}
-      nil -> {:noreply, gone(socket, "There's no project called #{socket.assigns.project.slug}.")}
+      %Project{} = project ->
+        {:noreply, assign(socket, project: project)}
+
+      nil ->
+        {:noreply, gone(socket, "There's no project called #{socket.assigns.project.slug}.")}
     end
   end
 
