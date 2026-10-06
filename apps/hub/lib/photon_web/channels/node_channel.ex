@@ -44,6 +44,12 @@ defmodule PhotonWeb.NodeChannel do
   @op_snapshot Wire.event(:snapshot)
   @op_output Wire.event(:output)
 
+  # Today's node ignores the join reply. A node built before step 1's PR B
+  # requires "sync" in it and crashes without it, so it couldn't stay
+  # joined; with an empty one it stays connected and is shown as outdated,
+  # or runs ops if it speaks ops:1 (rule 75).
+  @join_reply %{"sync" => %{}}
+
   # A node joins as the node its key belongs to (`PhotonWeb.NodeSocket`),
   # while that key is still current. It listens for key changes before it
   # checks (so none slips in between), and checks again once registered,
@@ -59,7 +65,7 @@ defmodule PhotonWeb.NodeChannel do
          true <- still_current(current?, node_id) do
       send(self(), :joined)
 
-      {:ok, assign(socket, :routes, %{})}
+      {:ok, @join_reply, assign(socket, :routes, %{})}
     else
       _replaced -> {:error, %{"reason" => "this key has been replaced"}}
     end

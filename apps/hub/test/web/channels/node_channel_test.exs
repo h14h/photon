@@ -86,7 +86,9 @@ defmodule PhotonWeb.NodeChannelTest do
     :ok = Machines.subscribe()
 
     {:ok, reply, socket} = join("box")
-    assert reply == %{}
+    # An empty "sync", so a node built before PR B, which requires it, stays
+    # joined and shows as outdated rather than crashing (rule 75).
+    assert reply == %{"sync" => %{}}
     assert_receive :nodes_changed
     assert %{"hostname" => "box"} = Machines.get("box")
 

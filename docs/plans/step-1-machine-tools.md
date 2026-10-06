@@ -108,8 +108,10 @@ Node to hub:
 Join: the join parameters stay as today (`hostname`, `platform`,
 `workspace`, `version`, `capabilities`). A node that speaks this protocol
 adds `"ops:1"` to `capabilities`. In PR A the join reply still carries the
-session `sync` map; in PR B it is `%{}`. After a join each side sends what
-it holds (section 2.4).
+session `sync` map; in PR B it is `%{"sync" => %{}}`, which the node
+ignores. The empty map stays so a node built before PR B, which requires
+`"sync"`, can stay joined and be reported as outdated (rule 75). After a
+join each side sends what it holds (section 2.4).
 
 Kinds a node doesn't support come back as a `failed` snapshot saying so.
 
@@ -716,7 +718,7 @@ calls.
 | `Photon.MachineTools.Call` | boundary | inside MachineTools | A | Section 3.2: `execute/3`, `resume/2`, `on_interrupt/2`, reading the limits from config. |
 | `Photon.MachineTools.Translate` | core | strict, `deps: [PhotonCore]` | A | `shell_args/1`, `view_image_args/1` (ported checks: limit range, NUL bytes, blank command or path, and a command over 100,000 bytes; return op `args` with `directory: nil`, and for `view_image` `max_size` from `max_size/0`), `result/3` (section 3.4; the content parts, so `Call` returns `{:ok, result, details}`), `details/3` (string keys: `machine`, `op_id`, `kind`, `status`, then `command`, `exit_code`, `out_truncated`, `err_truncated` and `full_output` for shell, or `path` for view_image; `full_output` is set only when the snapshot has both output paths, section 3.6), and the error texts `unknown_machine(machine, known_ids)` and `outdated_machine(machine)`. |
 | `Photon.MachineTools.Wait` | core | strict, `deps: []` | A | `op_id/1` (`t_<suffix>` to `op_<suffix>`), `first(online?, now, limits) :: {until, offline_since}` (`offline_since` is `now` when offline, nil when online; `Call` puts it in its state), `next(state, online?, now, limits) :: {:park, until, state} \| :give_up` (gives up once `now - offline_since` reaches the limit, so a limit of 0 gives up at the first offline sighting), and `offline_message(machine, facts, limit_ms)` with the three texts of section 2.4 (`facts` from `abandon_tx`), naming the limit ("10 minutes", or "250 milliseconds" in tests). Times are Unix milliseconds; `limits` is `%{check_ms:, offline_limit_ms:}`. Time and limits are arguments (rule 29). |
-| `PhotonWeb.NodeChannel` | boundary (Phoenix channel, the per-node server) | unchanged | A, B | PR A: `handle_in("op.snapshot")` and `handle_in("op.output")` call `Machines.snapshot/3` and `Machines.output/3` and push what they return; `handle_info(:joined)` also pushes `Machines.joined/1`; a new `{:push_op, op_id}` clause pushes what `Machines.push_for/2` returns, and the `{:command, event, payload}` clause already pushes `op.cancel`. A new clause before the generic one drops `{:command, "op.start", _}` with a log line, so the channel never pushes an `op.start` built by another process. It doesn't catch failures from `Machines`: a failed call crashes the channel, and the node's rejoin resends everything (node rule 8). Live output routes (`op_id` to conversation and call) are cached in the `routes` assign, which `Machines.snapshot/3` and `output/3` take and return; an op is dropped from it on its terminal snapshot. Each callback stays within 15 lines (rule 30). PR B: removes `event`, `live` and `input_rejected`, the `pushed_inputs` and `sessions` assigns, and the `sync` reply. |
+| `PhotonWeb.NodeChannel` | boundary (Phoenix channel, the per-node server) | unchanged | A, B | PR A: `handle_in("op.snapshot")` and `handle_in("op.output")` call `Machines.snapshot/3` and `Machines.output/3` and push what they return; `handle_info(:joined)` also pushes `Machines.joined/1`; a new `{:push_op, op_id}` clause pushes what `Machines.push_for/2` returns, and the `{:command, event, payload}` clause already pushes `op.cancel`. A new clause before the generic one drops `{:command, "op.start", _}` with a log line, so the channel never pushes an `op.start` built by another process. It doesn't catch failures from `Machines`: a failed call crashes the channel, and the node's rejoin resends everything (node rule 8). Live output routes (`op_id` to conversation and call) are cached in the `routes` assign, which `Machines.snapshot/3` and `output/3` take and return; an op is dropped from it on its terminal snapshot. Each callback stays within 15 lines (rule 30). PR B: removes `event`, `live` and `input_rejected`, the `pushed_inputs` and `sessions` assigns, and the `sync` replay (the reply keeps an empty `"sync"` for older nodes, section 2.2). |
 | `PhotonWeb.Endpoint` | lifecycle config | unchanged | A | `max_frame_size: 8_000_000` on the `/node` socket's websocket options. PR B removes `plug PhotonWeb.NodeAuthPlug`. |
 | `Photon.Assistant` | boundary | adds `Photon.MachineTools` to deps; PR B drops `Photon.NodeSessions` and `Photon.Nodes` | A, B | `@tools` gains `MachineTools.tools()` (PR A) and loses the node tools (PR B). Moduledoc updated. |
 | `Photon.Assistant.Transcript` | core | unchanged | A | `tool_output(outputs, event)` folds each `tool_output` event into a map of the last 8,000 characters per `call_id` (both streams, in the order they came). It is a function of its own, not a `live/2` clause, because `BlipLive` clears the in-flight answer when the assistant entry that makes a call commits, which is before the call prints anything; `BlipLive` keeps the map in its own `outputs` assign and drops a call's tail when its result comes. `action_status/3` shows a machine op whose details say `canceled` as stopped (`failed` was already an error). As built after review: `add_result/2` keeps each result without its image data and with its entry's ID (`"entry_id"`), and `image(entry, index)` decodes one image back from the entry, only for the four `view_image` types, so the page's state and re-renders carry no base64. |
@@ -1455,10 +1457,12 @@ B2. Remove node sessions from the hub. After B1.
   `{:durable_tasks, _}`, which nothing in it uses (it still subscribes, for
   the pages).
 - `lib/photon_web/channels/node_channel.ex`: drop `event`, `live`,
-  `input_rejected`, `pushed_inputs`, `sessions`, the `sync` reply and
-  `resend_queued`. The join reply is `%{}`, so until B5 the node's
-  `Connection.handle_join/3` takes a reply without `"sync"` (nothing to
-  replay); B5 deletes that code with the rest of the session handlers.
+  `input_rejected`, `pushed_inputs`, `sessions`, the `sync` replay and
+  `resend_queued`. The join reply is `%{"sync" => %{}}`: the new node
+  ignores it, and a node built before PR B, whose `handle_join/3` requires
+  `"sync"`, stays joined and shows as outdated instead of crashing on every
+  join (rule 75). The node's `Connection.handle_join/3` takes any reply;
+  B5 deleted the replay with the rest of the session handlers.
 - `lib/photon.ex` exports and moduledoc; `.credo.exs` lists (and the
   `Photon.Nodes` `PreferCall` reason loses its NodeSessions outbox clause);
   `lib/photon/durable/store.ex` moduledoc mention.
