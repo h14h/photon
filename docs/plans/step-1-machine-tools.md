@@ -1586,6 +1586,19 @@ B8. Docs and final checks. After all of the above.
   says to delete the hub database and reinstall nodes, and that the Blip
   brand kit's `VOICE.md` needs the voice edit PR A made (say it in PR A's
   description too).
+- As built: `docs/architecture.md`'s module map, test support table and
+  supervision trees describe the code after step 1; its hotspots and
+  refactor log stay as the history of the 2026-10-03 snapshot, with a
+  step 1 status line on each hotspot whose code went and a step 1 entry
+  at the end of the log. Also updated, because they described what PR B
+  removed: `apps/node/README.md` (it still said the node runs
+  `unreal-agent-runner`), `PhotonNode`'s moduledoc (the `unstarted`
+  file among those a resumed command's outcome comes from), and short
+  status notes in `docs/projects-and-blip.md` ("Hub and nodes", and the
+  approvals question) and above the drift list in
+  `docs/otp-design-guide.md`. Dialyzer and coverage are left to the
+  final stage; `mix precommit`, the credo checks' tests and the e2e test
+  ran here.
 
 ## 9. Decisions for the user
 

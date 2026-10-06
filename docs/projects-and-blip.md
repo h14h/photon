@@ -100,6 +100,11 @@ The home page shows the state layer directly ("needs you", "running",
 
 ## Hub and nodes
 
+> Status: step 1 built this section's machine tools and removed what it
+> says goes away (`docs/plans/step-1-machine-tools.md`). The node's
+> operation layer is now `PhotonNode.Ops`, run by `PhotonNode.Executor`;
+> the paragraph below describes the code before step 1.
+
 Today each node runs a whole agent loop (`PhotonNode.Harness`: session
 state machine, context, tools, its own log) and calls the model through the
 hub's relay. The hub mirrors each session's log into its own tables
@@ -199,6 +204,6 @@ Later, with the door left open:
   other's changes. T3 Code gives each thread its own git worktree; Photon
   projects aren't always repos. Shared for now, until it causes trouble.
 - **Approvals.** Threads and Blip run shell commands on your machines
-  without asking, as node sessions do today.
+  without asking, as Blip does today.
 - **Model per thread.** Every conversation uses the model in Settings for
   now; choosing one per thread or project can come later.

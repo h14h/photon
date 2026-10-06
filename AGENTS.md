@@ -1,10 +1,10 @@
-This is an all-Elixir monorepo: a Phoenix hub and the node agent it hands work to.
+This is an all-Elixir monorepo: a Phoenix hub and the nodes that run its commands on each machine.
 
 ## Layout
 
-- `apps/core` (`:photon_core`): the streaming model client (ChatGPT through the Responses API), message format and scripted models, shared by both apps. Sign in with ChatGPT is the only way to give Photon a model; `PHOTON_MOCK_MODEL=1` swaps in the scripted models for local development
-- `apps/node` (`:photon_node`): the node's agent harness (a port of unreal-agent; see `docs/unreal-agent-port-spec.md`) and hub connection, packaged with Burrito
-- `apps/hub` (`:photon`): the Phoenix hub, its durable harness (`Photon.Durable`, after pi-durable) and the assistant
+- `apps/core` (`:photon_core`): shared code: the streaming model client the hub uses (ChatGPT through the Responses API, and a scripted mock), the message format, and the operation snapshot and its `op.*` messages, which both apps use (`PhotonCore.Operation`, `Operation.Wire`). Sign in with ChatGPT is the only way to give Photon a model; `PHOTON_MOCK_MODEL=1` swaps in the hub's scripted model for local development
+- `apps/node` (`:photon_node`): the node, an executor for the hub's operations: `PhotonNode.Executor` and its journal, the operation processes (`PhotonNode.Ops`, ported from unreal-agent; see `docs/unreal-agent-port-spec.md`) and the hub connection, packaged with Burrito
+- `apps/hub` (`:photon`): the Phoenix hub, its durable harness (`Photon.Durable`, after pi-durable), the assistant and its machine tools (`Photon.MachineTools`, `Photon.Machines`)
 
 Each app is its own Mix project linked by path dependencies, so run Mix in the app's directory, e.g. `cd apps/hub && mix test`. The Phoenix guidelines below apply to `apps/hub`.
 

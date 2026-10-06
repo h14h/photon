@@ -816,6 +816,11 @@ because it runs in the caller's process and both callers are tasks. Calling
 
 ### Where it drifts, roughly in order of payoff
 
+These were found on the 2026-10-03 code. Items 1 to 4 and 8 name the
+node's session harness, `Photon.NodeSessions`, `Assistant.NodeWatch` and
+`Photon.Nodes`, which step 1 removed or folded into `Photon.Machines`;
+they stay as the record of what was found and fixed.
+
 1. `Harness.Coordinator` is 826 lines, and much of it is core logic living in
    the GenServer (rules 28, 30): replaying records (`apply_item`,
    `apply_input`, `overlay`), deciding when a turn starts (`decide`,
