@@ -104,9 +104,9 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    {"PhotonNode.Connection",
                     "log records and live output for the hub link: a lost record is recovered (the hub resyncs gaps, every join replays) and live output is never stored; producers are bounded (see its moduledoc)"},
                    {"PhotonNode.Harness.Coordinator",
-                    "report_op/2: a lost snapshot is recovered, since Ops.add/2 makes a live operation resend it to a restarted coordinator"},
+                    "report/2 (its Ops.Owner callback): a lost snapshot is recovered, since Ops.add/2 makes a live operation resend it to a restarted coordinator"},
                    {"PhotonNode.Harness.Ops",
-                    ":resend and :cancel to a local operation process, which the coordinator monitors: a process that exits instead of answering is seen there"}
+                    ":resend and :cancel to a local operation process, which its owner monitors: a process that exits instead of answering is seen there"}
                  ]
                ]},
               # 80, 91, 16: processes start under supervisors.

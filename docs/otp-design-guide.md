@@ -861,7 +861,8 @@ because it runs in the caller's process and both callers are tasks. Calling
    the moduledocs, so the next person doesn't add a fast producer to the same
    path (rule 73). Status: done on the node (`Connection`, `Coordinator`,
    `Ops`, `ModelRequest`, `Ops.Shell`); the client functions are now
-   `Connection.event/3` and `Coordinator.report_op/2`. On the hub,
+   `Connection.event/3` and `Coordinator.report/2` (the coordinator's
+   `Ops.Owner` callback). On the hub,
    `Scheduler.notify/2`, `Nodes.command/3`, `Durable.live/2`,
    `ToolAPI.output/2` and `NodeSessions.live/2` say the same in their docs.
 5. `Ops.Shell` sleeps with backoff inside its GenServer while it waits for a

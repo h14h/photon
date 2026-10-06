@@ -45,9 +45,11 @@ defmodule PhotonNode do
     * `PhotonNode.Harness.TaskSupervisor`: model request tasks, each linked
       to the coordinator that started it
     * `PhotonNode.Harness.OpSupervisor`: one `:temporary` process per
-      running operation, started by `PhotonNode.Harness.Ops.add/2`. A
-      crash is not restarted here; the coordinator monitors its operations
-      and decides.
+      running operation, started by `PhotonNode.Harness.Ops.add/2` for an
+      owner (`PhotonNode.Harness.Ops.Owner`). A crash is not restarted
+      here; the owner, a session's coordinator, monitors its operations
+      and decides. A shell stopped here while its command runs kills the
+      command and leaves a `stopped` marker, so a resumed operation says so.
     * `PhotonNode.Harness.SessionSupervisor`: one `:transient` coordinator
       per active session, started on demand by
       `PhotonNode.Harness.Coordinator.ensure_started/1`. It stops itself
