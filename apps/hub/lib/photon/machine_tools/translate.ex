@@ -329,7 +329,10 @@ defmodule Photon.MachineTools.Translate do
       "There is no machine called #{inspect(machine)}. The machines this hub knows are " <>
         Enum.join(known_ids, ", ") <> "."
 
-  @doc "The error for a call on a machine whose photon-node predates the operation protocol."
+  @doc """
+  The error for a call on a machine whose photon-node is older than the
+  operation protocol this hub speaks (`ops:2`).
+  """
   @spec outdated_machine(String.t()) :: String.t()
   def outdated_machine(machine),
     do:

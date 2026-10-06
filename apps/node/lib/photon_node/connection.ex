@@ -161,7 +161,7 @@ defmodule PhotonNode.Connection do
       "platform" => to_string(:erlang.system_info(:system_architecture)),
       "workspace" => config.workspace,
       "version" => to_string(Application.spec(:photon_node, :vsn)),
-      "capabilities" => ["ops:1"]
+      "capabilities" => ["ops:2"]
     }
   end
 end

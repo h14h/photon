@@ -1,8 +1,16 @@
 defmodule PhotonNode.Ops.Shell do
   @moduledoc """
-  The `shell` operation: runs one command, in the workspace, in its own
-  process group, with stdout and stderr going straight to files in
+  The `shell` operation: runs one command, in its `directory` (the
+  workspace, or a folder in it such as a project's), in its own process
+  group, with stdout and stderr going straight to files in
   `<operations dir>/<op id>/` and stdin from `/dev/null`.
+
+  The command's directory is created first if it is missing
+  (`File.mkdir_p/1`, the `ops:2` capability), before the `process`
+  checkpoint, so a resumed or rerun start just finds it. If it can't be
+  created (a file is in the way, no permission), the operation fails
+  before anything runs: "couldn't create the working directory
+  <path>: not a directory. The command didn't run."
 
   A small wrapper starts the command as a job-control background job (so it
   leads a new process group), writes its PID to `pid` and reports it, waits
@@ -155,10 +163,24 @@ defmodule PhotonNode.Ops.Shell do
   ## Starting
 
   defp prepare(state) do
+    directory = state.op["state"]["input"]["directory"]
+
+    case File.mkdir_p(directory) do
+      :ok -> prepare_output(state)
+      {:error, reason} -> fail(state, workdir_message(directory, reason))
+    end
+  end
+
+  defp prepare_output(state) do
     case prepare_files(state.op) do
       :ok -> start_when_confirmed(state, process_checkpoint(state.op))
       {:error, reason} -> fail(state, "prepare output files: #{:file.format_error(reason)}")
     end
+  end
+
+  defp workdir_message(directory, reason) do
+    "couldn't create the working directory #{directory}: " <>
+      "#{:file.format_error(reason)}. The command didn't run."
   end
 
   # Empty output files only this user can read, and no exit, pid, stopped,

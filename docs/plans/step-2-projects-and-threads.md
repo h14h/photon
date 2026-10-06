@@ -974,7 +974,8 @@ never raw HTML.
   (`Photon.MachineOps.connect/2`): no `op.start` is pushed to it
   (`refute_receive`), and the call ends with the outdated message at its
   next check, its row canceled; connecting again with `["ops:2"]`
-  pushes nothing for that call.
+  pushes no `op.start` for that call, only the `op.cancel` its canceled
+  row keeps.
 - `projects_test.exs`: create (slug, derived name, unique suffix when two
   projects share a name), update (slug unchanged, name derived again when
   cleared), errors as field maps; files: create, case-insensitive

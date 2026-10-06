@@ -16,10 +16,16 @@ defmodule PhotonWeb.NodeChannelTest do
   defp token_info(token),
     do: %{x_headers: [{"x-photon-token", token}], peer_data: %{address: {10, 0, 0, 5}}}
 
+  # A node that speaks the op protocol joins as `node`.
   defp join(node) do
     {:ok, key} = Photon.NodeKeys.issue(node)
     {:ok, socket} = connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(key))
-    subscribe_and_join(socket, "node:" <> node, %{"hostname" => node, "version" => "0.1.0"})
+
+    subscribe_and_join(socket, "node:" <> node, %{
+      "hostname" => node,
+      "version" => "0.1.0",
+      "capabilities" => ["ops:2"]
+    })
   end
 
   @tag capture_log: true

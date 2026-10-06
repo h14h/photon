@@ -21,7 +21,7 @@ defmodule Photon.MachineToolsTest do
   alias Photon.{Assistant, Machines}
   alias Photon.Durable.{Submission, TaskRecord, ToolAPI, Tx}
   alias Photon.Machines.Op
-  alias Photon.MachineTools.{ListMachines, Shell}
+  alias Photon.MachineTools.{ListMachines, Shell, Translate}
   alias PhotonCore.Message
 
   @endpoint PhotonWeb.Endpoint
@@ -48,8 +48,8 @@ defmodule Photon.MachineToolsTest do
     key
   end
 
-  # A node that speaks the op protocol joins as `machine`.
-  defp join_node(machine, key \\ nil) do
+  # A node that speaks the op protocol (or the given capabilities) joins as `machine`.
+  defp join_node(machine, key \\ nil, capabilities \\ ["ops:2"]) do
     {:ok, socket} =
       connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(key || key(machine)))
 
@@ -59,7 +59,7 @@ defmodule Photon.MachineToolsTest do
         "platform" => "linux",
         "workspace" => "/home/me/photon",
         "version" => "0.2.0",
-        "capabilities" => ["ops:1"]
+        "capabilities" => capabilities
       })
 
     socket
@@ -325,6 +325,36 @@ defmodule Photon.MachineToolsTest do
       assert message =~ "mm1 was offline for 0 milliseconds and has just come back"
       assert_push "op.cancel", %{"id" => ^id}, @wait
       assert %Op{cancel: true, pushed: true} = row(id)
+    end
+
+    # Step 2, section 3.4 point 7: an ops:1 node wouldn't create a
+    # project's working directory, so it gets no op.start, and the call
+    # ends rather than waiting out the offline limit on a connected machine.
+    test "a call parked while its machine is offline ends with the outdated message when the machine comes back with an older photon-node" do
+      key = key("mm1")
+      args = %{"machine" => "mm1", "command" => "echo hi"}
+      api = tool_api(args)
+      assert {:wait, _waiting, %{"op_id" => id} = state} = Shell.execute(args, api)
+
+      old = join_node("mm1", key, ["ops:1"])
+      _ = :sys.get_state(old.channel_pid)
+      refute_push "op.start", _
+      assert %Op{status: "open", pushed: false} = row(id)
+
+      assert {:commit, fun} = Shell.resume(state, api)
+      assert {:error, message} = Durable.commit(fun)
+      assert message == Translate.outdated_machine("mm1")
+      assert %Op{status: "open", cancel: true, pushed: false} = row(id)
+      # An ops:1 node understands op.cancel (it journals it, for an op it
+      # never had), so the cancel still goes out.
+      assert_push "op.cancel", %{"id" => ^id}, @wait
+
+      # Reinstalled with a current build, it is told to cancel the op,
+      # never to start it.
+      Process.unlink(old.channel_pid)
+      _socket = join_node("mm1", key)
+      assert_push "op.cancel", %{"id" => ^id}, @wait
+      refute_push "op.start", _
     end
 
     test "local parks while it is offline, on a hub that runs its own node" do

@@ -25,7 +25,7 @@ defmodule Photon.AssistantTest do
         "platform" => "test",
         "workspace" => "/w",
         "version" => "0",
-        "capabilities" => ["ops:1"]
+        "capabilities" => ["ops:2"]
       })
   end
 

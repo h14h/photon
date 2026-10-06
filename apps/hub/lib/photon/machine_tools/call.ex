@@ -16,7 +16,11 @@ defmodule Photon.MachineTools.Call do
   one waits on: while the machine is online the call asks for the op to be
   pushed again at each check (hub rule 11); while it is offline the call
   counts how long, and gives up past the limit, canceling the op in the
-  same commit and saying what may have happened (hub rule 7). `resume/2`
+  same commit and saying what may have happened (hub rule 7). A machine
+  that is connected but `:outdated` (it came back with a photon-node
+  older than `ops:2`, which `Photon.Machines` sends no ops) ends the call
+  at its next check with `Translate.outdated_machine/1`, canceling the op
+  (section 3.4 of `docs/plans/step-2-projects-and-threads.md`). `resume/2`
   only reads before its final commit, so a rerun is harmless.
 
   Every error result from the op ID on, and every interruption
@@ -118,8 +122,17 @@ defmodule Photon.MachineTools.Call do
     end
   end
 
+  # A machine that came back with an older photon-node gets no ops
+  # (`Photon.Machines.joined/1`), so the call ends now rather than waiting
+  # out the offline limit on a machine that is connected.
   defp check_again(%{"op_id" => op_id, "machine" => machine} = state) do
-    online? = online?(machine)
+    case Machines.status(machine) do
+      :outdated -> fail(op_id, Translate.outdated_machine(machine))
+      status -> wait_on(state, status == :online)
+    end
+  end
+
+  defp wait_on(%{"op_id" => op_id} = state, online?) do
     limits = limits()
 
     case Wait.next(state, online?, now(), limits) do

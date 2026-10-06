@@ -134,7 +134,7 @@ defmodule PhotonNode.ConnectionTest do
       refute_received {:pushed, _, _}
     end
 
-    test "the join lists the ops:1 capability, and only it" do
+    test "the join lists the ops:2 capability, and only it" do
       socket = %Slipstream.Socket{
         channel_pid: fake_channel(),
         socket_pid: self(),
@@ -142,7 +142,7 @@ defmodule PhotonNode.ConnectionTest do
       }
 
       {:ok, _socket} = Connection.handle_connect(socket)
-      assert_receive {:joining, "node:test", %{"capabilities" => ["ops:1"]}}
+      assert_receive {:joining, "node:test", %{"capabilities" => ["ops:2"]}}
     end
   end
 end

@@ -113,6 +113,19 @@ defmodule Photon.MachinesTest do
     end
   end
 
+  # Step 2, section 3.4 point 7: a step 1 node (ops:1) wouldn't create a
+  # project's working directory, so it gets no ops until it is reinstalled.
+  describe "an outdated machine" do
+    test "joined/1 and push_for/2 push nothing and leave its open rows unpushed" do
+      {_task, %{id: id}} = started("mm1")
+      :ok = connect("mm1", ["ops:1"])
+
+      assert Machines.joined("mm1") == []
+      assert Machines.push_for("mm1", id) == []
+      assert %Op{status: "open", pushed: false} = row(id)
+    end
+  end
+
   test "repush/1 asks the machine's channel to push the op again" do
     {_task, %{id: id}} = started("mm1")
     assert Machines.repush(id) == {:error, :offline}

@@ -11,15 +11,21 @@ defmodule Photon.Machines.Roster do
   calls before the local node connects) instead of failing as unknown
   (section 2.3, hub rule 12, of `docs/plans/step-1-machine-tools.md`).
 
-  A connected node that doesn't list the `"ops:1"` capability runs a
-  photon-node from before the operation protocol, and is `:outdated`.
+  A connected node that doesn't list the `"ops:2"` capability runs a
+  photon-node from before the operation protocol this hub speaks, and is
+  `:outdated`. `ops:2` is `ops:1` plus one promise: a `shell` operation
+  creates its working directory when it is missing, so a project's folder
+  on a machine is made on first use (section 3.4 of
+  `docs/plans/step-2-projects-and-threads.md`). A step 1 node would fail
+  a thread's first command with "start process ...: enoent" instead, so it
+  gets no work until it is reinstalled.
   """
 
   # Functional core: no processes, no I/O.
   use Boundary, type: :strict, deps: []
 
   @local "local"
-  @ops_capability "ops:1"
+  @ops_capability "ops:2"
 
   @typedoc "A connected node's info from the registry, with its `\"id\"`."
   @type info :: %{optional(String.t()) => term()}
