@@ -14,8 +14,10 @@ defmodule Photon.Threads.MockTitle do
     * `read notes.md`, `write notes.md: ...` and `edit notes.md: ...` are
       "Read notes.md", "Write notes.md" and "Edit notes.md"
 
-  Anything else is its first line's first five words, capitalized. A
-  request that isn't a title request fails, as a model error.
+  A schedule's `"[Scheduled] "` in front is dropped first, as the scripted
+  thread drops it. Anything else is its first line's first five words,
+  capitalized. A request that isn't a title request fails, as a model
+  error.
   """
 
   # Functional core: no processes, no I/O.
@@ -33,7 +35,11 @@ defmodule Photon.Threads.MockTitle do
   def respond(request) do
     with %{"role" => "user"} = message <- List.last(request[:messages] || []),
          text when is_binary(text) <- Rules.requested_message(Message.text_of(message)) do
-      text |> String.trim() |> title() |> Message.assistant()
+      text
+      |> String.trim()
+      |> String.replace_prefix("[Scheduled] ", "")
+      |> title()
+      |> Message.assistant()
     else
       _other -> {:error, "The scripted title model only answers title requests."}
     end

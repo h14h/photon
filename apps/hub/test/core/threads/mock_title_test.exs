@@ -29,6 +29,11 @@ defmodule Photon.Threads.MockTitleTest do
     assert title("on mm1: $ for x in a; do") == "Run a command on mm1"
   end
 
+  test "names a schedule's prompt as it names the same message typed" do
+    assert title("[Scheduled] on local: $ df -h /") == "Run df on local"
+    assert title("[Scheduled] read notes.md") == "Read notes.md"
+  end
+
   test "otherwise takes the first five words, capitalized" do
     assert title("fix the pump in zone 2 before Friday\nthanks") == "Fix the pump in zone"
     assert title("## `API` keys rotate") == "API keys rotate"

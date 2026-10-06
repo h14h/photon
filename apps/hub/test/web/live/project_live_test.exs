@@ -411,6 +411,23 @@ defmodule PhotonWeb.ProjectLiveTest do
              )
     end
 
+    test "a prompt shows its own line breaks and nothing before them", %{
+      conn: conn,
+      project: project
+    } do
+      schedule = schedule!(project, %{"prompt" => "Check the backups\nThen the logs"})
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}")
+
+      prompt =
+        view
+        |> element("#schedule-#{schedule.id}-prompt")
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.text()
+
+      assert prompt == "Check the backups\nThen the logs"
+    end
+
     test "a firing elsewhere updates the row, and a rename of its thread follows", %{
       conn: conn,
       project: project

@@ -689,13 +689,13 @@ defmodule PhotonWeb.ProjectLive do
               class="mt-0.5 size-4 shrink-0 text-ink-faint transition group-hover:text-ink-soft"
             />
             <div class="min-w-0 flex-1">
+              <%!-- On one line: whitespace-pre-line would show the break before it. --%>
               <p
                 id={"#{dom_id}-prompt"}
                 class="line-clamp-2 text-[14px] leading-snug whitespace-pre-line text-ink"
                 title={item.schedule.prompt}
-              >
-                {item.schedule.prompt}
-              </p>
+                phx-no-format
+              >{item.schedule.prompt}</p>
               <.schedule_when id={dom_id} item={item} />
               <.schedule_target id={dom_id} item={item} project={@project} />
               <.last_run

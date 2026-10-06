@@ -1003,7 +1003,10 @@ them after the machine phrasings, and their help texts list them.
 
 `Photon.Threads.MockScript` also strips a leading `"[Scheduled] "` before
 matching, as Blip's already does, so a project schedule whose prompt is
-`on local: $ uptime` runs that command on the scripted model. Under
+`on local: $ uptime` runs that command on the scripted model.
+(Demo) `Photon.Threads.MockTitle` strips it too, so a thread a schedule
+starts gets the title the same message typed would get ("Run uptime on
+local"), not the prompt's first five words. Under
 `PHOTON_MOCK_MODEL=1` consent counts as given (the scripted model uses
 nobody's plan), so schedules fire in development without touching
 Settings.
