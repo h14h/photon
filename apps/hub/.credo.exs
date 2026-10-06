@@ -72,6 +72,9 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.MachineTools.MockPhrases",
                    "Photon.MachineTools.Translate",
                    "Photon.MachineTools.Wait",
+                   "Photon.Projects.Project",
+                   "Photon.Projects.ContextFile",
+                   "Photon.Projects.Rules",
                    "Photon.Provision.Jobs",
                    "Photon.Provision.Script",
                    "Photon.Provision.Lines",
@@ -145,6 +148,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.ChatGPT",
                    "Photon.Durable",
                    "Photon.Machines",
+                   "Photon.Projects",
                    "Photon.Provision",
                    "Photon.Settings",
                    "Photon.Tailnet"

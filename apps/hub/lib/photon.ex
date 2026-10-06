@@ -10,6 +10,9 @@ defmodule Photon do
     * `Photon.Durable`: the durable agent harness the assistant runs on
     * `Photon.Machines`: the machines the hub knows, which are connected,
       and the operations (shell commands, image reads) it runs on them
+    * `Photon.Projects`: projects (a purpose, for any body of work) and
+      their context files, the Markdown notes the user and the project's
+      threads share
     * `Photon.Settings`: the model and the assistant's instructions
     * `Photon.Provision`, `Photon.NodeDist`, `Photon.Hub`,
       `Photon.Tailnet`: putting nodes on machines, and how they reach the hub
@@ -21,7 +24,7 @@ defmodule Photon do
   `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall,
   Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice,
   MockScript}`, `Photon.Transcript` (what a conversation page shows),
-  `Photon.Machines.{Rules, Roster}`,
+  `Photon.Machines.{Rules, Roster}`, `Photon.Projects.Rules`,
   `Photon.MachineTools.{Translate, Wait}`, `Photon.Provision.{Jobs,
   Script}`, and
   `Photon.Markdown`. `Photon.Application` holds the lifecycle plan.
@@ -50,6 +53,9 @@ defmodule Photon do
       NodeDist,
       NodeKeys,
       Paths,
+      Projects,
+      Projects.ContextFile,
+      Projects.Project,
       Provision,
       Settings,
       Tailnet,

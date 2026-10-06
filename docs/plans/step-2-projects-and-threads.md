@@ -156,14 +156,17 @@ Rules (`Photon.Projects.Rules`):
   digits, `.`, `_` and `-`, start with a letter or digit, and contain no
   `..`. Otherwise: `A file name uses letters, digits, ".", "_" and "-",
   like "notes.md".` Files are flat: no folders.
-- `content/1`: at most 100,000 characters (code points): "notes.md would
+- `content(name, content)`: at most 100,000 characters (code points),
+  with the file's name for the message: "notes.md would
   be 123,456 characters; the limit is 100,000. Split it into more than
   one file."
 - `save_check(current, expected_version)`: the user's editor sends the
   version it loaded. `:ok` when it matches (or both are nil for a new
-  file), `:stale` when the file changed since, `:exists` when a new file's
-  name is taken. Threads write without a version (section 3.3).
-- `edit(content, old_text, new_text)`: `{:ok, content}` when `old_text`
+  file, or the file was deleted since it was loaded, so saving creates it
+  again, section 5.5), `:stale` when the file changed since, `:exists`
+  when a new file's name is taken. Threads write without a version
+  (section 3.3).
+- `edit(name, content, old_text, new_text)`: `{:ok, content}` when `old_text`
   occurs exactly once; otherwise an error saying it wasn't found, or was
   found N times and needs more context.
 
@@ -334,7 +337,7 @@ after a hub restart either finds nothing done or never runs.
 `edit_context_file`
 - Parameters: `name`, `old_text`, `new_text` (strings, required).
 - Inside the commit, `Projects.edit_file_tx/6` checks the name, reads the
-  current content, applies `Rules.edit/3`, checks the new content's
+  current content, applies `Rules.edit/4`, checks the new content's
   length and writes it, returning `{:ok, file}` or `{:error, message}`
   like `write_file_tx/5`. The error results ("old_text
   wasn't found in notes.md", "old_text appears 3 times in notes.md; give
@@ -860,7 +863,7 @@ No Boundary or Credo list changes.
 | `Photon.Projects` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Repo, PhotonCore, Ecto], exports: [Project, ContextFile]` (not `Rules`: callers outside get its answers through the API) | `subscribe/0`, `subscribe_files/1`, `list/0`, `get/1`, `get_by_slug/1`, `create/1`, `update/2`, `list_files/1`, `get_file/2` (by name, case-insensitive through `key`), `create_file/2`, `save_file/4` (name, content, version), `delete_file/2`, and for thread tools inside their commit `write_file_tx/5`, `edit_file_tx/6`. Results: `{:ok, struct}`, `{:error, %{field => message}}` for form input, `{:error, :stale \| :exists \| :not_found}` for saves, `{:error, message}` for tool writes, returned from inside the commit. Validates once with `Projects.Rules` (rule 64), including for `write_file_tx/5` and `edit_file_tx/6`, so the thread tools check nothing themselves; every write is a `Durable.commit/1` that applies the rule's answer and calls `Tx.announce/3`. Moduledoc: what a project is, the slug rules' reason, and that there is no process. |
 | `Photon.Projects.Project` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 2.1. |
 | `Photon.Projects.ContextFile` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 2.3. |
-| `Photon.Projects.Rules` | core | `use Boundary, type: :strict, deps: [Photon.Projects.Project, Photon.Projects.ContextFile]` | `project/2`, `name_from/1`, `slug/1`, `unique_slug/2`, `file_name/1`, `content/1`, `save_check/2`, `edit/3`. IDs and times are arguments. |
+| `Photon.Projects.Rules` | core | `use Boundary, type: :strict, deps: [Photon.Projects.Project, Photon.Projects.ContextFile]` | `project/2`, `name_from/1`, `slug/1`, `unique_slug/2`, `file_name/1`, `key/1` (the lookup key: `.md` added, downcased), `content/2`, `save_check/2`, `edit/4`, `count/1` ("1,234"). The file's name is an argument of `content/2` and `edit/4` for their messages. IDs and times are arguments. |
 | `Photon.Threads` | boundary (API and the `"thread"` profile) | `use Boundary, deps: [Photon.ChatGPT, Photon.Durable, Photon.MachineTools, Photon.Projects, Photon.Repo, Photon.Settings, Photon.Transcript, PhotonCore, PhotonCore.LLM, Ecto], exports: [Thread]` (`Photon.Transcript` for `image/3`, as `Assistant.image/2` uses it; never `Photon.Assistant`, which depends on `Photon.Threads`) | API: `start/2`, `get/1`, `list/1`, `sidebar/1`, `running/1`, `project_id!/1`, `send/3`, `stop/1`, `withdraw/1`, `entries/1`, `busy?/1`, `queued/1`, `subscribe/1`, `image/3`, `latest_answer/1`. Profile: `llm/1`, `system_prompt/1`, `tools/1`, `workdir/1` (section 3.1). `start/2` checks the text isn't blank and creates the conversation, the row and the first submission in one commit (`Tx.create_conversation/2`, `Repo.insert!`, `Durable.submit_tx/4`), and announces `{:projects_changed, project_id}`. `send/3` submits and sets `active_at` in one commit and announces the same. |
 | `Photon.Threads.Thread` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 2.4. |
 | `Photon.Threads.Rules` | core | `use Boundary, type: :strict, deps: []` | `title/1`, `listing/3`, `file_header/2` (the first line of a read). |
@@ -924,7 +927,7 @@ never raw HTML.
   empty to `project`, `new` to `new-project`; `unique_slug/2` with `-2`
   and `-3`; file names (adds `.md`, keeps `README.md`, refuses `../x`,
   `a/b.md`, `.hidden.md`, 65 characters, a space); content at 100,000
-  and 100,001 characters; `save_check/2` for each case; `edit/3` found
+  and 100,001 characters; `save_check/2` for each case; `edit/4` found
   once, not found, found three times.
 - `threads/rules_test.exs`: titles (first non-blank line, collapsed,
   60-character cut with `...`); `listing/3` names "you", "the user" and
