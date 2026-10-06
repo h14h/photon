@@ -1835,6 +1835,12 @@ K5c.
   `active={:skills}`.
 - Tests: `test/web/live/pages_test.exs` (mounts and redirects),
   `sidebar_test.exs` (`#nav-skills`).
+- (K7) Done as listed. A missing project or schedule goes to `/`, as
+  step 2's thread and file pages do; a schedule of Blip's counts as
+  missing there. The Skills page already has its `#new-skill` and
+  `#install-skill` links; a skill's page shows its description
+  (`#skill-summary`) and a schedule's its prompt (`#schedule-summary`)
+  under the heading until K9 and K12 fill them in.
 
 K8. Times and schedule words. After K6.
 - New `apps/hub/lib/photon_web/components/time_components.ex` (with the
