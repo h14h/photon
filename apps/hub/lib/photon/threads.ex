@@ -40,6 +40,11 @@ defmodule Photon.Threads do
   in one commit, so there is never a thread without its first message or a
   conversation without its row.
 
+  The project's schedules start and wake threads too, inside their own
+  commits, through `start_tx/4` and `send_tx/4`: the message then carries
+  the schedule as its source and a request ID, so one firing makes one
+  submission. A thread itself has no way to reach them.
+
   A thread's first title is made from its first message
   (`Photon.Threads.Rules.title/1`). The same commit creates a background
   task, `Photon.Threads.Titling`, that asks the model once for a short
@@ -111,34 +116,63 @@ defmodule Photon.Threads do
   text, `:not_found` when the project doesn't exist; either makes nothing.
   """
   @spec start(String.t(), String.t()) :: {:ok, Thread.t()} | {:error, :blank | :not_found}
-  def start(project_id, text) do
-    if blank?(text),
-      do: {:error, :blank},
-      else: Durable.commit(&start_tx(&1, project_id, text))
+  def start(project_id, text), do: Durable.commit(&start_tx(&1, project_id, text, []))
+
+  @doc """
+  `start/2` inside the caller's commit, for `Photon.Schedules` to start a
+  thread when a schedule fires. Options:
+
+    * `:source` - where the first message came from, stored with it
+      (default `%{"kind" => "user"}`)
+    * `:request_id` - when a thread of this project already has a message
+      with this request ID, that thread is returned and nothing is made, so
+      a retried start makes one thread and one submission
+
+  Errors as `start/2`'s; they make nothing, so the caller's commit can go
+  on.
+  """
+  @spec start_tx(Tx.t(), String.t(), String.t(), keyword()) ::
+          {:ok, Thread.t()} | {:error, :blank | :not_found}
+  def start_tx(tx, project_id, text, opts \\ []) do
+    with false <- blank?(text),
+         %Project{} = project <- Projects.get(project_id),
+         nil <- started(project.id, opts[:request_id]) do
+      {:ok, create_tx(tx, project, text, submit_opts(opts))}
+    else
+      true -> {:error, :blank}
+      nil -> {:error, :not_found}
+      %Thread{} = thread -> {:ok, thread}
+    end
   end
 
-  defp start_tx(tx, project_id, text) do
-    case Projects.get(project_id) do
-      %Project{} = project ->
-        title = Rules.title(text)
-        conversation = Tx.create_conversation(tx, %{profile: @profile, title: title})
+  # The thread of project `project_id` whose conversation has a submission
+  # with `request_id`, or nil (always nil without a request ID).
+  defp started(_project_id, nil), do: nil
 
-        thread =
-          Repo.insert!(%Thread{
-            id: conversation.id,
-            project_id: project.id,
-            title: title,
-            active_at: DateTime.utc_now()
-          })
+  defp started(project_id, request_id) do
+    Thread
+    |> join(:inner, [t], s in Submission, on: s.conversation_id == t.id)
+    |> where([t, s], t.project_id == ^project_id and s.request_id == ^request_id)
+    |> limit(1)
+    |> Repo.one()
+  end
 
-        _submission = Durable.submit_tx(tx, conversation.id, text, source: user())
-        :ok = title_later(tx, conversation.id, title, text)
-        :ok = Projects.threads_changed_tx(tx, project.id)
-        {:ok, thread}
+  defp create_tx(tx, project, text, opts) do
+    title = Rules.title(text)
+    conversation = Tx.create_conversation(tx, %{profile: @profile, title: title})
 
-      nil ->
-        {:error, :not_found}
-    end
+    thread =
+      Repo.insert!(%Thread{
+        id: conversation.id,
+        project_id: project.id,
+        title: title,
+        active_at: DateTime.utc_now()
+      })
+
+    _submission = Durable.submit_tx(tx, conversation.id, text, opts)
+    :ok = title_later(tx, conversation.id, title, text)
+    :ok = Projects.threads_changed_tx(tx, project.id)
+    thread
   end
 
   # The task that names the thread once its first run ends
@@ -203,38 +237,44 @@ defmodule Photon.Threads do
 
   @doc """
   Sends the user's message to thread `thread_id`, and moves the thread's
-  `active_at`, in one commit. The options are `Photon.Durable.submit/3`'s.
+  `active_at`, in one commit. The options are `send_tx/4`'s.
   Errors: `:blank`, `:not_found`, and `:busy` for `when_busy: "reject"`.
   """
   @spec send(String.t(), String.t(), keyword()) ::
           {:ok, Submission.t()} | {:error, :blank | :not_found | :busy}
   def send(thread_id, text, opts \\ []) do
-    if blank?(text) do
-      {:error, :blank}
+    case Durable.commit(&send_tx(&1, thread_id, text, opts)) do
+      {:rolled_back, :busy} -> {:error, :busy}
+      result -> result
+    end
+  end
+
+  @doc """
+  `send/3` inside the caller's commit, for `Photon.Schedules` to wake a
+  thread when a schedule fires. The options are
+  `Photon.Durable.submit/3`'s: `:source` (default `%{"kind" =>
+  "user"}`), `:request_id` (a repeated one returns the submission already
+  made instead of making another) and `:when_busy`. With `when_busy:
+  "reject"` a busy thread rolls back the caller's whole commit with
+  `:busy`. `:blank` and `:not_found` make nothing.
+  """
+  @spec send_tx(Tx.t(), String.t(), String.t(), keyword()) ::
+          {:ok, Submission.t()} | {:error, :blank | :not_found}
+  def send_tx(tx, thread_id, text, opts \\ []) do
+    with false <- blank?(text),
+         %Thread{} = thread <- get(thread_id) do
+      submission = Durable.submit_tx(tx, thread.id, text, submit_opts(opts))
+      _thread = Repo.update!(Ecto.Changeset.change(thread, active_at: DateTime.utc_now()))
+      :ok = Projects.threads_changed_tx(tx, thread.project_id)
+      {:ok, submission}
     else
-      opts = Keyword.put_new(opts, :source, user())
-
-      case Durable.commit(&send_tx(&1, thread_id, text, opts)) do
-        {:rolled_back, :busy} -> {:error, :busy}
-        result -> result
-      end
+      true -> {:error, :blank}
+      nil -> {:error, :not_found}
     end
   end
 
-  defp send_tx(tx, thread_id, text, opts) do
-    case get(thread_id) do
-      %Thread{} = thread ->
-        submission = Durable.submit_tx(tx, thread.id, text, opts)
-        _thread = Repo.update!(Ecto.Changeset.change(thread, active_at: DateTime.utc_now()))
-        :ok = Projects.threads_changed_tx(tx, thread.project_id)
-        {:ok, submission}
-
-      nil ->
-        {:error, :not_found}
-    end
-  end
-
-  defp user, do: %{"kind" => "user"}
+  # A submission's options, with the user as its source unless one is given.
+  defp submit_opts(opts), do: Keyword.put_new(opts, :source, %{"kind" => "user"})
 
   defp blank?(text), do: not is_binary(text) or String.trim(text) == ""
 

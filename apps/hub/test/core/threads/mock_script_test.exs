@@ -59,6 +59,14 @@ defmodule Photon.Threads.MockScriptTest do
              ]
   end
 
+  test "drops a leading [Scheduled], so a schedule's prompt runs as typed" do
+    assert calls(ask("[Scheduled] on box: $ ls")) ==
+             [{"shell", %{"machine" => "box", "command" => "ls"}}]
+
+    assert calls(ask("[Scheduled] files")) == [{"list_context_files", %{}}]
+    assert Message.text_of(ask("[Scheduled] tidy the shed")) =~ "scripted model"
+  end
+
   test "reads the last text part of the message" do
     message = Message.user([Message.text("[Looking at the project]"), Message.text("files")])
     assert calls(MockScript.respond(%{messages: [message]})) == [{"list_context_files", %{}}]

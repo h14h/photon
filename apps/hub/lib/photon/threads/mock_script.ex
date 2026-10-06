@@ -20,7 +20,9 @@ defmodule Photon.Threads.MockScript do
       (`Photon.Skills.MockPhrases`)
 
   After a tool result it relays the result, as Blip's does. Anything else
-  gets a help text. It reads the last text part of the last user message.
+  gets a help text. It reads the last text part of the last user message,
+  without a leading `"[Scheduled] "`, as Blip's does, so a project
+  schedule's prompt such as `on local: $ uptime` runs on it too.
   """
 
   # Functional core: no processes, no I/O.
@@ -76,6 +78,8 @@ defmodule Photon.Threads.MockScript do
   end
 
   defp last_text(message), do: Message.text_of(message)
+
+  defp plan("[Scheduled] " <> text, request), do: plan(text, request)
 
   defp plan(text, request) do
     Enum.find_value(phrasings(request), Message.assistant(@help), fn {pattern, reply} ->

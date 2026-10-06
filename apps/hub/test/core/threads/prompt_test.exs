@@ -45,8 +45,21 @@ defmodule Photon.Threads.PromptTest do
           ~w(shell view_image list_machines list_context_files read_context_file write_context_file edit_context_file),
         do: assert(prompt =~ tool)
 
-    refute prompt =~ "schedule"
+    refute prompt =~ ~r/\bschedule\b/
     refute prompt =~ "memory"
+  end
+
+  test "says a [Scheduled] message comes from the project's schedules, under How you work" do
+    prompt = Prompt.system_prompt(@project, @now, [])
+
+    line =
+      ~s(- A message starting with "[Scheduled]" comes from one of the project's schedules, ) <>
+        "not from the user typing it. The user may not be watching, so record what matters " <>
+        "in the context files.\n"
+
+    assert [_top, section] = String.split(prompt, "## How you work\n")
+    assert [how_you_work, _rest] = String.split(section, "\n\n## ", parts: 2)
+    assert how_you_work =~ "Keep them short and current.\n" <> line <> "- You can search the web"
   end
 
   test "names the time to the hour, so it is the same all hour" do

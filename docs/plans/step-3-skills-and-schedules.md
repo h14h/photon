@@ -813,6 +813,17 @@ the check moves to `Photon.Durable.Submission.background?/1` (section
   inside its commit (today `start/2` and `send/3` wrap private versions).
   `opts` takes `:source` (default `%{"kind" => "user"}`) and
   `:request_id`. `start_tx/4` keeps creating the titling task.
+  Both check the text and the target themselves (`start/2` and `send/3`
+  only wrap them in a commit), and their `{:error, :blank |
+  :not_found}` makes nothing, so the caller's commit goes on. A repeated
+  request ID makes nothing new in either (K5b): `send_tx/4` gets that
+  from `Durable.submit_tx/4`, which returns the submission already made
+  in that conversation; `start_tx/4` looks for a thread of the project
+  whose conversation has a submission with that request ID and returns
+  it, since a new thread is a new conversation and `submit_tx/4` alone
+  would make a second one. `send_tx/4` passes `:when_busy` on as well;
+  `"reject"` on a busy thread rolls back the caller's whole commit with
+  `:busy`, so the routine doesn't pass it.
 - `Threads.stop/1` doesn't change: Stop in a thread withdraws everything
   queued, scheduled prompts included, as step 2 chose ("a thread has no
   background input to keep"). `Durable.abort/2` withdraws what its filter
