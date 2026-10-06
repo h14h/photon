@@ -28,27 +28,36 @@ defmodule PhotonNode.Ops.Shell do
   is stored, and the owner syncs this directory when it stores it, so the
   marker can't outlive a start that may have spawned the command.
 
-  On recovery after a node restart, a command that was killed because this
-  process stopped (a `stopped` file in its directory, see below) failed,
-  whatever its `exit` file says. Otherwise a command whose `exit` file
-  exists is finished normally; one still running is waited for (polled,
+  On recovery after a node restart, a command that was killed by a cancel
+  (a `canceled` file in its directory, see below) is canceled, and one
+  killed because this process stopped (a `stopped` file) failed, whatever
+  its `exit` file says. Otherwise a command whose `exit` file exists is
+  finished normally; one still running is waited for (polled,
   since this process has no port to it); one the `unstarted` marker proves
   never started is started; and any other failed with its outcome unknown.
   A process group not yet checkpointed is read from the `pid` file, so a
   command started just before a crash is still waited for (or killed by a
   stop).
 
-  A shell that stops while its command runs (its supervisor shuts it down
-  when the node stops, or it crashes) kills the command's process group in
-  `terminate/2`, whether it started the command (the port is open) or
-  reattached to it after an abrupt crash and polls it. It first writes a
-  `stopped` file next to the output, so a resumed operation reports that
-  photon-node stopped and killed the command. Without it, the wrapper,
-  which is outside the killed group, records exit 143 and recovery would
-  report the command `completed` with partial output.
+  A shell that stops while its command may run (its supervisor shuts it
+  down when the node stops, or it crashes) kills the command's process
+  group in `terminate/2`: whenever the port is open, and whenever its
+  snapshot is still `awaiting` in phase `process` with a process group on
+  record (in the snapshot or the `pid` file), so a shell that resumed
+  after an abrupt crash kills the command whether it has reattached yet or
+  crashed in recovery first. It first writes a `stopped` file next to the
+  output, unless the command has already exited (its `exit` file is
+  there, and the kill is only for children it left), so a resumed
+  operation reports that photon-node stopped and killed the command.
+  Without it, the wrapper, which is outside the killed group, records exit
+  143 and recovery would report the command `completed` with partial
+  output.
 
-  A cancel that arrives before the wrapper reports the PID kills the group
-  as soon as it does.
+  A cancel writes a `canceled` file before it kills the group, for the
+  same reason: if the executor or the node dies before the `canceled`
+  snapshot is stored, the resumed operation finds the marker and reports
+  the cancel instead of the exit 143. A cancel that arrives before the
+  wrapper reports the PID kills the group as soon as it does.
 
   Killing a group doesn't block the process. After SIGTERM it polls the
   group with `Process.send_after/3`, backing off from 1 ms to 50 ms, and
@@ -99,6 +108,9 @@ defmodule PhotonNode.Ops.Shell do
   echo "exit $code"
   """
 
+  # The files a start leaves besides its output (see prepare_files/1).
+  @leftovers ~w(exit stopped canceled unstarted pid)
+
   @term_grace_ms 5_000
   @max_poll_backoff_ms 50
   @tick_ms 1_000
@@ -119,8 +131,6 @@ defmodule PhotonNode.Ops.Shell do
       op: op,
       owner: owner,
       port: nil,
-      # Waiting for a command it didn't start (it reattached after a crash).
-      reattached: false,
       exit_code: nil,
       canceled: false,
       live_offsets: %{out: 0, err: 0},
@@ -151,8 +161,8 @@ defmodule PhotonNode.Ops.Shell do
     end
   end
 
-  # Empty output files only this user can read, and no exit, pid, stopped
-  # or unstarted file left from an earlier start.
+  # Empty output files only this user can read, and no exit, pid, stopped,
+  # canceled or unstarted file left from an earlier start.
   defp prepare_files(op) do
     dir = dir(op)
 
@@ -161,23 +171,22 @@ defmodule PhotonNode.Ops.Shell do
          :ok <- File.write(out_path(op), "", [:write]),
          :ok <- File.write(err_path(op), "", [:write]),
          :ok <- File.chmod(out_path(op), 0o600),
-         :ok <- File.chmod(err_path(op), 0o600),
-         :ok <- remove_stale(exit_path(op)),
-         :ok <- remove_stale(stopped_path(op)),
-         :ok <- remove_stale(unstarted_path(op)) do
-      remove_stale(pid_path(op))
+         :ok <- File.chmod(err_path(op), 0o600) do
+      remove_stale(dir, @leftovers)
     end
   end
 
-  # A leftover exit, pid or stopped file would make recovery think this
-  # start already ran, and a leftover unstarted file that it never did, so
-  # one that can't be removed fails the operation.
-  defp remove_stale(path) do
-    case File.rm(path) do
-      :ok -> :ok
-      {:error, :enoent} -> :ok
-      error -> error
-    end
+  # A leftover exit, pid, stopped or canceled file would make recovery
+  # think this start already ran, and a leftover unstarted file that it
+  # never did, so one that can't be removed fails the operation.
+  defp remove_stale(dir, names) do
+    Enum.reduce_while(names, :ok, fn name, :ok ->
+      case File.rm(Path.join(dir, name)) do
+        :ok -> {:cont, :ok}
+        {:error, :enoent} -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
   end
 
   defp process_checkpoint(op) do
@@ -301,41 +310,61 @@ defmodule PhotonNode.Ops.Shell do
     if Operation.terminal?(state.op), do: {:noreply, state}, else: cancel(state)
   end
 
-  # The group is killed here; the exit status arrives next and finishes as canceled.
-  def handle_info(:cancel, state),
-    do: kill_group(state, state.op["state"]["pgid"], &{:noreply, %{&1 | canceled: true}})
+  # The group is killed here (or once its PID is known, by
+  # kill_if_canceled/2), after the canceled marker; the exit status arrives
+  # next and finishes as canceled.
+  def handle_info(:cancel, state) do
+    mark_canceled(state.op)
+    kill_group(state, state.op["state"]["pgid"], &{:noreply, %{&1 | canceled: true}})
+  end
 
   def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
   def handle_info(_message, state), do: {:noreply, state}
 
-  # A running command is killed, after the stopped marker: one this process
-  # started (the port is open), or one it reattached to and still waits for
-  # (node rule 10 holds after an abrupt crash too). Once it has exited, a
-  # kill under way is only for children it left behind, so its exit file
-  # stands.
+  # A command that may be running is killed, after the stopped marker: one
+  # this process started (the port is open), or one on record for a
+  # snapshot still awaiting its process, which a shell resumed after an
+  # abrupt crash may be waiting for or may not have reattached to yet
+  # (node rule 10, and no command left running after its op fails).
   @impl true
-  def terminate(_reason, %{port: port} = state) when port != nil, do: stop_command(state)
+  def terminate(_reason, %{port: port} = state) when port != nil,
+    do: stop_command(state, recorded_pgid(state.op))
 
-  def terminate(_reason, %{reattached: true, op: %{"status" => "awaiting"}} = state),
-    do: stop_command(state)
-
-  def terminate(_reason, %{killing: %{} = killing}),
-    do: await_group_exit_now(killing.pgid, killing.deadline, killing.backoff)
-
-  def terminate(_reason, _state), do: :ok
-
-  defp stop_command(state) do
-    mark_stopped(state.op)
-
-    case state.killing do
-      %{} = killing -> await_group_exit_now(killing.pgid, killing.deadline, killing.backoff)
-      nil -> kill_group_now(recorded_pgid(state.op))
+  def terminate(
+        _reason,
+        %{op: %{"status" => "awaiting", "state" => %{"phase" => "process"}}} = state
+      ) do
+    case recorded_pgid(state.op) do
+      nil -> await_kill_now(state)
+      pgid -> stop_command(state, pgid)
     end
   end
+
+  def terminate(_reason, state), do: await_kill_now(state)
+
+  # Once the command has exited, a kill is only for children it left, so
+  # its exit file stands and no marker is written.
+  defp stop_command(state, pgid) do
+    if read_exit(state.op) == nil, do: mark_stopped(state.op)
+
+    case state.killing do
+      %{} -> await_kill_now(state)
+      nil -> kill_group_now(pgid)
+    end
+  end
+
+  defp await_kill_now(%{killing: %{} = killing}),
+    do: await_group_exit_now(killing.pgid, killing.deadline, killing.backoff)
+
+  defp await_kill_now(_state), do: :ok
 
   # Written before the group is signalled, so a resume can't find the
   # wrapper's exit 143 without it.
   defp mark_stopped(op), do: write_marker(op, stopped_path(op))
+
+  # Written before a cancel's kill, so a resume reports the cancel, not the
+  # wrapper's exit 143.
+  defp mark_canceled(op), do: write_marker(op, canceled_path(op))
 
   # Written only by a start that never spawned. Without it, a resume
   # reports the outcome as unknown, which is safe.
@@ -377,12 +406,18 @@ defmodule PhotonNode.Ops.Shell do
         do: checkpoint(state, "awaiting", %{"pgid" => pgid}),
         else: state
 
-    # The stopped marker comes before the exit file: the wrapper records
-    # exit 143 for a command this process killed as it stopped.
-    if File.exists?(stopped_path(state.op)),
-      do: kill_group(state, pgid, &fail(&1, stopped_message(read_exit(&1.op)))),
-      else: reattach(state, pgid)
+    # The markers come before the exit file: the wrapper records exit 143
+    # for a command this process killed for a cancel or as it stopped. A
+    # cancel's kill comes first if both happened.
+    cond do
+      File.exists?(canceled_path(state.op)) -> cancel(state)
+      File.exists?(stopped_path(state.op)) -> stopped(state, pgid)
+      true -> reattach(state, pgid)
+    end
   end
+
+  defp stopped(state, pgid),
+    do: kill_group(state, pgid, &fail(&1, stopped_message(read_exit(&1.op))))
 
   defp reattach(state, pgid) do
     cond do
@@ -399,7 +434,7 @@ defmodule PhotonNode.Ops.Shell do
       group_alive?(pgid) ->
         Logger.info("shell #{state.op["id"]}: reattaching to process group #{pgid}")
         Process.send_after(self(), :poll, @tick_ms)
-        {:noreply, %{state | reattached: true}}
+        {:noreply, state}
 
       true ->
         fail(state, "shell execution was interrupted before an exit status was recorded")
@@ -429,7 +464,7 @@ defmodule PhotonNode.Ops.Shell do
 
       # The command has exited; a kill now is only for its leftover children.
       code = read_exit(state.op) ->
-        kill_group(%{state | reattached: false}, pgid, &finish_read(&1, code))
+        kill_group(state, pgid, &finish_read(&1, code))
 
       group_alive?(pgid) ->
         state = stream_live(state)
@@ -495,7 +530,10 @@ defmodule PhotonNode.Ops.Shell do
     end
   end
 
+  # A command that may have started is killed after the canceled marker.
   defp cancel(state) do
+    if awaiting_process?(state.op), do: mark_canceled(state.op)
+
     kill_group(state, state.op["state"]["pgid"], fn state ->
       state =
         checkpoint(state, "canceled", %{
@@ -694,11 +732,15 @@ defmodule PhotonNode.Ops.Shell do
   defp send_live_output(state, stream, data),
     do: Owner.output(state.owner, state.op["id"], to_string(stream), Output.sanitize(data))
 
+  defp awaiting_process?(op),
+    do: op["status"] == "awaiting" and op["state"]["phase"] == "process"
+
   defp dir(op), do: Path.join(op["state"]["base_directory"], op["id"])
   defp out_path(op), do: Path.join(dir(op), "out")
   defp err_path(op), do: Path.join(dir(op), "err")
   defp exit_path(op), do: Path.join(dir(op), "exit")
   defp pid_path(op), do: Path.join(dir(op), "pid")
   defp stopped_path(op), do: Path.join(dir(op), "stopped")
+  defp canceled_path(op), do: Path.join(dir(op), "canceled")
   defp unstarted_path(op), do: Path.join(dir(op), "unstarted")
 end

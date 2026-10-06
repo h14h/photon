@@ -3,7 +3,8 @@ defmodule PhotonNode.Executor.Journal do
   The node's durable record of the hub's operations
   (`docs/plans/step-1-machine-tools.md`, section 2.3, node rules 1 and 5
   to 8): one file per operation, `<ops dir>/<op_id>/op.json`, next to the
-  shell's `out`, `err`, `pid`, `exit`, `stopped` and `unstarted` files.
+  shell's `out`, `err`, `pid`, `exit`, `stopped`, `canceled` and
+  `unstarted` files.
 
   Each file holds an entry, `%{"op" => snapshot, "cancel" => boolean}`: the
   operation's latest snapshot and whether the hub has canceled it. `write/3`
@@ -39,7 +40,7 @@ defmodule PhotonNode.Executor.Journal do
   @tmp "op.json.tmp"
 
   # Files `forget/2` deletes; `out` and `err` stay for the sweep.
-  @forgotten [@entry, @tmp, "pid", "exit", "stopped", "unstarted"]
+  @forgotten [@entry, @tmp, "pid", "exit", "stopped", "canceled", "unstarted"]
 
   @typedoc ~S|A journal entry: `%{"op" => snapshot, "cancel" => boolean}`.|
   @type entry :: %{required(String.t()) => term()}
@@ -225,9 +226,10 @@ defmodule PhotonNode.Executor.Journal do
   end
 
   @doc """
-  Deletes the operation's entry and its `pid`, `exit`, `stopped` and
-  `unstarted` files, after the hub has acknowledged its result. `out` and
-  `err` stay for `sweep/3`. Files that are already gone are fine.
+  Deletes the operation's entry and its `pid`, `exit`, `stopped`,
+  `canceled` and `unstarted` files, after the hub has acknowledged its
+  result. `out` and `err` stay for `sweep/3`. Files that are already gone
+  are fine.
   """
   @spec forget(String.t(), String.t()) :: :ok | {:error, String.t()}
   def forget(ops_dir, id) do

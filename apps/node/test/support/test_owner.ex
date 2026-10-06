@@ -22,7 +22,16 @@ defmodule PhotonNode.TestOwner do
   @doc "The owner pair for `Ops.add/2`, reporting to `pid` (the caller by default)."
   def owner(pid \\ self()), do: {__MODULE__, pid}
 
+  @doc """
+  An owner pair whose `report/2` raises, so the operation process crashes
+  at its next report, as a bug in its own code would. Its checkpoints go
+  to the caller.
+  """
+  def crashing_owner(pid \\ self()), do: {__MODULE__, {:crash, pid}}
+
   @impl true
+  def checkpoint({:crash, pid}, op), do: checkpoint(pid, op)
+
   def checkpoint(pid, op) do
     GenServer.call(pid, {:checkpoint, op}, :infinity)
   catch
@@ -30,12 +39,16 @@ defmodule PhotonNode.TestOwner do
   end
 
   @impl true
+  def report({:crash, _pid}, _op), do: raise("a bug in the operation's own code")
+
   def report(pid, op) do
     send(pid, {:report, op})
     :ok
   end
 
   @impl true
+  def output({:crash, pid}, op_id, stream, text), do: output(pid, op_id, stream, text)
+
   def output(pid, op_id, stream, text) do
     send(pid, {:output, op_id, stream, text})
     :ok

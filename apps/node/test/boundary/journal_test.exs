@@ -62,7 +62,7 @@ defmodule PhotonNode.JournalTest do
        %{ops_dir: ops_dir} do
     :ok = Journal.write(ops_dir, "op_a", entry("op_a"))
 
-    for name <- ~w(out err pid exit stopped unstarted),
+    for name <- ~w(out err pid exit stopped canceled unstarted),
         do: File.write!(file(ops_dir, "op_a", name), name)
 
     assert Journal.forget(ops_dir, "op_a") == :ok

@@ -65,11 +65,11 @@ defmodule PhotonNode do
   A crashed registry or supervisor takes everything after it down with it
   and back up in order: the executor restarts after the operations it
   tracks and resumes them from the journal. A node VM restart does the
-  same, and a shell command's outcome then comes from its `stopped`,
-  `exit`, `pid` and `unstarted` files. Shutdown runs in reverse, so the
-  executor stops before the operations, and a shell operation kills its
-  command's process group as it stops (and leaves its `stopped` marker, so
-  the restarted node reports the command as killed). Workers use the
+  same, and a shell command's outcome then comes from its `canceled`,
+  `stopped`, `exit`, `pid` and `unstarted` files. Shutdown runs in
+  reverse, so the executor stops before the operations, and a shell
+  operation kills its command's process group as it stops (and leaves its
+  `stopped` marker, so the restarted node reports the command as killed). Workers use the
   default 5 second shutdown, supervisors `:infinity`.
 
   The config sits in `:persistent_term` (`config/0`) and every name is

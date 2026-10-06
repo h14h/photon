@@ -8,7 +8,14 @@ defmodule PhotonNode.Ops.ShellTest do
   use PhotonNode.NodeCase, async: false
 
   import PhotonNode.TestOwner,
-    only: [owner: 0, owner: 1, await_status: 1, await_status: 2, await_pgid: 0]
+    only: [
+      owner: 0,
+      owner: 1,
+      crashing_owner: 0,
+      await_status: 1,
+      await_status: 2,
+      await_pgid: 0
+    ]
 
   alias PhotonNode.Executor.Request
   alias PhotonNode.Ops
@@ -291,6 +298,117 @@ defmodule PhotonNode.Ops.ShellTest do
 
     assert error ==
              "photon-node stopped while the command was running, so the command was killed."
+  end
+
+  # E1 in specs/tla/Executor.md: the executor (or the node) died before it
+  # stored the canceled snapshot of a command a cancel had killed, and the
+  # resumed operation found the wrapper's exit 143 and reported the command
+  # completed.
+  test "a command killed by a cancel is resumed as canceled, not completed", context do
+    pattern = "sleep 67.#{System.unique_integer([:positive])}"
+    on_exit(fn -> kill_all(pattern) end)
+    op = shell(pattern, context)
+    dir = Path.join(op["state"]["base_directory"], op["id"])
+
+    {:ok, pid} = Ops.add(op, owner())
+    ref = Process.monitor(pid)
+    running = await_pgid()
+    send(pid, :cancel)
+
+    # The canceled snapshot never reached the journal, which still holds
+    # the running one.
+    await_status("canceled")
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+    assert gone?(pattern)
+    assert File.exists?(Path.join(dir, "canceled"))
+    assert File.read!(Path.join(dir, "exit")) == "143\n"
+
+    {:ok, _pid} = Ops.add(running, owner())
+
+    assert %{"state" => %{"terminal_error" => "shell operation canceled"}} =
+             await_status("canceled")
+  end
+
+  # The same after an abrupt crash: a shell that reattached to its command
+  # (no port) and was canceled.
+  test "a reattached command killed by a cancel is resumed as canceled", context do
+    pattern = "sleep 68.#{System.unique_integer([:positive])}"
+    on_exit(fn -> kill_all(pattern) end)
+
+    op = shell("true", context)
+    dir = Path.join(op["state"]["base_directory"], op["id"])
+    File.mkdir_p!(dir)
+    reattached = recovered(op, dir, start_group(dir, pattern))
+
+    {:ok, pid} = Ops.add(reattached, owner())
+    _ = :sys.get_state(pid)
+    send(pid, :cancel)
+
+    await_status("canceled")
+    assert gone?(pattern)
+    assert File.exists?(Path.join(dir, "canceled"))
+    # What a wrapper records for a command killed by SIGTERM.
+    File.write!(Path.join(dir, "exit"), "143\n")
+
+    {:ok, _pid} = Ops.add(reattached, owner())
+    await_status("canceled")
+  end
+
+  # K2 in specs/tla/Executor.md: a shell resumed after an abrupt crash that
+  # crashed before it reattached (here, in its first report) killed
+  # nothing, so its command ran on after the operation failed.
+  test "a resumed shell that crashes before it reattaches kills its command", context do
+    pattern = "sleep 69.#{System.unique_integer([:positive])}"
+    on_exit(fn -> kill_all(pattern) end)
+
+    op = shell("true", context)
+    dir = Path.join(op["state"]["base_directory"], op["id"])
+    File.mkdir_p!(dir)
+    pgid = start_group(dir, pattern)
+    File.write!(Path.join(dir, "pid"), "#{pgid}\n")
+
+    {:ok, pid} = Ops.add(recovered(op, dir, 0), crashing_owner())
+    ref = Process.monitor(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, {%RuntimeError{}, _stack}}, 10_000
+
+    assert gone?(pattern)
+    assert File.exists?(Path.join(dir, "stopped"))
+  end
+
+  # A command that exited on its own isn't reported as stopped by a shell
+  # that crashes before it reads the exit file: the kill is only for what
+  # the command left in its group.
+  test "a resumed shell that crashes after its command exited leaves no stopped marker",
+       context do
+    pattern = "sleep 70.#{System.unique_integer([:positive])}"
+    on_exit(fn -> kill_all(pattern) end)
+
+    op = shell("true", context)
+    dir = Path.join(op["state"]["base_directory"], op["id"])
+    File.mkdir_p!(dir)
+    pgid = start_group(dir, pattern)
+    File.write!(Path.join(dir, "pid"), "#{pgid}\n")
+    # The command's exit, as the wrapper records it; the group still holds
+    # a background child it left.
+    File.write!(Path.join(dir, "exit"), "0\n")
+
+    {:ok, pid} = Ops.add(recovered(op, dir, 0), crashing_owner())
+    ref = Process.monitor(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, {%RuntimeError{}, _stack}}, 10_000
+
+    assert gone?(pattern)
+    refute File.exists?(Path.join(dir, "stopped"))
+  end
+
+  test "a fresh start clears a canceled marker left by an earlier one", context do
+    op = shell("echo hi", context)
+    dir = Path.join(op["state"]["base_directory"], op["id"])
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, "canceled"), "")
+
+    {:ok, _pid} = Ops.add(op, owner())
+    await_status("completed")
+    refute File.exists?(Path.join(dir, "canceled"))
   end
 
   # The executor died after storing the "process" checkpoint and before
