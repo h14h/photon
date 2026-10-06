@@ -82,6 +82,40 @@ defmodule PhotonWeb.NodesLiveTest do
     end
   end
 
+  describe "known machines that aren't connected" do
+    setup [:fake_tailscale]
+
+    setup do
+      {:ok, _key} = Photon.NodeKeys.issue("box")
+      :ok
+    end
+
+    setup [:page]
+
+    test "are listed, so the sidebar's offline link lands on them", %{view: view} do
+      assert has_element?(view, "#side-node-box[href='/nodes']", "offline")
+      assert has_element?(view, "#offline-box", "box")
+      refute has_element?(view, "#node-box")
+      assert has_element?(view, "#no-connected-nodes")
+      refute has_element?(view, "#no-connected-nodes", "Add one below.")
+    end
+
+    test "are offered an update, not a fresh install, on the tailnet", %{view: view} do
+      render_async(view)
+      assert has_element?(view, "#machine-box", "node not connected")
+      assert has_element?(view, "#install-box", "Update")
+      assert has_element?(view, "#uninstall-box")
+    end
+
+    test "leave the list when they connect", %{view: view} do
+      connected_node(%{})
+      Machines.broadcast()
+      _ = render(view)
+      refute has_element?(view, "#offline-nodes")
+      assert has_element?(view, "#node-box")
+    end
+  end
+
   describe "machines on the tailnet" do
     setup [:fake_tailscale, :page]
 

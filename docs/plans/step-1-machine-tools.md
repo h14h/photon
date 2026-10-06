@@ -836,7 +836,11 @@ Hub UI, left coherent:
   `/sessions` links; the "nowhere to send work" copy becomes "No machines
   yet. Add one from the Nodes page."
 - Nodes (`nodes_live.ex`): no Sessions field or count, no
-  `:node_sessions_changed`; "Its sessions stay here" copy removed.
+  `:node_sessions_changed`; "Its sessions stay here" copy removed. The
+  sidebar links every roster machine here, so the page lists the known
+  machines that aren't connected (from the Shell's roster) under "Not
+  connected", and a tailnet machine with a known node gets Update and
+  Uninstall rather than Install.
 - Blip (`blip_live.ex`): no `/sessions` links in bubbles, notices, sources
   or details; no `node_report` source rendering; no page context (the
   hook's page reports, the "About ..." chip and label); no

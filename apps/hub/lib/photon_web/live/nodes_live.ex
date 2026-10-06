@@ -1,6 +1,8 @@
 defmodule PhotonWeb.NodesLive do
   @moduledoc """
-  The user's machines: connected nodes, one-click installs and updates over
+  The user's machines: connected nodes, known ones that aren't connected
+  (a node key that isn't revoked, from the shell's `Photon.Machines.roster/0`,
+  which the sidebar links here), one-click installs and updates over
   SSH for machines on the hub's tailnet (one machine at a time, or every
   outdated node at once), and a one-line installer for anywhere else, made
   per node since each node has its own key (`Photon.NodeKeys`). That key
@@ -8,7 +10,8 @@ defmodule PhotonWeb.NodesLive do
   is never kept in the page's state, which crash reports would print.
 
   What the page shows is read into assigns when it mounts and when it hears
-  a change (`:nodes_changed`, `{:provision, jobs}`);
+  a change (`:nodes_changed`, `{:provision, jobs}`; `PhotonWeb.Shell`
+  keeps `@shell.nodes` current);
   `tailscale status` runs in a task (`start_async/3`), so a slow tailnet
   doesn't hold up the page. `render/1` only derives from assigns.
   """
@@ -208,7 +211,9 @@ defmodule PhotonWeb.NodesLive do
       assign(assigns,
         base: match?({:ok, _}, assigns.hub) && elem(assigns.hub, 1),
         manual_base: manual_base(assigns),
-        self_machine: self_machine(assigns.tailnet)
+        self_machine: self_machine(assigns.tailnet),
+        not_connected: for(m <- assigns.shell.nodes, !m.online, do: m.id),
+        known_ids: MapSet.new(assigns.shell.nodes, & &1.id)
       )
 
     ~H"""
@@ -240,9 +245,10 @@ defmodule PhotonWeb.NodesLive do
             </div>
             <p
               :if={@online == []}
+              id="no-connected-nodes"
               class="mt-3 rounded-xl border border-dashed border-line-strong px-4 py-6 text-center text-sm text-ink-faint"
             >
-              No nodes are connected. Add one below.
+              No nodes are connected.{if(@not_connected == [], do: " Add one below.")}
             </p>
             <div class="mt-3 grid gap-3 sm:grid-cols-2">
               <div
@@ -280,6 +286,27 @@ defmodule PhotonWeb.NodesLive do
                     </dd>
                   </div>
                 </dl>
+              </div>
+            </div>
+          </section>
+
+          <section :if={@not_connected != []} id="offline-nodes" class="mt-10">
+            <h2 class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
+              Not connected
+            </h2>
+            <p class="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
+              These machines have a node but aren't connected now. A command Blip sends one waits for it to come back, for up to 10 minutes. Start the node on the machine, or update it from your tailnet below.
+            </p>
+            <div class="mt-3 divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface shadow-xs">
+              <div
+                :for={id <- @not_connected}
+                id={"offline-#{id}"}
+                class="flex items-center gap-3 px-4 py-3 text-sm"
+              >
+                <.dot status={:off} />
+                <span class="font-mono text-ink-soft">{id}</span>
+                <span class="flex-1" />
+                <span class="text-[11px] text-ink-faint">offline</span>
               </div>
             </div>
           </section>
@@ -380,7 +407,8 @@ defmodule PhotonWeb.NodesLive do
                 :for={m <- elem(@tailnet, 1).peers}
                 machine={m}
                 job={@jobs[m.name]}
-                node?={MapSet.member?(@node_ids, m.name)}
+                node?={MapSet.member?(@known_ids, m.name)}
+                connected?={MapSet.member?(@node_ids, m.name)}
                 outdated?={MapSet.member?(@outdated, m.name)}
                 can_install={is_binary(@base) and @built != []}
               />
@@ -496,7 +524,9 @@ defmodule PhotonWeb.NodesLive do
 
   attr :machine, :map, required: true
   attr :job, :map, default: nil
+  # node?: it has a node the hub knows (connected or not); connected?: that node is connected.
   attr :node?, :boolean, required: true
+  attr :connected?, :boolean, required: true
   attr :outdated?, :boolean, default: false
   attr :can_install, :boolean, required: true
 
@@ -510,8 +540,14 @@ defmodule PhotonWeb.NodesLive do
         <span class={["font-mono", !@machine.online && "text-ink-faint"]}>{@machine.name}</span>
         <span class="rounded bg-sunken px-1.5 py-0.5 text-[11px] text-ink-soft">{@machine.os}</span>
         <span :if={@machine.tailscale_ssh} class="text-[11px] text-ink-faint">Tailscale SSH</span>
-        <span :if={@node? and !@outdated?} class="flex items-center gap-1 text-[11px] text-ok">
+        <span
+          :if={@connected? and !@outdated?}
+          class="flex items-center gap-1 text-[11px] text-ok"
+        >
           <.icon name="hero-check-circle-micro" class="size-3.5" /> connected
+        </span>
+        <span :if={@node? and !@connected?} class="text-[11px] text-ink-faint">
+          node not connected
         </span>
         <span :if={@outdated?} class="flex items-center gap-1 text-[11px] text-warn">
           <.icon name="hero-arrow-up-circle-micro" class="size-3.5" /> update available
