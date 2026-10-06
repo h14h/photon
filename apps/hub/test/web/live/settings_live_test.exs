@@ -100,6 +100,15 @@ defmodule PhotonWeb.SettingsLiveTest do
       assert Photon.Settings.scheduled_work?(settings)
     end
 
+    test "the scheduled-work checkbox speaks for every schedule, not only Blip's", %{view: view} do
+      label = ~s{label:has(input[type=checkbox][name="settings[scheduled_work]"])}
+
+      assert has_element?(view, label, "Let schedules use my plan while I'm away")
+      refute has_element?(view, label, "Blip")
+      assert has_element?(view, "#scheduled-work-hint", "your projects' schedules")
+      assert has_element?(view, "#scheduled-work-hint", "the project page shows it")
+    end
+
     test "signing out stops Blip until the next sign-in", %{view: view} do
       ChatGPTStub.answer(%{"/api/accounts/oauth/revoke" => fn _ -> {200, %{}} end})
       view |> element("#sign-out") |> render_click()

@@ -29,7 +29,7 @@ config :photon, Photon.Repo,
 config :photon, Photon.Durable,
   profiles: %{"assistant" => Photon.Assistant, "thread" => Photon.Threads},
   kinds: %{
-    "routine" => Photon.Assistant.Routine,
+    "routine" => Photon.Schedules.Routine,
     "thread_title" => Photon.Threads.Titling
   }
 

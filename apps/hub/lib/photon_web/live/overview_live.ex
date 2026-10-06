@@ -1,36 +1,52 @@
 defmodule PhotonWeb.OverviewLive do
   @moduledoc """
   The home page, at a glance: your machines and whether they're online, a
-  pointer to Blip and to projects for work on them, and what's scheduled. Blip floats over
-  it, as over every page.
+  pointer to Blip and to projects for work on them, and Blip's schedules.
+  Blip floats over it, as over every page.
 
-  Machines come from `@shell`, which keeps them current; schedules are
-  read here and again on `{:durable_tasks, _}`.
+  Machines come from `@shell`, which keeps them current. Blip's schedules
+  that are waiting for their next time, and those that stopped after an
+  error (`Photon.Assistant.schedules/0`), which stay in sight with why and
+  their cancel button showing until the owner cancels them, are a stream (`#schedule-list`), read here and again on
+  `{:schedules_changed, nil}` (`Photon.Schedules.subscribe/0`). A
+  project's schedules are on its page, and their announcements carry the
+  project's ID, so they don't reload this list. Times are shown in the
+  owner's time zone, in the lines a schedule shows wherever it is listed
+  (`PhotonWeb.ScheduleComponents`).
   """
 
   use PhotonWeb, :live_view
 
-  alias Photon.Assistant
+  import PhotonWeb.ScheduleComponents
+
+  alias Photon.{Assistant, Schedules}
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, assign(socket, page_title: "Overview", schedules: Assistant.schedules())}
+    if connected?(socket), do: :ok = Schedules.subscribe()
+
+    {:ok,
+     socket
+     |> assign(page_title: "Overview")
+     |> stream_configure(:schedules, dom_id: &"schedule-#{&1.id}")
+     |> load_schedules()}
   end
 
   @impl true
   def handle_event("cancel_schedule", %{"id" => id}, socket) do
-    Assistant.cancel_schedule(id)
-    {:noreply, socket}
+    case Assistant.cancel_schedule(id) do
+      :ok -> {:noreply, socket}
+      {:error, :not_found} -> {:noreply, load_schedules(socket)}
+    end
   end
 
   @impl true
-  def handle_info({:durable_tasks, tasks}, socket) do
-    if Enum.any?(tasks, &(&1.kind == "routine")),
-      do: {:noreply, assign(socket, schedules: Assistant.schedules())},
-      else: {:noreply, socket}
-  end
-
+  def handle_info({:schedules_changed, nil}, socket), do: {:noreply, load_schedules(socket)}
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  defp load_schedules(socket), do: stream(socket, :schedules, Assistant.schedules(), reset: true)
+
+  defp stopped?(%{state: state}), do: match?({:stopped, _reason}, state)
 
   @impl true
   def render(assigns) do
@@ -85,25 +101,40 @@ defmodule PhotonWeb.OverviewLive do
 
           <section id="schedules" class="mt-9">
             <.section_title>Schedules</.section_title>
-            <p :if={@schedules == []} class="mt-3 text-[14px] leading-relaxed text-ink-faint">
-              None yet. Ask Blip for something recurring, like "every morning, check my disks".
-            </p>
-            <div :if={@schedules != []} class="mt-3 space-y-2">
+            <div id="schedule-list" phx-update="stream" class="mt-3 space-y-2">
+              <p
+                id="no-schedules"
+                class="hidden text-[14px] leading-relaxed text-ink-faint only:block"
+              >
+                None yet. Ask Blip for something recurring, like "every morning, check my disks".
+                Project schedules are on each project's page.
+              </p>
               <div
-                :for={task <- @schedules}
-                id={"schedule-#{task.id}"}
+                :for={{dom_id, item} <- @streams.schedules}
+                id={dom_id}
                 class="group flex items-start gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-[14px] shadow-xs"
               >
-                <.icon name="hero-clock" class="mt-0.5 size-4 shrink-0 text-ink-faint" />
+                <.icon
+                  name={if(stopped?(item), do: "hero-exclamation-triangle", else: "hero-clock")}
+                  class={[
+                    "mt-0.5 size-4 shrink-0",
+                    if(stopped?(item), do: "text-bad", else: "text-ink-faint")
+                  ]}
+                />
                 <div class="min-w-0 flex-1">
-                  <p class="leading-snug text-ink">{task.input["prompt"]}</p>
-                  <p class="mt-0.5 text-[12px] text-ink-faint">{schedule_text(task)}</p>
+                  <p class="leading-snug text-ink">{item.schedule.prompt}</p>
+                  <.schedule_when id={dom_id} item={item} whose={:blip} />
+                  <.last_run id={dom_id} schedule={item.schedule} class="mt-0.5" />
                 </div>
                 <button
+                  id={"#{dom_id}-cancel"}
                   phx-click="cancel_schedule"
-                  phx-value-id={task.id}
+                  phx-value-id={item.id}
                   data-confirm="Cancel this schedule?"
-                  class="rounded-md p-1 text-ink-faint transition group-hover:opacity-100 hover:bg-bad-soft hover:text-bad sm:opacity-0"
+                  class={[
+                    "rounded-md p-1 text-ink-faint transition group-hover:opacity-100 hover:bg-bad-soft hover:text-bad",
+                    !stopped?(item) && "sm:opacity-0"
+                  ]}
                   title="Cancel"
                 >
                   <.icon name="hero-x-mark-micro" class="size-4" />
@@ -160,24 +191,4 @@ defmodule PhotonWeb.OverviewLive do
       [info["hostname"], info["platform"]] |> Enum.reject(&(&1 in [nil, ""])) |> Enum.join(" · ")
 
   defp machine_line(_node), do: "Not connected"
-
-  defp schedule_text(task) do
-    next = task.checkpoint["next_at"] || task.input["first_at"]
-    next = next |> DateTime.from_unix!(:millisecond) |> Calendar.strftime("%b %-d, %H:%M UTC")
-
-    case task.input["every_ms"] do
-      nil -> "Once, #{next}"
-      every -> "Every #{format_interval(every)} · next #{next}"
-    end
-  end
-
-  defp format_interval(ms) do
-    minutes = div(ms, 60_000)
-
-    cond do
-      rem(minutes, 1440) == 0 -> "#{div(minutes, 1440)}d"
-      rem(minutes, 60) == 0 -> "#{div(minutes, 60)}h"
-      true -> "#{minutes}m"
-    end
-  end
 end

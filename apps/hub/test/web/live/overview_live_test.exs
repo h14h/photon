@@ -7,7 +7,9 @@ defmodule PhotonWeb.OverviewLiveTest do
 
   import Phoenix.LiveViewTest
 
-  alias Photon.{Assistant, Durable, Machines, NodeKeys}
+  alias Photon.{Assistant, Durable, Machines, NodeKeys, Projects, Schedules}
+  alias Photon.Durable.Tx
+  alias Photon.Schedules.Routine
 
   @moduletag :durable
 
@@ -40,26 +42,109 @@ defmodule PhotonWeb.OverviewLiveTest do
     assert has_element?(view, ~s(#work-hint-new-project[href="/projects/new"]), "start a project")
   end
 
-  test "lists schedules, which can be cancelled", %{view: view} do
-    assert has_element?(view, "#schedules", "None yet")
+  # One of Blip's schedules, as its `schedule` tool makes it.
+  defp blip_schedule!(args, request_id) do
+    now = System.system_time(:millisecond)
 
-    routine =
-      Durable.create_task(%{
-        kind: "routine",
-        conversation_id: Assistant.conversation_id(),
-        background: true,
-        input: %{
-          "prompt" => "check disks",
-          "first_at" => 4_102_444_800_000,
-          "every_ms" => 3_600_000
-        }
+    {:ok, schedule} =
+      Durable.commit(
+        &Schedules.blip_schedule_tx(&1, Assistant.conversation_id(), args, request_id, now)
+      )
+
+    schedule
+  end
+
+  test "lists Blip's schedules, which can be cancelled", %{view: view} do
+    assert has_element?(view, "#no-schedules", "None yet")
+    assert has_element?(view, "#no-schedules", "Project schedules are on each project's page.")
+
+    schedule =
+      blip_schedule!(
+        %{"prompt" => "check disks", "at" => "2035-01-01T00:00:00Z", "every_minutes" => 60},
+        "schedule:t_disks"
+      )
+
+    assert has_element?(view, "#schedule-#{schedule.id}", "check disks")
+    assert has_element?(view, "#schedule-#{schedule.id}-when", "Every hour · next")
+
+    assert has_element?(
+             view,
+             ~s(#schedule-#{schedule.id}-when time[datetime="2035-01-01T00:00:00Z"]),
+             "Jan 1, 00:00 UTC"
+           )
+
+    refute has_element?(view, "#schedule-#{schedule.id}-last")
+
+    view |> element("#schedule-#{schedule.id} button") |> render_click()
+    assert Schedules.get(schedule.id) == nil
+    refute has_element?(view, "#schedule-#{schedule.id}")
+  end
+
+  test "leaves out a project's schedules, which are on its page", %{view: view} do
+    {:ok, project} =
+      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+
+    {:ok, theirs} =
+      Schedules.create({:project, project.id}, %{
+        "prompt" => "Check the backups",
+        "at" => "2035-01-01T00:00:00Z",
+        "repeat" => "once",
+        "target" => "new_thread"
       })
 
-    _ = render(view)
-    assert has_element?(view, "#schedule-#{routine.id}", "check disks")
-    assert has_element?(view, "#schedule-#{routine.id}", "Every 1h")
+    mine = blip_schedule!(%{"prompt" => "check disks", "in_minutes" => 60}, "schedule:t_mine")
 
-    view |> element("#schedule-#{routine.id} button") |> render_click()
-    assert Durable.task(routine.id).abort_requested
+    assert has_element?(view, "#schedule-#{mine.id}-when", "Once ·")
+    assert has_element?(view, "#schedule-#{mine.id}-when time[datetime]")
+    refute has_element?(view, "#schedule-#{theirs.id}")
+  end
+
+  test "keeps a schedule that stopped after an error in sight, with why, until it's cancelled",
+       %{view: view} do
+    schedule =
+      blip_schedule!(
+        %{"prompt" => "check disks", "at" => "2035-01-01T00:00:00Z", "every_minutes" => 1440},
+        "schedule:t_stopped"
+      )
+
+    task = Durable.task(schedule.task_id)
+
+    :ok =
+      Durable.commit(fn tx ->
+        _failed = Tx.finish(tx, task, "failed", %{"status" => "failed", "reason" => "boom"})
+        Routine.on_fail(task, "boom", tx)
+      end)
+
+    _ = render(view)
+    assert has_element?(view, ~s(#schedule-#{schedule.id}-when[data-state="stopped"]))
+
+    assert has_element?(
+             view,
+             "#schedule-#{schedule.id}-when",
+             "Stopped after an error: boom. Cancel it, and ask Blip to schedule it again."
+           )
+
+    view |> element("#schedule-#{schedule.id}-cancel") |> render_click()
+    assert Schedules.get(schedule.id) == nil
+    refute has_element?(view, "#schedule-#{schedule.id}")
+  end
+
+  test "says when a schedule last ran and what it did", %{view: view} do
+    schedule =
+      blip_schedule!(
+        %{"prompt" => "check disks", "at" => "2035-01-01T00:00:00Z", "every_minutes" => 1440},
+        "schedule:t_last"
+      )
+
+    {:ok, "sent"} = Schedules.run_now(schedule.id)
+    %{schedule: %{last_run_at: ran_at}} = Schedules.get(schedule.id)
+    _ = render(view)
+
+    assert has_element?(view, "#schedule-#{schedule.id}-when", "Every day · next")
+    assert has_element?(view, "#schedule-#{schedule.id}-last", "Last ran")
+    assert has_element?(view, "#schedule-#{schedule.id}-last", ": sent")
+
+    iso = ran_at |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+    assert has_element?(view, ~s(#schedule-#{schedule.id}-last time[datetime="#{iso}"]))
   end
 end

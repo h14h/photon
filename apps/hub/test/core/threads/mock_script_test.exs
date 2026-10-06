@@ -3,6 +3,7 @@ defmodule Photon.Threads.MockScriptTest do
 
   use Photon.Case, async: true
 
+  alias Photon.Skills.Prompt, as: SkillsPrompt
   alias Photon.Threads.MockScript
 
   defp ask(text), do: MockScript.respond(%{messages: [Message.user(text)]})
@@ -58,6 +59,14 @@ defmodule Photon.Threads.MockScriptTest do
              ]
   end
 
+  test "drops a leading [Scheduled], so a schedule's prompt runs as typed" do
+    assert calls(ask("[Scheduled] on box: $ ls")) ==
+             [{"shell", %{"machine" => "box", "command" => "ls"}}]
+
+    assert calls(ask("[Scheduled] files")) == [{"list_context_files", %{}}]
+    assert Message.text_of(ask("[Scheduled] tidy the shed")) =~ "scripted model"
+  end
+
   test "reads the last text part of the message" do
     message = Message.user([Message.text("[Looking at the project]"), Message.text("files")])
     assert calls(MockScript.respond(%{messages: [message]})) == [{"list_context_files", %{}}]
@@ -80,5 +89,30 @@ defmodule Photon.Threads.MockScriptTest do
     assert help =~ "Sign in with ChatGPT"
     assert calls(ask("tidy the shed")) == []
     assert Message.text_of(MockScript.respond(%{messages: []})) =~ "scripted model"
+  end
+
+  describe "skills" do
+    @system "You are an agent.\n\n" <>
+              SkillsPrompt.section([
+                %{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."}
+              ])
+
+    test "skills says what the prompt lists, and load skill loads one" do
+      listed = MockScript.respond(%{system: @system, messages: [Message.user("skills")]})
+      assert calls(listed) == []
+      assert Message.text_of(listed) == "Skills turned on here: pdf-forms (version 2)."
+
+      assert Message.text_of(ask("skills")) == "No skills are turned on here."
+      assert calls(ask("load skill pdf-forms")) == [{"load_skill", %{"name" => "pdf-forms"}}]
+    end
+
+    test "relays a loaded skill, and its help lists the phrasings" do
+      loaded = ~s(<skill name="pdf-forms" id="sk_pdf" version="2">\nFill it.\n</skill>)
+      assert relay(loaded) == "```\n" <> loaded <> "\n```"
+
+      help = Message.text_of(ask("tidy the shed"))
+      assert help =~ "`skills`"
+      assert help =~ "`load skill <name>`"
+    end
   end
 end

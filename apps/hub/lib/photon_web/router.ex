@@ -24,6 +24,14 @@ defmodule PhotonWeb.Router do
       live "/projects/:slug/files/:name", ContextFileLive, :edit
       live "/projects/:slug/threads/new", ThreadLive, :new
       live "/projects/:slug/threads/:id", ThreadLive, :show
+      live "/projects/:slug/schedules/new", ScheduleLive, :new
+      live "/projects/:slug/schedules/:id", ScheduleLive, :edit
+      # `/skills/new` and `/skills/install` before `/skills/:name`; `new`
+      # and `install` are reserved skill names.
+      live "/skills", SkillsLive
+      live "/skills/new", SkillLive, :new
+      live "/skills/install", SkillInstallLive
+      live "/skills/:name", SkillLive, :edit
       live "/nodes", NodesLive
       live "/settings", SettingsLive
     end

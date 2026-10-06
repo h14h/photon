@@ -26,6 +26,10 @@ defmodule PhotonWeb.ContextFileLive do
   textarea's value alone and the user would otherwise see, and save over,
   the old text.
 
+  The form asks before the owner leaves it with unsaved text
+  (`PhotonWeb.EditorComponents.guarded_form/1`, shared with the skill
+  editor).
+
   `{:projects_changed, id}` comes through `PhotonWeb.Shell` and keeps the
   project's name, and the title of the thread that last wrote the file,
   current. A `:tick` once a minute redraws `#file-meta`, so
@@ -34,6 +38,8 @@ defmodule PhotonWeb.ContextFileLive do
   """
 
   use PhotonWeb, :live_view
+
+  import PhotonWeb.EditorComponents
 
   alias Photon.{Markdown, Projects, Threads}
   alias Photon.Projects.{ContextFile, Project}
@@ -355,13 +361,13 @@ defmodule PhotonWeb.ContextFileLive do
             This file was deleted while it was open. Save to create it again.
           </.banner>
 
-          <.form
+          <.guarded_form
             for={@form}
             id="file-form"
+            dirty={@dirty?}
+            leave="Leave without saving? Your changes to this file will be lost."
             phx-change="edit"
             phx-submit="save"
-            phx-hook=".UnsavedGuard"
-            data-dirty={to_string(@dirty?)}
             class="mt-6 space-y-5"
           >
             <.input
@@ -382,8 +388,10 @@ defmodule PhotonWeb.ContextFileLive do
                   role="tablist"
                   class="flex items-center rounded-full border border-line bg-sunken p-0.5"
                 >
-                  <.tab id="file-tab-write" tab="write" current={@tab}>Write</.tab>
-                  <.tab id="file-tab-preview" tab="preview" current={@tab}>Preview</.tab>
+                  <.editor_tab id="file-tab-write" tab="write" current={@tab}>Write</.editor_tab>
+                  <.editor_tab id="file-tab-preview" tab="preview" current={@tab}>
+                    Preview
+                  </.editor_tab>
                 </div>
                 <span class="flex items-center gap-1.5 text-[11.5px] text-ink-faint">
                   <.icon name="hero-document-text-micro" class="size-4" /> Markdown
@@ -441,53 +449,10 @@ defmodule PhotonWeb.ContextFileLive do
                 </.button>
               </div>
             </div>
-          </.form>
+          </.guarded_form>
         </div>
       </div>
     </Layouts.app>
-
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".UnsavedGuard">
-      // Asks before leaving the editor with unsaved text: closing or
-      // reloading the tab (beforeunload), and following a live link (the
-      // sidebar, the back link), which LiveView handles without unloading.
-      // The server's data-dirty lags typing by the content's debounce, so
-      // typing since the last patch of the form counts as unsaved too.
-      export default {
-        mounted() {
-          this.typed = false
-          this.onInput = () => { this.typed = true }
-          this.el.addEventListener("input", this.onInput)
-
-          this.onUnload = e => {
-            if (!this.dirty()) return
-            e.preventDefault()
-            e.returnValue = ""
-          }
-          window.addEventListener("beforeunload", this.onUnload)
-
-          // In the capture phase, so it runs before LiveView's own handler
-          // on window; stopping the event there keeps the page.
-          this.onClick = e => {
-            const link = e.target.closest?.("a[data-phx-link]")
-            if (!link || !this.dirty()) return
-            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
-            if (confirm("Leave without saving? Your changes to this file will be lost.")) return
-            e.preventDefault()
-            e.stopPropagation()
-          }
-          document.addEventListener("click", this.onClick, true)
-        },
-
-        updated() { this.typed = false },
-
-        destroyed() {
-          window.removeEventListener("beforeunload", this.onUnload)
-          document.removeEventListener("click", this.onClick, true)
-        },
-
-        dirty() { return this.typed || this.el.dataset.dirty === "true" }
-      }
-    </script>
     """
   end
 
@@ -495,58 +460,4 @@ defmodule PhotonWeb.ContextFileLive do
     do: "This file was saved somewhere else while you were editing."
 
   defp changed_by({:changed, _thread}), do: "A thread changed this file while you were editing."
-
-  attr :id, :string, required: true
-  attr :tab, :string, required: true
-  attr :current, :string, required: true
-  slot :inner_block, required: true
-
-  defp tab(assigns) do
-    ~H"""
-    <button
-      type="button"
-      role="tab"
-      id={@id}
-      aria-selected={to_string(@tab == @current)}
-      phx-click="tab"
-      phx-value-tab={@tab}
-      class={[
-        "rounded-full px-3 py-0.5 text-[12.5px] transition",
-        @tab == @current && "bg-surface font-medium text-ink shadow-xs",
-        @tab != @current && "text-ink-faint hover:text-ink"
-      ]}
-    >
-      {render_slot(@inner_block)}
-    </button>
-    """
-  end
-
-  attr :id, :string, required: true
-  attr :tone, :string, values: ~w(warn bad), required: true
-  attr :icon, :string, required: true
-  slot :inner_block, required: true
-  slot :actions
-
-  defp banner(assigns) do
-    ~H"""
-    <div
-      id={@id}
-      role="status"
-      class={[
-        "mt-5 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-xl border px-4 py-3",
-        @tone == "warn" && "border-warn/30 bg-warn-soft",
-        @tone == "bad" && "border-bad/30 bg-bad-soft"
-      ]}
-    >
-      <p class="flex min-w-0 flex-1 items-center gap-2.5 text-[13.5px] text-ink">
-        <.icon
-          name={@icon}
-          class={["size-4 shrink-0", @tone == "warn" && "text-warn", @tone == "bad" && "text-bad"]}
-        />
-        {render_slot(@inner_block)}
-      </p>
-      <div :if={@actions != []} class="flex items-center gap-2">{render_slot(@actions)}</div>
-    </div>
-    """
-  end
 end

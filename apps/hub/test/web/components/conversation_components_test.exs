@@ -60,6 +60,28 @@ defmodule PhotonWeb.ConversationComponentsTest do
     end
   end
 
+  describe "a load_skill call" do
+    test "names the skill while it loads, once loaded, and when it couldn't" do
+      call = call("load_skill", %{"name" => " pdf-forms "}, "c1")
+      assert label(action(call, nil)) == "Loading the pdf-forms skill"
+
+      result = ok("c1", "<skill ...>", %{"skill" => "pdf-forms", "version" => 2})
+      html = action(call, result)
+      assert label(html) == "Loaded the pdf-forms skill"
+      assert html |> LazyHTML.query("summary .hero-book-open-micro") |> Enum.count() == 1
+
+      error = %{
+        "message" => Message.tool_result("c1", "Error: No skills are turned on here."),
+        "status" => "error",
+        "details" => %{},
+        "entry_id" => "e_1"
+      }
+
+      call = call("load_skill", %{"name" => "pdf-form"}, "c1")
+      assert label(action(call, error)) == "Couldn't load pdf-form"
+    end
+  end
+
   describe "a machine call" do
     defp action(call, result, prefix, tail) do
       assigns = [

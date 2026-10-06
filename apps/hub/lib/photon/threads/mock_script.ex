@@ -15,17 +15,25 @@ defmodule Photon.Threads.MockScript do
       lines, as the whole file (`write_context_file`)
     * `edit <name>: <old> => <new>` changes one passage
       (`edit_context_file`)
+    * `skills` says which skills the prompt lists, and `load skill <name>`
+      loads one (`load_skill`), the same as Blip's
+      (`Photon.Skills.MockPhrases`)
 
   After a tool result it relays the result, as Blip's does. Anything else
-  gets a help text. It reads the last text part of the last user message.
+  gets a help text. It reads the last text part of the last user message,
+  without a leading `"[Scheduled] "`, as Blip's does, so a project
+  schedule's prompt such as `on local: $ uptime` runs on it too.
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM, Photon.MachineTools]
+  use Boundary,
+    type: :strict,
+    deps: [PhotonCore, PhotonCore.LLM, Photon.MachineTools, Photon.Skills]
 
   @behaviour PhotonCore.LLM.Mock
 
   alias Photon.MachineTools.MockPhrases
+  alias Photon.Skills.MockPhrases, as: SkillPhrases
   alias PhotonCore.LLM.Mock
   alias PhotonCore.Message
 
@@ -39,6 +47,8 @@ defmodule Photon.Threads.MockScript do
   - `read <name>` reads one, like `read notes.md`
   - `write <name>: <text>` writes a whole file
   - `edit <name>: <old text> => <new text>` changes one passage
+  - `skills` lists the skills turned on for this project
+  - `load skill <name>` loads one, like `load skill pdf-forms`
 
   Sign in with ChatGPT and it can do the rest.
   """
@@ -52,7 +62,7 @@ defmodule Photon.Threads.MockScript do
         result |> MockPhrases.relay_result() |> Message.assistant()
 
       %{"role" => "user"} = message ->
-        message |> last_text() |> String.trim() |> plan()
+        message |> last_text() |> String.trim() |> plan(request)
 
       _ ->
         Message.assistant(@help)
@@ -69,8 +79,10 @@ defmodule Photon.Threads.MockScript do
 
   defp last_text(message), do: Message.text_of(message)
 
-  defp plan(text) do
-    Enum.find_value(phrasings(), Message.assistant(@help), fn {pattern, reply} ->
+  defp plan("[Scheduled] " <> text, request), do: plan(text, request)
+
+  defp plan(text, request) do
+    Enum.find_value(phrasings(request), Message.assistant(@help), fn {pattern, reply} ->
       case Regex.run(pattern, text, capture: :all_but_first) do
         nil -> nil
         captures -> reply.(captures)
@@ -79,9 +91,10 @@ defmodule Photon.Threads.MockScript do
   end
 
   # The phrasings it understands, in the order it tries them, each with the
-  # reply its captures make: the shared machine ones first.
-  defp phrasings do
+  # reply its captures make: the shared machine and skill ones first.
+  defp phrasings(request) do
     MockPhrases.phrasings() ++
+      SkillPhrases.phrasings(request) ++
       [
         {~r/\A(?:list )?files\z/, &list_files/1},
         {~r/\Aread\s+([^\s:]+)\z/, &read/1},

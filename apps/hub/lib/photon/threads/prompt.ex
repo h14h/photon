@@ -1,26 +1,33 @@
 defmodule Photon.Threads.Prompt do
   @moduledoc """
-  A thread's system prompt, as a pure function of its project and the
-  time (section 3.2 of `docs/plans/step-2-projects-and-threads.md`).
-  `Photon.Threads` reads the project and calls this.
+  A thread's system prompt, as a pure function of its project, the time
+  and the skills turned on for the project (section 3.2 of
+  `docs/plans/step-2-projects-and-threads.md`, and section 2.6 of
+  `docs/plans/step-3-skills-and-schedules.md`). `Photon.Threads` reads the
+  project and its skills and calls this.
 
   It says who the thread is, the project's name and purpose, how it works
-  (the machine tools in the project's folder, the context files, the web)
-  and the time to the hour. It changes only when the project's name or
-  purpose changes, or on the hour, so provider prompt caches stay warm;
-  that's also why it doesn't list the context files, which the model
-  lists with a tool.
+  (the machine tools in the project's folder, the context files, messages
+  from the project's schedules, the web),
+  the project's skills (`Photon.Skills.Prompt.section/1`, left out when
+  none are on) and the time to the hour. It changes only when the
+  project's name or purpose changes, a skill is turned on or off or
+  changed, or on the hour, so provider prompt caches stay warm; that's
+  also why it doesn't list the context files, which the model lists with
+  a tool.
 
   Nothing about the user goes in: not Blip's voice, not the user's name,
-  time zone or instructions from Settings, and not Blip's memory. The
+  time zone or instructions from Settings, and not Blip's memory. A skill
+  is the user's text, but the user turned it on for this project. The
   lines about how a `shell` call behaves are
   `Photon.MachineTools.Guide.shell/1`'s, shared with Blip's prompt.
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [Photon.MachineTools]
+  use Boundary, type: :strict, deps: [Photon.MachineTools, Photon.Skills]
 
   alias Photon.MachineTools.Guide
+  alias Photon.Skills.Prompt, as: SkillsPrompt
 
   @typedoc "What the prompt needs of a project: a `Photon.Projects.Project` will do."
   @type project :: %{
@@ -30,9 +37,12 @@ defmodule Photon.Threads.Prompt do
           optional(atom()) => term()
         }
 
-  @doc "The system prompt for a thread in `project` at the time `now`."
-  @spec system_prompt(project(), DateTime.t()) :: String.t()
-  def system_prompt(project, now) do
+  @doc """
+  The system prompt for a thread in `project` at the time `now`, with
+  `skills` the skills turned on for the project, by name.
+  """
+  @spec system_prompt(project(), DateTime.t(), [SkillsPrompt.listed()]) :: String.t()
+  def system_prompt(project, now, skills) do
     """
     You are an agent working on one project in Photon, a hub that runs work on a set of machines. You work in this thread. Other threads in the project may be working on it at the same time.
 
@@ -50,14 +60,23 @@ defmodule Photon.Threads.Prompt do
     - Your working directory on every machine is the project's folder, `<workspace>/#{project.slug}`, where `<workspace>` is that machine's workspace. It is made the first time a command runs there. The project's other threads share it, so look before you delete or overwrite anything, and keep what matters in files.
     - #{Guide.shell("the project's folder")}
     - The project has context files: Markdown notes kept on the hub and shared with the user and the project's other threads, for background, decisions, findings and plans. Check them with list_context_files and read_context_file before starting on something that may have history, and record what the next thread would need to know. Use write_context_file for a new or rewritten file and edit_context_file to change one passage. Keep them short and current.
+    - A message starting with "[Scheduled]" comes from one of the project's schedules, not from the user typing it. The user may not be watching, so record what matters in the context files.
     - You can search the web yourself, for facts, docs, versions or a link you're given, and link where the answer came from.
     - Never invent results. If a machine is offline or a command failed, say so plainly.
     - Use Markdown when it helps. Say the result first, then the detail.
 
-    ## Now
+    #{skills_section(skills)}## Now
 
     It's about #{Calendar.strftime(now, "%H:00 UTC on %A, %B %-d, %Y")}.
     """
     |> String.trim()
+  end
+
+  # The Skills section and the blank line after it, or nothing.
+  defp skills_section(skills) do
+    case SkillsPrompt.section(skills) do
+      nil -> ""
+      section -> section <> "\n\n"
+    end
   end
 end

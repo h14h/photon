@@ -4,6 +4,7 @@ defmodule Photon.Assistant.MockScriptTest do
   use Photon.Case, async: true
 
   alias Photon.Assistant.MockScript
+  alias Photon.Skills.Prompt, as: SkillsPrompt
 
   defp ask(text), do: MockScript.respond(%{messages: [Message.user(text)]})
 
@@ -66,6 +67,20 @@ defmodule Photon.Assistant.MockScriptTest do
     assert relay(image) == "Here it is.\n\n1x1 image/png, /tmp/dot.png on local"
   end
 
+  test "relays what the schedule tools say, with their sc_ IDs" do
+    scheduled = "Scheduled sc_4f2a: first at 2026-10-08 09:00 UTC, then every 1440 minutes."
+    assert relay(scheduled) == scheduled
+    assert relay("Cancelled sc_4f2a.") == "Cancelled sc_4f2a."
+
+    assert relay("Error: There is no schedule sc_nope.") ==
+             "That didn't work: There is no schedule sc_nope."
+
+    listed =
+      ~s(Now: 2026-10-07 08:12 UTC.\n- sc_4f2a: next 2026-10-08 09:00 UTC, every 1440 min: "machines")
+
+    assert relay(listed) =~ ~s(- sc_4f2a: next 2026-10-08 09:00 UTC, every 1440 min: "machines")
+  end
+
   defp relay(content),
     do: Message.text_of(MockScript.respond(%{messages: [Message.tool_result("c1", content)]}))
 
@@ -96,5 +111,30 @@ defmodule Photon.Assistant.MockScriptTest do
 
     assert Message.text_of(MockScript.respond(%{messages: []})) =~
              "I'm Blip, on the scripted model"
+  end
+
+  describe "skills" do
+    @system "You are an agent.\n\n" <>
+              SkillsPrompt.section([
+                %{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."}
+              ])
+
+    test "skills says what the prompt lists, and load skill loads one" do
+      listed = MockScript.respond(%{system: @system, messages: [Message.user("skills")]})
+      assert calls(listed) == []
+      assert Message.text_of(listed) == "Skills turned on here: pdf-forms (version 2)."
+
+      assert Message.text_of(ask("skills")) == "No skills are turned on here."
+      assert calls(ask("load skill pdf-forms")) == [{"load_skill", %{"name" => "pdf-forms"}}]
+    end
+
+    test "relays a loaded skill, and its help lists the phrasings" do
+      loaded = ~s(<skill name="pdf-forms" id="sk_pdf" version="2">\nFill it.\n</skill>)
+      assert relay(loaded) == "```\n" <> loaded <> "\n```"
+
+      help = Message.text_of(ask("tidy the shed"))
+      assert help =~ "`skills`"
+      assert help =~ "`load skill <name>`"
+    end
   end
 end

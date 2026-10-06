@@ -1,5 +1,11 @@
 defmodule Photon.Assistant.Tools.ListSchedules do
-  @moduledoc false
+  @moduledoc """
+  Blip's `list_schedules` tool: Blip's own schedules that are waiting for
+  their next time, and those that stopped after an error, with why
+  (`Photon.Assistant.schedules/0`), each with its `sc_` ID for
+  `cancel_schedule`. A project's schedules aren't Blip's, so they aren't
+  listed.
+  """
   @behaviour Photon.Durable.Tool
 
   @impl true
@@ -27,17 +33,16 @@ defmodule Photon.Assistant.Tools.ListSchedules do
     end
   end
 
-  defp schedule_line(task) do
-    next =
-      (task.checkpoint["next_at"] || task.input["first_at"])
-      |> DateTime.from_unix!(:millisecond)
-      |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
-
-    every =
-      if task.input["every_ms"],
-        do: ", every #{div(task.input["every_ms"], 60_000)} min",
-        else: ""
-
-    ~s(- #{task.id}: next #{next}#{every}: "#{task.input["prompt"]}")
+  defp schedule_line(%{schedule: schedule} = item) do
+    every = if schedule.every_minutes, do: ", every #{schedule.every_minutes} min", else: ""
+    ~s(- #{schedule.id}: #{status(item)}#{every}: "#{schedule.prompt}")
   end
+
+  defp status(%{state: :waiting, next_at: next_at}),
+    do: "next " <> Calendar.strftime(next_at, "%Y-%m-%d %H:%M UTC")
+
+  # A stopped schedule won't fire again: cancel it and schedule it anew.
+  defp status(%{state: {:stopped, reason}}),
+    do:
+      "stopped after an error (#{reason}); it won't run again until you cancel it and schedule it anew"
 end

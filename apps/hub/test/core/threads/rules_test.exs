@@ -45,6 +45,10 @@ defmodule Photon.Threads.RulesTest do
       assert Rules.title("snake_case_name stays") == "snake_case_name stays"
     end
 
+    test "titles a schedule's message by its prompt" do
+      assert Rules.title("[Scheduled] Check the backups") == "Check the backups"
+    end
+
     test "has a fallback for a message with no text" do
       assert Rules.title(" \n ") == "Untitled thread"
       assert Rules.title("```") == "Untitled thread"

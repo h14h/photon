@@ -236,10 +236,13 @@ defmodule PhotonWeb.SettingsLive do
                 <.input
                   field={@form[:scheduled_work]}
                   type="checkbox"
-                  label="Let Blip use my plan for schedules while I'm away"
+                  label="Let schedules use my plan while I'm away"
                 />
-                <p class="mt-1 pl-6.5 text-[12px] leading-relaxed text-ink-faint">
-                  Schedules you set up (like a morning check) run on your plan without you there. Off, Blip skips them and says so.
+                <p
+                  id="scheduled-work-hint"
+                  class="mt-1 pl-6.5 text-[12px] leading-relaxed text-ink-faint"
+                >
+                  Blip's schedules and your projects' schedules run on your plan without you there. Off, they skip their runs: Blip and threads say so in the conversation, and the project page shows it on the schedule.
                 </p>
               </div>
             </section>

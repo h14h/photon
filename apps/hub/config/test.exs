@@ -20,6 +20,8 @@ config :photon, :mock_model, true
 # PHOTON_TAILSCALE when they need one.
 config :photon, :find_tailscale, false
 config :photon, Photon.ChatGPT, req_options: [plug: {Req.Test, Photon.ChatGPT}]
+# Skills are fetched from a stub too, never from GitHub.
+config :photon, Photon.Skills, req_options: [plug: {Req.Test, Photon.Skills}]
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
@@ -55,7 +57,7 @@ config :photon, Photon.Durable,
     "test_workdir" => Photon.TestProfile.Workdir
   },
   kinds: %{
-    "routine" => Photon.Assistant.Routine,
+    "routine" => Photon.Schedules.Routine,
     "thread_title" => Photon.Threads.Titling
   }
 

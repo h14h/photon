@@ -139,6 +139,88 @@ defmodule Photon.ThreadsTest do
     end
   end
 
+  describe "start_tx/4 and send_tx/4, inside a schedule's commit" do
+    @source %{"kind" => "routine", "schedule_id" => "sc_backups"}
+
+    defp submissions(request_id),
+      do: Repo.all(from(s in Submission, where: s.request_id == ^request_id))
+
+    test "start_tx/4 starts a thread with the schedule as the first message's source, once", %{
+      project: project
+    } do
+      :ok = Projects.subscribe()
+      opts = [source: @source, request_id: "schedule:sc_backups:t_1:0"]
+      start = &Threads.start_tx(&1, project.id, "[Scheduled] Check the backups", opts)
+
+      # Titled by the prompt (section 3.2), without the "[Scheduled] " in front.
+      assert {:ok, %Thread{id: id, title: "Check the backups"}} = Durable.commit(start)
+
+      project_id = project.id
+      assert_receive {:projects_changed, ^project_id}
+      assert [%{kind: "user"} = first | _] = Durable.entries(id)
+      assert first.data["source"] == @source
+
+      assert [%Submission{conversation_id: ^id} = submission] =
+               submissions("schedule:sc_backups:t_1:0")
+
+      assert submission.content["source"] == @source
+
+      assert {:ok, %Thread{id: ^id}} = Durable.commit(start)
+      assert [%Thread{id: ^id}] = Threads.list(project.id)
+      assert [%Submission{id: same}] = submissions("schedule:sc_backups:t_1:0")
+      assert same == submission.id
+      idle!(id)
+    end
+
+    test "start_tx/4 refuses a blank message and a missing project, and the commit goes on", %{
+      project: project
+    } do
+      assert Durable.commit(fn tx ->
+               {Threads.start_tx(tx, project.id, " ", source: @source),
+                Threads.start_tx(tx, "p_missing", "hello")}
+             end) == {{:error, :blank}, {:error, :not_found}}
+
+      assert Threads.list(project.id) == []
+      assert Repo.aggregate(Conversation, :count) == 0
+    end
+
+    test "send_tx/4 sends with the schedule as source, and a repeated request ID sends once", %{
+      project: project
+    } do
+      thread_id = idle_thread!(project, "first")
+      opts = [source: @source, request_id: "schedule:sc_backups:t_1:1"]
+      send = &Threads.send_tx(&1, thread_id, "[Scheduled] machines", opts)
+
+      assert {:ok, %Submission{} = submission} = Durable.commit(send)
+      assert submission.content["source"] == @source
+      assert {:ok, %Submission{id: same}} = Durable.commit(send)
+      assert same == submission.id
+      assert [_one] = submissions("schedule:sc_backups:t_1:1")
+
+      assert %Submission{status: "done", entry_id: entry_id} =
+               await_settled(thread_id, submission.id)
+
+      assert [%{id: ^entry_id}] =
+               Enum.filter(Durable.entries(thread_id), &(&1.data["source"] == @source))
+
+      assert Durable.commit(&Threads.send_tx(&1, "c_missing", "hello")) == {:error, :not_found}
+      assert Durable.commit(&Threads.send_tx(&1, thread_id, "")) == {:error, :blank}
+    end
+
+    test "a scheduled prompt queued on a busy thread is withdrawn by stop/1", %{project: project} do
+      fake_machine("box")
+      thread = running!(project, "busy")
+      opts = [source: @source, request_id: "schedule:sc_backups:t_1:2"]
+
+      assert {:ok, %Submission{status: "queued"} = queued} =
+               Durable.commit(&Threads.send_tx(&1, thread.id, "[Scheduled] machines", opts))
+
+      assert Threads.stop(thread.id) == :ok
+      idle!(thread.id)
+      assert Repo.get(Submission, queued.id).status == "withdrawn"
+    end
+  end
+
   describe "sidebar/1" do
     test "groups threads under their projects, newest first, five a project, with the rest counted",
          %{project: garden} do
@@ -223,7 +305,7 @@ defmodule Photon.ThreadsTest do
   end
 
   describe "the thread profile" do
-    test "has the machine tools and the four context-file tools, nothing else", %{
+    test "has the machine tools, the four context-file tools and load_skill, nothing else", %{
       project: project
     } do
       thread = start!(project, "hello")
@@ -231,7 +313,7 @@ defmodule Photon.ThreadsTest do
 
       assert conversation |> Threads.tools() |> Enum.map(& &1.name()) |> Enum.sort() ==
                Enum.sort(~w(shell view_image list_machines list_context_files read_context_file
-                   write_context_file edit_context_file))
+                   write_context_file edit_context_file load_skill))
     end
 
     test "works in the project's folder, and searches the web with the model in Settings", %{

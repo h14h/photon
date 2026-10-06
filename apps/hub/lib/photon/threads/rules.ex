@@ -58,11 +58,12 @@ defmodule Photon.Threads.Rules do
   isn't blank, without Markdown's marks (a heading's `#`, a list's `-`,
   backticks, `**`) and with its whitespace collapsed, cut to at most 50
   characters at a word boundary and `...` added when cut. "Untitled
-  thread" when the message has no text.
+  thread" when the message has no text. A schedule's message is titled
+  by its prompt, without the `[Scheduled] ` in front.
   """
   @spec title(String.t()) :: String.t()
   def title(text) do
-    line = text |> first_line() |> unmark()
+    line = text |> String.replace_prefix("[Scheduled] ", "") |> first_line() |> unmark()
 
     cond do
       line == "" -> "Untitled thread"

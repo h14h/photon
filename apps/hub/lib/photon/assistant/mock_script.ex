@@ -12,6 +12,8 @@ defmodule Photon.Assistant.MockScript do
     * `schedules` lists schedules
     * `here` says the first line of the page note the message came with
       (`Photon.Assistant.Page.note/2`), or that it doesn't know the page
+    * `skills` says which skills the prompt lists, and `load skill <name>`
+      loads one (`load_skill`)
 
   It reads the last text part of the user's message, which is what the
   user typed: a message sent from a page has the page's note in front of
@@ -21,16 +23,19 @@ defmodule Photon.Assistant.MockScript do
   is." and its dimensions line.
 
   The three machine phrasings and the relay are
-  `Photon.MachineTools.MockPhrases`, which a thread's scripted model uses
-  too.
+  `Photon.MachineTools.MockPhrases`, and the skill phrasings
+  `Photon.Skills.MockPhrases`; a thread's scripted model uses both too.
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM, Photon.MachineTools]
+  use Boundary,
+    type: :strict,
+    deps: [PhotonCore, PhotonCore.LLM, Photon.MachineTools, Photon.Skills]
 
   @behaviour PhotonCore.LLM.Mock
 
   alias Photon.MachineTools.MockPhrases
+  alias Photon.Skills.MockPhrases, as: SkillPhrases
   alias PhotonCore.LLM.Mock
   alias PhotonCore.Message
 
@@ -44,6 +49,8 @@ defmodule Photon.Assistant.MockScript do
   - `in 2 minutes: <prompt>` or `every 30 minutes: <prompt>` schedules a prompt
   - `schedules` lists what's scheduled
   - `here` tells you which page you're on, as I see it
+  - `skills` lists the skills turned on for me
+  - `load skill <name>` loads one, like `load skill pdf-forms`
 
   Sign in with ChatGPT and I can do the rest.
   """
@@ -58,7 +65,7 @@ defmodule Photon.Assistant.MockScript do
 
       %{"role" => "user", "content" => content} ->
         {note, typed} = split(content)
-        typed |> String.trim() |> plan(note)
+        typed |> String.trim() |> plan(note, request)
 
       _ ->
         Message.assistant(@help)
@@ -78,14 +85,14 @@ defmodule Photon.Assistant.MockScript do
 
   defp split(content), do: {nil, Message.text_of(content)}
 
-  defp plan("[Scheduled] " <> prompt, note), do: plan(prompt, note)
+  defp plan("[Scheduled] " <> prompt, note, request), do: plan(prompt, note, request)
 
-  defp plan(text, note) do
-    if Regex.match?(~r/\Ahere\??\z/i, text), do: here(note), else: plan(text)
+  defp plan(text, note, request) do
+    if Regex.match?(~r/\Ahere\??\z/i, text), do: here(note), else: plan(text, request)
   end
 
-  defp plan(text) do
-    Enum.find_value(phrasings(), Message.assistant(@help), fn {pattern, reply} ->
+  defp plan(text, request) do
+    Enum.find_value(phrasings(request), Message.assistant(@help), fn {pattern, reply} ->
       case Regex.run(pattern, text, capture: :all_but_first) do
         nil -> nil
         captures -> reply.(captures)
@@ -94,9 +101,10 @@ defmodule Photon.Assistant.MockScript do
   end
 
   # The phrasings it understands, in the order it tries them, each with the
-  # reply its captures make: the shared machine ones first.
-  defp phrasings do
+  # reply its captures make: the shared machine and skill ones first.
+  defp phrasings(request) do
     MockPhrases.phrasings() ++
+      SkillPhrases.phrasings(request) ++
       [
         {~r/\Aremember\s+(.+)\z/s, &remember/1},
         {~r/\Ain\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("in_minutes", &1)},

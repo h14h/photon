@@ -1,7 +1,7 @@
 defmodule PhotonWeb.SidebarTest do
   @moduledoc """
   The sidebar on every page (`PhotonWeb.Layouts`, fed by `PhotonWeb.Shell`):
-  Home, the projects with their threads, Machines and Settings, kept current
+  Home, the projects with their threads, Machines, Skills and Settings, kept current
   as projects and threads change.
 
   Threads run on the scripted model (`Photon.Threads.MockScript`). A thread
@@ -197,5 +197,26 @@ defmodule PhotonWeb.SidebarTest do
 
     {:ok, view, _html} = live(conn, ~p"/nodes")
     assert has_element?(view, "#nav-machines[aria-current=page]")
+  end
+
+  test "Skills links to the Skills page and is marked on the skills pages", %{
+    conn: conn,
+    view: view
+  } do
+    assert has_element?(view, "#nav-skills[href='/skills']", "Skills")
+    refute has_element?(view, "#nav-skills[aria-current]")
+
+    {:ok, _skill} =
+      Photon.Skills.create(%{
+        "name" => "pdf-forms",
+        "description" => "Fill in PDF forms.",
+        "instructions" => "Read the form first."
+      })
+
+    for path <- [~p"/skills", ~p"/skills/new", ~p"/skills/install", ~p"/skills/pdf-forms"] do
+      {:ok, view, _html} = live(conn, path)
+      assert has_element?(view, "#nav-skills[aria-current=page]"), "#{path} doesn't mark Skills"
+      refute has_element?(view, "#nav-settings[aria-current]")
+    end
   end
 end

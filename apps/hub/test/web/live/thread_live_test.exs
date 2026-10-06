@@ -16,7 +16,7 @@ defmodule PhotonWeb.ThreadLiveTest do
   import Phoenix.LiveViewTest
   import Photon.Fixtures, only: [call: 3]
 
-  alias Photon.{Durable, MachineOps, Machines, Projects, Threads}
+  alias Photon.{Durable, MachineOps, Machines, Projects, Schedules, Skills, Threads}
   alias Photon.Durable.Tx
   alias PhotonCore.Message
 
@@ -368,6 +368,67 @@ defmodule PhotonWeb.ThreadLiveTest do
       assert has_element?(view, "#thread-title", "Pump check")
       assert has_element?(view, "#side-thread-#{thread.id}", "Pump check")
       assert has_element?(blip, "#page-chip", "About Garden / Pump check")
+    end
+  end
+
+  describe "schedules and skills" do
+    test "Schedule opens a new schedule for this thread", %{conn: conn, project: project} do
+      thread = idle_thread!(project, "Fix the pump")
+      view = thread_page(conn, project, thread)
+
+      path = "/projects/garden/schedules/new?thread=#{thread.id}"
+      assert has_element?(view, ~s(#thread-schedule[href="#{path}"]), "Schedule")
+    end
+
+    test "a scheduled prompt shows as Scheduled", %{conn: conn, project: project} do
+      thread = idle_thread!(project, "Fix the pump")
+      view = thread_page(conn, project, thread)
+
+      {:ok, schedule} =
+        Schedules.create({:project, project.id}, %{
+          "prompt" => "Check the pump",
+          "at" => DateTime.utc_now() |> DateTime.add(1, :hour) |> DateTime.to_iso8601(),
+          "repeat" => "once",
+          "target" => thread.id
+        })
+
+      assert Schedules.run_now(schedule.id) == {:ok, "sent"}
+      await_idle(thread.id)
+
+      [entry] =
+        for %{kind: "user"} = entry <- Durable.entries(thread.id),
+            entry.data["source"]["kind"] == "routine",
+            do: entry
+
+      assert has_element?(view, "#thread-entry-#{entry.id}", "Scheduled")
+      assert has_element?(view, "#thread-entry-#{entry.id} p", "Check the pump")
+      refute has_element?(view, "#thread-entry-#{entry.id} p", "[Scheduled]")
+    end
+
+    test "loading a skill shows its line", %{conn: conn, project: project} do
+      {:ok, skill} =
+        Skills.create(%{
+          "name" => "pdf-forms",
+          "description" => "Fill in PDF forms.",
+          "instructions" => "Use the form's own field names."
+        })
+
+      :ok = Skills.enable(skill.id, {:project, project.id})
+      thread = idle_thread!(project, "load skill pdf-forms")
+      view = thread_page(conn, project, thread)
+
+      [%{"id" => call_id}] =
+        Message.tool_calls(await_entry(thread.id, &tool_calls?/1).data["message"])
+
+      action = "#thread-action-#{call_id}"
+
+      assert has_element?(
+               view,
+               "#{action}[data-status=done] summary",
+               "Loaded the pdf-forms skill"
+             )
+
+      assert has_element?(view, "#{action} details", "Use the form's own field names.")
     end
   end
 

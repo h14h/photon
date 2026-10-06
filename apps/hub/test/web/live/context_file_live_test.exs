@@ -132,7 +132,13 @@ defmodule PhotonWeb.ContextFileLiveTest do
       {:ok, view, _html} = open_notes(conn)
       assert view |> element("#file-meta") |> render() =~ "Version 1, changed just now by you"
 
-      assert has_element?(view, ~s(#file-form[phx-hook][data-dirty="false"]))
+      assert has_element?(view, ~s(#file-form[data-dirty="false"]))
+
+      assert has_element?(
+               view,
+               ~s(#file-form[phx-hook="PhotonWeb.EditorComponents.UnsavedGuard"])
+             )
+
       assert has_element?(view, ~s(#file-content[phx-debounce]))
 
       view |> form("#file-form", file: %{content: "Zone 2 and 3."}) |> render_change()

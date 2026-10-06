@@ -24,13 +24,19 @@ defmodule Photon.MachineToolsE2ETest do
   7.5) checks what only a real node shows: a thread's commands run in its
   project's folder, `<workspace>/<slug>`, which the node makes on first
   use, and the project's threads share it.
+
+  The schedule test (`docs/plans/step-3-skills-and-schedules.md`, section
+  8.4) puts step 3's two features on the same path: a project schedule's
+  durable task fires on time and starts a thread whose scheduled prompt
+  runs on the node in the project's folder, and that thread loads a skill
+  turned on for the project.
   """
 
   use Photon.DataCase, async: false
 
   import Photon.Eventually
 
-  alias Photon.{Assistant, Machines, Projects, Threads}
+  alias Photon.{Assistant, Machines, Projects, Schedules, Skills, Threads}
   alias Photon.Machines.Op
   alias PhotonCore.Message
   alias PhotonNode.Executor.Journal
@@ -95,13 +101,16 @@ defmodule Photon.MachineToolsE2ETest do
   # with the scripted model is after it relays its one tool result.
   defp run_thread!(project, text) do
     {:ok, thread} = Threads.start(project.id, text)
+    await_idle(thread.id)
+    thread.id
+  end
 
+  # Waits until the thread has a tool result and no run in progress.
+  defp await_idle(thread_id) do
     assert eventually(
-             fn -> results(thread.id) != [] and not Threads.busy?(thread.id) end,
+             fn -> results(thread_id) != [] and not Threads.busy?(thread_id) end,
              @wait
            )
-
-    thread.id
   end
 
   # The output of the thread's one shell call.
@@ -297,5 +306,60 @@ defmodule Photon.MachineToolsE2ETest do
 
     assert output(second) =~ "from-first.txt"
     refute File.exists?(Path.join(workspace(node), "from-first.txt"))
+  end
+
+  test "a project schedule starts a thread that runs on the node, and the thread loads the project's skill",
+       %{node: node} do
+    start_node(node)
+
+    {:ok, project} =
+      Projects.create(%{"name" => "Greeter", "purpose" => "Greet whoever asks."})
+
+    {:ok, skill} =
+      Skills.create(%{
+        "name" => "say-hello",
+        "description" => "Greet someone.",
+        "instructions" => "Run `echo hello` when asked to greet."
+      })
+
+    :ok = Skills.enable(skill.id, {:project, project.id})
+
+    at = DateTime.utc_now() |> DateTime.add(1, :second) |> DateTime.to_iso8601()
+
+    {:ok, schedule} =
+      Schedules.create({:project, project.id}, %{
+        "prompt" => "on local: $ pwd",
+        "at" => at,
+        "repeat" => "once",
+        "target" => "new_thread"
+      })
+
+    # The routine task waits for its time, then starts the thread.
+    started =
+      eventually(
+        fn ->
+          case Schedules.get(schedule.id) do
+            %{schedule: %{last_outcome: "started", last_thread_id: id}} -> id
+            _not_yet -> nil
+          end
+        end,
+        @wait
+      )
+
+    assert is_binary(started)
+    assert [%{id: ^started}] = Threads.list(project.id)
+    assert %{state: :done} = Schedules.get(schedule.id)
+
+    await_idle(started)
+    assert String.ends_with?(String.trim(output(started)), "/workspace/#{project.slug}")
+
+    :ok = Threads.subscribe(started)
+    {:ok, submission} = Threads.send(started, "load skill say-hello")
+    assert %{status: "done"} = await_settled(started, submission.id, @wait)
+
+    assert %{"status" => "ok", "message" => message, "details" => %{"skill" => "say-hello"}} =
+             List.last(results(started))
+
+    assert Message.text_of(message) =~ "Run `echo hello` when asked to greet."
   end
 end

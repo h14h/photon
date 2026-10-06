@@ -1,7 +1,7 @@
 # Projects, threads and Blip
 
-Status: written 2026-10-05. Steps 1 and 2 of the build order are built
-(2026-10-06); the rest is still a design. See "Build order".
+Status: written 2026-10-05. Steps 1, 2 and 3 of the build order are
+built (2026-10-06); the rest is still a design. See "Build order".
 
 Photon is meant to be a self-hostable replacement for two things at once:
 
@@ -31,6 +31,16 @@ is turned off everywhere: each project, and Blip, has its own set of
 enabled skills. Skills are instructions only for now, with no scripts or
 other files to run.
 
+> Status: step 3 built skills (`docs/plans/step-3-skills-and-schedules.md`,
+> section 2). A skill is a name, a description and Markdown instructions,
+> written on the Skills page or installed from a pasted SKILL.md or a
+> GitHub link. Install keeps only those three and says what it left out
+> (other files in the folder, other front matter, files the instructions
+> mention). A project's skills are turned on on its page, Blip's on the
+> Skills page and on each skill's page. An agent's prompt lists the
+> enabled skills' names and descriptions, and its `load_skill` tool puts
+> one's instructions in the conversation. Each set holds at most 30.
+
 **Project.** A context for some body of work, not necessarily code. It has:
 
 - an owner (you, for now)
@@ -42,6 +52,28 @@ other files to run.
 - **schedules**: prompts that start or wake a thread at set times
 
 A project doesn't belong to a machine. Its threads can use any machine.
+
+**Schedule.** A prompt that fires at set times, once or every so often. A
+project's schedule starts a new thread in the project each time, or
+wakes one of its threads. Blip has its own schedules, for things outside
+projects like a morning review, which post into Blip's conversation.
+Threads can't make schedules, since a schedule that starts threads would
+let a thread start threads.
+
+A firing is skipped rather than piled up. A new-thread schedule waits
+while the thread it last started is still running, and a prompt doesn't
+queue behind one of its own that hasn't run yet. Stop in a thread
+withdraws everything queued there, scheduled prompts included, so the
+thread stays stopped until the schedule's next firing. Blip's Stop keeps
+its scheduled prompts waiting. A firing uses your
+ChatGPT plan only when Settings allows scheduled work; otherwise it is
+skipped, and the project page or the conversation says so.
+
+> Status: step 3 built schedules (`docs/plans/step-3-skills-and-schedules.md`,
+> section 3). Each is a row with a durable task as its timer, so it
+> survives hub restarts. A project's are listed on its page and made or
+> edited in a form there; Blip's are still made by asking Blip and listed
+> on the home page.
 
 **Thread.** One agent conversation inside a project, run on the hub by the
 durable harness. Its tools take a `machine` argument, so one thread can run
@@ -144,6 +176,10 @@ After this change there is one loop, on the hub:
 - **Skills** are read from the hub. Loading one puts its instructions in the
   conversation.
 
+> Status: step 3 built skills on the hub. Nothing about them reaches a
+> node: the hub stores them, lists them in prompts and loads them inside
+> the conversation's own commit.
+
 What goes away: the node's session state machine, coordinator, context
 builder, log store, skills and model requests; the hub's model relay;
 `Photon.NodeSessions` and its mirror; Blip's `run_on_node` family of tools;
@@ -183,14 +219,24 @@ looking at.
 
 Each step leaves a working app.
 
-> Status: steps 1 and 2 are built (`docs/plans/step-1-machine-tools.md`,
-> `docs/plans/step-2-projects-and-threads.md`). Step 2 left out, for
-> later: deleting or archiving projects and threads, renaming or moving
-> threads (context files can be deleted), a model per thread, and skills
-> and schedules on the project page, whose second column is kept for
-> them. Blip sees projects and threads
-> only through a note about the page on screen until step 4 gives it
-> tools.
+> Status: steps 1, 2 and 3 are built (`docs/plans/step-1-machine-tools.md`,
+> `docs/plans/step-2-projects-and-threads.md`,
+> `docs/plans/step-3-skills-and-schedules.md`). Step 2 left out, for
+> later: deleting or archiving projects and threads, moving threads
+> (context files can be deleted), and a model per thread. Blip sees
+> projects and threads only through a note about the page on screen until
+> step 4 gives it tools.
+>
+> Step 3 put skills and schedules in the project page's second column.
+> It left out, for later: skills scoped to machines and skills with
+> scripts or other files; updating an installed skill from its source,
+> and exporting one as a SKILL.md; pausing a schedule (delete it and make
+> it again); calendar rules such as "weekdays at 9"; and repeats that
+> follow your time zone across daylight saving changes (a repeat is a
+> fixed interval, so it drifts by an hour). Blip's schedule tools touch
+> only its own schedules until step 4. Asked for recurring work in a
+> project, Blip tells you to add it with New schedule on the project's
+> page.
 
 1. **Machine tools on the hub.** Make nodes executors and give Blip shell
    and view_image on any machine, replacing `run_on_node` and node

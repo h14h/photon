@@ -4,7 +4,7 @@ This records how Photon's harnesses were checked, what was found, and what
 was fixed. There are three parts:
 
 - **TLA+ specs** in `specs/tla`, checked with TLC: `Durable` (the hub's
-  durable harness and Blip's machine calls), `HubOps` (build step 1's
+  durable harness, its machine calls and schedules), `HubOps` (build step 1's
   operation protocol between the hub and a node) and `Executor` (the
   node's executor, its journal, the operation processes and the commands
   they run).
@@ -55,10 +55,13 @@ with the tool calls a conversation makes: a machine call
 (`Photon.MachineTools.Call`: `Machines.start/1`'s own commit, the park on
 the op's signal, the recheck, the claim, the offline give-up, and
 `cancel_tx/2` in every commit that ends the call another way), a plain
-tool that isn't safe to rerun, and `Routine`. Faults: hub crashes,
-Scheduler-only crashes, step crashes, a machine call's code raising, user
-Stops, failing model requests, a machine that is offline when the call
-checks, and the op finishing at any time.
+tool that isn't safe to rerun, and since step 3 the routine behind a
+schedule (`Photon.Schedules.Routine`), which may repeat and which the
+owner may edit or delete from the project page while a firing is in
+flight. Faults: hub crashes, Scheduler-only crashes, step crashes, a
+machine call's code raising, user Stops, the owner's edits and deletes,
+failing model requests, a machine that is offline when the call checks,
+and the op finishing at any time.
 
 Properties: one active run per conversation; one `tool_result` per tool
 task and per stored call; bottom-up abort, and a stopped task ends
@@ -66,7 +69,10 @@ aborted; unsafe tools run at most once; placed input belongs to a live run
 and settles; queued input leaves the inbox, and a Stop keeps a routine's
 prompt; nothing stays running; a machine call records one result, an
 op's result reaches at most one tool result, a call that has ended leaves
-no row that may still start its op, and every row closes.
+no row that may still start its op, and every row closes; one routine
+carries a schedule at a time, no firing lands after an edit or delete
+replaced its routine, each firing happens once, and a replaced routine
+ends aborted.
 
 Details: `specs/tla/Durable.md`.
 
@@ -188,7 +194,8 @@ where `<Spec>` is `Durable`, `HubOps` or `Executor` and `<Cfg>` is one of
 its `.cfg` files. Add `-lncheck final` for configs with `PROPERTIES`.
 `-deadlock` is needed because every modeled behavior ends (the `HubOps`
 and `Executor` configs also turn deadlock checking off themselves). The
-`HubOps-bug-*` and `Executor-bug-*` configs are meant to fail; each spec's notes list the property each one breaks.
+`Durable-bug-*`, `HubOps-bug-*` and `Executor-bug-*` configs are meant to
+fail; each spec's notes list the property each one breaks.
 
 To run every config of every spec:
 
@@ -203,6 +210,51 @@ done
 ```
 
 ## Results
+
+### Step 3: schedules in `Durable.tla` (2026-10-06)
+
+Step 3 makes schedules owner-facing: a routine repeats, and the owner can
+edit or delete its schedule from the project page while a firing is in
+flight. `Durable.tla` was extended before the code, from the plan
+(`docs/plans/step-3-skills-and-schedules.md`, sections 3.3, 3.4 and 10),
+with `OwnerEdit`, `OwnerDelete`, a repeating `RoutineFire`, the
+invariants `OneCarrier`, `NoFireAfterRetire` and `FireOncePerSlot`, and
+the liveness property `RetiredEnds`. TLC 2.19 on the shared 12-core
+machine (load average around 40 from other work):
+
+- The three new configs pass: `Durable-schedule.cfg` (firings into
+  Blip's or a thread's conversation, an edit and a delete, every crash
+  kind and a Stop; 7.3M distinct states, 5m17s),
+  `Durable-schedule-thread.cfg` (each firing starts a thread, so there is
+  no request ID to dedupe on; 9.4M, 8m22s) and
+  `Durable-schedule-live.cfg` (1.2M, 43m27s with the temporal check).
+  TLC found no problem in the plan's rules: the step fence alone keeps a
+  firing from landing after its schedule was edited or deleted, or
+  twice.
+- The two bug configs fail as they should: `Durable-bug-edit-keeps-old`
+  (an edit that doesn't mark the old routine) on `OneCarrier` in 2
+  states, and `Durable-bug-fire-after-retire` (a fire commit that ignores
+  the abort mark) on `NoFireAfterRetire` in 8. A copy of the spec whose
+  fire commit isn't fenced on its start fails `FireOncePerSlot` in 10
+  states, and an edit that keeps the old routine fails `RetiredEnds`.
+- The 15 older configs, rerun with the new constants at their old
+  values, reach exactly their old state counts.
+
+`Durable-schedule.cfg` leaves out the user input the plan first gave it:
+with it, TLC passed 160M states in two hours without finishing. Times are
+left out of the model, so `Rules.arm/4` and `fired_through/3` (an edit
+neither skips nor repeats a firing) are covered by ExUnit, not TLC.
+Per-config counts and traces: `specs/tla/Durable.md`.
+
+The implementation review found one case those tests missed: a repeating
+schedule saved as Once at the slot it had just fired got `:finished`
+from `arm/4`, and the edit left its old routine running. The fix retires
+the routine and arms none, which on the modeled variables is
+`OwnerDelete`'s step, so the spec didn't change. A new liveness config,
+`Durable-schedule-retire-live.cfg`, checks that a routine retired with
+no replacement ends `aborted` (394 distinct states, 2s), and
+`test/core/schedules/rules_test.exs` and
+`test/boundary/schedules_test.exs` now cover the edit.
 
 ### Step 1 review: E1 and K2 fixed (2026-10-06)
 
@@ -300,7 +352,7 @@ for the reason they target, and the fifth pins behavior the fix keeps.
 
 "Test" names the regression tests (file: test name). "Spec" names the
 config that reproduced the bug. A bug config whose name starts with
-`HubOps-bug-` or `Executor-bug-` puts the bug back and fails; any other
+`Durable-bug-`, `HubOps-bug-` or `Executor-bug-` puts the bug back and fails; any other
 config is a regression check that passes. "Retired" means the code, its
 fix and its tests were deleted with node sessions or the old model client;
 the spec column then names the config as it was.
@@ -441,4 +493,5 @@ were reported; they went with those specs (in git history).
   be visible to a model, which is why it was low.
 - `Durable.tla` reduces the machine to its row and signal, and bounds a
   call's rechecks (`MaxRechecks`); `HubOps.tla` models the rest of the
-  protocol.
+  protocol. It models one schedule, without times, and bounds a
+  repeating routine's firings (`MaxFires`).

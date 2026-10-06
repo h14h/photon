@@ -280,6 +280,54 @@ defmodule PhotonWeb.CoreComponents do
     """
   end
 
+  @doc """
+  An on/off switch: a button with `role="switch"` and its label, for a
+  setting that applies the moment it is clicked (no form to save). The
+  page handles the click (`phx-click`, `phx-value-*` in `rest`) and
+  renders the stored state back as `on`.
+
+      <.switch id="skill-blip" on={@on?} label="Blip" phx-click="blip" phx-value-on="false" />
+  """
+  attr :id, :string, required: true
+  attr :on, :boolean, required: true
+  attr :label, :string, required: true
+  attr :class, :any, default: nil
+  attr :rest, :global
+
+  @spec switch(map()) :: Phoenix.LiveView.Rendered.t()
+  def switch(assigns) do
+    ~H"""
+    <button
+      type="button"
+      role="switch"
+      id={@id}
+      aria-checked={to_string(@on)}
+      class={[
+        "group inline-flex cursor-pointer select-none items-center gap-2 rounded-full text-[13px] transition",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        "phx-click-loading:opacity-60",
+        @class
+      ]}
+      {@rest}
+    >
+      <span class={[
+        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition duration-200",
+        @on && "border-accent bg-accent shadow-sm shadow-accent/30",
+        !@on && "border-line-strong bg-sunken group-hover:border-ink-faint/60"
+      ]}>
+        <span class={[
+          "absolute left-0.5 size-3.5 rounded-full shadow-xs transition duration-200 ease-out",
+          @on && "translate-x-4 bg-accent-ink",
+          !@on && "bg-surface ring-1 ring-line-strong"
+        ]} />
+      </span>
+      <span class={["truncate", @on && "text-ink", !@on && "text-ink-soft group-hover:text-ink"]}>
+        {@label}
+      </span>
+    </button>
+    """
+  end
+
   @doc "A small status dot: `ok`, `busy` (breathing amber), `warn`, `bad` or `off`."
   attr :status, :atom, default: :off
   attr :class, :any, default: nil

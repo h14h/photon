@@ -2,7 +2,7 @@ defmodule PhotonWeb.Layouts do
   @moduledoc """
   The app shell: a sidebar with Home (the overview), the projects, each
   with its most recently active threads and any running one, Machines (how
-  many are online, linking to the nodes page) and Settings; the page fills
+  many are online, linking to the nodes page), Skills and Settings; the page fills
   the rest. On small screens the sidebar folds into a drawer behind a top
   bar. The sidebar's data is `@shell`, kept current by `PhotonWeb.Shell`.
 
@@ -20,7 +20,7 @@ defmodule PhotonWeb.Layouts do
   attr :active, :any,
     default: nil,
     doc:
-      "the page in the sidebar: `:home`, `:nodes`, `:settings`, `{:project, slug}` or `{:thread, slug, id}` (which marks its project's row too)"
+      "the page in the sidebar: `:home`, `:nodes`, `:skills`, `:settings`, `{:project, slug}` or `{:thread, slug, id}` (which marks its project's row too)"
 
   slot :inner_block, required: true
 
@@ -160,6 +160,14 @@ defmodule PhotonWeb.Layouts do
               {Enum.count(@shell.nodes, & &1.online)} online
             </span>
           </:trailing>
+        </.nav_item>
+        <.nav_item
+          navigate={~p"/skills"}
+          icon="hero-book-open"
+          active={@active == :skills}
+          id="nav-skills"
+        >
+          Skills
         </.nav_item>
         <.nav_item
           navigate={~p"/settings"}

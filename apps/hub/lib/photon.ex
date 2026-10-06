@@ -6,14 +6,19 @@ defmodule Photon do
 
   The contexts (the APIs the web layer and nodes use):
 
-    * `Photon.Assistant`: Blip's conversation, memory and schedules, the
-      page the user has open under it, and its `"assistant"` profile for
-      the durable harness
+    * `Photon.Assistant`: Blip's conversation and memory, its tools over
+      its own skills and schedules, the page the user has open under it,
+      and its `"assistant"` profile for the durable harness
     * `Photon.Projects`: projects (a purpose, for any body of work) and
       their context files, the Markdown notes the user and the project's
       threads share
     * `Photon.Threads`: threads, the durable agent conversations inside a
       project, and their `"thread"` profile for the durable harness
+    * `Photon.Skills`: skills, the instructions an agent loads when a task
+      calls for them, written or installed by the user and turned on for
+      Blip or per project
+    * `Photon.Schedules`: schedules, prompts that fire at set times: a
+      project's start or wake its threads, and Blip's post to Blip
     * `Photon.Durable`: the durable agent harness Blip and threads run on
     * `Photon.Machines`: the machines the hub knows, which are connected,
       and the operations (shell commands, image reads) it runs on them;
@@ -26,9 +31,11 @@ defmodule Photon do
     * `Photon.Auth`, `Photon.NodeKeys`: who may open the GUI (your devices
       on the tailnet, or a password), and each node's own key
 
-  None of them adds a process for a project, a thread or an operation:
-  projects and context files are rows, a thread is a conversation in the
-  durable harness, and an operation is a row its tool call waits on.
+  None of them adds a process for a project, a thread, a skill, a
+  schedule or an operation: projects, context files and skills are rows,
+  a thread is a conversation in the durable harness, a schedule is a row
+  and a durable task waiting for its time, and an operation is a row its
+  tool call waits on.
 
   Layers, after *Designing Elixir Systems with OTP*: each context's
   moduledoc names its pure core and its processes. The pure modules are
@@ -36,12 +43,16 @@ defmodule Photon do
   Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Page,
   MockScript}`, `Photon.Transcript` (what a conversation page shows),
   `Photon.Projects.Rules`, `Photon.Threads.{Rules, Prompt, MockScript}`,
+  `Photon.Skills.{Rules, SkillMd, Source, Prompt, MockPhrases}`,
+  `Photon.Schedules.Rules`,
   `Photon.Machines.{Rules, Roster}`,
   `Photon.MachineTools.{Translate, Wait, Guide, MockPhrases}`,
   `Photon.Provision.{Jobs, Script}`, and `Photon.Markdown`.
   `Photon.Application` holds the lifecycle plan. `PhotonWeb` is the
   boundary for browsers and nodes: its LiveViews, channel and controllers
-  call the contexts above and hold no business logic.
+  call the contexts above and hold no business logic; its pure
+  `PhotonWeb.{ProjectText, ScheduleText, SkillText}` only put the pages'
+  words together.
   """
 
   # The hub's contexts, each a boundary of its own; this root exports
@@ -68,7 +79,11 @@ defmodule Photon do
       Projects.ContextFile,
       Projects.Project,
       Provision,
+      Schedules,
+      Schedules.Schedule,
       Settings,
+      Skills,
+      Skills.Skill,
       Tailnet,
       Threads,
       Threads.Thread,
