@@ -88,7 +88,7 @@ hotspots still refer to the original snapshot.
 | Module | Layer | Purity | Depends on |
 | --- | --- | --- | --- |
 | `PhotonNode.Application` | lifecycle | is a process (app supervisor); runs `CLI.boot/0` first when packaged | `CLI`, `PhotonNode` |
-| `PhotonNode` | lifecycle (node supervisor, with its lifecycle plan in the moduledoc) and global config accessor | is a process; `init/1` writes `:persistent_term` and creates directories | `Config`, `Harness`, `Connection`, Registry, DynamicSupervisor, Task.Supervisor |
+| `PhotonNode` | lifecycle (node supervisor, with its lifecycle plan in the moduledoc) and global config accessor | is a process; `init/1` writes `:persistent_term` and creates directories (sessions, ops, workspace) | `Config`, `Harness`, `Executor`, `Connection`, Registry, DynamicSupervisor, Task.Supervisor |
 | `PhotonNode.CLI` | boundary (executable entry point) | does I/O (stdout/stderr, `System.halt`, logger config) | Logger |
 | `PhotonNode.Config` | data (struct with `t/0`) and boundary (`new/1`) | `new/1`, `hostname/0` do I/O (opts, app env, OS env, hostname); `sessions_dir/1`, `llm_base_url/1` pure | none |
 | `PhotonNode.Connection` | boundary and worker (the hub link) | is a process (Slipstream); reads session logs during replay; hands `op.start`, `op.cancel` and `op.ack` to the executor and pushes its journaled snapshots after each join; `event/3` and `live/2` (`Harness.Link`) and `snapshot/1` and `output/3` (`Executor.Link`) are its client functions | Slipstream, `Harness`, `Harness.Store`, `Executor`, `Config`, `PhotonCore.ID`, `PhotonCore.Operation.Wire` |
@@ -112,6 +112,11 @@ hotspots still refer to the original snapshot.
 | `PhotonNode.Harness.Ops.Job` | worker (one-shot operations, behaviour for jobs) | is a process; runs `job.run/1` once and reports | `Ops`, `Ops.Owner`, `Operation` |
 | `PhotonNode.Harness.Ops.ViewImage` | boundary (job: reads the image file) | does I/O (file) | `Image`, `Operation`, `Ops.Job` |
 | `PhotonNode.Harness.Ops.SkillUse` | boundary (job: reads `SKILL.md`) | does I/O (file) | `Operation`, `Output`, `Ops.Job` |
+| `PhotonNode.Executor` | boundary (the node's API for the hub's operations: `start/1`, `cancel/1`, `ack/1`, `snapshots/0`; one server for all of them, which owns the journal, implements `Ops.Owner`, monitors the op processes it starts and applies `Executor.Rules`; step 1, section 2.3's node rules) | is a process; journal files through `Journal`, starts op processes, forwards snapshots through `Link`, a daily `send_after` sweep | `Journal`, `Request`, `Rules`, `Link`, `Harness.Ops`, `Ops.Owner`, `Env`, `Config`, `PhotonCore.Operation` |
+| `PhotonNode.Executor.Journal` | boundary helper (each op's `op.json`: fsynced write by rename, read, list, forget on `op.ack`, the 7-day sweep of output; no process, called only from the executor) | does I/O (files, fsync, `sync` on the directory on Linux) | Jason |
+| `PhotonNode.Executor.Request` | functional core (judges an `op.start` into an operation; builds the snapshots for ops the node won't run: rejected, lost, never started, unrecorded, unreadable, failed; `fit/2` cuts a snapshot to the 6 MB frame budget) | pure | `PhotonCore.Operation`, `PhotonCore.Output`, Jason |
+| `PhotonNode.Executor.Rules` | functional core (what `op.start`, the start-up scan and an op process's exit mean: run, resend, resume, lost, restart or fail, each with the journal's cancel flag) | pure | `PhotonCore.Operation` |
+| `PhotonNode.Executor.Link` | contract (behaviour for the hub link: `snapshot/1`, `output/3`; dispatches to the config's `:link`, `Connection` by default) | reads `PhotonNode.config/0` | `Config` |
 | `Mix.Tasks.Photon.Package` | build tooling, outside the runtime layers | does I/O (`System.cmd`, an HTTP HEAD, files) | Burrito, Req, `QuietStream` |
 | `Mix.Tasks.Photon.Package.QuietStream` | build tooling (Collectable, now in its own file) | does I/O (`IO.write`) | none |
 
@@ -154,7 +159,7 @@ hotspots still refer to the original snapshot.
 | `Photon.Durable.Submission` | data | pure | Ecto |
 | `Photon.Durable.TaskRecord` | data (plus `terminal?/1`) | pure | Ecto |
 | **Assistant** | | | |
-| `Photon.Assistant` | boundary (the assistant's API, which the web pages use, and its profile) | does I/O (docs, settings file, clock); `conversation_id/0` may commit | `Durable`, `Settings`, `Prompt`, `Memory`, `Assistant.Tools.*` |
+| `Photon.Assistant` | boundary (the assistant's API, which the web pages use, and its profile) | does I/O (docs, settings file, clock); `conversation_id/0` may commit | `Durable`, `Settings`, `Prompt`, `Memory`, `MachineTools` (`tools/0`), `Assistant.Tools.*` |
 | `Photon.Assistant.Prompt` | functional core (system prompt and reasoning setting from settings, memory and time) | pure | `Memory` |
 | `Photon.Assistant.Memory` | functional core (editing the memory text) | pure | none |
 | `Photon.Assistant.Report` | functional core (how node work's outcome reads, as a report and as a tool result) | pure | none |
@@ -174,6 +179,17 @@ hotspots still refer to the original snapshot.
 | `Photon.Assistant.Tools.Schedule` | boundary (tool) | does I/O (creates a task, clock) | `Durable`, `ToolAPI` |
 | `Photon.Assistant.Tools.ListSchedules` | boundary (tool) | does I/O (DB, clock) | `Assistant` |
 | `Photon.Assistant.Tools.CancelSchedule` | boundary (tool) | does I/O | `Durable` |
+| **Machines and machine tools** (step 1) | | | |
+| `Photon.Machines` | boundary (the context for machines and their operations: status and roster, starting an op, the tool call's claim, cancel and give-up inside its commit, and the channel's join, push, snapshot and output; no process) | does I/O: every write and the channel's reads are `Durable.Store` commits; asks channels to push through `Nodes`, sends `op.cancel` from inside cancel commits, broadcasts output with `Durable.live/2` | `Durable`, `Tx`, `Repo`, `Nodes`, `NodeKeys`, `Machines.Op`, `Machines.Rules`, `Machines.Roster`, `PhotonCore.Operation.Wire` |
+| `Photon.Machines.Op` | data (Ecto schema, table `machine_ops`: one row per tool call's op, with `confirmed`, `pushed`, `cancel` and the result until it is claimed) | pure | Ecto |
+| `Photon.Machines.Rules` | functional core (hub rules 2 to 9 of step 1: what a push, a join, a snapshot, a claim, a cancel or a give-up does to a row, and what to send) | pure | `Machines.Op`, `PhotonCore.Operation`, `Operation.Wire` |
+| `Photon.Machines.Roster` | functional core (the machines the hub knows, `local` first, and each one's status: online, outdated, offline or unknown) | pure | none |
+| `Photon.MachineTools` | boundary (namespace: `tools/0` for a profile, `signal_key/1`; the moduledoc lists the layers) | pure | `Machines`, its tool modules |
+| `Photon.MachineTools.Shell`, `Photon.MachineTools.ViewImage` | boundary (durable tools, `replay: :safe`; delegate to `Call`) | does I/O through `Call` | `Call`, `Translate` |
+| `Photon.MachineTools.ListMachines` | boundary (durable tool) | does I/O (Registry, DB) | `Machines` |
+| `Photon.MachineTools.Call` | boundary (one `shell` or `view_image` call: `execute/3` commits the op and parks on its signal, `resume/2` claims, waits on or gives up, `on_interrupt/2` cancels) | does I/O (commits through `Machines`, app env, clock) | `Machines`, `Translate`, `Wait`, `Durable.ToolAPI`, `Tx` |
+| `Photon.MachineTools.Translate` | functional core (tool arguments to an op's `args`; a snapshot to the tool result and its details, bounded again on the hub; the unknown and outdated machine texts) | pure | `PhotonCore.Operation`, `PhotonCore.Output`, `Message` |
+| `Photon.MachineTools.Wait` | functional core (the op ID from the task ID, when to check again, when to give up on an offline machine, and the offline message) | pure (time and limits passed in) | none |
 | **Node sessions and nodes** | | | |
 | `Photon.NodeSessions` | boundary (session mirror, input outbox, node commands); every write is a `Durable.Store` commit | does I/O (DB through the Store, PubSub, sends) | `Repo`, `Durable`, `Tx`, `Mirror`, `Nodes`, `Settings`, node-session schemas, `PhotonCore.ID` |
 | `Photon.NodeSessions.Mirror` | functional core (where a record goes, what it changes, what a refusal changes, the stored and sent shapes) | pure | node-session schemas, `Message` |
@@ -181,7 +197,7 @@ hotspots still refer to the original snapshot.
 | `Photon.NodeSessions.Event` | data | pure | Ecto |
 | `Photon.NodeSessions.Input` | data | pure | Ecto |
 | `Photon.NodeTranscript` | functional core (a token: `fold/2` returns the transcript and the items it changed) | pure | `Message` |
-| `Photon.Nodes` | boundary (connected nodes, which are channel processes in a Registry; why commands are plain sends is in its moduledoc) | does I/O (Registry, sends, PubSub); `roster/2`, `sort/1` pure | `Photon.NodeRegistry`, Phoenix.PubSub |
+| `Photon.Nodes` | boundary (connected nodes, which are channel processes in a Registry; `command/3` and `push_op/2` reach a node's channel; why they are plain sends is in its moduledoc) | does I/O (Registry, sends, PubSub); `roster/2`, `sort/1` pure | `Photon.NodeRegistry`, Phoenix.PubSub |
 | `Photon.NodeDist` | boundary (packaged binaries, install script) | `dir/0`, `binary/1`, `available/0`, `version/0` do I/O; `outdated?/2`, `target/2`, `install_script/1` pure | `Hub`, EEx |
 | `Photon.Hub` | boundary (how nodes reach the hub) | reads app env; `node_socket_url/1` pure | none |
 | `Photon.Provision` | boundary (API and server: job table; jobs run as monitored tasks) | is a process; `System.cmd` ssh, temp files, PubSub | `Jobs`, `Script`, `NodeDist`, `Nodes`, `NodeKeys` (a fresh key per install, revoked on removal), `Photon.ProvisionTasks` |
@@ -214,7 +230,7 @@ hotspots still refer to the original snapshot.
 | `PhotonWeb.Shell` | boundary (LiveView hook for the app shell) | does I/O on mount and on the messages it rebuilds on; the derivations are `Nodes.roster/2`, `Settings.model_label/1` and `ChatGPT.ready?/1` | `Assistant`, `ChatGPT`, `NodeSessions`, `Nodes`, `Settings` |
 | `PhotonWeb.HealthPlug` | boundary | does I/O (response only) | Plug |
 | `PhotonWeb.NodeSocket` | boundary (node socket auth: the node's key against where it connected from; the socket's ID names the node and key generation) | does I/O through `NodeKeys` | `NodeKeys`, `ClientIP`, `NodeChannel` |
-| `PhotonWeb.NodeChannel` | boundary and worker (one per connected node; the server layer for a node, rule 11; joins only while its key is current, closes its connection when the key is replaced, and acts only on its own node's sessions) | is a process; DB through `NodeSessions`, Registry, PubSub | `NodeSessions`, `NodeKeys`, `Nodes`, `Photon.NodeRegistry` |
+| `PhotonWeb.NodeChannel` | boundary and worker (one per connected node; the server layer for a node, rule 11; joins only while its key is current, closes its connection when the key is replaced, and acts only on its own node's sessions and ops; hands `op.snapshot` and `op.output` to `Machines` and pushes what it returns, and is the only place an `op.start` is built, on `:joined` and `{:push_op, id}`) | is a process; DB through `NodeSessions` and `Machines`, Registry, PubSub | `NodeSessions`, `Machines`, `NodeKeys`, `Nodes`, `PhotonCore.Operation.Wire`, `Photon.NodeRegistry` |
 | `PhotonWeb.ModelRelayController` | boundary (the model relay for nodes: runs a node's request on the hub's ChatGPT sign-in and streams it back) | does I/O (settings file, streaming HTTP); the request runs in a linked task | `Settings`, `ChatGPT` (`stream/3`), `NodeAuthPlug` (in front), `Relay`, `MockAgent` |
 | `PhotonWeb.NodeInstallController` | boundary | does I/O (files) | `NodeDist` |
 | `PhotonWeb.ErrorHTML` | boundary (rendering) | pure | Phoenix |
@@ -247,6 +263,10 @@ hotspots still refer to the original snapshot.
 | `Photon.DataCase` | tests | Deletes every table, writes the real settings file, starts `Photon.Durable.Supervisor.children/0` for `@tag :durable` |
 | `PhotonWeb.ConnCase` | tests | Phoenix conn case on top of `DataCase` |
 | `Photon.TestProfile`, `Photon.TestProfile.Wait` | tests (fake profile and tool) | pure* |
+| `Photon.TestProfile.Raise`, `Photon.TestProfile.ShellThenRaise` | tests (tools that raise: in `execute/2`, and in `resume/2` after a shell op exists) | for the raise-runs-`on_interrupt` tests (step 1, hub rule 10) |
+| `Photon.MachineOps` | tests (builders) | A live tool task to hang an op on, the op it would start, and snapshot payloads as a node sends them |
+| `PhotonNode.TestOwner` | tests (an `Ops.Owner`) | Forwards an operation's checkpoints, reports and output to the test process, which answers the checkpoints |
+| `PhotonNode.TestLink` | tests (an `Executor.Link`) | Sends the test process each snapshot with the journal entry at that moment, and output; can hold the executor inside the link |
 | `Photon.HarnessProfiles` (`Block`, `Loop`), `Photon.Property.SlowProfile` | tests (profiles for regression tests and properties) | `Block` holds a model request until the test releases it; `SlowProfile` simulates model latency |
 
 ## Supervision trees
@@ -269,6 +289,7 @@ PhotonNode.AppSupervisor  one_for_one     (PhotonNode.Application)
     │       └── (Shell) Port -> bash wrapper -> the command's own process group (outside the BEAM)
     ├── PhotonNode.Harness.SessionSupervisor  DynamicSupervisor
     │   └── Harness.Coordinator           GenServer, :transient, one per session, runs a Harness.Session; stops itself after 10 idle minutes
+    ├── PhotonNode.Executor               GenServer, :permanent: the hub's operations and their journal (<data_dir>/ops); scans and resumes on start
     ├── PhotonNode.Connection             Slipstream client, :permanent; left out when connect: false (tests)
     └── :resume                           Task, :temporary: Harness.resume_all/0 restarts sessions that were running
 ```
@@ -279,14 +300,20 @@ PhotonNode.AppSupervisor  one_for_one     (PhotonNode.Application)
 - Model request tasks are linked to their coordinator (since the
   verification pass), so they die with it; the coordinator traps exits,
   monitors them and kills them on steer, stop or terminate.
-- Operations report to their owner (`Harness.Ops.Owner`), a session's
-  coordinator, by plain `send` through `Coordinator.report/2`
-  (`Coordinator.notify/2` before the refactor, then `report_op/2`), except
-  a shell's `process` checkpoint, which is a call
-  (`Coordinator.checkpoint/2`) answered once it is persisted. The
-  coordinator monitors operation processes. A coordinator that restarts
-  catches up by calling `Ops.add/2`, which asks a live operation to resend
-  its snapshot.
+- Operations report to their owner (`Harness.Ops.Owner`). For a
+  session's coordinator that is a plain `send` through
+  `Coordinator.report/2` (`Coordinator.notify/2` before the refactor, then
+  `report_op/2`), except a shell's `process` checkpoint, which is a call
+  (`Coordinator.checkpoint/2`) answered once it is persisted. For the
+  hub's operations the owner is `PhotonNode.Executor`, and both `report/2`
+  and `checkpoint/2` are calls with no timeout that catch every exit, so
+  a snapshot is journaled before the operation goes on and an executor
+  crash never takes an operation with it. Each owner monitors its
+  operation processes. One that restarts catches up by calling
+  `Ops.add/2`, which asks a live operation to resend its snapshot.
+- An `Executor` crash restarts it and the `Connection` (`rest_for_one`);
+  the operation processes keep running, and the restarted executor
+  re-monitors them from its journal scan.
 - `Harness.deliver/3` is a call (`Coordinator.deliver/3`) that returns
   once the input is persisted, retrying with a restarted coordinator.
 - Config sits in `:persistent_term` and every name is global, so a VM runs

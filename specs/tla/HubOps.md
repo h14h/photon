@@ -4,7 +4,8 @@
 (`docs/plans/step-1-machine-tools.md`, section 2): Blip's `shell` call as
 a durable tool task on the hub, its op row, the websocket between hub and
 node, and the node's executor with its journal, op processes and commands.
-It was written against the plan, before any of the code exists.
+It was written against the plan, before any of the code existed; "The
+code against the spec", near the end, compares it with the code as built.
 
 Checking the plan as written found five problems in its protocol (H1 to H5
 below), and a review of the plan three more (H6 to H8), which the spec
@@ -63,8 +64,8 @@ running it twice is harmless.
 | `StepError` | a step that ends its call with an error before its own commit: a raise `ToolTask` rescues, or an error result `Call` returns (hub rule 10). Its commit runs `on_interrupt` -> `cancel_tx` |
 | `UserStop` | `Durable.abort` marks the task |
 | `SchedAbort1`, `CommitEnd` | `Scheduler.stop_aborted`: kill the step, then the abort commit with `on_interrupt` -> `cancel_tx` (hub rule 7). Split in two because `cancel_tx` sends `op.cancel` before the commit is visible. `CommitEnd` is the second half of every commit that may send from inside: a Stop, a `StepError` or an offline abandon |
-| `ChanCmd` | the channel handles `:joined` (`Machines.joined/1`), `{:push_op, id}` (`Machines.push_for/1`) or `{:command, "op.cancel", _}`. The two reads set `pushed` on each row they push `op.start` for |
-| `HubRecv` | `handle_in("op.snapshot")` -> `Machines.snapshot/2` with `Machines.Rules.on_snapshot` (hub rules 3 to 6), then its pushes |
+| `ChanCmd` | the channel handles `:joined` (`Machines.joined/1`), `{:push_op, id}` (`Machines.push_for/2`) or `{:command, "op.cancel", _}`. The two reads set `pushed` on each row they push `op.start` for |
+| `HubRecv` | `handle_in("op.snapshot")` -> `Machines.snapshot/3` with `Machines.Rules.on_snapshot/3` (hub rules 3 to 6), then its pushes |
 | `HubCommitPending` | ack-early bug only: the commit after the ack |
 | `HubChanDown` | the channel of a dropped socket terminates |
 | `Connect` | the node connects; `NodeChannel.join/3` registers, taking over a stale channel, and sends itself `:joined` |
@@ -116,8 +117,15 @@ looks from here.
 An executor-only crash is left out (it restarts, re-monitors its ops and
 re-reads the journal; the journal and the commands don't change, and the
 op processes don't die with it, because their calls into it catch every
-exit). Its one effect on an op is `NodeResume`: a resumed op is told to
-cancel when its journal says so. Op-process crashes are left out too (a
+exit). Its main effect on an op is `NodeResume`: a resumed op is told to
+cancel when its journal says so. The code has one more, which the
+hub-plus-node test found. If the executor dies after it journals a
+shell's `process` checkpoint but before it answers, the shell gets
+`:ignored` and stops without spawning, and the resumed op fails with
+"shell execution outcome is unknown because process start was not
+recorded". The command never ran, so at most once holds, but the call
+gets a `failed` result that `ResultFromOwnOp` allows only after a node
+restart. Op-process crashes are left out too (a
 `failed` snapshot, `Executor.Rules.down/3`, the Coordinator spec's F9).
 A step that raises is not a crash: `ToolTask` rescues it and records an
 error result. That, and every error result `Call` returns, is
@@ -295,9 +303,9 @@ rejoin delivers the result.
 
 Fix (hub rule 2): only the channel builds `op.start`, from the row as it
 is when it pushes. `Machines.start/1` asks the channel to push the op
-(`{:push_op, id}`), and `Machines.push_for/1` returns `op.start` only for
-an open row without `cancel`. The channel pushes `op.ack` after the commit
-that finishes the row, and it handles one message at a time, so any
+(`{:push_op, id}`), and `Machines.push_for/2` returns `op.start` only for
+an open row of the channel's machine without `cancel`. The channel pushes
+`op.ack` after the commit that finishes the row, and it handles one message at a time, so any
 `op.start` it pushes after an `op.ack` sees the finished row and isn't
 sent. One sent before the `op.ack` arrives before it and finds the journal.
 
@@ -390,7 +398,7 @@ the row unconfirmed, and the node runs the command anyway before
 drops before any snapshot arrives. A model told "didn't run" would retry,
 and a command that isn't safe to run twice would run twice.
 
-Fix (hub rules 2 and 7): `push_for/1` and the join, which already go
+Fix (hub rules 2 and 7): `push_for/2` and the join, which already go
 through `Durable.commit/1`, set `pushed` on every row they return
 `op.start` for, and `abandon_tx` picks the message inside its commit:
 "didn't run" only when the row was never pushed and never confirmed.
@@ -439,9 +447,74 @@ above and the Coordinator spec, which keeps the op-process detail: the pid
 file, background children, F3, F8, F9, F11, K1); power loss (the journal
 writes are fsynced before they are acted on); journal write failures
 (node rule 8: they answer `failed` or forward without journaling, and run
-nothing); message sizes and the frame limit (node rule 9); a second hub;
+nothing; a `canceled` entry for an `op.cancel` with no journal that can't
+be written is answered with nothing, and the next join's `op.cancel`
+tries again); journal entries that exist but can't be read (the executor
+answers `op.start` for one with an unjournaled `failed` snapshot, "It may
+or may not have run.", unless a process runs the op, and `op.ack` then
+forgets it); message sizes and the frame limit (node rule 9); a second hub;
 output files and the 7-day sweep; an orphaned `resume/2` step (its commit
 is fenced, but an abandon's `op.cancel` would already be out, and the node
 would then report `canceled`, which the rerun delivers). A node restart
 that kills a running command is `cmd = "lost"`, which ends as `failed`:
 the `stopped` marker (node rule 10) is what makes the code agree.
+
+## The code against the spec
+
+Once build step 1's code was written, it was compared with this spec
+action by action (task A14 in the plan). No rule in the plan's section
+2.3 changed in a way the spec models, so the spec is unchanged apart from
+a comment, and the results above stand without a rerun. One rule's text
+grew: node rule 8 now says that a `canceled` entry for an `op.cancel` with
+no journal that can't be written is answered with nothing (see "Not
+modeled"). The function names in the tables above are the code's.
+
+Where the code is shaped differently from the actions, and why the spec
+still covers it:
+
+- `resume/2` (`Photon.MachineTools.Call`) reads the row with
+  `Machines.op_state/1` before its commit, and a call that stays parked
+  returns `{:wait, ...}` without reading the row again; only the claim
+  (`claim_tx/2`) and the give-up (`abandon_tx/2`) read it inside their
+  commits. So a call can park again on a row that finished after its
+  read, where `ResumeCommit` would claim it. The park changes only the
+  task and the finish only the row and the signal, so the two commits
+  commute. Parking first and finishing after reaches the same state, and
+  the spec allows that. A signal recorded before the park wakes the call
+  at once. The re-push (`Machines.repush/1`) is sent before the park
+  commit rather than inside it; it only asks the channel to read the row
+  through the Store, so when it is sent doesn't matter.
+- `NodeChannel.join/3` registers the channel before it sends itself
+  `:joined`, so a `{:push_op, id}` or an `op.cancel` sent in between is
+  handled before `:joined`, where `Connect` puts `"joined"` first in `cq`.
+  The channel handles nothing before `join/3` returns, so the node still
+  gets the join reply first. Each such request reads the row through the
+  Store when it is handled, or is an `op.cancel` the row already calls
+  for, so handling it before the join's read adds at most a duplicate
+  `op.start` or `op.cancel`, which the node handles idempotently (node
+  rules 2 and 7).
+- `Machines.start/1` asks for a push only when its commit inserted the
+  row or found it there, not after `{:error, :stopped}`, and
+  `Photon.Nodes.push_op/2` sends to any registered channel, `stale` ones
+  included. `ExecSend` asks whenever the channel is `up`. A push request
+  is only a read, so asking less often removes behaviors, and one sent to
+  a channel whose socket is gone is lost, as in `ExecSend` with a `stale`
+  channel.
+- The node's `Connection` handles its mailbox in arrival order. A
+  forward that arrived before the join reply is handled while the channel
+  isn't joined, and dropped; one that arrived after it is pushed after the
+  journal's snapshots. `NodeForward` allows both, and more orders besides.
+  So a stale non-terminal snapshot after the join's terminal one, which
+  the review of the node's connection raised, is a behavior the spec
+  already has (see "Modeling choices worth knowing").
+- The executor does some actions back to back that the spec takes as two:
+  `op.start` for a journaled op that nothing runs sends the journaled
+  snapshot and then resumes it (`RecvStart`, then `NodeResume`), and
+  `op.cancel` for such an op journals the cancel and resumes it with a
+  cancel (`RecvCancel`, then `NodeResume`). The other way round, a
+  `process` checkpoint the journal says is canceled is two steps in the
+  code. The executor answers `:cancel`, and the shell then reports
+  `canceled`, which the executor journals and forwards. In between, the
+  journal still says `ready` with `cancel` set, which is the state
+  `OpCheckpoint` starts from, so a node restart or another `op.cancel`
+  there does what the spec does from that state.

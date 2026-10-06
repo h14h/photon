@@ -1275,6 +1275,19 @@ designed; merge last.
 - `docs/verification.md`: a `HubOps` section.
 - `docs/architecture.md`: add `Photon.Machines`, `Photon.MachineTools` and
   `PhotonNode.Executor`.
+- As built (A14): the code was compared with section 2 and `HubOps.tla`
+  action by action. No rule the spec models changed (node rule 8's added
+  sentence covers a journal write failure, which the spec leaves out), so
+  the spec's logic is unchanged and TLC wasn't rerun. `HubOps.md` gained
+  "The code against the spec" (where the code's steps differ in shape,
+  and why the spec covers them), the code's names (`push_for/2`,
+  `snapshot/3`), a note on the executor crash the hub-plus-node test
+  found, and corrupt journal entries under "Not modeled"; one comment in
+  `HubOps.tla` names `snapshot/3`. `docs/architecture.md` also got the
+  executor's place in the node's supervision tree, the step 1 rows of
+  `Photon.Nodes`, `NodeChannel` and `Photon.Assistant`, and the new test
+  support modules. `docs/verification.md` also lists the two new property
+  tests and a table of H1 to H8 with the tests that pin each fix.
 
 A15. Final checks. After all of the above.
 - Section 6.3 in all three apps; run the e2e test; run Photon with
