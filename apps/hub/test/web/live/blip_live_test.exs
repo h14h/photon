@@ -2,14 +2,13 @@ defmodule PhotonWeb.BlipLiveTest do
   @moduledoc """
   Blip, floating over the pages, driven as a user would: the conversation
   (sending, the in-flight answer, the inbox while the assistant is busy),
-  the panel, what Blip says while it's closed, the page it offers as
-  context, and its mood.
+  the panel, what Blip says while it's closed, and its mood.
   """
 
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
-  import Photon.Fixtures, only: [call: 3, state_record: 1, state_record: 2]
+  import Photon.Fixtures, only: [call: 3, state_record: 1]
 
   alias Photon.{Assistant, Durable, NodeSessions}
   alias PhotonCore.Message
@@ -84,7 +83,7 @@ defmodule PhotonWeb.BlipLiveTest do
       conversation: c
     } do
       assert has_element?(blip, "#empty-state")
-      blip |> form("#composer", message: %{text: "nodes"}) |> render_submit()
+      blip |> form("#composer", message: %{text: "machines"}) |> render_submit()
       await_entry(c, &(&1.kind == "assistant" and &1.seq > 3))
 
       assert has_element?(blip, "#entries details", "Checked your machines")
@@ -96,45 +95,6 @@ defmodule PhotonWeb.BlipLiveTest do
       await_entry(c, &(&1.kind == "assistant"))
       _ = render(blip)
       assert has_element?(blip, "#entries [id^=entries-]")
-    end
-
-    test "node work a call left running settles when its report comes in", %{
-      conn: conn,
-      blip: blip,
-      conversation: c
-    } do
-      call = %{
-        "id" => "c1",
-        "name" => "run_on_node",
-        "arguments" => Jason.encode!(%{"node" => "box", "task" => "check disks"})
-      }
-
-      Durable.commit(fn tx ->
-        Durable.Tx.append(tx, c, "assistant", %{
-          "message" => PhotonCore.Message.assistant("Handing that to box.", [call])
-        })
-
-        Durable.Tx.append(tx, c, "tool_result", %{
-          "message" => PhotonCore.Message.tool_result("c1", "still running"),
-          "name" => "run_on_node",
-          "status" => "ok",
-          "details" => %{"status" => "running", "session_id" => "ns_1", "node" => "box"}
-        })
-      end)
-
-      assert has_element?(blip, "#action-c1[data-status=running]")
-
-      Durable.commit(
-        &Durable.Tx.append(&1, c, "user", %{
-          "message" => PhotonCore.Message.user("[Report from box] finished"),
-          "source" => %{"kind" => "node_report", "node" => "box", "session_id" => "ns_1"}
-        })
-      )
-
-      assert has_element?(blip, "#action-c1[data-status=done]")
-
-      {:ok, reloaded, _html} = live(conn, ~p"/")
-      assert has_element?(find_live_child(reloaded, "blip"), "#action-c1[data-status=done]")
     end
 
     test "shows the web searches an answer runs, and keeps them with the answer", %{
@@ -434,90 +394,6 @@ defmodule PhotonWeb.BlipLiveTest do
       )
 
       refute has_element?(blip, "[data-bubble]")
-    end
-
-    test "work you started yourself is mentioned only when it fails", %{blip: blip} do
-      {:ok, fine, _input} = NodeSessions.start("box", "uptime", title: "Uptime")
-      {:ok, broken, _input} = NodeSessions.start("box", "backup", title: "Backup")
-
-      for s <- [fine, broken],
-          do: :ok = NodeSessions.ingest(s.id, "box", 0, state_record("running"))
-
-      _ = render(blip)
-
-      :ok =
-        NodeSessions.ingest(fine.id, "box", 1, state_record("idle", %{"answer" => "up 3 days"}))
-
-      refute has_element?(blip, "[data-bubble]")
-
-      :ok =
-        NodeSessions.ingest(
-          broken.id,
-          "box",
-          1,
-          state_record("idle", %{"failure" => "disk full"})
-        )
-
-      assert has_element?(blip, "[data-bubble].is-failed", ~s(box couldn't finish "Backup".))
-
-      assert has_element?(
-               blip,
-               ~s([data-bubble] a[href="/sessions/#{broken.id}"]),
-               "Open session"
-             )
-
-      # Opened, the failure stays at the top of the panel until dismissed.
-      render_hook(blip, "panel", %{"to" => "open"})
-      assert has_element?(blip, "#blip-notice-bar", "Backup")
-      blip |> element("#blip-notice-bar button") |> render_click()
-      refute has_element?(blip, "#blip-notice-bar")
-    end
-  end
-
-  describe "the page under Blip" do
-    setup [:page, :opened]
-
-    test "a node session's page goes with the next message", %{blip: blip, conversation: c} do
-      {:ok, session, _input} = NodeSessions.start("box", "backup", title: "Nightly backup")
-
-      render_hook(blip, "page", %{"path" => "/sessions/#{session.id}"})
-      assert has_element?(blip, "#page-chip", "box / Nightly backup")
-
-      blip |> form("#composer", message: %{text: "nodes"}) |> render_submit()
-      entry = await_entry(c, &(&1.kind == "user"))
-
-      assert entry.data["source"]["page"]["session_id"] == session.id
-      assert PhotonCore.Message.text_of(entry.data["message"]) =~ ~s([Looking at box's session)
-
-      # Shown as typed, with what it was about; the scripted model still
-      # understood it.
-      await_entry(c, &(&1.kind == "assistant" and &1.seq > 3))
-      _ = render(blip)
-      assert has_element?(blip, "#entries", "About box / Nightly backup")
-      refute has_element?(blip, "#entries", "Looking at")
-      assert has_element?(blip, "#entries details", "Checked your machines")
-    end
-
-    test "can be left out, until the page changes", %{blip: blip, conversation: c} do
-      {:ok, session, _input} = NodeSessions.start("box", "backup", title: "Nightly backup")
-      render_hook(blip, "page", %{"path" => "/sessions/#{session.id}"})
-
-      blip |> element("#page-chip-dismiss") |> render_click()
-      refute has_element?(blip, "#page-chip")
-
-      blip |> form("#composer", message: %{text: "help"}) |> render_submit()
-      entry = await_entry(c, &(&1.kind == "user"))
-      assert entry.data["source"] == %{"kind" => "user"}
-
-      render_hook(blip, "page", %{"path" => "/sessions/#{session.id}"})
-      assert has_element?(blip, "#page-chip")
-    end
-
-    test "other pages offer nothing", %{blip: blip} do
-      for path <- ["/", "/nodes", "/sessions/missing", "/sessions/a/b"] do
-        render_hook(blip, "page", %{"path" => path})
-        refute has_element?(blip, "#page-chip")
-      end
     end
   end
 

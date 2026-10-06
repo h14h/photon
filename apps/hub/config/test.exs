@@ -51,4 +51,4 @@ config :photon, Photon.MachineTools, check_ms: 200, offline_limit_ms: 500
 # Harness tests use their own conversation profile alongside the assistant's.
 config :photon, Photon.Durable,
   profiles: %{"assistant" => Photon.Assistant, "test" => Photon.TestProfile},
-  kinds: %{"node_watch" => Photon.Assistant.NodeWatch, "routine" => Photon.Assistant.Routine}
+  kinds: %{"routine" => Photon.Assistant.Routine}

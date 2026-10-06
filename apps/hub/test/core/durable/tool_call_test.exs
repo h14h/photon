@@ -5,8 +5,8 @@ defmodule Photon.Durable.ToolCallTest do
 
   @schema %{
     "type" => "object",
-    "properties" => %{"node" => %{"type" => "string"}},
-    "required" => ["node"]
+    "properties" => %{"machine" => %{"type" => "string"}},
+    "required" => ["machine"]
   }
 
   describe "a call" do
@@ -16,13 +16,13 @@ defmodule Photon.Durable.ToolCallTest do
     end
 
     test "with valid arguments runs" do
-      assert ToolCall.plan(call("run", %{"node" => "box"}), 1, {:unsafe, @schema}) ==
-               {:execute, %{"node" => "box"}}
+      assert ToolCall.plan(call("run", %{"machine" => "box"}), 1, {:unsafe, @schema}) ==
+               {:execute, %{"machine" => "box"}}
     end
 
     test "with arguments that don't fit the schema ends with an error" do
       assert ToolCall.plan(call("run", %{}), 1, {:safe, @schema}) ==
-               {:finish, {:error, "Invalid arguments: missing required argument(s): node"}}
+               {:finish, {:error, "Invalid arguments: missing required argument(s): machine"}}
 
       bad_json = %{"id" => "c1", "name" => "run", "arguments" => "{nope"}
 
@@ -31,12 +31,12 @@ defmodule Photon.Durable.ToolCallTest do
     end
 
     test "rerun after a hub restart runs only if its tool is safe to repeat" do
-      args = call("run", %{"node" => "box"})
+      args = call("run", %{"machine" => "box"})
 
       assert {:finish, {:interrupted, "The hub restarted while this call was running" <> _}} =
                ToolCall.plan(args, 2, {:unsafe, @schema})
 
-      assert ToolCall.plan(args, 2, {:safe, @schema}) == {:execute, %{"node" => "box"}}
+      assert ToolCall.plan(args, 2, {:safe, @schema}) == {:execute, %{"machine" => "box"}}
     end
 
     test "finds its tool by name among the profile's tools" do

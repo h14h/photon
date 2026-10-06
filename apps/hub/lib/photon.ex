@@ -1,7 +1,7 @@
 defmodule Photon do
   @moduledoc """
-  The Photon hub: an always-on assistant that hands work to agent nodes on
-  the user's machines, and the web UI to talk to it.
+  The Photon hub: an always-on assistant that runs commands on the user's
+  machines through the nodes there, and the web UI to talk to it.
 
   The contexts (the APIs the web layer and nodes use):
 
@@ -22,7 +22,7 @@ defmodule Photon do
   Layers, after *Designing Elixir Systems with OTP*: each context's
   moduledoc names its pure core and its processes. The pure modules are
   `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall,
-  Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Report,
+  Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice,
   Transcript, MockScript}`, `Photon.Machines.{Rules, Roster}`,
   `Photon.MachineTools.{Translate, Wait}`, `Photon.NodeSessions.Mirror`,
   `Photon.NodeTranscript`, `Photon.Provision.{Jobs, Script}`, and
@@ -41,7 +41,6 @@ defmodule Photon do
     exports: [
       Assistant,
       Assistant.Notice,
-      Assistant.Page,
       Assistant.Transcript,
       Auth,
       ChatGPT,

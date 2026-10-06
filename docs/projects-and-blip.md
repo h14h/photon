@@ -84,7 +84,7 @@ running in each. It rests on two layers:
    unread, idle, or quiet (unresolved and untouched for a while). These are
    cheap to compute and drive the UI directly.
 2. **Blip's judgement on top.** State changes reach Blip as signals in its
-   conversation, the way node reports do today (`Assistant.NodeWatch`).
+   conversation, the way node reports did before step 1 removed them.
    Blip decides what is worth telling you, and in what words.
 
 Waking Blip's model on every state change would spend your ChatGPT plan
@@ -161,8 +161,9 @@ today's overview.
 the machine named on each tool call.
 
 **Blip panel.** Stays as it is, floating over every page. It knows which
-project or thread is on screen (`Assistant.Page`, extended past node
-sessions), so "what's left here?" means the thing you're looking at.
+project or thread is on screen (as `Assistant.Page` did for node sessions
+until step 1 removed them), so "what's left here?" means the thing you're
+looking at.
 
 ## Build order
 

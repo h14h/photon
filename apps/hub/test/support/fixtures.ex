@@ -121,19 +121,7 @@ defmodule Photon.Fixtures do
   def signal(key \\ "go", payload \\ %{}),
     do: %Signal{key: key, payload: payload, inserted_at: @at}
 
-  ## Node work and node sessions
-
-  @doc "Node work as the assistant's watcher and tools describe it."
-  def work(overrides \\ %{}) do
-    Map.merge(
-      %{"node" => "box", "title" => "Check disks", "session_id" => "ns_1", "input_id" => "in_1"},
-      Map.new(overrides)
-    )
-  end
-
-  @doc "The payload of a node input's signal."
-  def node_answer(answer \\ "all good", failure \\ nil),
-    do: %{"session_id" => "ns_1", "answer" => answer, "failure" => failure}
+  ## Node sessions
 
   @doc "The hub's record of a node session."
   def session(overrides \\ []) do

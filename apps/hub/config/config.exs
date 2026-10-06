@@ -28,7 +28,7 @@ config :photon, Photon.Repo,
 # What runs the assistant's conversation, and its own task kinds.
 config :photon, Photon.Durable,
   profiles: %{"assistant" => Photon.Assistant},
-  kinds: %{"node_watch" => Photon.Assistant.NodeWatch, "routine" => Photon.Assistant.Routine}
+  kinds: %{"routine" => Photon.Assistant.Routine}
 
 # How a machine tool call waits for its operation: it checks once a minute
 # (asking an online machine to push the op again), and gives up once the

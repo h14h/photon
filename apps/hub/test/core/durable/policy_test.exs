@@ -31,9 +31,9 @@ defmodule Photon.Durable.PolicyTest do
 
     test "background work doesn't hold up its owner's abort" do
       parent = task(id: "p", abort_requested: true)
-      watcher = task(id: "w", kind: "node_watch", owner_task_id: "p", background: true)
+      background = task(id: "w", kind: "routine", owner_task_id: "p", background: true)
 
-      assert Policy.ready_to_abort([parent, watcher]) == [parent]
+      assert Policy.ready_to_abort([parent, background]) == [parent]
     end
 
     test "only an unfinished task is aborted, and the abort records its outcome" do

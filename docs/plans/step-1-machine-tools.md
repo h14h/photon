@@ -620,15 +620,15 @@ results.
 
 - `machines` and `list machines` call `list_machines` (PR A changes them
   from `list_nodes`); `nodes` and `list nodes` keep calling `list_nodes`
-  until PR B
+  until PR B, which drops them (they answer with the help text)
 - `on <machine>: $ <command>` calls `shell`
 - `on <machine>: look at <path>` calls `view_image`
 - after a machine tool result, it relays the result text, and for an image
   says "Here it is." with the dimensions line
 
 PR A keeps `on <machine>: <task>` (anything not starting with `$` or
-`look at`) for `run_on_node`; PR B deletes it. Update the `@help` text to
-match.
+`look at`) for `run_on_node`; PR B deletes it, along with `check <session
+id>` and the node-report lines. Update the `@help` text to match.
 
 ## 4. Module plan
 
@@ -744,7 +744,7 @@ PR B:
   `PhotonNode.Ops` (":resend and :cancel to a local op process, which the
   executor monitors"); move the `NoSleep` entry to `PhotonNode.Ops.Shell`;
   drop the `PhotonCore.ID.new` allowances.
-- hub: drop `Assistant.Report`, `NodeSessions.*`, `NodeTranscript` from
+- hub: drop `Assistant.Report`, `Assistant.Page`, `NodeSessions.*`, `NodeTranscript` from
   `FunctionalCore`; drop `Photon.NodeSessions` and `Photon.Nodes` from
   `api_modules`; rename the registry entry; replace the `Photon.Nodes`
   `PreferCall` entry with `Photon.Machines` ("command/3, push_op/2 and
@@ -752,7 +752,7 @@ PR B:
   pushed again on every join and every minute while their call waits, and a
   replaced connection is waited for"); delete the
   `PhotonWeb.ModelRelayController` entry.
-- `lib/photon.ex`: drop `NodeSessions`, `NodeSessions.Session`,
+- `lib/photon.ex`: drop `Assistant.Page`, `NodeSessions`, `NodeSessions.Session`,
   `NodeTranscript`, `Nodes` from exports; rewrite the moduledoc.
 
 ## 5. What PR A adds and PR B deletes
@@ -783,10 +783,11 @@ Hub deletions:
   the `node_watch` kind in `config/config.exs` and `config/test.exs`.
 - The report half of `Assistant.Transcript` (`settle/3` for `node_report`,
   `report?`, `went_wrong?`), `Assistant.Notice`'s node-session statuses and
-  failures (it keeps Blip's own failures), `Assistant.Page`'s session
-  context (`session_id/1`, `of_session/1` and the session branches of
-  `note/2`, `label/1`, `strip/1`), and `background_input?/1`'s
-  `"node_report"` source (`"routine"` stays).
+  failures (it keeps Blip's own failures), `Assistant.Page` and the page
+  context it put in front of a message (node session pages were the only
+  kind, so nothing is left of it; step 2 brings it back for projects and
+  threads), and `background_input?/1`'s `"node_report"` source
+  (`"routine"` stays).
 - `Photon.NodeSessions` and `node_sessions/{mirror,session,input,event}.ex`;
   `Photon.NodeTranscript`; `Photon.Settings.node_config/1`;
   `PhotonWeb.SessionLive` and its route; `Photon.Nodes` (folded into
@@ -808,8 +809,11 @@ Hub UI, left coherent:
 - Nodes (`nodes_live.ex`): no Sessions field or count, no
   `:node_sessions_changed`; "Its sessions stay here" copy removed.
 - Blip (`blip_live.ex`): no `/sessions` links in bubbles, notices, sources
-  or details; no `node_report` source rendering; `page_at/1` no longer
-  looks up sessions; no `:node_sessions_changed` handler.
+  or details; no `node_report` source rendering; no page context (the
+  hook's page reports, the "About ..." chip and label); no
+  `:node_sessions_changed` handler, notice bar or failed-session bubble
+  (B1 does these, since they use what B1 removes); no node work in
+  Blip's `working` mood or its live output (B2, with the Shell).
 - `PhotonWeb.Shell`: no `NodeSessions.subscribe/0`, no `sessions` or
   `working` assigns; `nodes` comes from `Machines.roster/0`.
 
@@ -1083,7 +1087,8 @@ apps/hub
   `MockAgent`.
 - Rewrite: hub `test/boundary/assistant_tools_test.exs` (drop the node-tool
   describes, keep schedules), `test/core/assistant/work_test.exs` (keep the
-  routine parts), `test/core/assistant/{notice,page,transcript,mock_script}_test.exs`,
+  routine parts; renamed `routine_test.exs`), `test/core/assistant/{notice,transcript,mock_script}_test.exs`
+  (`page_test.exs` goes with `Assistant.Page`),
   `test/core/durable/tool_call_test.exs` (its two node-tool references),
   `test/boundary/assistant_test.exs`, `test/web/live/{blip_live,pages,overview_live,nodes_live}_test.exs`,
   `test/web/channels/node_channel_test.exs` (drop sync, ingest,
@@ -1330,10 +1335,14 @@ A15. Final checks. After all of the above.
 
 B1. Remove Blip's node-session tools.
 - Delete the files listed in section 5.2 under "Blip's node tools".
-- `apps/hub/lib/photon/assistant.ex`: `@tools`, deps (keep
-  `Photon.Nodes` until B4), `background_input?/1`, moduledoc.
-- `assistant/{prompt,mock_script,transcript,notice,page}.ex`: node-session
-  parts out; prompt and voice per section 3.7.
+- `apps/hub/lib/photon/assistant.ex`: `@tools`, deps (as built: both
+  `Photon.NodeSessions` and `Photon.Nodes` go, since nothing left in the
+  Assistant boundary calls them), `background_input?/1`, the `page:`
+  option of `send/2`, moduledoc.
+- `assistant/{prompt,mock_script,transcript,notice}.ex`: node-session
+  parts out; prompt and voice per section 3.7. Delete `assistant/page.ex`
+  (section 5.2).
+- `lib/photon_web/live/blip_live.ex`: the parts section 5.2 gives B1.
 - `config/config.exs`, `config/test.exs`: drop the `node_watch` kind.
 - Tests per section 6.2; keep the F6 test in `machine_tools_test.exs`.
 

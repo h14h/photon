@@ -22,8 +22,7 @@ defmodule Photon.Assistant.TranscriptTest do
 
       assert Transcript.index([asked, result]) == %{
                results: %{"c1" => Map.put(result.data, "entry_id", "e_2")},
-               calls: %{"c1" => asked},
-               settled: %{}
+               calls: %{"c1" => asked}
              }
 
       assert Transcript.call_id(result) == "c1"
@@ -127,70 +126,9 @@ defmodule Photon.Assistant.TranscriptTest do
     end
   end
 
-  describe "node work a call left running" do
-    defp left_running(call_id, session_id, seq) do
-      tool_result_entry(call_id, "still running",
-        id: "e_#{seq}",
-        seq: seq,
-        details: %{"status" => "running", "session_id" => session_id}
-      )
-    end
-
-    defp report(session_id, failed, seq) do
-      entry(
-        "user",
-        %{
-          "message" => PhotonCore.Message.user("[Report from box]"),
-          "source" => %{"kind" => "node_report", "session_id" => session_id, "failed" => failed}
-        },
-        id: "e_#{seq}",
-        seq: seq
-      )
-    end
-
-    test "is settled by the next report for its session, the way the report says" do
-      results = %{
-        "c1" => left_running("c1", "ns_1", 1).data,
-        "c2" => left_running("c2", "ns_2", 2).data,
-        "c3" => tool_result_entry("c3", "finished", details: %{"session_id" => "ns_1"}).data
-      }
-
-      assert Transcript.settle(%{}, results, report("ns_1", false, 3)) ==
-               {%{"c1" => :done}, ["c1"]}
-
-      assert Transcript.settle(%{}, results, report("ns_2", true, 3)) ==
-               {%{"c2" => :error}, ["c2"]}
-
-      assert Transcript.settle(%{}, results, user_entry("hi")) == {%{}, []}
-    end
-
-    test "a follow-up to the same session waits for the next report" do
-      first = left_running("c1", "ns_1", 1)
-      follow_up = left_running("c2", "ns_1", 3)
-
-      index = Transcript.index([first, report("ns_1", false, 2), follow_up])
-      assert index.settled == %{"c1" => :done}
-
-      results = Map.put(index.results, "c2", follow_up.data)
-
-      assert {settled, ["c2"]} =
-               Transcript.settle(index.settled, results, report("ns_1", true, 4))
-
-      assert settled == %{"c1" => :done, "c2" => :error}
-    end
-
-    test "shows as running until settled, then as the report says" do
-      result = left_running("c1", "ns_1", 1).data
-      assert Transcript.action_status(result, result["details"]) == :running
-      assert Transcript.action_status(result, result["details"], :done) == :done
-      assert Transcript.action_status(result, result["details"], :error) == :error
-    end
-  end
-
   describe "a tool call's status" do
-    test "follows its result and the node work's details" do
+    test "follows its result" do
       assert Transcript.action_status(nil, %{}) == :pending
-      assert Transcript.action_status(%{"status" => "ok"}, %{"status" => "running"}) == :running
       assert Transcript.action_status(%{"status" => "ok"}, %{"status" => "failed"}) == :error
       assert Transcript.action_status(%{"status" => "ok"}, %{}) == :done
       assert Transcript.action_status(%{"status" => "aborted"}, %{}) == :stopped
@@ -275,22 +213,10 @@ defmodule Photon.Assistant.TranscriptTest do
   end
 
   describe "the outcome of new entries" do
-    defp report(failed) do
-      entry("user", %{
-        "message" => PhotonCore.Message.user("[Report from box]"),
-        "source" => %{"kind" => "node_report", "node" => "box", "failed" => failed}
-      })
-    end
-
     test "a run that finishes is done" do
       assert Transcript.outcome([assistant_entry("Checked.")], true, false) == :done
       assert Transcript.outcome([assistant_entry("Checking.")], true, true) == nil
       assert Transcript.outcome([user_entry("hi")], false, true) == nil
-    end
-
-    test "a report is done if the node work went fine, an error if it failed" do
-      assert Transcript.outcome([report(false)], false, true) == :done
-      assert Transcript.outcome([report(true)], false, true) == :error
     end
 
     test "a failed run or tool call is an error, even as the run ends" do
