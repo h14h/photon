@@ -31,7 +31,14 @@ defmodule Photon.Threads do
 
   Starting a thread makes the row, the conversation and the first message
   in one commit, so there is never a thread without its first message or a
-  conversation without its row. Starting one and sending one a message
+  conversation without its row.
+
+  A thread's first title is made from its first message
+  (`Photon.Threads.Rules.title/1`). The same commit creates a background
+  task, `Photon.Threads.Titling`, that asks the model once for a short
+  title when the first run ends; the owner can also rename a thread
+  (`rename/2`). Either change announces `{:projects_changed, project_id}`,
+  so the sidebar, the pages and Blip's chip show the new title. Starting one and sending one a message
   move its `active_at` and announce `{:projects_changed, project_id}`
   (through `Photon.Projects.threads_changed_tx/2`) in the same commit.
   Whether a thread is running is derived from its durable run
@@ -63,7 +70,7 @@ defmodule Photon.Threads do
   alias Photon.{Durable, MachineTools, Projects, Repo, Settings, Transcript}
   alias Photon.Durable.{Entry, Submission, Tx}
   alias Photon.Projects.Project
-  alias Photon.Threads.{Prompt, Rules, Thread, Tools}
+  alias Photon.Threads.{Prompt, Rules, Thread, Titling, Tools}
 
   @profile "thread"
 
@@ -89,8 +96,9 @@ defmodule Photon.Threads do
 
   @doc """
   Starts a thread in project `project_id` with the user's first message:
-  the thread's row, its conversation and the message, in one commit. The
-  title comes from the message. Errors: `:blank` when the message has no
+  the thread's row, its conversation, the message and the task that names
+  the thread after its first run, in one commit. The first title comes
+  from the message. Errors: `:blank` when the message has no
   text, `:not_found` when the project doesn't exist; either makes nothing.
   """
   @spec start(String.t(), String.t()) :: {:ok, Thread.t()} | {:error, :blank | :not_found}
@@ -115,12 +123,73 @@ defmodule Photon.Threads do
           })
 
         _submission = Durable.submit_tx(tx, conversation.id, text, source: user())
+        :ok = title_later(tx, conversation.id, title, text)
         :ok = Projects.threads_changed_tx(tx, project.id)
         {:ok, thread}
 
       nil ->
         {:error, :not_found}
     end
+  end
+
+  # The task that names the thread once its first run ends
+  # (`Photon.Threads.Titling`), unless the hub is set not to (tests).
+  defp title_later(tx, thread_id, title, text) do
+    with true <- Application.get_env(:photon, __MODULE__, [])[:auto_title] != false,
+         %{id: run_id} <- Tx.active_run(tx, thread_id) do
+      _task = Tx.create_task(tx, Titling.task(thread_id, run_id, title, text))
+      :ok
+    else
+      _off_or_no_run -> :ok
+    end
+  end
+
+  @doc """
+  Stores the title `Photon.Threads.Titling` asked the model for, inside
+  its commit, and announces it: only while the thread still has its first
+  title `fallback` (the owner may have renamed it), and only when there is
+  a new one (`title` is nil when the model gave none).
+  """
+  @spec titled_tx(Tx.t(), String.t(), String.t(), String.t() | nil) :: :ok
+  def titled_tx(tx, thread_id, fallback, title) do
+    case get(thread_id) do
+      %Thread{title: ^fallback} = thread when is_binary(title) and title != fallback ->
+        retitle_tx(tx, thread, title)
+
+      _renamed_gone_or_none ->
+        :ok
+    end
+  end
+
+  @doc """
+  Renames thread `thread_id` to what the owner typed (whitespace
+  collapsed, at most 80 characters; see `Photon.Threads.Rules.rename/1`),
+  and announces it. Errors: `:blank`, and `:not_found` when there is no
+  such thread.
+  """
+  @spec rename(String.t(), String.t()) :: {:ok, Thread.t()} | {:error, :blank | :not_found}
+  def rename(thread_id, text) do
+    with {:ok, title} <- Rules.rename(text),
+         do: Durable.commit(&rename_tx(&1, thread_id, title))
+  end
+
+  defp rename_tx(tx, thread_id, title) do
+    case get(thread_id) do
+      %Thread{} = thread ->
+        :ok = retitle_tx(tx, thread, title)
+        {:ok, %{thread | title: title}}
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
+  # The thread's title, and the announcement that updates the pages showing
+  # it. The conversation keeps its first title: nothing shows it, and only
+  # the harness writes its rows.
+  defp retitle_tx(tx, thread, title) do
+    _thread = Repo.update!(Ecto.Changeset.change(thread, title: title))
+    Projects.threads_changed_tx(tx, thread.project_id)
   end
 
   @doc """

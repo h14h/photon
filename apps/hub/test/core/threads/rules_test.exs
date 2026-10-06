@@ -20,26 +20,81 @@ defmodule Photon.Threads.RulesTest do
       assert Rules.title("\n  \n  Fix   the\tpump  \nand then the valves") == "Fix the pump"
     end
 
-    test "cuts a long line to 60 characters at a word boundary and adds ..." do
+    test "cuts a long line to 50 characters at a word boundary and adds ..." do
       line =
         "Check every zone of the irrigation system and write down which valves stick open in the cold"
 
       title = Rules.title(line)
-      assert title == "Check every zone of the irrigation system and write down..."
-      assert String.length(String.trim_trailing(title, "...")) <= 60
+      assert title == "Check every zone of the irrigation system and..."
+      assert String.length(String.trim_trailing(title, "...")) <= 50
     end
 
-    test "keeps a line of exactly 60 characters whole" do
-      line = String.duplicate("a", 60)
+    test "keeps a line of exactly 50 characters whole" do
+      line = String.duplicate("a", 50)
       assert Rules.title(line) == line
     end
 
     test "cuts one long word" do
-      assert Rules.title(String.duplicate("a", 70)) == String.duplicate("a", 60) <> "..."
+      assert Rules.title(String.duplicate("a", 70)) == String.duplicate("a", 50) <> "..."
+    end
+
+    test "leaves out Markdown's marks" do
+      assert Rules.title("## Fix the `pump`\nIt sticks.") == "Fix the pump"
+      assert Rules.title("- read **notes.md** first") == "read notes.md first"
+      assert Rules.title("> 1. check _zone 2_ valves") == "1. check zone 2 valves"
+      assert Rules.title("snake_case_name stays") == "snake_case_name stays"
     end
 
     test "has a fallback for a message with no text" do
       assert Rules.title(" \n ") == "Untitled thread"
+      assert Rules.title("```") == "Untitled thread"
+    end
+  end
+
+  describe "the model's title" do
+    test "the request shows the start of the first message and the first answer" do
+      %{system: system, messages: [message]} = Rules.title_request("read notes.md", "Zone 2.")
+      assert system =~ "2 to 6 words"
+      text = PhotonCore.Message.text_of(message)
+      assert text =~ "Its first answer:\n<<<\nZone 2.\n>>>"
+      assert Rules.requested_message(text) == "read notes.md"
+
+      %{messages: [message]} = Rules.title_request(String.duplicate("x", 2_000), nil)
+      text = PhotonCore.Message.text_of(message)
+      assert String.length(Rules.requested_message(text)) == 1_503
+      assert text =~ "(none yet)"
+
+      assert Rules.requested_message("Something else") == nil
+    end
+
+    test "is its answer's first line, without quotes, marks or an ending" do
+      assert Rules.model_title("Check disk space on local") == {:ok, "Check disk space on local"}
+      assert Rules.model_title("\n\"Fix the pump.\"\n") == {:ok, "Fix the pump"}
+      assert Rules.model_title("Title: **Weekly checklist**!") == {:ok, "Weekly checklist"}
+      assert Rules.model_title("\u201cZone 2 valves\u201d") == {:ok, "Zone 2 valves"}
+      assert Rules.model_title("# Plan the beds\nBecause...") == {:ok, "Plan the beds"}
+    end
+
+    test "is cut at 50 characters, and isn't one when it's empty or too long" do
+      assert {:ok, title} =
+               Rules.model_title("Investigate intermittent irrigation controller disconnections")
+
+      assert title == "Investigate intermittent irrigation controller"
+
+      assert Rules.model_title("  \n ") == :error
+      assert Rules.model_title("\"\"") == :error
+
+      assert Rules.model_title("This is a whole sentence about the thread that goes on and on") ==
+               :error
+    end
+  end
+
+  describe "rename/1" do
+    test "collapses whitespace, cuts at 80 characters and refuses a blank" do
+      assert Rules.rename("  Fix\n the   pump ") == {:ok, "Fix the pump"}
+      assert {:ok, long} = Rules.rename(String.duplicate("a", 100))
+      assert String.length(long) == 80
+      assert Rules.rename(" \n ") == {:error, :blank}
     end
   end
 

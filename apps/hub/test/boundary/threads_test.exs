@@ -15,6 +15,8 @@ defmodule Photon.ThreadsTest do
   alias Photon.Durable.{Conversation, Submission}
   alias Photon.Threads.Thread
 
+  import Ecto.Query, only: [from: 2]
+
   setup do
     {:ok, project} =
       Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
@@ -280,6 +282,79 @@ defmodule Photon.ThreadsTest do
       assert_raise RuntimeError, ~r/project no longer exists/, fn ->
         Threads.system_prompt(conversation)
       end
+    end
+  end
+
+  describe "titles" do
+    setup do
+      Application.put_env(:photon, Threads, auto_title: true)
+      on_exit(fn -> Application.put_env(:photon, Threads, auto_title: false) end)
+    end
+
+    # The thread's title task, as stored now.
+    defp title_task(thread_id) do
+      Repo.one!(
+        from(t in Durable.TaskRecord,
+          where: t.conversation_id == ^thread_id and t.kind == "thread_title"
+        )
+      )
+    end
+
+    # Waits until the thread's title task has finished.
+    defp titled!(thread_id) do
+      :ok = Threads.subscribe(thread_id)
+
+      if title_task(thread_id).status != "done" do
+        await_change(thread_id, fn changes ->
+          Enum.any?(changes.tasks, &(&1.kind == "thread_title" and &1.status == "done"))
+        end)
+      end
+
+      Threads.get(thread_id)
+    end
+
+    test "after its first run, the model names the thread, and the pages hear of it", %{
+      project: project
+    } do
+      fake_machine("box")
+      :ok = Projects.subscribe()
+      thread = running!(project, "pump")
+      project_id = project.id
+      assert_receive {:projects_changed, ^project_id}
+
+      # Background work waiting on the run: it doesn't make the thread busy.
+      assert %{status: "waiting", background: true} = title_task(thread.id)
+      assert thread.title == "on box: $ sleep 1000 # pump"
+
+      :ok = Threads.stop(thread.id)
+      assert %Thread{title: "Run sleep on box"} = titled!(thread.id)
+      assert_receive {:projects_changed, ^project_id}
+      refute Threads.busy?(thread.id)
+    end
+
+    test "a title the owner gave the thread meanwhile stays", %{project: project} do
+      fake_machine("box")
+      thread = running!(project, "pump")
+      assert {:ok, %Thread{title: "Pump check"}} = Threads.rename(thread.id, " Pump\ncheck ")
+
+      :ok = Threads.stop(thread.id)
+      assert %Thread{title: "Pump check"} = titled!(thread.id)
+    end
+
+    test "without a model the thread keeps its first title", %{project: project} do
+      Photon.ChatGPTStub.reset!()
+      Application.put_env(:photon, :mock_model, false)
+      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+
+      thread = start!(project, "Check the valves")
+      assert %Thread{title: "Check the valves"} = titled!(thread.id)
+    end
+
+    test "rename/2 refuses a blank title and a missing thread", %{project: project} do
+      id = idle_thread!(project, "Check the valves")
+      assert Threads.rename(id, "  ") == {:error, :blank}
+      assert Threads.rename("c_missing", "Valves") == {:error, :not_found}
+      assert Threads.get(id).title == "Check the valves"
     end
   end
 

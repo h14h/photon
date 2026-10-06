@@ -54,4 +54,12 @@ config :photon, Photon.Durable,
     "test" => Photon.TestProfile,
     "test_workdir" => Photon.TestProfile.Workdir
   },
-  kinds: %{"routine" => Photon.Assistant.Routine}
+  kinds: %{
+    "routine" => Photon.Assistant.Routine,
+    "thread_title" => Photon.Threads.Titling
+  }
+
+# Threads aren't named by the model after their first run, so no title task
+# outlives a test or retitles a thread under it; the tests of titling turn
+# it on.
+config :photon, Photon.Threads, auto_title: false

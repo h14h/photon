@@ -166,6 +166,11 @@ defmodule PhotonWeb.ContextFileLiveTest do
 
       assert view |> element("#file-meta") |> render() =~
                "Version 2, changed just now by &quot;Fix the pump&quot;"
+
+      # The thread's new title, when the model names it or the owner renames it.
+      {:ok, _thread} = Threads.rename(thread.id, "Pump check")
+      _ = :sys.get_state(Durable.Store)
+      assert view |> element("#file-meta") |> render() =~ "by &quot;Pump check&quot;"
     end
 
     test "the preview tab renders the Markdown, and the write tab comes back", %{conn: conn} do

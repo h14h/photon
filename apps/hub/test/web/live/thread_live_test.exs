@@ -326,6 +326,51 @@ defmodule PhotonWeb.ThreadLiveTest do
     assert ids -- Enum.uniq(ids) == []
   end
 
+  describe "the title" do
+    test "the owner renames the thread in place", %{conn: conn, project: project} do
+      thread = idle_thread!(project, "Fix the pump")
+      view = thread_page(conn, project, thread)
+      assert has_element?(view, "#thread-title", "Fix the pump")
+      refute has_element?(view, "#thread-rename-form")
+
+      view |> element("#thread-rename") |> render_click()
+      assert has_element?(view, ~s(#thread-title-input[value="Fix the pump"][phx-mounted]))
+
+      view |> element("#thread-rename-cancel") |> render_click()
+      assert has_element?(view, "#thread-title", "Fix the pump")
+
+      view |> element("#thread-rename") |> render_click()
+      view |> form("#thread-rename-form", thread: %{title: "  "}) |> render_submit()
+      assert has_element?(view, "#thread-rename-form", "Give it a title.")
+
+      view |> form("#thread-rename-form", thread: %{title: "Pump  check"}) |> render_submit()
+      refute has_element?(view, "#thread-rename-form")
+      assert has_element?(view, "#thread-title", "Pump check")
+      assert has_element?(view, "#side-thread-#{thread.id}", "Pump check")
+      assert page_title(view) =~ "Pump check"
+      assert Threads.get(thread.id).title == "Pump check"
+    end
+
+    test "the header, the sidebar and Blip's chip follow a new title", %{
+      conn: conn,
+      project: project
+    } do
+      thread = idle_thread!(project, "Fix the pump")
+      view = thread_page(conn, project, thread)
+      blip = find_live_child(view, "blip")
+      render_hook(blip, "page", %{"path" => ~p"/projects/garden/threads/#{thread.id}"})
+      assert has_element?(blip, "#page-chip", "About Garden / Fix the pump")
+
+      # As the model's title lands (Photon.Threads.Titling), or a rename elsewhere.
+      {:ok, _thread} = Threads.rename(thread.id, "Pump check")
+      _ = :sys.get_state(Photon.Durable.Store)
+
+      assert has_element?(view, "#thread-title", "Pump check")
+      assert has_element?(view, "#side-thread-#{thread.id}", "Pump check")
+      assert has_element?(blip, "#page-chip", "About Garden / Pump check")
+    end
+  end
+
   test "the page keeps clear of Blip's floating panel", %{conn: conn, project: project} do
     thread = idle_thread!(project, "Fix the pump")
     assert has_element?(thread_page(conn, project, thread), "#thread-page[data-blip-room]")

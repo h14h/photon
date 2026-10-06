@@ -26,7 +26,9 @@ defmodule PhotonWeb.BlipLive do
   a context file, a new thread, a thread) `Photon.Assistant.page_at/1`
   gives the page (`@page`). The message box shows it as a chip, "About
   Garden / Fix the pump"; its × leaves it out (`@page_dismissed`, until
-  the next page). A message sent with the chip goes with the page, and
+  the next page). When that project changes (`{:projects_changed, id}`,
+  through `PhotonWeb.Shell`: a new name, or a thread's new title), the
+  page is read again from its path (`@page_path`), so the chip keeps up. A message sent with the chip goes with the page, and
   the model sees a note of it in front of the message.
 
   The conversation is shared with a project's thread page.
@@ -82,6 +84,7 @@ defmodule PhotonWeb.BlipLive do
         bubbles: [],
         unread: 0,
         page: nil,
+        page_path: nil,
         page_dismissed: false
       )
       |> ConversationView.mount_conversation(Assistant.entries(conversation),
@@ -141,8 +144,10 @@ defmodule PhotonWeb.BlipLive do
     do: {:noreply, leave(socket, fn _bubble -> true end)}
 
   # The page under Blip changed (the hook reports each navigation).
-  def handle_event("page", %{"path" => path}, socket) when is_binary(path),
-    do: {:noreply, assign(socket, page: Assistant.page_at(path), page_dismissed: false)}
+  def handle_event("page", %{"path" => path}, socket) when is_binary(path) do
+    {:noreply,
+     assign(socket, page: Assistant.page_at(path), page_path: path, page_dismissed: false)}
+  end
 
   # The × on the page chip: the next messages go without it, until the next page.
   def handle_event("dismiss_page", _params, socket),
@@ -177,6 +182,11 @@ defmodule PhotonWeb.BlipLive do
         %{assigns: %{conversation: conversation}} = socket
       ),
       do: {:noreply, ConversationView.apply_live(socket, event)}
+
+  # The project on screen changed (its name, or a thread's title): the
+  # chip reads the page again. Through PhotonWeb.Shell's subscription.
+  def handle_info({:projects_changed, id}, %{assigns: %{page: %{"project_id" => id}}} = socket),
+    do: {:noreply, assign(socket, page: Assistant.page_at(socket.assigns.page_path))}
 
   def handle_info({:bubble_gone, id}, socket),
     do:

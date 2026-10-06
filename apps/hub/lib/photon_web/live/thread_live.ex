@@ -24,11 +24,15 @@ defmodule PhotonWeb.ThreadLive do
       (`Photon.Threads.subscribe/1`): the thread's commits, and its
       in-flight answer and running commands' output
     * `{:projects_changed, id}` (through `PhotonWeb.Shell`'s subscription):
-      for this project, reload it, since its name is in the header
+      for this project, reload it and the thread, since the project's name
+      and the thread's title are in the header (the title changes when the
+      model names the thread after its first run, or the owner renames it)
 
-  With Blip's floating panel open on a wide screen, the page keeps clear
-  of it (`data-blip-room`, see app.css), so the conversation stays
-  readable beside it.
+  The pencil by the title opens it in a small form in its place
+  (`#thread-rename-form`): Enter saves (`Photon.Threads.rename/2`), Esc
+  or Cancel puts the title back. With Blip's floating panel open on a
+  wide screen, the page keeps clear of it (`data-blip-room`, see app.css),
+  so the conversation stays readable beside it.
 
   Everything else the shell passes on (`{:durable_tasks, _}` among them)
   is ignored.
@@ -53,6 +57,7 @@ defmodule PhotonWeb.ThreadLive do
       {:ok,
        socket
        |> assign(page_title: title(project, thread), project: project, thread: thread)
+       |> assign(title_form: nil)
        |> conversation(thread)}
     else
       {:error, message} -> {:ok, gone(socket, message)}
@@ -133,6 +138,27 @@ defmodule PhotonWeb.ThreadLive do
     end
   end
 
+  # The title, edited in place: the pencil opens the form, Esc or Cancel
+  # closes it.
+  def handle_event("rename", _params, socket),
+    do: {:noreply, assign(socket, title_form: title_form(socket.assigns.thread.title))}
+
+  def handle_event("cancel_rename", _params, socket),
+    do: {:noreply, assign(socket, title_form: nil)}
+
+  def handle_event("save_title", %{"thread" => %{"title" => text}}, socket) do
+    case Threads.rename(socket.assigns.thread.id, text) do
+      {:ok, thread} ->
+        {:noreply, retitled(socket, thread)}
+
+      {:error, :blank} ->
+        {:noreply, assign(socket, title_form: title_form(text, "Give it a title."))}
+
+      {:error, :not_found} ->
+        {:noreply, gone(socket, no_thread(socket.assigns.project))}
+    end
+  end
+
   def handle_event("toggle_mode", _params, socket) do
     {:noreply, update(socket, :mode, &if(&1 == "steer", do: "follow_up", else: "steer"))}
   end
@@ -145,6 +171,21 @@ defmodule PhotonWeb.ThreadLive do
   def handle_event("withdraw", %{"id" => id}, socket) do
     :ok = withdraw(id, socket.assigns.queued)
     {:noreply, assign(socket, queued: Threads.queued(socket.assigns.thread.id))}
+  end
+
+  defp title_form(title, error \\ nil),
+    do:
+      to_form(%{"title" => title},
+        as: :thread,
+        errors: if(error, do: [title: {error, []}], else: [])
+      )
+
+  defp retitled(socket, thread) do
+    assign(socket,
+      thread: thread,
+      title_form: nil,
+      page_title: title(socket.assigns.project, thread)
+    )
   end
 
   # Only a message queued for this thread: the ID comes from the browser.
@@ -164,17 +205,21 @@ defmodule PhotonWeb.ThreadLive do
     do: {:noreply, ConversationView.apply_live(socket, event)}
 
   def handle_info({:projects_changed, id}, %{assigns: %{project: %{id: id}}} = socket) do
-    case Projects.get(id) do
-      %Project{} = project ->
+    case {Projects.get(id), reload(socket.assigns.thread)} do
+      {%Project{} = project, thread} ->
         {:noreply,
-         assign(socket, project: project, page_title: title(project, socket.assigns.thread))}
+         assign(socket, project: project, thread: thread, page_title: title(project, thread))}
 
-      nil ->
+      {nil, _thread} ->
         {:noreply, gone(socket)}
     end
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  # The thread as stored now, for its title (threads aren't deleted).
+  defp reload(nil), do: nil
+  defp reload(%Thread{id: id} = thread), do: Threads.get(id) || thread
 
   ## Rendering
 
@@ -253,13 +298,8 @@ defmodule PhotonWeb.ThreadLive do
           <div class="mx-auto flex w-full max-w-3xl items-center gap-3">
             <div class="min-w-0 flex-1">
               <.back_to_project project={@project} />
-              <h1
-                id="thread-title"
-                class="mt-0.5 truncate text-[17px] font-semibold tracking-tight text-ink"
-                title={@thread.title}
-              >
-                {@thread.title}
-              </h1>
+              <.title_line :if={is_nil(@title_form)} title={@thread.title} />
+              <.title_editor :if={@title_form} form={@title_form} />
             </div>
             <.status busy={@busy} />
             <%!-- Without a model the composer, and its Stop, give way to the sign-in. --%>
@@ -325,6 +365,71 @@ defmodule PhotonWeb.ThreadLive do
         />
       </div>
     </Layouts.app>
+    """
+  end
+
+  attr :title, :string, required: true
+
+  # The title, with a pencil to rename the thread.
+  defp title_line(assigns) do
+    ~H"""
+    <div class="group/title mt-0.5 flex min-w-0 items-center gap-1.5">
+      <h1
+        id="thread-title"
+        class="min-w-0 truncate text-[17px] font-semibold tracking-tight text-ink"
+        title={@title}
+      >
+        {@title}
+      </h1>
+      <button
+        type="button"
+        id="thread-rename"
+        phx-click="rename"
+        class="shrink-0 rounded-md p-1 text-ink-faint opacity-60 transition group-hover/title:opacity-100 hover:bg-sunken hover:text-ink focus-visible:opacity-100"
+        title="Rename"
+        aria-label="Rename this thread"
+      >
+        <.icon name="hero-pencil-micro" class="size-3.5" />
+      </button>
+    </div>
+    """
+  end
+
+  attr :form, Phoenix.HTML.Form, required: true
+
+  # The title in a box, in its place: Enter saves, Esc cancels.
+  defp title_editor(assigns) do
+    ~H"""
+    <.form
+      for={@form}
+      id="thread-rename-form"
+      phx-submit="save_title"
+      class="mt-0.5 flex items-start gap-1.5"
+    >
+      <div class="min-w-0 flex-1">
+        <.input
+          field={@form[:title]}
+          id="thread-title-input"
+          maxlength="80"
+          autocomplete="off"
+          aria-label="Title"
+          phx-mounted={JS.focus()}
+          phx-keydown="cancel_rename"
+          phx-key="Escape"
+          class="block h-8 w-full rounded-lg border border-accent/60 bg-surface px-2.5 text-[15px] font-semibold tracking-tight text-ink shadow-xs outline-none focus:ring-3 focus:ring-accent/15"
+        />
+      </div>
+      <.button type="submit" id="thread-rename-save" variant="primary" size="sm">Save</.button>
+      <.button
+        type="button"
+        id="thread-rename-cancel"
+        variant="ghost"
+        size="sm"
+        phx-click="cancel_rename"
+      >
+        Cancel
+      </.button>
+    </.form>
     """
   end
 

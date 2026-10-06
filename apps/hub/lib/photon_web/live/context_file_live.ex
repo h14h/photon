@@ -27,7 +27,8 @@ defmodule PhotonWeb.ContextFileLive do
   the old text.
 
   `{:projects_changed, id}` comes through `PhotonWeb.Shell` and keeps the
-  project's name current. A `:tick` once a minute redraws `#file-meta`, so
+  project's name, and the title of the thread that last wrote the file,
+  current. A `:tick` once a minute redraws `#file-meta`, so
   "changed just now" ages on a page left open. An unknown project or file goes back to `/`
   with a flash.
   """
@@ -120,6 +121,8 @@ defmodule PhotonWeb.ContextFileLive do
   defp replace(socket, file), do: socket |> load(file) |> update(:revision, &(&1 + 1))
 
   # "Version 4, changed 5 minutes ago by "Fix the pump"".
+  defp meta(nil), do: nil
+
   defp meta(%ContextFile{updated_by: by} = file) do
     titles = if by == "owner", do: %{}, else: Threads.titles([by])
     "Version #{file.version}, #{ProjectText.changed(file, titles, DateTime.utc_now())}"
@@ -249,8 +252,9 @@ defmodule PhotonWeb.ContextFileLive do
 
   def handle_info({:projects_changed, id}, %{assigns: %{project: %{id: id}}} = socket) do
     case Projects.get(id) do
+      # The meta line may name a thread whose title just changed.
       %Project{} = project ->
-        {:noreply, assign(socket, project: project)}
+        {:noreply, assign(socket, project: project, meta: meta(socket.assigns.file))}
 
       nil ->
         {:noreply, gone(socket, "There's no project called #{socket.assigns.project.slug}.")}
