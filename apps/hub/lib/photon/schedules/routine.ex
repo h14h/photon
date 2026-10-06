@@ -26,11 +26,6 @@ defmodule Photon.Schedules.Routine do
   pages say the schedule stopped; it never retries, since a firing that
   crashed would crash the same way again, and saving the schedule arms a
   fresh task.
-
-  Until Blip's tools move onto `Photon.Schedules`, a task without
-  `"schedule_id"` is one of Blip's routines in the old shape: its input
-  holds the `"prompt"`, and it posts into the task's conversation with the
-  consent check alone.
   """
 
   @behaviour Photon.Durable.TaskKind
@@ -44,17 +39,18 @@ defmodule Photon.Schedules.Routine do
 
   @doc """
   The routine task's attributes for `schedule`, waiting first for
-  `next_ms`; its request ID names the schedule's version, so one edit
-  makes one task.
+  `next_ms`. Its request ID is `request_id` when given (Blip's tool call,
+  so the call makes one schedule), or else names the schedule's version,
+  so one edit makes one task.
   """
-  @spec task(Schedule.t(), Rules.ms()) :: map()
-  def task(%Schedule{} = schedule, next_ms) do
+  @spec task(Schedule.t(), Rules.ms(), String.t() | nil) :: map()
+  def task(%Schedule{} = schedule, next_ms, request_id \\ nil) do
     %{
       kind: "routine",
       conversation_id: nil,
       background: true,
       phase: "start",
-      request_id: "schedule:#{schedule.id}:v#{schedule.version}",
+      request_id: request_id || "schedule:#{schedule.id}:v#{schedule.version}",
       input: %{
         "schedule_id" => schedule.id,
         "first_at" => next_ms,
@@ -83,15 +79,6 @@ defmodule Photon.Schedules.Routine do
     end)
   end
 
-  def step("fire", task, runtime) do
-    allowed? = Schedules.consent?()
-
-    Runtime.commit(runtime, fn tx ->
-      :ok = fire_old(tx, task, allowed?)
-      after_fire(task, System.system_time(:millisecond))
-    end)
-  end
-
   @impl true
   def on_fail(%TaskRecord{id: task_id, input: %{"schedule_id" => id}}, _reason, tx) do
     case Repo.get(Schedule, id) do
@@ -104,6 +91,7 @@ defmodule Photon.Schedules.Routine do
     end
   end
 
+  # Every routine task names its schedule; there is nothing to record otherwise.
   def on_fail(_task, _reason, _tx), do: :ok
 
   ## A firing
@@ -210,30 +198,6 @@ defmodule Photon.Schedules.Routine do
     do: {outcome, schedule.last_thread_id}
 
   defp source(schedule), do: %{"kind" => "routine", "schedule_id" => schedule.id}
-
-  ## Blip's routines in the old shape, until Blip's tools use Photon.Schedules
-
-  defp fire_old(tx, task, true = _allowed) do
-    _prompt =
-      Durable.submit_tx(tx, task.conversation_id, Rules.text(task.input["prompt"]),
-        request_id: "routine:#{task.id}:#{runs(task)}",
-        source: %{"kind" => "routine", "schedule_id" => task.id}
-      )
-
-    :ok
-  end
-
-  defp fire_old(tx, task, false = _allowed) do
-    _note =
-      Tx.append(
-        tx,
-        task.conversation_id,
-        "error",
-        Rules.skipped_note(:blip, task.input["prompt"])
-      )
-
-    :ok
-  end
 
   ## The timer
 

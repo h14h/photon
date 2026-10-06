@@ -9,7 +9,9 @@ defmodule Photon.AssistantTest do
 
   @moduletag :durable
 
-  alias Photon.{Assistant, Projects, Threads}
+  alias Photon.{Assistant, Projects, Schedules, Threads}
+  alias Photon.Durable.Submission
+  alias Photon.Schedules.Schedule
 
   setup do
     conversation = Assistant.conversation_id()
@@ -65,19 +67,50 @@ defmodule Photon.AssistantTest do
       Application.put_env(:photon, :mock_model, false)
       on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
 
-      Durable.create_task(%{
-        kind: "routine",
-        conversation_id: c,
-        background: true,
-        phase: "fire",
-        input: %{"prompt" => "check disks", "first_at" => 0, "every_ms" => nil},
-        waiting: %{"until" => 0}
-      })
+      now = System.system_time(:millisecond)
+
+      {:ok, schedule} =
+        Durable.commit(
+          &Schedules.blip_schedule_tx(
+            &1,
+            c,
+            %{"prompt" => "check disks", "in_minutes" => 0},
+            "schedule:t_x",
+            now
+          )
+        )
 
       note = await_entry(c, &(&1.kind == "error"), 10_000)
       assert note.data["notice"]
       assert note.data["message"] =~ ~s{Skipped "check disks"}
       refute Enum.any?(Durable.entries(c), &(&1.data["source"]["kind"] == "routine"))
+      assert %{last_outcome: "skipped_consent"} = Repo.get!(Schedule, schedule.id)
+    end
+
+    test "Stop withdraws the user's queued messages and keeps scheduled prompts", %{
+      conversation: c
+    } do
+      fake_node("box")
+      {:ok, first} = Assistant.send("on box: $ sleep 30")
+      assert Durable.busy?(c)
+
+      {:ok, mine} = Assistant.send("and also this")
+
+      {:ok, scheduled} =
+        Durable.submit(c, "[Scheduled] hello",
+          source: %{"kind" => "routine", "schedule_id" => "sc_hello"}
+        )
+
+      assert {mine.status, scheduled.status} == {"queued", "queued"}
+      assert Submission.background?(scheduled)
+      refute Submission.background?(mine)
+
+      Assistant.stop()
+      assert %{status: "unanswered"} = await_settled(c, first.id)
+      assert Repo.get!(Submission, mine.id).status == "withdrawn"
+
+      # The scheduled prompt runs once the stopped run has ended.
+      assert %{status: "done"} = await_settled(c, scheduled.id)
     end
   end
 

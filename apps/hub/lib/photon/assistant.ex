@@ -5,7 +5,8 @@ defmodule Photon.Assistant do
 
   It runs commands and looks at images on the user's machines itself, with
   the machine tools (`Photon.MachineTools`: `shell`, `view_image`,
-  `list_machines`), and keeps a memory and a list of schedules. Its prompt
+  `list_machines`), keeps a memory, and keeps schedules of its own in
+  `Photon.Schedules`, which post into its conversation. Its prompt
   lists the skills turned on for Blip (`Photon.Skills`), and `load_skill`
   loads one.
 
@@ -36,6 +37,7 @@ defmodule Photon.Assistant do
       Photon.Durable,
       Photon.MachineTools,
       Photon.Projects,
+      Photon.Schedules,
       Photon.Settings,
       Photon.Skills,
       Photon.Threads,
@@ -48,8 +50,8 @@ defmodule Photon.Assistant do
   @behaviour Photon.Durable.Profile
 
   alias Photon.Assistant.{Memory, Page, Prompt, Tools}
-  alias Photon.{Durable, MachineTools, Projects, Settings, Skills, Threads, Transcript}
-  alias Photon.Durable.{Entry, Submission, TaskRecord}
+  alias Photon.{Durable, MachineTools, Projects, Schedules, Settings, Skills, Threads, Transcript}
+  alias Photon.Durable.{Entry, Submission}
   alias Photon.Projects.Project
   alias PhotonCore.Message
 
@@ -196,20 +198,15 @@ defmodule Photon.Assistant do
 
   @doc """
   Stops the current run and withdraws the user's queued messages.
-  Scheduled prompts that are waiting stay, since they come from background
-  work the stop leaves running.
+  Scheduled prompts that are waiting stay
+  (`Photon.Durable.Submission.background?/1`), since they come from
+  schedules the stop leaves running.
   """
   @spec stop() :: :ok
   def stop do
-    _run = Durable.abort(conversation_id(), withdraw: &(not background_input?(&1)))
+    _run = Durable.abort(conversation_id(), withdraw: &(not Submission.background?(&1)))
     :ok
   end
-
-  @doc false
-  # Input from the assistant's own background work, which a stop keeps.
-  @spec background_input?(Submission.t()) :: boolean()
-  def background_input?(submission),
-    do: get_in(submission.content, ["source", "kind"]) == "routine"
 
   @spec memory() :: String.t()
   def memory, do: Durable.doc("global", "memory", Memory.empty())["text"]
@@ -221,28 +218,26 @@ defmodule Photon.Assistant do
   end
 
   @doc """
-  Blip's scheduled routines that haven't finished. Only those in the old
-  shape (a `"prompt"` in the input, no `"schedule_id"`): a project's
-  schedules are `Photon.Schedules`' and don't show here.
+  Blip's own schedules that are waiting for their next time, soonest
+  first (`Photon.Schedules.list/1`), for the home page and Blip's
+  `list_schedules`. A project's schedules are on its page.
   """
-  @spec schedules() :: [TaskRecord.t()]
-  def schedules,
-    do: Enum.reject(Durable.live_tasks("routine"), &Map.has_key?(&1.input, "schedule_id"))
+  @spec schedules() :: [Schedules.listed()]
+  def schedules, do: Enum.filter(Schedules.list(:blip), &(&1.state == :waiting))
 
-  @doc "Cancels a scheduled routine (the web page's cancel button)."
-  @spec cancel_schedule(String.t()) :: :ok
-  def cancel_schedule(id) do
-    _routine = Durable.abort_task(id, background: true)
-    :ok
-  end
+  @doc """
+  Deletes one of Blip's schedules (the home page's cancel button). A
+  project's schedule, or one already gone, is `{:error, :not_found}`.
+  """
+  @spec cancel_schedule(String.t()) :: :ok | {:error, :not_found}
+  def cancel_schedule(id), do: Durable.commit(&Schedules.delete_tx(&1, id, :blip))
 
   ## The conversation, for the web pages
 
   @doc """
   Subscribes to the conversation (`{:durable, id, changes}` and
-  `{:live, id, event}`) and to global changes (`{:durable, "global",
-  changes}` for memory, `{:durable_tasks, tasks}` for schedules); see
-  `Photon.Durable.subscribe/1`.
+  `{:live, id, event}`); see `Photon.Durable.subscribe/1`. Blip's
+  schedules announce on `Photon.Schedules.subscribe/0`.
   """
   @spec subscribe(String.t()) :: :ok
   def subscribe(conversation_id), do: Durable.subscribe(conversation_id)

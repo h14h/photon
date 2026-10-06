@@ -7,7 +7,7 @@ defmodule PhotonWeb.OverviewLiveTest do
 
   import Phoenix.LiveViewTest
 
-  alias Photon.{Assistant, Durable, Machines, NodeKeys}
+  alias Photon.{Assistant, Durable, Machines, NodeKeys, Projects, Schedules}
 
   @moduletag :durable
 
@@ -40,26 +40,50 @@ defmodule PhotonWeb.OverviewLiveTest do
     assert has_element?(view, ~s(#work-hint-new-project[href="/projects/new"]), "start a project")
   end
 
-  test "lists schedules, which can be cancelled", %{view: view} do
-    assert has_element?(view, "#schedules", "None yet")
+  # One of Blip's schedules, as its `schedule` tool makes it.
+  defp blip_schedule!(args, request_id) do
+    now = System.system_time(:millisecond)
 
-    routine =
-      Durable.create_task(%{
-        kind: "routine",
-        conversation_id: Assistant.conversation_id(),
-        background: true,
-        input: %{
-          "prompt" => "check disks",
-          "first_at" => 4_102_444_800_000,
-          "every_ms" => 3_600_000
-        }
+    {:ok, schedule} =
+      Durable.commit(
+        &Schedules.blip_schedule_tx(&1, Assistant.conversation_id(), args, request_id, now)
+      )
+
+    schedule
+  end
+
+  test "lists Blip's schedules, which can be cancelled", %{view: view} do
+    assert has_element?(view, "#no-schedules", "None yet")
+
+    schedule =
+      blip_schedule!(
+        %{"prompt" => "check disks", "at" => "2100-01-01T00:00:00Z", "every_minutes" => 60},
+        "schedule:t_disks"
+      )
+
+    assert has_element?(view, "#schedule-#{schedule.id}", "check disks")
+    assert has_element?(view, "#schedule-#{schedule.id}", "Every 1h · next Jan 1, 00:00 UTC")
+
+    view |> element("#schedule-#{schedule.id} button") |> render_click()
+    assert Schedules.get(schedule.id) == nil
+    refute has_element?(view, "#schedule-#{schedule.id}")
+  end
+
+  test "leaves out a project's schedules, which are on its page", %{view: view} do
+    {:ok, project} =
+      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+
+    {:ok, theirs} =
+      Schedules.create({:project, project.id}, %{
+        "prompt" => "Check the backups",
+        "at" => "2100-01-01T00:00:00Z",
+        "repeat" => "once",
+        "target" => "new_thread"
       })
 
-    _ = render(view)
-    assert has_element?(view, "#schedule-#{routine.id}", "check disks")
-    assert has_element?(view, "#schedule-#{routine.id}", "Every 1h")
+    mine = blip_schedule!(%{"prompt" => "check disks", "in_minutes" => 60}, "schedule:t_mine")
 
-    view |> element("#schedule-#{routine.id} button") |> render_click()
-    assert Durable.task(routine.id).abort_requested
+    assert has_element?(view, "#schedule-#{mine.id}", "Once, ")
+    refute has_element?(view, "#schedule-#{theirs.id}")
   end
 end

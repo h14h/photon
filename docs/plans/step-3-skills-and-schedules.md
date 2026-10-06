@@ -798,6 +798,18 @@ same names, parameters and result texts, rewritten over
 - `cancel_schedule`: `Schedules.delete_tx(tx, id, :blip)` inside the
   result's commit; a project schedule's ID gets "There is no schedule
   sc_...." as an unknown one does.
+- (K6) `blip_schedule_tx/5` keeps the call's request ID as the routine
+  task's (`Routine.task/3`; a project schedule's task keeps
+  `"schedule:<id>:v<version>"`) and first looks for a schedule whose task
+  has it, returning that one. The commit fence already stops a rerun
+  after a restart; this also makes a call run twice with the same task ID
+  make one schedule, as today's `Durable.create_task` did. It returns
+  `{:ok, schedule}` or `{:error, message}` (`Rules.from_tool/2`'s), and
+  announces `{:schedules_changed, nil}`. The result's words come from
+  `Schedules.when_text/1` (a schedule to `Rules.when_text/2`), since
+  `Photon.Schedules` exports only `Schedule`. `delete_tx(tx, id, scope)`
+  is `:ok`, or `{:error, :not_found}` for a missing schedule or one
+  outside `scope` (`:blip` or `{:project, id}`).
 
 None of them takes a project or a thread, so Blip can't schedule work in
 projects until step 4 gives it project tools. Blip's panel floats over
@@ -816,6 +828,14 @@ Garden's Schedules list. Two texts change so Blip says so instead:
   conversation; it can't schedule work in a project." `Photon.Assistant.schedules/0`
 and `cancel_schedule/1` become `Schedules.list(:blip)` and
 `Schedules.delete/1`, for the home page.
+
+(K6) `Assistant.schedules/0` is `Schedules.list(:blip)` with only the
+waiting ones (a next time), for `list_schedules` and the home page, so
+the filter lives in one place. `Assistant.cancel_schedule/1` is
+`Schedules.delete_tx(tx, id, :blip)` in a commit, returning `:ok` or
+`{:error, :not_found}`, so the home page's button can't delete a
+project's schedule by its ID. `OverviewLive` reads and cancels through
+these two and subscribes with `Schedules.subscribe/0`.
 
 `Assistant.stop/0` keeps scheduled prompts that are waiting, as today;
 the check moves to `Photon.Durable.Submission.background?/1` (section
@@ -1197,6 +1217,9 @@ words for each state, above), and `target(schedule, thread_title)`. Times are re
   empty text stays "None yet. Ask Blip for something recurring, like
   "every morning, check my disks"." and gains "Project schedules are on
   each project's page."
+- (K6) The rows are a stream in `#schedule-list` (inside `#schedules`),
+  with DOM IDs `#schedule-<id>` and the empty text as `#no-schedules`,
+  shown only when the stream is empty.
 
 ### 6.9 The conversation view
 
@@ -1260,10 +1283,10 @@ No changes.
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Schedules` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Repo, Photon.Settings, Photon.Threads, PhotonCore, Ecto], exports: [Schedule]` | `subscribe/0`, `list/1`, `get/1` (with `next_at` and `state`), `create/2`, `update/3` (id, params, version), `delete/1`, `run_now/1`, `consent?/0`, `new_params/1` (the form's defaults for a time), and for Blip's tools `blip_schedule_tx/5`, `delete_tx/3`. Moduledoc: targets, the routine, the fence, consent and overlap, that there is no process. |
+| `Photon.Schedules` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Repo, Photon.Settings, Photon.Threads, PhotonCore, Ecto], exports: [Schedule]` | `subscribe/0`, `list/1`, `get/1` (with `next_at` and `state`), `create/2`, `update/3` (id, params, version), `delete/1`, `run_now/1`, `consent?/0`, `new_params/1` (the form's defaults for a time), and for Blip's tools `blip_schedule_tx/5`, `delete_tx/3` and `when_text/1` (K6). Moduledoc: targets, the routine, the fence, consent and overlap, that there is no process. |
 | `Photon.Schedules.Schedule` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 3.1. |
 | `Photon.Schedules.Rules` | core | `use Boundary, type: :strict, deps: []` | `schedule/2`, `from_tool/2`, `arm/4`, `fired_through/3`, `next_after/3`, `target/1` (a row's target), `fire/2`, `text/1` (`"[Scheduled] " <> prompt`), `skipped_note/2`, `request_id/3`, `when_text/2` (the tool's "first at ..., then every N minutes"), `datetime/1` (milliseconds to the row's `DateTime`), `next_hour/1` (the form's starting time, K5c). `now` is always Unix milliseconds passed in; the row's times (`first_at` in `schedule/2`'s and `from_tool/2`'s answer, `when_text/2`'s argument) are `DateTime`s. |
-| `Photon.Schedules.Routine` | worker logic (task kind, inside `Photon.Schedules`) | none of its own | Moved from `Photon.Assistant.Routine` (section 3.3). `task/2` (a row's task attributes, waiting first for the armed time), `step/3`, `on_fail/3`, and `fire_tx/3` (a firing's commit, shared with `run_now/1`). |
+| `Photon.Schedules.Routine` | worker logic (task kind, inside `Photon.Schedules`) | none of its own | Moved from `Photon.Assistant.Routine` (section 3.3). `task/3` (a row's task attributes, waiting first for the armed time; the optional third argument is Blip's tool call's request ID, K6), `step/3`, `on_fail/3`, and `fire_tx/3` (a firing's commit, shared with `run_now/1`). |
 | `Photon.Threads` | boundary | unchanged deps | `start_tx/4`, `send_tx/4` public with `:source` and `:request_id`. `stop/1` unchanged (section 3.7). |
 | `Photon.Durable.Submission` | data | unchanged | `background?/1`. |
 | `Photon.Assistant.Tools.Schedule`, `.ListSchedules`, `.CancelSchedule` | boundary (durable tools) | inside `Photon.Assistant` | Section 3.6, including `schedule`'s new description line. |
@@ -1791,6 +1814,10 @@ K6. Blip's schedules over the context. After K5c.
 - `apps/hub/lib/photon_web/live/overview_live.ex`: `Schedules.list(:blip)`
   and `Schedules.subscribe/0` (times stay as today's text until K8).
 - Remove K5c's no-`schedule_id` case from `schedules/routine.ex`.
+- (K6) Done as listed; the choices it made are recorded in sections 3.6
+  and 6.8 under "(K6)". `Assistant.subscribe/1` no longer mentions
+  `{:durable_tasks, _}` for schedules; `subscribe_tasks/0` stays for the
+  shell's sidebar.
 - Tests: `test/boundary/assistant_tools_test.exs`, `assistant_test.exs`,
   `assistant/prompt_test.exs` (the schedule line),
   `test/web/live/overview_live_test.exs`, `assistant/mock_script_test.exs`

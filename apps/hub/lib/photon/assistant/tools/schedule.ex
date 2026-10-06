@@ -1,9 +1,20 @@
 defmodule Photon.Assistant.Tools.Schedule do
-  @moduledoc false
+  @moduledoc """
+  Blip's `schedule` tool (section 3.6 of
+  `docs/plans/step-3-skills-and-schedules.md`): one of Blip's own
+  schedules, which posts its prompt into Blip's conversation, once or
+  repeatedly. It can't schedule work in a project; the owner adds those on
+  the project's page.
+
+  The schedule is made inside the commit that records the call's result
+  (`Photon.Schedules.blip_schedule_tx/5`), with the call's task ID as its
+  request ID, so a call that runs again after a restart makes one
+  schedule.
+  """
   @behaviour Photon.Durable.Tool
 
-  alias Photon.Durable
   alias Photon.Durable.ToolAPI
+  alias Photon.Schedules
 
   @impl true
   def name, do: "schedule"
@@ -11,6 +22,7 @@ defmodule Photon.Assistant.Tools.Schedule do
   @impl true
   def description do
     "Schedule a prompt for yourself, once or repeatedly. When it's due, it arrives here as a message starting with \"[Scheduled]\" and you act on it. " <>
+      "It posts here, in your own conversation; it can't schedule work in a project. " <>
       "Give the time as in_minutes, or at (ISO 8601 with a UTC offset, such as 2026-10-04T09:00:00-05:00)."
   end
 
@@ -43,47 +55,18 @@ defmodule Photon.Assistant.Tools.Schedule do
   @impl true
   def execute(args, api) do
     now = System.system_time(:millisecond)
-
-    with {:ok, first_at} <- first_at(args, now),
-         {:ok, every} <- every(args["every_minutes"]) do
-      task =
-        Durable.create_task(%{
-          kind: "routine",
-          conversation_id: api.conversation_id,
-          background: true,
-          request_id: "schedule:" <> ToolAPI.task_id(api),
-          phase: "start",
-          input: %{"prompt" => args["prompt"], "first_at" => first_at, "every_ms" => every}
-        })
-
-      when_text =
-        first_at |> DateTime.from_unix!(:millisecond) |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
-
-      repeat = if every, do: ", then every #{div(every, 60_000)} minutes", else: ""
-      {:ok, "Scheduled #{task.id}: first at #{when_text}#{repeat}.", %{"schedule_id" => task.id}}
-    end
+    request_id = "schedule:" <> ToolAPI.task_id(api)
+    {:commit, &schedule(&1, api.conversation_id, args, request_id, now)}
   end
 
-  defp first_at(%{"in_minutes" => minutes}, now) when is_integer(minutes) and minutes >= 0,
-    do: {:ok, now + minutes * 60_000}
+  defp schedule(tx, conversation_id, args, request_id, now) do
+    case Schedules.blip_schedule_tx(tx, conversation_id, args, request_id, now) do
+      {:ok, schedule} ->
+        {:ok, "Scheduled #{schedule.id}: #{Schedules.when_text(schedule)}.",
+         %{"schedule_id" => schedule.id}}
 
-  defp first_at(%{"at" => at}, now) when is_binary(at) do
-    case DateTime.from_iso8601(at) do
-      {:ok, dt, _offset} ->
-        ms = DateTime.to_unix(dt, :millisecond)
-        if ms < now - 60_000, do: {:error, "#{at} is in the past."}, else: {:ok, ms}
-
-      {:error, _} ->
-        {:error, "at must be ISO 8601 with a UTC offset, like 2026-10-04T09:00:00-05:00."}
+      {:error, message} ->
+        {:error, message}
     end
   end
-
-  defp first_at(%{"every_minutes" => every}, now) when is_integer(every),
-    do: {:ok, now + every * 60_000}
-
-  defp first_at(_args, _now), do: {:error, "Give in_minutes or at."}
-
-  defp every(nil), do: {:ok, nil}
-  defp every(minutes) when is_integer(minutes) and minutes >= 5, do: {:ok, minutes * 60_000}
-  defp every(_), do: {:error, "every_minutes must be at least 5."}
 end

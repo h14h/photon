@@ -29,4 +29,13 @@ defmodule Photon.Durable.Submission do
     field(:answer_entry_id, :string)
     timestamps(type: :utc_datetime_usec)
   end
+
+  @doc """
+  Whether the submission came from background work rather than someone
+  typing it: today, a schedule's firing (source kind `"routine"`). Blip's
+  Stop keeps these waiting, since the work that sent them keeps running.
+  """
+  @spec background?(t()) :: boolean()
+  def background?(%__MODULE__{content: content}),
+    do: is_map(content) and get_in(content, ["source", "kind"]) == "routine"
 end

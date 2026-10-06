@@ -1,5 +1,10 @@
 defmodule Photon.Assistant.Tools.ListSchedules do
-  @moduledoc false
+  @moduledoc """
+  Blip's `list_schedules` tool: Blip's own schedules that are waiting for
+  their next time (`Photon.Assistant.schedules/0`), with their `sc_` IDs
+  for `cancel_schedule`. A project's schedules aren't Blip's, so they
+  aren't listed.
+  """
   @behaviour Photon.Durable.Tool
 
   @impl true
@@ -27,17 +32,9 @@ defmodule Photon.Assistant.Tools.ListSchedules do
     end
   end
 
-  defp schedule_line(task) do
-    next =
-      (task.checkpoint["next_at"] || task.input["first_at"])
-      |> DateTime.from_unix!(:millisecond)
-      |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
-
-    every =
-      if task.input["every_ms"],
-        do: ", every #{div(task.input["every_ms"], 60_000)} min",
-        else: ""
-
-    ~s(- #{task.id}: next #{next}#{every}: "#{task.input["prompt"]}")
+  defp schedule_line(%{schedule: schedule, next_at: next_at}) do
+    next = Calendar.strftime(next_at, "%Y-%m-%d %H:%M UTC")
+    every = if schedule.every_minutes, do: ", every #{schedule.every_minutes} min", else: ""
+    ~s(- #{schedule.id}: next #{next}#{every}: "#{schedule.prompt}")
   end
 end

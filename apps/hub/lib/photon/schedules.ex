@@ -38,6 +38,11 @@ defmodule Photon.Schedules do
   (`Photon.Schedules.Rules.arm/4` and `fired_through/3`), so an edit
   neither skips nor repeats a firing.
 
+  Blip's `schedule` and `cancel_schedule` tools change Blip's schedules
+  inside the commits that record their results (`blip_schedule_tx/5`,
+  `delete_tx/3`), so a tool call that runs again after a restart makes
+  or removes nothing twice.
+
   Every change and every firing announces `{:schedules_changed,
   project_id}` (nil for Blip's) on `"schedules"` after its commit.
 
@@ -283,7 +288,9 @@ defmodule Photon.Schedules do
   # old one hadn't fired. When there is none (a one-off edited after it
   # fired, keeping its time), the old, finished task stays the row's, so
   # the row still reads as done. A new schedule has no old task.
-  defp arm_tx(tx, schedule, old, now) do
+  # Blip's tool names the task's request ID; otherwise it is the
+  # schedule's version (`Photon.Schedules.Routine.task/3`).
+  defp arm_tx(tx, schedule, old, now, request_id \\ nil) do
     fired_through = old && Rules.fired_through(old.input, old.checkpoint, old.status)
 
     case next_ms(schedule, now, fired_through) do
@@ -292,7 +299,7 @@ defmodule Photon.Schedules do
 
       next_ms ->
         :ok = retire_tx(tx, old)
-        task = Tx.create_task(tx, Routine.task(schedule, next_ms))
+        task = Tx.create_task(tx, Routine.task(schedule, next_ms, request_id))
         schedule |> Ecto.Changeset.change(task_id: task.id) |> Repo.update!()
     end
   end
@@ -310,18 +317,105 @@ defmodule Photon.Schedules do
   defp every_ms(%Schedule{every_minutes: minutes}), do: minutes * 60_000
 
   @doc """
+  Makes one of Blip's own schedules from its `schedule` tool's arguments
+  (`prompt`, `in_minutes` or `at`, `every_minutes`, read by
+  `Photon.Schedules.Rules.from_tool/2` with the tool's messages) inside
+  the commit that records the tool's result, so the row and its routine
+  task exist only if the result does. The schedule posts into
+  `conversation_id`, Blip's conversation.
+
+  `request_id` is the tool call's (`"schedule:<task id>"`), kept as the
+  routine task's request ID: a call that runs again with it gets the
+  schedule it already made, not a second one. `now` is the clock the
+  tool read (Unix milliseconds), shared by the rules and the arming, so a
+  time the rules accept always fires.
+  """
+  @spec blip_schedule_tx(Tx.t(), String.t(), map(), String.t(), Rules.ms()) ::
+          {:ok, Schedule.t()} | {:error, String.t()}
+  def blip_schedule_tx(tx, conversation_id, args, request_id, now) do
+    case made_for(request_id) do
+      %Schedule{} = schedule ->
+        {:ok, schedule}
+
+      nil ->
+        with {:ok, attrs} <- Rules.from_tool(args, now) do
+          schedule =
+            Repo.insert!(
+              struct!(
+                %Schedule{
+                  id: PhotonCore.ID.new("sc_"),
+                  conversation_id: conversation_id,
+                  version: 1,
+                  created_by: "blip"
+                },
+                attrs
+              )
+            )
+
+          schedule = arm_tx(tx, schedule, nil, now, request_id)
+          :ok = announce(tx, schedule)
+          {:ok, schedule}
+        end
+    end
+  end
+
+  # The schedule whose routine task carries `request_id`, if one was made.
+  defp made_for(request_id) do
+    query =
+      from(s in Schedule,
+        join: t in TaskRecord,
+        on: t.id == s.task_id,
+        where: t.request_id == ^request_id
+      )
+
+    Repo.one(query)
+  end
+
+  @doc """
+  When a schedule fires, in the words of Blip's tools: "first at
+  2026-10-08 09:00 UTC, then every 1440 minutes", or only the first part
+  for a one-off.
+  """
+  @spec when_text(Schedule.t()) :: String.t()
+  def when_text(%Schedule{} = schedule),
+    do: Rules.when_text(schedule.first_at, schedule.every_minutes)
+
+  @doc """
   Deletes schedule `id` (a project's or Blip's) and retires its task in
   the same commit, so nothing fires afterwards. Threads it started stay.
   """
   @spec delete(String.t()) :: :ok | {:error, :not_found}
   def delete(id) do
     Durable.commit(fn tx ->
-      with {:ok, schedule} <- fetch_schedule(id) do
-        :ok = retire_tx(tx, schedule.task_id && Tx.get_task(tx, schedule.task_id))
-        _deleted = Repo.delete!(schedule)
-        announce(tx, schedule)
-      end
+      with {:ok, schedule} <- fetch_schedule(id), do: remove_tx(tx, schedule)
     end)
+  end
+
+  @doc """
+  Deletes schedule `id` inside the caller's commit, as `delete/1` does,
+  but only when it is in `scope`: Blip's `cancel_schedule` tool passes
+  `:blip`, so a project's schedule is `{:error, :not_found}` to it, like
+  one that doesn't exist.
+  """
+  @spec delete_tx(Tx.t(), String.t(), scope()) :: :ok | {:error, :not_found}
+  def delete_tx(tx, id, scope) do
+    case fetch_schedule(id) do
+      {:ok, schedule} ->
+        if in_scope?(schedule, scope), do: remove_tx(tx, schedule), else: {:error, :not_found}
+
+      {:error, :not_found} ->
+        {:error, :not_found}
+    end
+  end
+
+  defp in_scope?(%Schedule{project_id: nil}, :blip), do: true
+  defp in_scope?(%Schedule{project_id: project_id}, {:project, project_id}), do: true
+  defp in_scope?(%Schedule{}, _scope), do: false
+
+  defp remove_tx(tx, schedule) do
+    :ok = retire_tx(tx, schedule.task_id && Tx.get_task(tx, schedule.task_id))
+    _deleted = Repo.delete!(schedule)
+    announce(tx, schedule)
   end
 
   # Marks a schedule's task for abort, background work included (a
