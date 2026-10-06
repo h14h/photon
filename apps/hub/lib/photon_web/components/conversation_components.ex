@@ -451,6 +451,7 @@ defmodule PhotonWeb.ConversationComponents do
   attr :id_prefix, :string, default: ""
   attr :placeholder, :string, default: "Ask Blip anything..."
   attr :class, :any, default: nil, doc: "added to the outer row"
+  attr :autofocus, :boolean, default: false, doc: "whether the message box takes focus on load"
 
   @spec composer(map()) :: Phoenix.LiveView.Rendered.t()
   def composer(assigns) do
@@ -488,6 +489,7 @@ defmodule PhotonWeb.ConversationComponents do
             id={"#{@id_prefix}composer-input"}
             name={@form[:text].name}
             phx-hook=".Composer"
+            autofocus={@autofocus}
             rows="1"
             placeholder={if(@busy, do: "Add to the conversation...", else: @placeholder)}
             class="block max-h-60 min-h-11 w-full resize-none bg-transparent px-3.5 pt-2.5 pb-1 text-[14.5px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"

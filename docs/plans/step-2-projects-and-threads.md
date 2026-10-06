@@ -689,11 +689,15 @@ concerns it), and the edit form.
 ### 5.6 New thread
 
 `PhotonWeb.ThreadLive`, action `:new`, at `/projects/:slug/threads/new`:
-the heading "New thread in Garden", the purpose (clamped to three lines),
-and the composer (section 5.8) with the placeholder "What should this
-thread work on?". Sending calls `Threads.start(project_id, text)` and
-navigates to the new thread. Without a model it shows the sign-in panel
-(`#thread-sign-in`) in place of the composer, as Blip does.
+the heading "New thread in Garden" (`#thread-new-heading`), the purpose
+clamped to three lines (`#thread-new-purpose`), and the composer (section
+5.8) with the placeholder "What should this thread work on?", focused on
+load, and under it a line saying the thread works in the project's folder
+on whichever machine is named. Sending calls `Threads.start(project_id,
+text)` and navigates to the new thread. Without a model it shows the
+sign-in panel (`#thread-sign-in-to-talk`, the shared `sign_in_to_talk/1`
+with the `"thread-"` prefix) in place of the composer, as Blip does; the
+thread page does the same.
 
 ### 5.7 The thread page
 
@@ -717,6 +721,8 @@ navigates to the new thread. Without a model it shows the sign-in panel
   button).
 - Stop calls `Threads.stop/1`: `Durable.abort/1` on the conversation,
   which withdraws everything queued (a thread has no background input).
+  A withdraw is only passed on for a message in the page's own queue,
+  since `Threads.withdraw/1` doesn't check whose submission it is.
 - The composer row keeps clear of Blip's face in the corner
   (`blip-clear-x`), and the page makes room for a pinned Blip panel as
   every page does.
@@ -749,8 +755,8 @@ Blip's own. Three moves:
   context-file tools join the existing ones; like the machine calls',
   they're in the present while the call runs ("Reading notes.md"). As
   built, `composer/1` also takes `placeholder` (default "Ask Blip
-  anything...") and `class` (added to its outer row, for the thread
-  page's `blip-clear-x`), and `sign_in_to_talk/1` takes `who` (default
+  anything..."), `class` (added to its outer row, for the thread
+  page's `blip-clear-x`) and `autofocus` (the new-thread page's), and `sign_in_to_talk/1` takes `who` (default
   "Blip"), so neither has Blip's words built in.
 - `PhotonWeb.ConversationView` (plain functions over a socket, no
   process, in the web layer): `mount_conversation(socket, entries, opts)`
