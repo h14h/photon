@@ -20,8 +20,9 @@ defmodule Photon.Durable do
   steer (joins the run after the current tool round) or a follow-up (starts
   the next run once this one answers). See `submit/3`.
 
-  What a conversation runs with (model, system prompt, tools) comes from its
-  profile, a `Photon.Durable.Profile` module named in config:
+  What a conversation runs with (model, system prompt, tools, and optionally
+  the working directory its tools use on machines) comes from its profile, a
+  `Photon.Durable.Profile` module named in config:
 
       config :photon, Photon.Durable, profiles: %{"assistant" => Photon.Assistant}
 
@@ -158,6 +159,23 @@ defmodule Photon.Durable do
   @doc "Whether the conversation has a run in progress."
   @spec busy?(String.t()) :: boolean()
   def busy?(conversation_id), do: Repo.one(Queries.active_run(conversation_id)) != nil
+
+  @doc """
+  Which of `conversation_ids` have a run in progress (`busy?/1` for many,
+  in one query).
+  """
+  @spec busy([String.t()]) :: MapSet.t(String.t())
+  def busy([]), do: MapSet.new()
+  def busy(conversation_ids), do: conversation_ids |> Queries.busy() |> Repo.all() |> MapSet.new()
+
+  @doc "Which conversations with `profile` have a run in progress, in one query."
+  @spec busy_in_profile(String.t()) :: MapSet.t(String.t())
+  def busy_in_profile(profile),
+    do: profile |> Queries.busy_in_profile() |> Repo.all() |> MapSet.new()
+
+  @doc "A conversation's newest entry of `kind`, or nil."
+  @spec last_entry(String.t(), String.t()) :: Entry.t() | nil
+  def last_entry(conversation_id, kind), do: Repo.one(Queries.last_entry(conversation_id, kind))
 
   @doc "The conversation's inbox: queued submissions, oldest first."
   @spec queued(String.t()) :: [Submission.t()]

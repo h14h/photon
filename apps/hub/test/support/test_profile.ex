@@ -7,6 +7,8 @@ defmodule Photon.TestProfile do
 
     * `"wait"` calls the wait tool, then answers `"waited"`
     * `"raise"` calls the raise tool, then answers `"waited"`
+    * `"where"` calls the `where` tool, which reports the call's working
+      directory once `"go"` fires, then answers `"waited"`
     * `"shell then raise on <machine>"` calls `shell_then_raise` there,
       then answers `"waited"`
     * `"fail"` makes the model request fail
@@ -31,7 +33,12 @@ defmodule Photon.TestProfile do
 
   @impl Photon.Durable.Profile
   def tools(_conversation),
-    do: [Photon.TestProfile.Wait, Photon.TestProfile.Raise, Photon.TestProfile.ShellThenRaise]
+    do: [
+      Photon.TestProfile.Wait,
+      Photon.TestProfile.Raise,
+      Photon.TestProfile.ShellThenRaise,
+      Photon.TestProfile.Where
+    ]
 
   @impl PhotonCore.LLM.Mock
   def respond(request) do
@@ -43,6 +50,7 @@ defmodule Photon.TestProfile do
 
   defp reply("wait"), do: Message.assistant("", [Mock.call("wait", %{})])
   defp reply("raise"), do: Message.assistant("", [Mock.call("raise", %{})])
+  defp reply("where"), do: Message.assistant("", [Mock.call("where", %{})])
 
   defp reply("shell then raise on " <> machine),
     do:

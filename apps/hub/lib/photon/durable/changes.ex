@@ -10,6 +10,8 @@ defmodule Photon.Durable.Changes do
     * `:tasks` - every task the commit changed, for the task panel and the
       scheduler
     * `:signals` - the keys of signals the commit recorded
+    * `:announcements` - `{topic, message}` for each `Tx.announce/3`, in
+      commit order; they belong to no conversation's scope
   """
 
   # Functional core: no processes, no I/O.
@@ -34,7 +36,8 @@ defmodule Photon.Durable.Changes do
   @type t :: %{
           scopes: %{String.t() => summary()},
           tasks: [TaskRecord.t()],
-          signals: [String.t()]
+          signals: [String.t()],
+          announcements: [{String.t(), term()}]
         }
 
   @spec summarize([Tx.change()]) :: t()
@@ -42,7 +45,8 @@ defmodule Photon.Durable.Changes do
     %{
       scopes: by_scope(changes),
       tasks: for({:task, task} <- changes, do: task),
-      signals: for({:signal, key} <- changes, do: key)
+      signals: for({:signal, key} <- changes, do: key),
+      announcements: for({:announce, topic, message} <- changes, do: {topic, message})
     }
   end
 
@@ -63,6 +67,7 @@ defmodule Photon.Durable.Changes do
   defp scope({:submission, submission}), do: submission.conversation_id
   defp scope({:task, task}), do: task.conversation_id
   defp scope({:signal, _key}), do: nil
+  defp scope({:announce, _topic, _message}), do: nil
 
   # Built back to front by prepending, so each list keeps commit order.
   defp summary(changes) do

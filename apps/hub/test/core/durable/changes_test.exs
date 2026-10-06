@@ -40,6 +40,25 @@ defmodule Photon.Durable.ChangesTest do
     assert summary.signals == ["go"]
   end
 
+  test "collects announcements in commit order, in no conversation's scope" do
+    e = user_entry("a")
+
+    summary =
+      Changes.summarize([
+        {:announce, "projects", {:projects_changed, "p_1"}},
+        {:entry, e},
+        {:announce, "project:p_1", {:project_files_changed, "p_1", "notes.md"}}
+      ])
+
+    assert summary.announcements == [
+             {"projects", {:projects_changed, "p_1"}},
+             {"project:p_1", {:project_files_changed, "p_1", "notes.md"}}
+           ]
+
+    assert summary.scopes == %{"c_1" => %{entries: [e], docs: [], submissions: [], tasks: []}}
+    refute Changes.wakes_scheduler?(summary)
+  end
+
   test "wakes the scheduler only when a task changed or a signal fired" do
     refute Changes.wakes_scheduler?(Changes.summarize([{:entry, user_entry("a")}]))
     assert Changes.wakes_scheduler?(Changes.summarize([{:signal, "go"}]))
@@ -47,6 +66,6 @@ defmodule Photon.Durable.ChangesTest do
   end
 
   test "an empty commit announces nothing" do
-    assert Changes.summarize([]) == %{scopes: %{}, tasks: [], signals: []}
+    assert Changes.summarize([]) == %{scopes: %{}, tasks: [], signals: [], announcements: []}
   end
 end

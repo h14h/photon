@@ -201,4 +201,104 @@ defmodule Photon.DurableTest do
       assert Durable.entries(c) == []
     end
   end
+
+  describe "announcements" do
+    setup :conversation
+
+    test "reach a subscriber only once the commit is stored, in order", %{conversation: c} do
+      Photon.Events.subscribe("test:announce")
+      test = self()
+
+      # What the test process had been sent by the time the commit's
+      # function finished: the announcements aren't out yet.
+      during =
+        Durable.commit(fn tx ->
+          :ok = Tx.announce(tx, "test:announce", {:first, c})
+          _entry = Tx.append(tx, c, "user", %{"message" => PhotonCore.Message.user("x")})
+          :ok = Tx.announce(tx, "test:announce", {:second, c})
+          {:messages, messages} = Process.info(test, :messages)
+          messages
+        end)
+
+      refute Enum.any?(during, &match?({:first, _}, &1))
+      assert_receive {:first, ^c}
+      assert_receive {:second, ^c}
+      assert [%{kind: "user"}] = Durable.entries(c)
+    end
+
+    test "a commit that rolls back or raises announces nothing", %{conversation: c} do
+      Photon.Events.subscribe("test:announce")
+
+      assert {:rolled_back, :no} =
+               Durable.commit(fn tx ->
+                 :ok = Tx.announce(tx, "test:announce", :rolled_back)
+                 Tx.rollback(:no)
+               end)
+
+      assert_raise RuntimeError, "boom", fn ->
+        Durable.commit(fn tx ->
+          :ok = Tx.announce(tx, "test:announce", :raised)
+          raise "boom"
+        end)
+      end
+
+      # A later commit's announcement arrives, and nothing before it did.
+      Durable.commit(&Tx.announce(&1, "test:announce", {:later, c}))
+      assert_receive {:later, ^c}
+      refute_received :rolled_back
+      refute_received :raised
+    end
+
+    test "can't be made outside a commit" do
+      stale = Durable.commit(fn tx -> tx end)
+      assert_raise ArgumentError, ~r/outside its commit/, fn -> Tx.announce(stale, "t", :x) end
+    end
+  end
+
+  describe "busy conversations and last entries" do
+    setup :conversation
+
+    test "busy/1 and busy_in_profile/1 name the conversations with a run", %{conversation: c} do
+      idle = Durable.create_conversation("test").id
+      other = Durable.create_conversation("test_workdir").id
+      Durable.subscribe(other)
+
+      [s, _] =
+        for id <- [c, other] do
+          {:ok, submission} = Durable.submit(id, "wait")
+          await_change(id, &Enum.any?(&1.tasks, fn t -> t.kind == "tool" end))
+          submission
+        end
+
+      assert Durable.busy([c, idle, other]) == MapSet.new([c, other])
+      assert Durable.busy([idle]) == MapSet.new()
+      assert Durable.busy([]) == MapSet.new()
+      assert Durable.busy_in_profile("test") == MapSet.new([c])
+      assert Durable.busy_in_profile("test_workdir") == MapSet.new([other])
+      assert Durable.busy_in_profile("assistant") == MapSet.new()
+
+      Durable.abort(c)
+      await_settled(c, s.id)
+      assert Durable.busy([c, idle, other]) == MapSet.new([other])
+    end
+
+    test "last_entry/2 is the newest entry of a kind, or nil", %{conversation: c} do
+      assert Durable.last_entry(c, "assistant") == nil
+
+      {:ok, s} = Durable.submit(c, "wait")
+
+      await_change(
+        c,
+        &Enum.any?(&1.tasks, fn t -> t.kind == "tool" and t.status == "waiting" end)
+      )
+
+      Durable.signal("go")
+      await_settled(c, s.id)
+
+      # The first answer asked for the tool; the newest one is the reply.
+      assert %Durable.Entry{kind: "assistant", data: data} = Durable.last_entry(c, "assistant")
+      assert PhotonCore.Message.text_of(data["message"]) == "waited"
+      assert Durable.last_entry(c, "error") == nil
+    end
+  end
 end

@@ -12,6 +12,13 @@ defmodule Photon.Durable.ToolTask do
   hand off or cancel what it started, in the same commit that records the
   call's result. A raise is rescued here and recorded as an error result.
 
+  Every call the tool gets (`execute/2`, `resume/2`, `on_interrupt/2`) comes
+  with a `Photon.Durable.ToolAPI` whose `workdir` is the conversation
+  profile's `workdir/1`, when the profile has one. A profile that raises
+  there (a thread whose project is gone) fails the call with that message
+  before the tool runs; `on_interrupt/2` still runs, with no `workdir`,
+  since cleaning up what a call started matters more than where it ran.
+
   This module is the task kind's boundary: it finds the tool, runs it, and
   commits. Whether a call runs and how its result is recorded is
   `Photon.Durable.ToolCall`.
@@ -42,9 +49,23 @@ defmodule Photon.Durable.ToolTask do
   end
 
   defp tool(task) do
-    conversation = Durable.conversation(task.conversation_id)
-    profile = Durable.profile(conversation.profile)
+    {profile, conversation} = profile(task)
     ToolCall.find_tool(profile.tools(conversation), task.input["call"]["name"])
+  end
+
+  defp profile(task) do
+    conversation = Durable.conversation(task.conversation_id)
+    {Durable.profile(conversation.profile), conversation}
+  end
+
+  # Asked at every step rather than stored with the call: the profile keeps
+  # it fixed (a project's slug never changes), and a rerun asks again.
+  defp api(task) do
+    {profile, conversation} = profile(task)
+
+    if Durable.implements?(profile, :workdir, 1),
+      do: ToolAPI.new(task, profile.workdir(conversation)),
+      else: ToolAPI.new(task)
   end
 
   defp facts(nil), do: nil
@@ -60,7 +81,7 @@ defmodule Photon.Durable.ToolTask do
 
   # A tool that raises ends its call with an error result, not a crash.
   defp call_tool(task, fun) do
-    fun.(ToolAPI.new(task))
+    fun.(api(task))
   rescue
     e ->
       Logger.error(
@@ -111,7 +132,17 @@ defmodule Photon.Durable.ToolTask do
   defp interrupted(task, tx) do
     with tool when tool != nil <- tool(task),
          true <- Durable.implements?(tool, :on_interrupt, 2) do
-      tool.on_interrupt(ToolAPI.new(task), tx)
+      tool.on_interrupt(interrupt_api(task), tx)
     end
+  end
+
+  # on_interrupt/2 cancels what the call started, so a profile that can't
+  # name the working directory any more doesn't stop it: it gets none.
+  defp interrupt_api(task) do
+    api(task)
+  rescue
+    e ->
+      Logger.error("no working directory for task #{task.id}: " <> Exception.message(e))
+      ToolAPI.new(task)
   end
 end
