@@ -53,11 +53,7 @@ defmodule PhotonWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
-  # The model relay checks a node's key before reading a byte of its body,
-  # and parses the (large) bodies it lets through itself.
-  plug PhotonWeb.NodeAuthPlug
-
-  # Everything else is small: forms and the LiveView long-poll fallback.
+  # Bodies are small: forms and the LiveView long-poll fallback.
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],

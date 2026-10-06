@@ -37,11 +37,10 @@ defmodule PhotonWeb.Router do
   # For the platform's health checks; needs no password.
   get "/healthz", PhotonWeb.HealthPlug, []
 
-  # The node installer, packaged binaries, and the model relay nodes use (the
-  # node websocket itself is mounted in the endpoint at /node/websocket).
+  # The node installer and packaged binaries (the node websocket itself is
+  # mounted in the endpoint at /node/websocket).
   scope "/node", PhotonWeb do
     get "/install.sh", NodeInstallController, :script
     get "/download/:file", NodeInstallController, :download
-    post "/llm/stream", ModelRelayController, :stream
   end
 end

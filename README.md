@@ -32,7 +32,7 @@ browser ──▶ hub: assistant + web UI ◀──websocket── node ──�
 
 | Path | What |
 | --- | --- |
-| `apps/core` | Shared: the streaming model client (ChatGPT through the Responses API, and the hub's relay that nodes use), the message format, the scripted models tests use |
+| `apps/core` | Shared: the streaming model client (ChatGPT through the Responses API), the message format, the scripted models tests use |
 | `apps/node` | The node: the agent harness (`PhotonNode.Harness`) and the hub connection, packaged as one self-contained binary |
 | `apps/hub` | The hub: the durable harness (`Photon.Durable`), the assistant (`Photon.Assistant`), node sessions, installer, web UI |
 | `docs/unreal-agent-port-spec.md` | What the node harness ports from unreal-agent, and where it differs |

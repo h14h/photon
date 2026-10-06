@@ -1,8 +1,7 @@
 defmodule Photon.NodeKeys do
   @moduledoc """
   Each node's own key: what it presents to connect to the hub
-  (`PhotonWeb.NodeSocket`) and to use the model relay
-  (`PhotonWeb.NodeAuthPlug`). A key works for one node ID only, so a node
+  (`PhotonWeb.NodeSocket`). A key works for one node ID only, so a node
   can't connect as another.
 
   The hub keeps only each key's SHA-256 (`Photon.NodeKeys.Key`). `issue/2`

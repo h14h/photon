@@ -140,7 +140,7 @@ code compares with the spec: `specs/tla/HubOps.md`.
 | core | `sse_property_test.exs` | `SSE.parse` gives the same payloads however a stream is cut (well-formed and arbitrary streams, bare CRs included) and never raises |
 | core | `chat_completions_property_test.exs` | `decode_messages` inverts `encode_messages` (tool images go back into their results); the wire form survives JSON; streamed answers fold into the same message and events however the bytes are split; the hub's mock renderer round-trips; arbitrary chunks and message lists never raise (all on the pure `ChatCompletions.Request` and `ChatCompletions.Response`, no HTTP) |
 | core | `llm_stream_property_test.exs` | an answer streamed over HTTP in any chunks gives `LLM.stream/3` the same result and events as the pure fold of the whole body |
-| core | `message_property_test.exs` | `Message.arguments` never raises and decodes objects exactly; text/parts agree; `MockAgent` answers the same directly and through the hub's proxy |
+| core | `message_property_test.exs` | `Message.arguments` never raises and decodes objects exactly; text/parts agree; `MockAgent`'s conversations encode as Responses input |
 | node | `context_property_test.exs` | `Context.build` pairs every tool call with one result, also when providers reuse call IDs; every input and finished result appears once, in order |
 | node | `inbox_property_test.exs` | first valid input wins, repeats are dropped, the seen set is seeded from the log; validation never raises; only settings carry parameters; accepted content can always be encoded |
 | core | `output_property_test.exs` | `Output.bound` gives valid UTF-8 and the documented head/tail/marker shape (moved from the node in step 1, with `PhotonCore.Output`) |

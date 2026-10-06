@@ -1,7 +1,7 @@
 defmodule PhotonCore.Property.MessageTest do
   @moduledoc """
-  Properties of `PhotonCore.Message`, and of the mock agent seen through the
-  hub's model proxy (which re-reads the wire format with `decode_messages/1`).
+  Properties of `PhotonCore.Message`, and of the conversations the mock
+  agent makes as Responses input.
   """
 
   use PhotonCore.Case, async: true
@@ -65,7 +65,7 @@ defmodule PhotonCore.Property.MessageTest do
     end
   end
 
-  ## The mock agent through the hub's proxy
+  ## The mock agent's conversations as Responses input
 
   # A node session's conversation with the mock agent: prompts, the calls it
   # makes, and their results (sometimes with an image, as ViewImage returns).
@@ -104,25 +104,6 @@ defmodule PhotonCore.Property.MessageTest do
             messages ++ [reply]
         end
       end)
-    end
-  end
-
-  # Mock call IDs are fresh each time; compare replies without them.
-  defp shape(%{"tool_calls" => calls} = reply) do
-    %{reply | "tool_calls" => Enum.map(calls, &Map.delete(&1, "id"))}
-  end
-
-  property "the mock agent answers the same directly and through the hub's relay" do
-    check all(messages <- session(), max_runs: 150) do
-      direct = MockAgent.respond(%{messages: messages})
-
-      relayed =
-        %{messages: messages}
-        |> Relay.body()
-        |> Jason.encode!()
-        |> Jason.decode!()
-
-      assert shape(MockAgent.respond(%{messages: relayed["messages"]})) == shape(direct)
     end
   end
 

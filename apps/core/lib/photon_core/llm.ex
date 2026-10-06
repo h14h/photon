@@ -17,11 +17,9 @@ defmodule PhotonCore.LLM do
   A config says where to send it:
 
     * `:provider` - `"chatgpt"` (the Responses API with a Sign in with
-      ChatGPT token; the hub), `"relay"` (the hub's model relay; nodes) or
-      `"mock"` (a scripted model; tests)
+      ChatGPT token; the hub) or `"mock"` (a scripted model; tests)
     * `:base_url` - where the provider is
-    * `:api_key` - the bearer token: the ChatGPT access token, or the
-      node's key for the relay
+    * `:api_key` - the bearer token: the ChatGPT access token
     * `:problem` - for `"chatgpt"` without a token, why there is none (the
       error says so instead of "not signed in")
     * `:headers` - extra request headers
@@ -61,9 +59,9 @@ defmodule PhotonCore.LLM do
     top_level?: true,
     type: :strict,
     deps: [PhotonCore, PhotonCore.LLM.Error, Jason, Req],
-    exports: [Mock, MockAgent, Relay, Responses]
+    exports: [Mock, MockAgent, Responses]
 
-  alias PhotonCore.LLM.{Error, Mock, Relay, Responses, Retry}
+  alias PhotonCore.LLM.{Error, Mock, Responses, Retry}
   alias PhotonCore.Message
 
   @typedoc "A model request; see the moduledoc."
@@ -119,12 +117,6 @@ defmodule PhotonCore.LLM do
            require_present(config[:api_key], config[:problem] || "not signed in with ChatGPT"),
          :ok <- require_present(request[:model], "no model selected") do
       attempt(Responses, request, config, on_event, 1)
-    end
-  end
-
-  def stream(request, %{provider: "relay"} = config, on_event) do
-    with :ok <- require_present(config[:base_url], "no hub to relay through") do
-      attempt(Relay, request, config, on_event, 1)
     end
   end
 

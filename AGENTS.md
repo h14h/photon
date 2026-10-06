@@ -2,7 +2,7 @@ This is an all-Elixir monorepo: a Phoenix hub and the node agent it hands work t
 
 ## Layout
 
-- `apps/core` (`:photon_core`): the streaming model client (ChatGPT through the Responses API, and the hub's relay that nodes use), message format and scripted models, shared by both apps. Sign in with ChatGPT is the only way to give Photon a model; `PHOTON_MOCK_MODEL=1` swaps in the scripted models for local development
+- `apps/core` (`:photon_core`): the streaming model client (ChatGPT through the Responses API), message format and scripted models, shared by both apps. Sign in with ChatGPT is the only way to give Photon a model; `PHOTON_MOCK_MODEL=1` swaps in the scripted models for local development
 - `apps/node` (`:photon_node`): the node's agent harness (a port of unreal-agent; see `docs/unreal-agent-port-spec.md`) and hub connection, packaged with Burrito
 - `apps/hub` (`:photon`): the Phoenix hub, its durable harness (`Photon.Durable`, after pi-durable) and the assistant
 

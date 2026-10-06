@@ -646,7 +646,8 @@ boundary, lifecycle, workers. "Registered names" lists names a module adds.
 Deleted in PR B: `PhotonCore.LLM.Relay`, `PhotonCore.LLM.Relay.Wire`,
 `PhotonCore.LLM.MockAgent`, and the relay provider in `PhotonCore.LLM`.
 `PhotonCore.LLM.Mock` stays (the hub's `MockScript` implements it). Update
-`PhotonCore`'s moduledoc and `exports`.
+`PhotonCore`'s moduledoc and `exports`. As built, the relay goes in B3 and
+`MockAgent` in B5: the node's session tests answer with it until then.
 
 ### 4.2 apps/node
 
@@ -1087,8 +1088,13 @@ apps/hub
   `test/web/controllers/model_relay_controller_test.exs`,
   `test/core/assistant/report_test.exs`; node `test/core/{session,context,inbox,model_request,tools}_test.exs`,
   `test/property/{session,coordinator_replay,context,inbox,store}_property_test.exs`,
-  `test/boundary/{harness,skills}_test.exs`; core tests for the relay and
-  `MockAgent`.
+  `test/boundary/{harness,skills}_test.exs`; core tests for the relay
+  (`test/core/relay_wire_test.exs`, the relay describe in
+  `test/boundary/llm_test.exs`, and the direct-versus-relayed property in
+  `test/property/message_property_test.exs`; B3) and for `MockAgent`
+  (`test/core/mock_agent_test.exs`, and the `MockAgent` conversations the
+  Responses-input property in `message_property_test.exs` is built from;
+  B5).
 - Rewrite: hub `test/boundary/assistant_tools_test.exs` (drop the node-tool
   describes, keep schedules), `test/core/assistant/work_test.exs` (keep the
   routine parts; renamed `routine_test.exs`), `test/core/assistant/{notice,transcript,mock_script}_test.exs`
@@ -1387,10 +1393,18 @@ B2. Remove node sessions from the hub. After B1.
 B3. Remove the model relay. Independent of B1 and B2.
 - Delete `lib/photon_web/controllers/model_relay_controller.ex`,
   `lib/photon_web/node_auth_plug.ex`; edit `endpoint.ex` and `router.ex`.
-- apps/core: delete `llm/relay.ex`, `llm/relay/wire.ex`, `llm/mock_agent.ex`
-  and the relay provider in `llm.ex`; their tests; `PhotonCore` moduledoc.
+- apps/core: delete `llm/relay.ex`, `llm/relay/wire.ex` and the relay
+  provider in `llm.ex`; their tests; `PhotonCore` moduledoc; the
+  `LLM.Relay.Wire` `FunctionalCore` entry in `apps/core/.credo.exs`. As
+  built, `llm/mock_agent.ex` stays until B5: the node's session tests
+  (`config :photon_node, llm:` in `apps/node/config/test.exs`,
+  `test/support/test_script.ex`) answer with it, so deleting it here would
+  break the node's suite.
 - `apps/hub/config/test.exs`: drop `config :photon_node, llm:`.
 - `.credo.exs`: drop the `ModelRelayController` entry.
+- As built, copy that named the relay: the `NodeKeys` moduledoc, the
+  `ChatGPT.stream/3` doc, and the `apps/core` lines in `README.md` and
+  `AGENTS.md`.
 
 B4. Fold `Photon.Nodes` into `Photon.Machines`. After B2.
 - Move the registry functions into `lib/photon/machines.ex`; delete
@@ -1412,6 +1426,11 @@ B4. Fold `Photon.Nodes` into `Photon.Machines`. After B2.
 B5. Remove the node's agent loop. After B3 (the node's `llm` config goes
 with it).
 - Delete the files in section 5.2 under "Node deletions".
+- apps/core (moved from B3): delete `llm/mock_agent.ex`, its test, its
+  `exports` and alias entries, its `FunctionalCore` entry and its mentions
+  in the `PhotonCore` moduledoc; rebuild or drop the `session/0` generator
+  in `test/property/message_property_test.exs`, which makes conversations
+  with it.
 - `connection.ex`: only `op.*`; capabilities `["ops:1"]`; moduledoc.
 - `photon_node.ex`: children and moduledoc (section 7, rules 79, 81, 84);
   Boundary deps without `PhotonCore.LLM`.

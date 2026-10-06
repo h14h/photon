@@ -12,10 +12,8 @@ config :photon, Photon.Repo,
   database: Path.expand("../_build/test-data/photon-test.db", __DIR__),
   pool_size: 5
 
-config :photon_node, llm: %{provider: "mock", script: PhotonCore.LLM.MockAgent}
-
-# Blip and the node relay answer with the scripted models, not ChatGPT; the
-# account's requests to OpenAI go to a stub (Photon.ChatGPTStub).
+# Blip answers with the scripted model, not ChatGPT; the account's requests
+# to OpenAI go to a stub (Photon.ChatGPTStub).
 config :photon, :mock_model, true
 
 # Tests never run the machine's own tailscale; they name a stand-in with
