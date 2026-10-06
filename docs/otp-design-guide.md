@@ -782,9 +782,9 @@ because it runs in the caller's process and both callers are tasks. Calling
 
 | Layer | Modules |
 | --- | --- |
-| Data | Ecto schemas `Photon.Durable.{Conversation, Entry, TaskRecord, Submission, Signal, Doc}` and `Photon.NodeSessions.{Session, Event, Input}`, each with `t/0`; messages from `PhotonCore.Message`; the `%NodeTranscript{}` token |
-| Functional core | `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall, Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Transcript, MockScript}`, `Photon.NodeSessions.Mirror`, `Photon.NodeTranscript`, `Photon.Provision.{Jobs, Script}`, `Photon.Provision.Lines` (pure apart from the `log` function it's handed), `Photon.InstallScript` (the install script and the node socket URL), `Photon.Markdown`, `Photon.Tailnet.parse/1`, and `Photon.Settings`' functions of a settings map |
-| Boundary | APIs: `Photon.Durable`, `Photon.NodeSessions`, `Photon.Assistant` (Blip's context), `Photon.Nodes`, `Photon.Settings`, `Photon.Provision`. Servers: `Durable.Store` (the single commit line, a lock with no state), `Durable.Scheduler` (applies `Durable.Policy`), `Photon.Provision` (the job table), `Photon.Tailnet` (owns its cache table). Framework callbacks (rule 11): `PhotonWeb.NodeChannel` and the LiveViews, which call the contexts and do no I/O in `render/1` |
+| Data | Ecto schemas `Photon.Durable.{Conversation, Entry, TaskRecord, Submission, Signal, Doc}` and `Photon.Machines.Op`, each with `t/0`; messages from `PhotonCore.Message` |
+| Functional core | `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall, Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Transcript, MockScript}`, `Photon.Machines.{Rules, Roster}`, `Photon.MachineTools.{Translate, Wait}`, `Photon.Provision.{Jobs, Script}`, `Photon.Provision.Lines` (pure apart from the `log` function it's handed), `Photon.InstallScript` (the install script and the node socket URL), `Photon.Markdown`, `Photon.Tailnet.parse/1`, and `Photon.Settings`' functions of a settings map |
+| Boundary | APIs: `Photon.Durable`, `Photon.Machines`, `Photon.Assistant` (Blip's context), `Photon.Nodes`, `Photon.Settings`, `Photon.Provision`. Servers: `Durable.Store` (the single commit line, a lock with no state), `Durable.Scheduler` (applies `Durable.Policy`), `Photon.Provision` (the job table), `Photon.Tailnet` (owns its cache table). Framework callbacks (rule 11): `PhotonWeb.NodeChannel` and the LiveViews, which call the contexts and do no I/O in `render/1` |
 | Lifecycle | `Photon.Application` with `:one_for_one`, plan in its moduledoc: repo, migrator, PubSub, `Tailnet`, `NodeRegistry`, provisioning, `Photon.Durable.Supervisor` (`:one_for_one`: task supervisor, store, scheduler; plan in its moduledoc), endpoint, optional local node |
 | Workers | Durable task steps under `Durable.TaskSupervisor` (`async_nolink`, monitored by the scheduler); the task kind `Assistant.Routine`, which does the job of the book's proctor (rule 95); provisioning jobs under `ProvisionTasks` (`async_nolink`, monitored by `Provision`); `NodesLive`'s `tailscale` task (`start_async`) |
 
@@ -808,7 +808,7 @@ because it runs in the caller's process and both callers are tasks. Calling
 - `Durable.Store.commit/1` is a `GenServer.call` through a single writer, so
   writers get back pressure from the database (rule 72). Nothing in the repo
   uses `GenServer.cast`.
-- `PhotonWeb.NodeChannel` is thin: it hands everything to `NodeSessions` and
+- `PhotonWeb.NodeChannel` is thin: it hands everything to `Machines` and
   `Nodes`, and ignores events it doesn't know (rules 11, 75). The coordinator
   and operations also drop unknown messages. No web module touches the repo.
 - Hub tests wait on PubSub (`DataCase.await_change/3`, `await_entry/3`)
@@ -965,7 +965,7 @@ The layering it encodes:
   harness only on `Config` and the node's config accessor, and reaches the
   hub through `Harness.Link`. Each functional-core module of the harness is
   a strict sub-boundary that may name only other core modules.
-- `apps/hub`: each context (`Durable`, `NodeSessions`, `Assistant`,
+- `apps/hub`: each context (`Durable`, `Machines`, `Assistant`,
   `Nodes`, `Settings`, `Provision`, `Repo`, and so on) is a sub-boundary of
   `Photon` with explicit `deps:`; `Photon` exports the contexts; `PhotonWeb`
   depends only on those exports and never on Ecto; `Photon.Application`

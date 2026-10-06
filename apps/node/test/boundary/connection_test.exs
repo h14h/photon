@@ -255,7 +255,8 @@ defmodule PhotonNode.ConnectionTest do
       :ok = Executor.cancel(a)
       :ok = Executor.cancel(b)
 
-      {:ok, _socket} = Connection.handle_join("node:test", %{"sync" => %{}}, joined_socket())
+      # The hub's join reply carries no session offsets.
+      {:ok, _socket} = Connection.handle_join("node:test", %{}, joined_socket())
 
       assert_receive {:pushed, "op.snapshot", %{"op" => %{"id" => ^a, "status" => "canceled"}}}
       assert_receive {:pushed, "op.snapshot", %{"op" => %{"id" => ^b, "status" => "canceled"}}}

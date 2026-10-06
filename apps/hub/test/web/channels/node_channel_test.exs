@@ -3,12 +3,12 @@ defmodule PhotonWeb.NodeChannelTest do
 
   import Phoenix.ChannelTest
 
-  # Records are ingested through the durable store.
+  # Op results are recorded through the durable store.
   @moduletag :durable
 
   import Photon.MachineOps, only: [live_task: 0, new_op: 2, snapshot: 2, snapshot: 3]
 
-  alias Photon.{Durable, Machines, Nodes, NodeSessions}
+  alias Photon.{Durable, Machines, Nodes}
 
   @endpoint PhotonWeb.Endpoint
 
@@ -73,26 +73,6 @@ defmodule PhotonWeb.NodeChannelTest do
              subscribe_and_join(idle, "node:box", %{})
   end
 
-  test "a node can't touch another node's sessions" do
-    {:ok, theirs, input} = NodeSessions.start("other", "hello")
-    {:ok, _reply, socket} = join("box")
-    NodeSessions.subscribe(theirs.id)
-
-    push(socket, "live", %{"session_id" => theirs.id, "data" => %{"text" => "spoofed"}})
-
-    push(socket, "input_rejected", %{
-      "session_id" => theirs.id,
-      "input_id" => input.id,
-      "reason" => "nope"
-    })
-
-    # The channel handles messages in order, so the reply-less push above has
-    # been dealt with once this one is.
-    _ = :sys.get_state(socket.channel_pid)
-    refute_received {:node_live, _, _}
-    assert NodeSessions.input(input.id).state == "queued"
-  end
-
   @tag capture_log: true
   test "a hub that vouches through its tailnet refuses keys from anywhere it can't name" do
     Application.put_env(:photon, :auth_mode, :tailscale)
@@ -102,50 +82,23 @@ defmodule PhotonWeb.NodeChannelTest do
     assert connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(key)) == :error
   end
 
-  test "joins with a sync map, resends queued input, and ingests records" do
-    {:ok, session, input} = NodeSessions.start("box", "hello")
+  test "joins as online, ignores events it doesn't know, and goes offline when it closes" do
     Phoenix.PubSub.subscribe(Photon.PubSub, Nodes.topic())
 
     {:ok, reply, socket} = join("box")
-    assert reply == %{"sync" => %{session.id => 0}}
+    assert reply == %{}
     assert_receive :nodes_changed
     assert %{"hostname" => "box"} = Nodes.get("box")
 
-    input_id = input.id
-
-    assert_push "input", %{
-      "session_id" => _,
-      "input" => %{"id" => ^input_id},
-      "config" => %{"model" => _}
-    }
-
-    push(socket, "event", %{"session_id" => session.id, "offset" => 3, "event" => %{}})
-    assert_push "resync", %{"from" => 0}
-
-    push(socket, "event", %{
-      "session_id" => session.id,
-      "offset" => 0,
-      "event" => %{"kind" => "session"}
-    })
-
-    push(socket, "event", %{
-      "session_id" => session.id,
-      "offset" => 1,
-      "event" => %{"kind" => "input", "data" => %{"id" => input.id}}
-    })
-
+    # Session records, from a node that still runs sessions, are ignored.
+    push(socket, "event", %{"session_id" => "ns_1", "offset" => 0, "event" => %{}})
     _ = :sys.get_state(socket.channel_pid)
-    assert length(NodeSessions.events(session.id)) == 2
-    assert NodeSessions.input(input.id).state == "accepted"
-
-    {:ok, stop} = NodeSessions.stop(session.id)
-    stop_id = stop.id
-    assert_push "input", %{"input" => %{"id" => ^stop_id, "kind" => "control"}}
+    assert Nodes.online?("box")
 
     Process.unlink(socket.channel_pid)
     close(socket)
     assert_receive :nodes_changed
-    _ = :sys.get_state(Photon.NodeRegistry |> Process.whereis() || self())
+    refute Nodes.online?("box")
   end
 
   test "a reconnecting node replaces its stale connection" do
@@ -157,21 +110,6 @@ defmodule PhotonWeb.NodeChannelTest do
     assert_receive {:DOWN, ^ref, _, _, _}
     assert [{pid, _}] = Registry.lookup(Photon.NodeRegistry, "dup")
     assert pid == s2.channel_pid
-  end
-
-  # NS-7: a send racing the resend at join pushed the same input twice on
-  # one connection; the node could refuse the first and accept the second.
-  test "an input is pushed to a connected node at most once" do
-    {:ok, session, input} = NodeSessions.start("box2", "hello")
-    {:ok, _reply, _socket} = join("box2")
-
-    input_id = input.id
-    assert_push "input", %{"input" => %{"id" => ^input_id}}
-
-    Nodes.command("box2", "input", %{"session_id" => session.id, "input" => input.input})
-    Nodes.command("box2", "stop", %{"session_id" => session.id})
-    assert_push "stop", _
-    refute_push "input", _
   end
 
   describe "operations" do

@@ -47,13 +47,12 @@ defmodule Photon.Assistant.Transcript do
   @type search :: %{id: String.t(), action: map() | nil}
 
   @typedoc "Blip's mood, as the avatar shows it."
-  @type mood :: :idle | :thinking | :working | :done | :error
+  @type mood :: :idle | :thinking | :done | :error
 
   @typedoc "What Blip's mood is made of right now."
   @type now :: %{
           outcome: :done | :error | nil,
           live: live() | nil,
-          working: non_neg_integer(),
           busy: boolean()
         }
 
@@ -261,14 +260,12 @@ defmodule Photon.Assistant.Transcript do
 
   @doc """
   Blip's mood. An outcome the page is holding (see `outcome/3`) shows first,
-  so a finish or a failure gets its moment. Then: an answer in flight is
-  thinking; node work the assistant started and is still running is
-  working; a run between steps is thinking; otherwise idle.
+  so a finish or a failure gets its moment. Then: an answer in flight, or a
+  run between steps, is thinking; otherwise idle.
   """
   @spec mood(now()) :: mood()
   def mood(%{outcome: outcome}) when outcome in [:done, :error], do: outcome
   def mood(%{live: live}) when is_map(live), do: :thinking
-  def mood(%{working: working}) when working > 0, do: :working
   def mood(%{busy: true}), do: :thinking
   def mood(_now), do: :idle
 

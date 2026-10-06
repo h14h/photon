@@ -10,7 +10,7 @@ defmodule Photon.Case do
     * `test/core` - the functional core: no database, no processes, no
       files, so every file runs `async: true`
     * `test/boundary` - the contexts (`Photon.Durable`,
-      `Photon.NodeSessions`, `Photon.Assistant`, `Photon.Provision`)
+      `Photon.Machines`, `Photon.Assistant`, `Photon.Provision`)
       through their public API, the way the web layer and nodes call them,
       against a real database and the harness's processes
       (`Photon.DataCase`)
@@ -40,7 +40,6 @@ defmodule Photon.Case do
         Turn
       }
 
-      alias Photon.NodeSessions.Mirror
       alias Photon.Provision.{Jobs, Script}
       alias PhotonCore.Message
 

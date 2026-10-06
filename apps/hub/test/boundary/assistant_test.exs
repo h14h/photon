@@ -9,7 +9,7 @@ defmodule Photon.AssistantTest do
 
   @moduletag :durable
 
-  alias Photon.{Assistant, NodeSessions}
+  alias Photon.Assistant
 
   setup do
     conversation = Assistant.conversation_id()
@@ -78,26 +78,6 @@ defmodule Photon.AssistantTest do
       assert note.data["notice"]
       assert note.data["message"] =~ ~s{Skipped "check disks"}
       refute Enum.any?(Durable.entries(c), &(&1.data["source"]["kind"] == "routine"))
-    end
-  end
-
-  describe "node sessions" do
-    test "a node that reconnects gets the inputs it missed", %{conversation: _c} do
-      {:ok, session, input} = NodeSessions.start("later", "hello")
-      refute_receive {:command, _, _}
-
-      fake_node("later")
-      NodeSessions.resend_queued("later")
-      assert_receive {:command, "input", %{"session_id" => sid, "input" => %{"id" => iid}}}
-      assert {sid, iid} == {session.id, input.id}
-    end
-
-    test "records arrive in order; gaps and repeats are caught" do
-      {:ok, session, _input} = NodeSessions.start("box", "hi")
-      assert :ok = NodeSessions.ingest(session.id, "box", 0, %{"kind" => "session"})
-      assert :duplicate = NodeSessions.ingest(session.id, "box", 0, %{"kind" => "session"})
-      assert {:gap, 1} = NodeSessions.ingest(session.id, "box", 5, %{"kind" => "turn"})
-      assert :ignored = NodeSessions.ingest(session.id, "other", 1, %{"kind" => "turn"})
     end
   end
 end

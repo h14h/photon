@@ -107,9 +107,10 @@ defmodule PhotonNode.Connection do
   end
 
   @impl Slipstream
-  def handle_join(_topic, %{"sync" => sync}, socket) do
+  def handle_join(_topic, reply, socket) do
+    # A hub without node sessions replies with no `sync`: nothing to replay.
     socket =
-      Enum.reduce(sync, assign(socket, sent: %{}), fn {id, from}, socket ->
+      Enum.reduce(Map.get(reply, "sync", %{}), assign(socket, sent: %{}), fn {id, from}, socket ->
         replay(socket, id, from)
       end)
 

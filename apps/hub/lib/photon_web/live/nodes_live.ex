@@ -8,16 +8,14 @@ defmodule PhotonWeb.NodesLive do
   is never kept in the page's state, which crash reports would print.
 
   What the page shows is read into assigns when it mounts and when it hears
-  a change (`:nodes_changed`, `:node_sessions_changed`, `{:provision, jobs}`);
+  a change (`:nodes_changed`, `{:provision, jobs}`);
   `tailscale status` runs in a task (`start_async/3`), so a slow tailnet
   doesn't hold up the page. `render/1` only derives from assigns.
   """
 
   use PhotonWeb, :live_view
 
-  alias Photon.{NodeDist, NodeKeys, Nodes, NodeSessions, Provision, Tailnet}
-
-  @max_counted_sessions 1000
+  alias Photon.{NodeDist, NodeKeys, Nodes, Provision, Tailnet}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -46,16 +44,13 @@ defmodule PhotonWeb.NodesLive do
     end
   end
 
-  # Connected nodes, how many sessions each has (up to a thousand), and
-  # which run an older build than this hub hands out.
+  # Connected nodes, and which run an older build than this hub hands out.
   defp assign_nodes(socket) do
     online = Nodes.list()
 
     assign(socket,
       online: online,
       node_ids: MapSet.new(online, & &1["id"]),
-      session_counts:
-        Map.new(online, &{&1["id"], NodeSessions.count(&1["id"], @max_counted_sessions)}),
       outdated:
         for(
           n <- online,
@@ -186,8 +181,7 @@ defmodule PhotonWeb.NodesLive do
   def handle_info({:provision, jobs}, socket),
     do: {:noreply, assign(socket, jobs: jobs, removed: NodeKeys.removed())}
 
-  def handle_info(message, socket) when message in [:nodes_changed, :node_sessions_changed],
-    do: {:noreply, assign_nodes(socket)}
+  def handle_info(:nodes_changed, socket), do: {:noreply, assign_nodes(socket)}
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
@@ -224,7 +218,7 @@ defmodule PhotonWeb.NodesLive do
           <.header>
             Nodes
             <:subtitle>
-              Machines the assistant can work on. Each runs its own agent and connects back to this hub.
+              Machines Blip can run commands on. Each runs a node that connects back to this hub.
             </:subtitle>
           </.header>
 
@@ -285,11 +279,6 @@ defmodule PhotonWeb.NodesLive do
                       {node["version"]}
                     </dd>
                   </div>
-                  <div class="flex gap-2">
-                    <dt class="w-20 shrink-0 text-ink-faint">Sessions</dt><dd class="text-ink-soft">
-                      {@session_counts[node["id"]]}
-                    </dd>
-                  </div>
                 </dl>
               </div>
             </div>
@@ -300,7 +289,7 @@ defmodule PhotonWeb.NodesLive do
               Removed
             </h2>
             <p class="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
-              These machines ran a node, so they still can't open the hub: something an agent started there could still be running. Let one back in once you're sure it's clean.
+              These machines ran a node, so they still can't open the hub: a command Blip started there could still be running. Let one back in once you're sure it's clean.
             </p>
             <div class="mt-3 divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface shadow-xs">
               <div
@@ -552,7 +541,7 @@ defmodule PhotonWeb.NodesLive do
             phx-value-machine={@machine.name}
             phx-value-action="uninstall"
             disabled={@busy}
-            data-confirm={"Remove the node from #{@machine.name}? Its sessions stay here, read-only."}
+            data-confirm={"Remove the node from #{@machine.name}?"}
           >
             Uninstall
           </.button>

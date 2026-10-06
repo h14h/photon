@@ -8,9 +8,9 @@ defmodule PhotonWeb.BlipLiveTest do
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
-  import Photon.Fixtures, only: [call: 3, state_record: 1]
+  import Photon.Fixtures, only: [call: 3]
 
-  alias Photon.{Assistant, Durable, NodeSessions}
+  alias Photon.{Assistant, Durable}
   alias PhotonCore.Message
 
   @moduletag :durable
@@ -460,19 +460,6 @@ defmodule PhotonWeb.BlipLiveTest do
       Durable.commit(&Durable.Tx.finish(&1, run, "done", %{}))
 
       assert has_element?(blip, "#blip-avatar[data-state=error]")
-    end
-
-    test "rides a wave while a machine works for it", %{blip: blip} do
-      render_hook(blip, "panel", %{"to" => "open"})
-
-      {:ok, s, _input} =
-        NodeSessions.start("box", "check disks", origin: "assistant", title: "Check disks")
-
-      :ok = NodeSessions.ingest(s.id, "box", 0, state_record("running"))
-
-      assert has_element?(blip, "#blip-avatar[data-state=working]")
-      assert has_element?(blip, "#live-work-#{s.id}", "Check disks")
-      assert has_element?(blip, "#blip-status", "box is working on it")
     end
   end
 

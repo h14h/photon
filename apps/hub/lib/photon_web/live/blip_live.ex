@@ -287,7 +287,6 @@ defmodule PhotonWeb.BlipLive do
           Transcript.mood(%{
             outcome: assigns.outcome,
             live: assigns.live,
-            working: length(assigns.shell.working),
             busy: assigns.busy
           })
       )
@@ -351,13 +350,7 @@ defmodule PhotonWeb.BlipLive do
               </div>
             </div>
 
-            <.live_output
-              :if={@live || @mood in [:thinking, :working]}
-              live={@live}
-              shown={@shown}
-              mood={@mood}
-              working={@shell.working}
-            />
+            <.live_output :if={@live || @mood == :thinking} live={@live} shown={@shown} mood={@mood} />
           </div>
           <.jump_to_latest />
         </div>
@@ -567,9 +560,6 @@ defmodule PhotonWeb.BlipLive do
   defp status_line(:thinking, _shell), do: "Thinking"
   defp status_line(:done, _shell), do: "Done"
   defp status_line(:error, _shell), do: "Something failed"
-
-  defp status_line(:working, %{working: [one]}), do: "#{one.node_id} is working on it"
-  defp status_line(:working, %{working: working}), do: "#{length(working)} jobs running"
   defp status_line(_mood, %{model: model}), do: "On #{model}"
 
   attr :bubble, :map, required: true
@@ -925,32 +915,13 @@ defmodule PhotonWeb.BlipLive do
   attr :live, :map, required: true
   attr :shown, :map, required: true, doc: "the finished blocks of the in-flight answer"
   attr :mood, :atom, required: true
-  attr :working, :list, required: true
 
-  # What Blip is up to between answers: waiting on a run, or node work still
-  # going. Blip itself shows it too, in the header; there's no second Blip here.
+  # What Blip is up to between answers: waiting on a run. Blip itself shows
+  # it too, in the header; there's no second Blip here.
   defp live_output(%{live: nil} = assigns) do
     ~H"""
     <div id="live-output" data-mood={@mood} class="mt-5">
       <div :if={@mood == :thinking} class="flex h-6 items-center"><.thinking /></div>
-      <div :if={@mood == :working} class="space-y-1">
-        <p
-          :for={s <- @working}
-          id={"live-work-#{s.id}"}
-          class="flex items-center gap-2 text-[13px] text-ink-soft"
-        >
-          <span class="text-accent-strong"><.spinner class="size-3.5" /></span>
-          <span class="min-w-0 truncate">
-            <span class="font-medium text-ink">{s.node_id}</span> is working on {s.title}
-          </span>
-          <.link
-            navigate={~p"/sessions/#{s.id}"}
-            class="shrink-0 rounded px-1.5 py-0.5 text-[12px] text-accent-strong hover:bg-accent-soft"
-          >
-            Open
-          </.link>
-        </p>
-      </div>
     </div>
     """
   end

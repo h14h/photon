@@ -16,7 +16,6 @@ defmodule PhotonWeb.Router do
 
     live_session :gui, on_mount: [PhotonWeb.Auth, PhotonWeb.Shell] do
       live "/", OverviewLive
-      live "/sessions/:id", SessionLive
       live "/nodes", NodesLive
       live "/settings", SettingsLive
     end

@@ -1,5 +1,5 @@
 // A scrolling thread that follows new content only while it's pinned to the
-// bottom, for Blip's conversation and a node session's page.
+// bottom, for Blip's conversation.
 //
 // Pinned is a flag only the reader changes. Scrolling up yourself (wheel,
 // touch, keys, the scrollbar) unpins it at once, and nothing that arrives

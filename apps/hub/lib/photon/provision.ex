@@ -169,7 +169,7 @@ defmodule Photon.Provision do
     with {:ok, out} <- ssh(opts, "sh -s", {:text, Script.uninstall_input(opts.base_url)}, log),
          true <- out =~ "PHOTON_UNINSTALL_OK" || {:error, "the uninstaller didn't finish"} do
       :ok = Photon.NodeKeys.revoke(opts.node_id)
-      {:ok, "Removed the node from #{opts.machine}. Its sessions stay here, read-only."}
+      {:ok, "Removed the node from #{opts.machine}."}
     end
   end
 

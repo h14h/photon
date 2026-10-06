@@ -8,20 +8,15 @@ defmodule Photon.Nodes do
   is online exactly as long as its channel lives, and nothing here holds on
   to a pid. The registry is this module's; callers name nodes by ID.
 
-  Commands are fire-and-forget: `command/3` sends the channel process a
-  message, and results come back as session records. A plain send on
-  purpose: the caller (a tool step, a LiveView, the session outbox) must not
-  wait on a node's connection, and every command it sends is small and
-  bounded by what a user or the assistant does. A command lost with a
-  dropping connection is recovered where it matters: inputs stay queued in
-  `Photon.NodeSessions`'s outbox and are resent on the next join. A stop is
-  not resent.
-
-  `push_op/2` is the same kind of send for operations: it asks the channel
-  to push an op, and the channel builds the `op.start` from the op's row
+  Commands are fire-and-forget: `command/3` and `push_op/2` send the
+  channel process a message, and results come back as op snapshots. A
+  plain send on purpose: the caller (`Photon.Machines`, from a tool step or
+  a commit) must not wait on a node's connection, and every command it
+  sends is small. `push_op/2` asks the channel to push an op, and the
+  channel builds the `op.start` from the op's row
   (`Photon.Machines.push_for/2`), so only `Photon.Machines` calls it. Ops
   are rows, pushed again on every join and every minute while their call
-  waits on an online machine, so a lost request costs a delay, not the op.
+  waits on an online machine, so a lost command costs a delay, not the op.
   """
 
   use Boundary, deps: [Photon.Events]
@@ -71,26 +66,6 @@ defmodule Photon.Nodes do
 
   @spec online?(String.t()) :: boolean()
   def online?(id), do: get(id) != nil
-
-  @doc """
-  Every node worth listing: the connected ones (`online`, from `list/0`),
-  then the IDs of nodes that only appear in `sessions`, offline. Pure.
-  """
-  @spec roster([info()], [Photon.NodeSessions.Session.t()]) :: [
-          %{id: String.t(), online: boolean(), info: info() | nil}
-        ]
-  def roster(online, sessions) do
-    online_ids = MapSet.new(online, & &1["id"])
-
-    offline =
-      sessions
-      |> Enum.map(& &1.node_id)
-      |> Enum.uniq()
-      |> Enum.reject(&MapSet.member?(online_ids, &1))
-
-    Enum.map(online, &%{id: &1["id"], online: true, info: &1}) ++
-      Enum.map(offline, &%{id: &1, online: false, info: nil})
-  end
 
   @doc """
   Registers the calling process as the connection for `node_id`, with the

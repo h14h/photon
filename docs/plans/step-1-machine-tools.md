@@ -813,9 +813,13 @@ Hub UI, left coherent:
   hook's page reports, the "About ..." chip and label); no
   `:node_sessions_changed` handler, notice bar or failed-session bubble
   (B1 does these, since they use what B1 removes); no node work in
-  Blip's `working` mood or its live output (B2, with the Shell).
+  Blip's `working` mood or its live output (B2, with the Shell). Node work
+  was the mood's only source of `:working`, so `Transcript.mood/1` loses
+  its `working` input and the `:working` mood; the avatar component keeps
+  the brand kit's pose.
 - `PhotonWeb.Shell`: no `NodeSessions.subscribe/0`, no `sessions` or
-  `working` assigns; `nodes` comes from `Machines.roster/0`.
+  `working` assigns; `nodes` comes from `Machines.roster/0`, rebuilt on
+  `:nodes_changed` and `{:node_keys_changed, _}`.
 
 Node deletions: `harness.ex`, `harness/{session,coordinator,store,context,inbox,model_request,link,skills,skill_prompt,tools}.ex`,
 `harness/tools/`, `harness/ops/skill_use.ex`, `priv/prompts/`; the session
@@ -1102,7 +1106,12 @@ apps/hub
   from `data_case.ex`'s `@tables`, the `Mirror` alias in `case.ex`, the
   `Session` and `Input` fixtures in `fixtures.ex`.
 - Add: `test/core/machines/roster_test.exs` covers known offline machines
-  from keys; a LiveView test that no page links to `/sessions`.
+  from keys (PR A already does); a LiveView test that no page links to
+  `/sessions` (as built, in `test/web/live/pages_test.exs`, which also
+  checks the route is gone).
+- As built in B2: `test/core/nodes_test.exs` loses its `roster/2` test,
+  `test/core/settings_test.exs` its `node_config/1` test, and the node's
+  `test/boundary/connection_test.exs` joins with an empty reply.
 - The PR A e2e test must pass unchanged.
 
 ### 6.3 Checks for both PRs
@@ -1353,12 +1362,26 @@ B2. Remove node sessions from the hub. After B1.
   migration.
 - Update `lib/photon_web/shell.ex`, `live/overview_live.ex`,
   `live/nodes_live.ex`, `components/layouts.ex`, `live/blip_live.ex` per
-  section 5.2 (using `Photon.Nodes.list/0` and `Photon.NodeKeys` until B4).
+  section 5.2. As built: the Shell reads `Photon.Machines.roster/0`, which
+  PR A added, so `Nodes.roster/2` (whose sessions argument is gone) is
+  deleted here rather than in B4; the Shell also subscribes to
+  `Photon.NodeKeys` and rebuilds on `{:node_keys_changed, _}`, since known
+  offline machines now come from keys, and no longer rebuilds on
+  `{:durable_tasks, _}`, which nothing in it uses (it still subscribes, for
+  the pages).
 - `lib/photon_web/channels/node_channel.ex`: drop `event`, `live`,
   `input_rejected`, `pushed_inputs`, `sessions`, the `sync` reply and
-  `resend_queued`.
-- `lib/photon.ex` exports and moduledoc; `.credo.exs` lists;
+  `resend_queued`. The join reply is `%{}`, so until B5 the node's
+  `Connection.handle_join/3` takes a reply without `"sync"` (nothing to
+  replay); B5 deletes that code with the rest of the session handlers.
+- `lib/photon.ex` exports and moduledoc; `.credo.exs` lists (and the
+  `Photon.Nodes` `PreferCall` reason loses its NodeSessions outbox clause);
   `lib/photon/durable/store.ex` moduledoc mention.
+- As built, copy that named node sessions or node agents: `Settings`'
+  moduledoc and `SettingsLive`'s subtitle (Blip alone uses the model), the
+  Nodes page subtitle and its Removed and Uninstall copy, `Provision`'s
+  uninstall message, the `Repo`, `Events` and `pin_to_bottom.js` comments,
+  and the hub tables in `docs/otp-design-guide.md`.
 - Tests and test support per section 6.2.
 
 B3. Remove the model relay. Independent of B1 and B2.
@@ -1373,9 +1396,10 @@ B4. Fold `Photon.Nodes` into `Photon.Machines`. After B2.
 - Move the registry functions into `lib/photon/machines.ex`; delete
   `lib/photon/nodes.ex`; rename `Photon.NodeRegistry` to
   `Photon.MachineRegistry` in `lib/photon/application.ex`.
-- `Machines.roster/0` (online plus known keys) replaces `Nodes.roster/2`
-  in `shell.ex`, `overview_live.ex`, `layouts.ex`, `nodes_live.ex` and
-  `list_machines`.
+- `Machines.roster/0` (online plus known keys) already feeds the Shell
+  (B2, as built), and through it the sidebar, the overview and Blip, and
+  `list_machines`; `nodes_live.ex` switches from `Nodes.list/0` to the
+  folded-in `Machines.list/0`.
 - Update callers: `node_channel.ex`, `node_keys` callers if any,
   LiveViews, `lib/photon/provision.ex` (it calls `Nodes.subscribe/0` and
   `Nodes.get/1`: switch to `Machines.subscribe/0` and `Machines.get/1`,

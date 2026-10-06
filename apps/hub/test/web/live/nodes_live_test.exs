@@ -1,14 +1,13 @@
 defmodule PhotonWeb.NodesLiveTest do
   @moduledoc """
-  The nodes page: connected nodes and their sessions, and machines on the
-  tailnet (read with a stand-in `tailscale`, in the background).
+  The nodes page: connected nodes, and machines on the tailnet (read with a stand-in `tailscale`, in the background).
   """
 
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
 
-  alias Photon.{Nodes, NodeSessions}
+  alias Photon.Nodes
 
   @moduletag :durable
   @moduletag :tmp_dir
@@ -62,13 +61,9 @@ defmodule PhotonWeb.NodesLiveTest do
   describe "connected nodes" do
     setup [:fake_tailscale, :connected_node, :page]
 
-    test "show with their session count, and an update badge for old builds", %{view: view} do
+    test "show with their platform, and an update badge for old builds", %{view: view} do
       assert has_element?(view, "#node-box", "update available")
-      assert has_element?(view, "#node-box", "Sessions")
-
-      {:ok, _, _} = NodeSessions.start("box", "check disks")
-      _ = render(view)
-      assert view |> element("#node-box") |> render() =~ ~r/Sessions<\/dt><dd[^>]*>\s*1\s*</
+      assert has_element?(view, "#node-box", "linux")
     end
 
     test "offer to update every outdated node at once", %{view: view} do

@@ -5,12 +5,12 @@ defmodule PhotonWeb.PagesTest do
 
   @moduletag :durable
 
-  alias Photon.{Durable, NodeSessions}
+  alias Photon.{Durable, NodeKeys, Nodes}
 
-  test "the overview shows machines, work and schedules", %{conn: conn} do
+  test "the overview shows machines and schedules", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
     assert has_element?(view, "#no-machines")
-    assert has_element?(view, "#running", "Nothing running")
+    assert has_element?(view, "#schedules")
     assert has_element?(view, "#nav-overview")
   end
 
@@ -49,49 +49,18 @@ defmodule PhotonWeb.PagesTest do
     assert settings["user_name"] == "Henry"
   end
 
-  test "a node session shows its commands and output", %{conn: conn} do
-    {:ok, session, input} = NodeSessions.start("box", "list files")
-    call = %{"id" => "c1", "name" => "Bash", "arguments" => ~s({"command":"ls"})}
+  test "no page links to node sessions, which are gone", %{conn: conn} do
+    {:ok, _key} = NodeKeys.issue("nas")
+    :ok = Nodes.register("box", %{"hostname" => "box.lan", "platform" => "linux"})
 
-    op = %{
-      "id" => "op",
-      "type" => "shell",
-      "status" => "completed",
-      "state" => %{"result" => %{"out" => "a.txt\n", "err" => "", "exit_code" => 0}}
-    }
+    for path <- [~p"/", ~p"/nodes", ~p"/settings"] do
+      {:ok, view, _html} = live(conn, path)
+      assert has_element?(view, "#side-node-box")
+      assert has_element?(view, "#side-node-nas")
+      refute has_element?(view, ~s(a[href^="/sessions"]))
+      refute has_element?(find_live_child(view, "blip"), ~s(a[href^="/sessions"]))
+    end
 
-    records = [
-      %{"kind" => "session", "data" => %{}},
-      %{
-        "kind" => "input",
-        "data" => %{
-          "id" => input.id,
-          "kind" => "external",
-          "payload" => %{"content" => "list files"}
-        }
-      },
-      %{
-        "kind" => "model_response",
-        "data" => %{
-          "turn_id" => "t",
-          "response" => %{"message" => PhotonCore.Message.assistant("Listing.", [call])}
-        }
-      },
-      %{
-        "kind" => "tool_call_status",
-        "data" => %{
-          "call_id" => "c1",
-          "status" => %{"error" => "", "waiting_for" => ["op"]},
-          "operations" => [op]
-        }
-      }
-    ]
-
-    for {r, i} <- Enum.with_index(records), do: :ok = NodeSessions.ingest(session.id, "box", i, r)
-
-    {:ok, view, html} = live(conn, ~p"/sessions/#{session.id}")
-    assert html =~ "$ ls"
-    assert html =~ "a.txt"
-    assert has_element?(view, "#session-composer")
+    assert get(conn, "/sessions/ns_1").status == 404
   end
 end

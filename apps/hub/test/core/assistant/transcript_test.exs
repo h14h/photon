@@ -187,7 +187,7 @@ defmodule Photon.Assistant.TranscriptTest do
   end
 
   describe "Blip's mood" do
-    @quiet %{outcome: nil, live: nil, working: 0, busy: false}
+    @quiet %{outcome: nil, live: nil, busy: false}
     @live %{text: "", reasoning: "", tools: %{}, retry: nil}
 
     test "is idle when nothing is happening" do
@@ -199,14 +199,8 @@ defmodule Photon.Assistant.TranscriptTest do
       assert Transcript.mood(%{@quiet | busy: true}) == :thinking
     end
 
-    test "is working while node work it started runs, unless it's answering" do
-      assert Transcript.mood(%{@quiet | working: 1}) == :working
-      assert Transcript.mood(%{@quiet | working: 1, busy: true}) == :working
-      assert Transcript.mood(%{@quiet | working: 1, live: @live}) == :thinking
-    end
-
     test "shows an outcome it is holding over everything else" do
-      busy = %{@quiet | live: @live, working: 2, busy: true}
+      busy = %{@quiet | live: @live, busy: true}
       assert Transcript.mood(%{busy | outcome: :done}) == :done
       assert Transcript.mood(%{busy | outcome: :error}) == :error
     end

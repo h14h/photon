@@ -1,8 +1,8 @@
 defmodule PhotonWeb.Layouts do
   @moduledoc """
-  The app shell: a sidebar with the overview, every node and its recent
-  work, and settings; the page fills the rest. On small screens the sidebar
-  folds into a drawer behind a top bar.
+  The app shell: a sidebar with the overview, the nodes page, every machine
+  and whether it is online, and settings; the page fills the rest. On small
+  screens the sidebar folds into a drawer behind a top bar.
 
   Blip floats over all of it: `PhotonWeb.BlipLive`, rendered here once and
   sticky, so it and its conversation stay put while you move between pages.
@@ -14,7 +14,7 @@ defmodule PhotonWeb.Layouts do
   attr :flash, :map, required: true
   attr :shell, :map, required: true
   attr :socket, Phoenix.LiveView.Socket, required: true, doc: "the page's, to render Blip"
-  attr :active, :any, default: nil, doc: ":overview, :nodes, :settings, or {:session, id}"
+  attr :active, :atom, default: nil, doc: ":overview, :nodes or :settings"
 
   slot :inner_block, required: true
 
@@ -75,7 +75,7 @@ defmodule PhotonWeb.Layouts do
   end
 
   attr :shell, :map, required: true
-  attr :active, :any, default: nil
+  attr :active, :atom, default: nil
 
   defp sidebar(assigns) do
     ~H"""
@@ -97,11 +97,6 @@ defmodule PhotonWeb.Layouts do
         id="nav-overview"
       >
         Overview
-        <:trailing>
-          <span :if={@shell.working != []} class="text-[11px] text-accent-strong tabular-nums">
-            {length(@shell.working)} running
-          </span>
-        </:trailing>
       </.nav_item>
       <.nav_item
         navigate={~p"/nodes"}
@@ -129,31 +124,24 @@ defmodule PhotonWeb.Layouts do
           <.icon name="hero-plus-micro" class="size-4" />
         </.link>
       </div>
-      <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-2.5 pb-4">
+      <div class="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pb-4">
         <p :if={@shell.nodes == []} class="px-2.5 py-2 text-[13px] leading-relaxed text-ink-faint">
           No machines yet.
           <.link navigate={~p"/nodes"} class="text-accent-strong underline underline-offset-2">Add one</.link>
           so Blip has somewhere to send work.
         </p>
-        <div :for={node <- @shell.nodes} id={"side-node-#{node.id}"}>
-          <div class="flex items-center gap-2 px-2.5 py-1 text-[13px]">
-            <.dot status={if(node.online, do: :ok, else: :off)} />
-            <span class={["truncate font-medium", !node.online && "text-ink-faint"]}>{node.id}</span>
-          </div>
-          <.link
-            :for={s <- @shell.sessions |> Enum.filter(&(&1.node_id == node.id)) |> Enum.take(4)}
-            navigate={~p"/sessions/#{s.id}"}
-            id={"side-session-#{s.id}"}
-            class={[
-              "ml-3 flex items-center gap-2 rounded-md border-l border-line py-1 pr-2 pl-3 text-[13px] transition",
-              @active == {:session, s.id} && "border-accent bg-accent-soft text-ink",
-              @active != {:session, s.id} && "text-ink-soft hover:bg-sunken hover:text-ink"
-            ]}
-          >
-            <span class="min-w-0 flex-1 truncate">{s.title}</span>
-            <.session_badge status={s.status} />
-          </.link>
-        </div>
+        <.link
+          :for={node <- @shell.nodes}
+          navigate={~p"/nodes"}
+          id={"side-node-#{node.id}"}
+          class="flex items-center gap-2 rounded-lg px-2.5 py-1 text-[13px] transition hover:bg-sunken"
+        >
+          <.dot status={if(node.online, do: :ok, else: :off)} />
+          <span class={["min-w-0 flex-1 truncate font-medium", !node.online && "text-ink-faint"]}>
+            {node.id}
+          </span>
+          <span :if={!node.online} class="shrink-0 text-[11px] text-ink-faint">offline</span>
+        </.link>
       </div>
     </div>
 
@@ -183,23 +171,6 @@ defmodule PhotonWeb.Layouts do
       </.nav_item>
       <div class="mt-1 flex justify-end px-1"><.theme_toggle /></div>
     </div>
-    """
-  end
-
-  attr :status, :string, required: true
-
-  @spec session_badge(map()) :: Phoenix.LiveView.Rendered.t()
-  def session_badge(assigns) do
-    ~H"""
-    <span :if={@status == "running"} class="text-accent-strong" title="Working">
-      <.spinner class="size-3.5" />
-    </span>
-    <span :if={@status == "pending"} class="text-ink-faint" title="Waiting for the node">
-      <.icon name="hero-clock-micro" class="size-3.5" />
-    </span>
-    <span :if={@status in ["failed", "stopped"]} class="text-bad" title={String.capitalize(@status)}>
-      <.icon name="hero-exclamation-circle-micro" class="size-3.5" />
-    </span>
     """
   end
 
