@@ -394,8 +394,10 @@ are `replay: :safe`.
 `shell`
 - Description: runs one command with the machine's default shell, in the
   machine's workspace (step 1), in its own process group; stdin is
-  `/dev/null`; background children are killed when the command exits; the
-  call returns when the command finishes.
+  `/dev/null`; background children are killed when the command exits,
+  `nohup` or not; something meant to keep running starts in its own
+  process group (`bash -c 'set -m; nohup CMD >CMD.log 2>&1 &'`, section
+  3.7); the call returns when the command finishes.
 - Parameters: `machine` (string, required, an ID from `list_machines`),
   `command` (string, required, at most 100,000 bytes), `max_output_length`
   (integer, optional, 1 to 1,000,000, default 40,000).
@@ -589,15 +591,25 @@ results.
 - PR A: add that Blip has `shell` and `view_image` on every machine and
   should use them for anything short (checks, reading files, one-off
   commands), and `run_on_node` only for long autonomous work. Each `shell`
-  call is a fresh shell in the machine's workspace. Commands that would run
-  for hours (servers, watchers) belong in the background with `nohup ... &`
-  and output to a file.
-- PR B: drop the node-agent lines entirely. The voice block's "You do not
-  run commands yourself. You hand work to ... machines, each of which has
-  its own agent" becomes "You run commands on <owner> machines yourself, and
-  you report back what actually happened." The block is copied from the Blip
-  brand kit's `VOICE.md`; say in the PR description that the kit needs the
-  same edit.
+  call is a fresh shell in the machine's workspace. Background children
+  are killed with the command's process group when it exits, and `nohup`
+  alone doesn't help, since its child stays in that group. Commands that
+  would run for hours (servers, watchers) start as a job in their own
+  process group, with output to a file: `bash -c 'set -m; nohup CMD
+  >CMD.log 2>&1 &'` (bash's job control puts the job in a new group
+  before it returns; `setsid` can still be in the old group when the
+  group is killed, and macOS has no `setsid`). The `shell` description
+  says the same.
+- PR A also changes the voice block, since Blip now runs commands
+  itself: "You do not run commands yourself. You hand work to ...
+  machines, each of which has its own agent" becomes "You run commands on
+  <owner> machines yourself, and you report back what actually happened.",
+  and the "never" line "Claim to have run something yourself. You
+  delegated it. Say who ran it." becomes "Say something ran without naming
+  the machine it ran on." BlipLive's empty state says the same. The block
+  is copied from the Blip brand kit's `VOICE.md`; say in the PR
+  description that the kit needs the same edit.
+- PR B: drop the node-agent lines entirely.
 
 `Photon.Assistant.MockScript` (the scripted model behind
 `PHOTON_MOCK_MODEL=1` and the tests) learns:
@@ -1389,7 +1401,8 @@ B8. Docs and final checks. After all of the above.
   `docs/unreal-agent-port-spec.md` note.
 - Section 6.3 in all three apps; the PR A e2e test; the PR description
   says to delete the hub database and reinstall nodes, and that the Blip
-  brand kit's `VOICE.md` needs the voice edit.
+  brand kit's `VOICE.md` needs the voice edit PR A made (say it in PR A's
+  description too).
 
 ## 9. Decisions for the user
 
@@ -1401,8 +1414,8 @@ choices made here that the user may want to know about, all reversible:
 - A finished op's `out` and `err` files stay on the machine for 7 days after
   the hub acknowledges the result, so a truncated result's file path keeps
   working for a while.
-- Blip's voice block changes one line, which puts it out of step with the
-  brand kit until `VOICE.md` gets the same edit.
+- Blip's voice block changes two lines in PR A, which puts it out of step
+  with the brand kit until `VOICE.md` gets the same edit.
 - Tool results from earlier turns are shortened in Blip's context: images
   dropped, text cut to 4,000 code points with a pointer to the full output
   on the machine. Results in the current turn stay whole.

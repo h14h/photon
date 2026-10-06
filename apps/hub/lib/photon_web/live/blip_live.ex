@@ -739,7 +739,7 @@ defmodule PhotonWeb.BlipLive do
     <div id="empty-state" class="pt-6 pb-8">
       <h2 class="text-xl font-semibold tracking-tight">Hi. I'm Blip.</h2>
       <p class="mt-2 text-[14.5px] leading-relaxed text-ink-soft">
-        I'm a photon living on this hub. I can't run commands myself, so I hand work to your machines and tell you what they actually did.
+        I'm a photon living on this hub. I run commands on your machines and tell you what actually happened.
       </p>
       <p :if={!@shell.model_ready} class="mt-3 text-sm text-ink-soft">
         First I need a model to think with. Sign in with ChatGPT and I'll use your plan.

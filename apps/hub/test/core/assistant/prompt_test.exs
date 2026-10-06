@@ -42,7 +42,8 @@ defmodule Photon.Assistant.PromptTest do
   test "runs short work on machines itself, and hands long work to a node's agent" do
     prompt = Prompt.system_prompt(settings(), "", @now)
     assert prompt =~ "You have shell and view_image on every machine."
-    assert prompt =~ "nohup ... &"
+    assert prompt =~ "Background children are killed when the command exits, nohup or not."
+    assert prompt =~ "bash -c 'set -m; nohup CMD >CMD.log 2>&1 &'"
     assert prompt =~ "Hand long autonomous work to a node's agent with run_on_node."
     assert prompt =~ "Use list_machines"
   end
@@ -59,13 +60,14 @@ defmodule Photon.Assistant.PromptTest do
   test "opens with Blip's voice, in the owner's name when it's set" do
     prompt = Prompt.system_prompt(settings(), "", @now)
     assert String.starts_with?(prompt, "You are Blip, the assistant in the user's Photon hub.")
-    assert prompt =~ "You hand work to the user's machines"
+    assert prompt =~ "You run commands on the user's machines yourself"
+    refute prompt =~ "You do not run commands yourself"
     assert prompt =~ "## How you work"
     refute prompt =~ "The user's name is"
 
     named = Prompt.system_prompt(settings(%{"user_name" => " Henry "}), "", @now)
     assert String.starts_with?(named, "You are Blip, the assistant in Henry's Photon hub.")
-    assert named =~ "You hand work to Henry's machines"
+    assert named =~ "You run commands on Henry's machines yourself"
     assert named =~ "The user's name is Henry."
   end
 end

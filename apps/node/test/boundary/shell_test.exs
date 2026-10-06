@@ -263,6 +263,27 @@ defmodule PhotonNode.Harness.ShellTest do
     refute File.exists?(Path.join(dir, "stopped"))
   end
 
+  # What the hub's `shell` tool tells the model: background children die
+  # with the command's group, nohup or not, and a job started in its own
+  # group with `bash -c 'set -m; nohup ...'` keeps running.
+  test "background children are killed when the command exits, unless in a group of their own",
+       %{workspace: workspace} do
+    unique = System.unique_integer([:positive])
+    child = "sleep 63.#{unique}"
+    server = "sleep 64.#{unique}"
+    on_exit(fn -> for p <- [child, server], do: kill_all(p) end)
+
+    command =
+      "nohup #{child} >/dev/null 2>&1 & bash -c 'set -m; nohup #{server} >/dev/null 2>&1 &'"
+
+    op = translated_op("detach", command, workspace)
+    {:ok, _pid} = Ops.add(op, owner())
+
+    assert %{"state" => %{"result" => %{"exit_code" => 0}}} = await_status("completed")
+    assert gone?(child)
+    refute gone?(server)
+  end
+
   test "new output streams to the owner while the command runs", %{workspace: workspace} do
     go = Path.join(workspace, "go")
 

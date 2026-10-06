@@ -15,8 +15,9 @@ defmodule Photon.MachineTools.Shell do
   def description do
     "Run one command on a machine with its default shell, in the machine's workspace, and return its output. " <>
       "Each call is a fresh shell in its own process group, with stdin from /dev/null; background children are killed " <>
-      "when the command exits, and the call returns when the command finishes. For something that should keep running " <>
-      "(a server, a watcher), start it with nohup ... & and send its output to a file. " <>
+      "when the command exits (nohup doesn't save them: they are in the same group), and the call returns when the " <>
+      "command finishes. To leave something running after the call (a server, a watcher), start it as a job in its own " <>
+      "process group, with its output in a file: bash -c 'set -m; nohup CMD >CMD.log 2>&1 &'. " <>
       "If the machine is offline, the call waits for it to come back, for up to 10 minutes."
   end
 
