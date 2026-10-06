@@ -119,7 +119,7 @@ defmodule Photon.SkillToolsTest do
              "Error: There's no skill called pdf-form turned on here. Turned on here: pdf-forms."
 
     :ok = ask(thread, "load skill PDF-Forms")
-    assert result_text(thread) =~ ~s(<skill name="pdf-forms" version="1">)
+    assert result_text(thread) =~ ~r/<skill name="pdf-forms" id="sk_\w+" version="1">/
   end
 
   test "Blip can't load a skill that is on only for a project, and loads its own", %{
@@ -200,6 +200,6 @@ defmodule Photon.SkillToolsTest do
     assert loaded =~
              ~r/characters of this older result left out\. Load it again with load_skill\("long-one"\) to read all of it\.\.\./
 
-    assert String.starts_with?(loaded, ~s(<skill name="long-one" version="1">))
+    assert String.starts_with?(loaded, ~s(<skill name="long-one" id="#{long.id}" version="1">))
   end
 end

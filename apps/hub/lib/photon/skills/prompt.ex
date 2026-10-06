@@ -6,15 +6,17 @@ defmodule Photon.Skills.Prompt do
   error, and the tool's name, description and parameters, which Blip's
   `load_skill` and a thread's share.
 
-  `section/1` lists the enabled skills' names, versions and descriptions,
-  and says what to do when a skill loaded earlier is no longer listed or
-  its version went up. With no skills it is nil, so a prompt without
+  `section/1` lists the enabled skills' names, IDs, versions and
+  descriptions, and says what to do when a skill loaded earlier is no
+  longer listed, or is listed with another ID or version. The ID tells
+  apart two skills that had the same name in turn: one deleted and
+  another written or installed under its name starts again at version 1. With no skills it is nil, so a prompt without
   enabled skills has no trace of the feature. It changes only when a skill
   is turned on or off, renamed, re-described or saved, so prompt caches
   stay warm between those.
 
   `loaded/1` wraps the instructions in a `<skill>` element that names the
-  version, and, for a skill installed without some of its files, adds a
+  ID and version, and, for a skill installed without some of its files, adds a
   line naming them and telling the agent not to look for them: they are on
   no machine, and a file of the same name in a project's folder is
   something else.
@@ -30,11 +32,12 @@ defmodule Photon.Skills.Prompt do
 
   Skills are instructions for particular kinds of task, written or installed by the user. When a task matches a skill's description, load it with #{@tool_name} before you start, and follow it. Load only the skills the task needs.
 
-  Only the skills listed here are turned on. If you loaded a skill earlier in this conversation and it isn't listed any more, it was turned off or deleted: stop following it. If a skill's version here is higher than the one you loaded, load it again before you use it.
+  Only the skills listed here are turned on. If you loaded a skill earlier in this conversation and it isn't listed any more, it was turned off or deleted: stop following it. If a skill's id or version here differs from the one you loaded, it has changed: load it again before you use it.
   """
 
   @typedoc "What the prompt needs of a skill: a `Photon.Skills.Skill` will do."
   @type listed :: %{
+          required(:id) => String.t(),
           required(:name) => String.t(),
           required(:version) => pos_integer(),
           required(:description) => String.t(),
@@ -43,6 +46,7 @@ defmodule Photon.Skills.Prompt do
 
   @typedoc "What `loaded/1` needs of a skill: a `Photon.Skills.Skill` will do."
   @type loadable :: %{
+          required(:id) => String.t(),
           required(:name) => String.t(),
           required(:version) => pos_integer(),
           required(:instructions) => String.t(),
@@ -64,6 +68,7 @@ defmodule Photon.Skills.Prompt do
 
   defp skill_line(skill) do
     "<skill><name>#{escape(skill.name)}</name><version>#{skill.version}</version>" <>
+      "<id>#{escape(skill.id)}</id>" <>
       "<description>#{escape(one_line(skill.description))}</description></skill>"
   end
 
@@ -80,13 +85,13 @@ defmodule Photon.Skills.Prompt do
 
   @doc """
   A loaded skill, as `load_skill` returns it: the instructions inside a
-  `<skill>` element naming the skill and its version, then, when install
+  `<skill>` element naming the skill, its ID and its version, then, when install
   left files out, the line that names them.
   """
   @spec loaded(loadable()) :: String.t()
   def loaded(skill) do
     text = """
-    <skill name="#{skill.name}" version="#{skill.version}">
+    <skill name="#{skill.name}" id="#{skill.id}" version="#{skill.version}">
     #{skill.instructions}
     </skill>\
     """

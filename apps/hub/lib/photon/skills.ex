@@ -79,14 +79,17 @@ defmodule Photon.Skills do
   What install keeps from the SKILL.md it read (section 2.4): how it
   arrived (`"pasted"` or `"fetched"`), the link for a fetched one, the
   notes the preview showed, and the files left out that an agent might
-  look for. The form gives the name, description and instructions; these
-  come from the candidate the page holds. Other keys are ignored.
+  look for, and what those were made from (`found`, see
+  `Photon.Skills.Source.candidate/0`). The form gives the name,
+  description and instructions; these come from the candidate the page
+  holds. Other keys are ignored.
   """
   @type candidate :: %{
           required(:origin) => String.t(),
           optional(:source_url) => String.t() | nil,
           optional(:notes) => [String.t()],
           optional(:files_left_out) => [String.t()],
+          optional(:found) => Source.found_facts(),
           optional(atom()) => term()
         }
 
@@ -120,6 +123,48 @@ defmodule Photon.Skills do
   @doc "The skill called `name`, or nil."
   @spec get_by_name(String.t()) :: Skill.t() | nil
   def get_by_name(name), do: Repo.get_by(Skill, name: name)
+
+  @doc """
+  The message for `name` (trimmed) when another skill has it, or nil:
+  what the install page says of a listed skill or the name typed in its
+  preview. Install checks it again in its commit.
+  """
+  @spec name_taken(String.t() | nil) :: String.t() | nil
+  def name_taken(name) when is_binary(name) do
+    name = String.trim(name)
+
+    case name != "" and get_by_name(name) do
+      %Skill{} -> Rules.name_taken(name).name
+      _free -> nil
+    end
+  end
+
+  def name_taken(_name), do: nil
+
+  @doc """
+  The messages the install preview shows under its fields before Install,
+  for `params` (`name`, `description`): the rule's message for a name or
+  a description left empty, as a SKILL.md without one opens, and a name
+  another skill has. Everything else is checked on install.
+  """
+  @spec preview_errors(map()) :: field_errors()
+  def preview_errors(params) do
+    blank =
+      case Rules.skill(params, nil) do
+        {:ok, _attrs} -> %{}
+        {:error, errors} -> Map.filter(errors, fn {field, _} -> blank?(params, field) end)
+      end
+
+    case name_taken(params["name"]) do
+      nil -> blank
+      message -> Map.put(blank, :name, message)
+    end
+  end
+
+  defp blank?(params, field) when field in [:name, :description],
+    do: String.trim(params[Atom.to_string(field)] || "") == ""
+
+  defp blank?(_params, _field), do: false
 
   @doc """
   The skills on in `scope`, by name: what its agents' prompts list and
@@ -229,19 +274,22 @@ defmodule Photon.Skills do
   Installs a skill: the name, description and instructions from the
   preview form's `params`, and how it arrived, its link, its notes and
   the files left out from `candidate` (section 2.4), never from the form.
-  On nowhere.
+  The notes and files left out are said again for what was saved
+  (`Photon.Skills.Source.saved/3`): a name the owner changed, and only
+  the files the saved instructions mention. On nowhere.
   """
   @spec install(map(), candidate()) :: {:ok, Skill.t()} | {:error, field_errors()}
   def install(params, candidate) do
     with {:ok, attrs} <- Rules.skill(params, nil) do
-      notes = Map.get(candidate, :notes) || []
+      %{notes: notes, files_left_out: left_out} =
+        Source.saved(candidate, attrs.name, attrs.instructions)
 
       insert(
         Map.merge(attrs, %{
           origin: Map.fetch!(candidate, :origin),
           source_url: Map.get(candidate, :source_url),
           install_notes: if(notes == [], do: nil, else: Enum.join(notes, "\n")),
-          files_left_out: Map.get(candidate, :files_left_out) || []
+          files_left_out: left_out
         })
       )
     end

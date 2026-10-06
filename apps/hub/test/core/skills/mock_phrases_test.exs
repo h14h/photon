@@ -30,8 +30,13 @@ defmodule Photon.Skills.MockPhrasesTest do
     system =
       "You are an agent.\n\n" <>
         SkillsPrompt.section([
-          %{name: "pdf-forms", version: 2, description: "Fill in PDF forms."},
-          %{name: "release-notes", version: 1, description: "Write release notes."}
+          %{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."},
+          %{
+            id: "sk_notes",
+            name: "release-notes",
+            version: 1,
+            description: "Write release notes."
+          }
         ])
 
     for text <- ["skills", "list skills"] do

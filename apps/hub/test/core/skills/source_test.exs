@@ -29,6 +29,15 @@ defmodule Photon.Skills.SourceTest do
     %{"sha" => "abc", "tree" => entries, "truncated" => truncated}
   end
 
+  # GitHub's answer for the folder `folder` (`Source.tree_url/1`): the
+  # files under it, relative to it.
+  defp listing(files, folder, truncated \\ false) do
+    files
+    |> Enum.filter(&(folder == "" or String.starts_with?(&1, folder <> "/")))
+    |> Enum.map(&if(folder == "", do: &1, else: String.replace_prefix(&1, folder <> "/", "")))
+    |> tree(truncated)
+  end
+
   defp skill_md(name, body \\ "Do it.") do
     "---\nname: #{name}\ndescription: Use for #{name}.\n---\n\n#{body}\n"
   end
@@ -102,6 +111,15 @@ defmodule Photon.Skills.SourceTest do
       assert Source.repo_url(link) == "https://api.github.com/repos/o/r"
 
       assert Source.tree_url(link) ==
+               "https://api.github.com/repos/o/r/git/trees/main:skills/pdf%20forms?recursive=1"
+
+      assert Source.tree_url(link("main", "skills/pdf forms/SKILL.md", :file)) ==
+               "https://api.github.com/repos/o/r/git/trees/main:skills/pdf%20forms?recursive=1"
+
+      assert Source.tree_url(link("main", "", :folder)) ==
+               "https://api.github.com/repos/o/r/git/trees/main?recursive=1"
+
+      assert Source.tree_url(link("main", "SKILL.md", :file)) ==
                "https://api.github.com/repos/o/r/git/trees/main?recursive=1"
 
       assert Source.raw_url(link, "skills/pdf forms/SKILL.md") ==
@@ -124,13 +142,16 @@ defmodule Photon.Skills.SourceTest do
   describe "skills_in_tree/3" do
     test "a file link: the file's folder, with its other files" do
       tree =
-        tree([
-          "README.md",
-          "skills/pdf-forms/SKILL.md",
-          "skills/pdf-forms/scripts/fill.py",
-          "skills/pdf-forms/reference.md",
-          "skills/other/SKILL.md"
-        ])
+        listing(
+          [
+            "README.md",
+            "skills/pdf-forms/SKILL.md",
+            "skills/pdf-forms/scripts/fill.py",
+            "skills/pdf-forms/reference.md",
+            "skills/other/SKILL.md"
+          ],
+          "skills/pdf-forms"
+        )
 
       assert Source.skills_in_tree(tree, "skills/pdf-forms/SKILL.md", :file) ==
                {:ok,
@@ -152,11 +173,14 @@ defmodule Photon.Skills.SourceTest do
 
     test "a folder with its own SKILL.md is that skill, nested ones and all" do
       tree =
-        tree([
-          "skills/pdf-forms/SKILL.md",
-          "skills/pdf-forms/extra/SKILL.md",
-          "skills/pdf-forms/reference.md"
-        ])
+        listing(
+          [
+            "skills/pdf-forms/SKILL.md",
+            "skills/pdf-forms/extra/SKILL.md",
+            "skills/pdf-forms/reference.md"
+          ],
+          "skills/pdf-forms"
+        )
 
       assert Source.skills_in_tree(tree, "skills/pdf-forms", :folder) ==
                {:ok,
@@ -170,18 +194,18 @@ defmodule Photon.Skills.SourceTest do
     end
 
     test "a folder of skills at two depths, by path, with nested ones skipped" do
-      tree =
-        tree([
-          "README.md",
-          "skills/zeta/SKILL.md",
-          "skills/alpha/SKILL.md",
-          "skills/alpha/scripts/run.sh",
-          "skills/alpha/inner/SKILL.md",
-          "skills/.curated/linear/SKILL.md",
-          "other/SKILL.md"
-        ])
+      files = [
+        "README.md",
+        "skills/zeta/SKILL.md",
+        "skills/alpha/SKILL.md",
+        "skills/alpha/scripts/run.sh",
+        "skills/alpha/inner/SKILL.md",
+        "skills/.curated/linear/SKILL.md",
+        "other/SKILL.md"
+      ]
 
-      assert {:ok, found, nil} = Source.skills_in_tree(tree, "skills", :folder)
+      assert {:ok, found, nil} =
+               Source.skills_in_tree(listing(files, "skills"), "skills", :folder)
 
       assert Enum.map(found, & &1.path) == [
                "skills/.curated/linear",
@@ -193,12 +217,12 @@ defmodule Photon.Skills.SourceTest do
                Enum.at(found, 1)
 
       # The repository's root finds every skill.
-      assert {:ok, all, nil} = Source.skills_in_tree(tree, "", :folder)
+      assert {:ok, all, nil} = Source.skills_in_tree(listing(files, ""), "", :folder)
       assert length(all) == 4
     end
 
     test "a sibling whose name starts like another's isn't nested in it" do
-      tree = tree(["s/a/SKILL.md", "s/a-b/SKILL.md", "s/a/b/SKILL.md"])
+      tree = listing(["s/a/SKILL.md", "s/a-b/SKILL.md", "s/a/b/SKILL.md"], "s")
 
       assert {:ok, found, nil} = Source.skills_in_tree(tree, "s", :folder)
       assert Enum.map(found, & &1.path) == ["s/a", "s/a-b"]
@@ -207,7 +231,9 @@ defmodule Photon.Skills.SourceTest do
     test "31 skills are cut to the first 30, with a notice" do
       files = for n <- 1..31, do: "skills/s#{String.pad_leading("#{n}", 2, "0")}/SKILL.md"
 
-      assert {:ok, found, notice} = Source.skills_in_tree(tree(files), "skills", :folder)
+      assert {:ok, found, notice} =
+               Source.skills_in_tree(listing(files, "skills"), "skills", :folder)
+
       assert length(found) == 30
       assert List.last(found).path == "skills/s30"
 
@@ -220,7 +246,7 @@ defmodule Photon.Skills.SourceTest do
       assert Source.skills_in_tree(tree(["README.md"]), "", :folder) ==
                {:error, "There's no SKILL.md in that folder."}
 
-      assert Source.skills_in_tree(tree(["skills/x/SKILL.md"]), "docs", :folder) ==
+      assert Source.skills_in_tree(listing(["skills/x/SKILL.md"], "docs"), "docs", :folder) ==
                {:error, "There's no SKILL.md in that folder."}
 
       assert Source.skills_in_tree(tree(["x/SKILL.md"], true), "", :folder) ==
@@ -228,7 +254,64 @@ defmodule Photon.Skills.SourceTest do
                 "That repository is too big to list in one go. Link to the skill's folder " <>
                   "or its SKILL.md instead."}
 
+      for {path, kind} <- [{"skills", :folder}, {"skills/x/SKILL.md", :file}] do
+        assert Source.skills_in_tree(listing(["skills/x/SKILL.md"], "skills", true), path, kind) ==
+                 {:error,
+                  "That folder is too big to list in one go. Link to a folder deeper in it, " <>
+                    "or to a skill's SKILL.md."}
+      end
+
       assert {:error, _message} = Source.skills_in_tree(%{"message" => "Not Found"}, "", :folder)
+    end
+  end
+
+  describe "saved/3" do
+    defp pdf_candidate do
+      folder = %{Source.pasted() | files: ["scripts/fill.py", "LICENSE"]}
+      body = "Fill it with `scripts/fill.py`."
+      text = "---\nname: PDF Forms\ndescription: d\nlicense: MIT\n---\n\n#{body}\n"
+      Source.candidate("pasted", folder, {:ok, text})
+    end
+
+    test "says again the notes made for the candidate as it was" do
+      candidate = pdf_candidate()
+
+      assert Source.saved(candidate, candidate.name, candidate.instructions) == %{
+               notes: candidate.notes,
+               files_left_out: candidate.files_left_out
+             }
+
+      assert candidate.files_left_out == ["scripts/fill.py", "LICENSE"]
+      assert Enum.any?(candidate.notes, &(&1 =~ "mention scripts/fill.py"))
+    end
+
+    test "follows a name and instructions the owner changed" do
+      %{notes: notes, files_left_out: left_out} =
+        Source.saved(pdf_candidate(), "pdf-filler", "Fill it by hand.")
+
+      assert notes == [
+               "Left out: scripts/fill.py, LICENSE. Photon skills are instructions only.",
+               "Ignored front matter: license.",
+               ~s(Renamed from "PDF Forms" to pdf-filler.)
+             ]
+
+      assert left_out == ["scripts/fill.py", "LICENSE"]
+    end
+
+    test "says nothing of a name kept as the SKILL.md had it" do
+      text = "---\nname: pdf-forms\ndescription: d\n---\n\nDo it.\n"
+      candidate = Source.candidate("pasted", Source.pasted(), {:ok, text})
+
+      assert Source.saved(candidate, "pdf-forms", "Do it.").notes == []
+
+      assert Source.saved(candidate, "pdf-filler", "Do it.").notes == [
+               ~s(Renamed from "pdf-forms" to pdf-filler.)
+             ]
+    end
+
+    test "keeps a candidate's own notes when it doesn't say what they came from" do
+      assert Source.saved(%{origin: "pasted", notes: ["n"], files_left_out: ["f"]}, "x", "i") ==
+               %{notes: ["n"], files_left_out: ["f"]}
     end
   end
 
@@ -316,7 +399,8 @@ defmodule Photon.Skills.SourceTest do
                    "digits and hyphens."
                ],
                files_left_out: ["LICENSE"],
-               error: nil
+               error: nil,
+               found: %{name: "PDF Forms", ignored: ["license"], files: ["LICENSE"], notes: []}
              }
     end
 

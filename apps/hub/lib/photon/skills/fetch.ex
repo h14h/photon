@@ -6,16 +6,19 @@ defmodule Photon.Skills.Fetch do
   the answers mean; this makes the requests with `Req`.
 
   A GitHub link costs at most two API calls without a sign-in (the
-  repository, for a root link's default branch, and the whole tree in
-  one call), then one download per SKILL.md. Those downloads run
+  repository, for a root link's default branch, and the tree under the
+  linked folder, or a file's folder, in one call), then one download per
+  SKILL.md. Those downloads run
   through `Task.async_stream/3`, six at a time, each given 20 seconds
-  (rule 93). Every download is bounded: no retries, 15 seconds between
-  chunks, at most 3 redirects, and it stops reading past 256 KB (8 MB for
-  an API answer, since a large repository's tree is long).
+  (rule 93). Every request is bounded: no retries, at most 3 redirects,
+  15 seconds in all (a server that sends a byte now and then can't hold
+  the install page on Fetching), and it stops reading past 256 KB (8 MB
+  for an API answer, since a large repository's tree is long).
 
-  There is no process here: the caller's process (the install page's
+  Each request runs in a task linked to the caller, so it can be stopped
+  at its deadline; the caller's process (the install page's
   `start_async` task) waits for the answer, and the stream's tasks are
-  linked to it.
+  linked to it too.
   """
 
   alias Photon.Skills.Source
@@ -23,6 +26,7 @@ defmodule Photon.Skills.Fetch do
   @file_limit 256 * 1024
   @api_limit 8 * 1024 * 1024
   @receive_timeout 15_000
+  @deadline 15_000
   @max_redirects 3
   @concurrency 6
   @download_timeout 20_000
@@ -78,8 +82,14 @@ defmodule Photon.Skills.Fetch do
 
   defp tree(link) do
     case get(Source.tree_url(link), :api) do
-      {:ok, tree} -> Source.skills_in_tree(tree, link.path, link.kind)
-      {:error, failure} -> {:error, Source.error_message(failure, {:api, Source.place(link)})}
+      {:ok, tree} ->
+        Source.skills_in_tree(tree, link.path, link.kind)
+
+      {:error, :too_big} when link.kind == :folder ->
+        {:error, Source.too_big_to_list(link.path)}
+
+      {:error, failure} ->
+        {:error, Source.error_message(failure, {:api, Source.place(link)})}
     end
   end
 
@@ -128,6 +138,18 @@ defmodule Photon.Skills.Fetch do
   """
   @spec get(String.t(), :api | :file) :: {:ok, term()} | {:error, Source.failure()}
   def get(url, kind) do
+    task = Task.async(fn -> request(url, kind) end)
+
+    case Task.yield(task, deadline()) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      # Only a caller that traps exits hears of a crash this way.
+      {:exit, reason} -> {:error, Exception.format_exit(reason)}
+      # Past the deadline: the task is gone, and so is its connection.
+      nil -> {:error, :timeout}
+    end
+  end
+
+  defp request(url, kind) do
     case Req.get(url, options(kind)) do
       {:ok, %Req.Response{status: status} = response} when status in 200..299 ->
         body(response, kind)
@@ -204,5 +226,9 @@ defmodule Photon.Skills.Fetch do
   defp reason(exception) when is_exception(exception), do: Exception.message(exception)
   defp reason(other), do: inspect(other)
 
-  defp req_options, do: Application.get_env(:photon, Photon.Skills, [])[:req_options] || []
+  defp req_options, do: config()[:req_options] || []
+
+  defp deadline, do: config()[:deadline] || @deadline
+
+  defp config, do: Application.get_env(:photon, Photon.Skills, [])
 end

@@ -30,6 +30,8 @@ defmodule Photon.Skills.Source do
   @no_skill "There's no SKILL.md in that folder."
   @too_big_to_list "That repository is too big to list in one go. Link to the skill's folder " <>
                      "or its SKILL.md instead."
+  @folder_too_big "That folder is too big to list in one go. Link to a folder deeper in it, " <>
+                    "or to a skill's SKILL.md."
   @not_listed "Couldn't list the folder on GitHub, so other files it may have weren't checked."
   @not_a_listing "GitHub's answer for that folder couldn't be read."
 
@@ -72,7 +74,10 @@ defmodule Photon.Skills.Source do
   A skill the install page offers (section 2.4). `name` is as found, or
   `Rules.suggest_name/1`'s when that breaks the rule; it, `description`
   and `instructions` are nil when missing. `error` is nil, or why this
-  one can't be installed.
+  one can't be installed. `found` keeps what the notes were made from
+  (the SKILL.md's own name, the front matter it ignored, the folder's
+  other files and notes), so install can say them again for what the
+  owner saved (`saved/3`).
   """
   @type candidate :: %{
           origin: String.t(),
@@ -83,7 +88,16 @@ defmodule Photon.Skills.Source do
           instructions: String.t() | nil,
           notes: [String.t()],
           files_left_out: [String.t()],
-          error: String.t() | nil
+          error: String.t() | nil,
+          found: found_facts()
+        }
+
+  @typedoc "What a candidate's notes were made from (`candidate/0`)."
+  @type found_facts :: %{
+          name: String.t() | nil,
+          ignored: [String.t()],
+          files: [String.t()],
+          notes: [String.t()]
         }
 
   @typedoc """
@@ -165,10 +179,26 @@ defmodule Photon.Skills.Source do
   @spec repo_url(github()) :: String.t()
   def repo_url(link), do: "https://api.github.com/repos/#{repo_path(link)}"
 
-  @doc "The GitHub API's address for the whole tree at the link's ref, in one call."
+  @doc """
+  The GitHub API's address for everything under the folder a link lists,
+  in one call: the linked folder, or a file's folder (the whole tree for
+  the root). Listing only that folder keeps a link into a large
+  repository within what GitHub lists in one answer.
+  """
   @spec tree_url(github()) :: String.t()
-  def tree_url(%{ref: ref} = link) when is_binary(ref),
-    do: "https://api.github.com/repos/#{repo_path(link)}/git/trees/#{encode(ref)}?recursive=1"
+  def tree_url(%{ref: ref} = link) when is_binary(ref) do
+    tree =
+      case listed_folder(link.path, link.kind) do
+        "" -> encode(ref)
+        folder -> encode(ref) <> ":" <> encode_path(folder)
+      end
+
+    "https://api.github.com/repos/#{repo_path(link)}/git/trees/#{tree}?recursive=1"
+  end
+
+  # The folder whose tree a link lists: a file's folder, or the folder.
+  defp listed_folder(path, :file), do: parent(path)
+  defp listed_folder(path, :folder), do: path
 
   @doc "The raw address of `file` (a path in the repository) at the link's ref."
   @spec raw_url(github(), String.t()) :: String.t()
@@ -204,8 +234,9 @@ defmodule Photon.Skills.Source do
   ## Finding skills in a tree
 
   @doc """
-  The skills a link finds in `tree`, GitHub's answer for the whole tree
-  (`"tree"` entries with `"path"` and `"type"`, and `"truncated"`):
+  The skills a link to `path` finds in `tree`, GitHub's answer for the
+  folder it lists (`tree_url/1`: `"tree"` entries with `"path"` and
+  `"type"`, relative to that folder, and `"truncated"`):
 
     * a file link: the file's folder holds the skill, and the file is
       what to download
@@ -214,22 +245,35 @@ defmodule Photon.Skills.Source do
       at any depth, by path, at most 30 (the notice says how many there
       were); a SKILL.md inside another one's folder belongs to it
 
-  Returns the folders and a notice (nil, or the cut to 30), or an error
-  for none or a tree too big for GitHub to list.
+  Paths in what it returns are the repository's. Returns the folders and
+  a notice (nil, or the cut to 30), or an error for none or a tree too
+  big for GitHub to list.
   """
   @spec skills_in_tree(map(), String.t(), :folder | :file) ::
           {:ok, [found()], String.t() | nil} | {:error, String.t()}
-  def skills_in_tree(%{"truncated" => true}, _path, _kind), do: {:error, @too_big_to_list}
+  def skills_in_tree(%{"truncated" => true}, path, kind),
+    do: {:error, too_big_to_list(listed_folder(path, kind))}
 
   def skills_in_tree(%{"tree" => entries}, path, kind) when is_list(entries) do
+    folder = listed_folder(path, kind)
+
     files =
       for %{"type" => "blob", "path" => file} when is_binary(file) <- entries,
-          do: file
+          do: join(folder, file)
 
     in_tree(files, path, kind)
   end
 
   def skills_in_tree(_answer, _path, _kind), do: {:error, @not_a_listing}
+
+  @doc """
+  What to say when GitHub can't list the folder at `folder` in one go:
+  for the root, link to a folder or a file instead; for a folder, link
+  deeper.
+  """
+  @spec too_big_to_list(String.t()) :: String.t()
+  def too_big_to_list(""), do: @too_big_to_list
+  def too_big_to_list(_folder), do: @folder_too_big
 
   defp in_tree(files, path, :file), do: {:ok, [found(parent(path), path, files)], nil}
 
@@ -361,7 +405,8 @@ defmodule Photon.Skills.Source do
             description: parsed.description,
             instructions: parsed.instructions,
             notes: notes(folder, parsed, mentioned),
-            files_left_out: Enum.take(Enum.uniq(mentioned ++ folder.files), @most_named)
+            files_left_out: left_out(mentioned, folder.files),
+            found: found_facts(folder, parsed)
         }
 
       {:error, message} ->
@@ -384,7 +429,43 @@ defmodule Photon.Skills.Source do
       instructions: nil,
       notes: [],
       files_left_out: [],
-      error: nil
+      error: nil,
+      found: found_facts(folder, %{name: nil, ignored: []})
+    }
+  end
+
+  defp found_facts(folder, parsed),
+    do: %{name: parsed.name, ignored: parsed.ignored, files: folder.files, notes: folder.notes}
+
+  # The files an agent might look for: those the instructions mention
+  # first, then the folder's others, at most 20.
+  defp left_out(mentioned, files), do: Enum.take(Enum.uniq(mentioned ++ files), @most_named)
+
+  @doc """
+  The notes and files left out to keep for `candidate` installed as the
+  owner saved it from the preview: under `name`, with `instructions`. A
+  name the owner changed is said as such, and the files the instructions
+  mention are those the saved instructions mention, so neither describes
+  text the skill no longer has. A candidate without `found` keeps its
+  own.
+  """
+  @spec saved(map(), String.t(), String.t()) :: %{
+          notes: [String.t()],
+          files_left_out: [String.t()]
+        }
+  def saved(%{found: %{} = found}, name, instructions) do
+    mentioned = Rules.mentions(instructions, found.files)
+
+    %{
+      notes: notes(found, found, mentioned, name),
+      files_left_out: left_out(mentioned, found.files)
+    }
+  end
+
+  def saved(candidate, _name, _instructions) do
+    %{
+      notes: Map.get(candidate, :notes) || [],
+      files_left_out: Map.get(candidate, :files_left_out) || []
     }
   end
 
@@ -406,13 +487,16 @@ defmodule Photon.Skills.Source do
   notes.
   """
   @spec notes(folder(), SkillMd.parsed(), [String.t()]) :: [String.t()]
-  def notes(folder, parsed, mentioned) do
+  def notes(folder, parsed, mentioned), do: notes(folder, parsed, mentioned, name(parsed.name))
+
+  # The notes for the skill saved under `name`.
+  defp notes(folder, parsed, mentioned, name) do
     Enum.reject(
       [
         left_out_note(folder.files),
         ignored_note(parsed.ignored),
         mentions_note(mentioned),
-        renamed_note(parsed.name)
+        renamed_note(parsed.name, name)
       ],
       &is_nil/1
     ) ++ folder.notes
@@ -449,15 +533,16 @@ defmodule Photon.Skills.Source do
     end
   end
 
-  defp renamed_note(nil), do: nil
+  # A SKILL.md without a name, or one kept as it was, needs no note. One
+  # changed to the suggested name says why; one the owner changed says
+  # only that.
+  defp renamed_note(nil, _name), do: nil
+  defp renamed_note(found, found), do: nil
 
-  defp renamed_note(found) do
-    case Rules.name(found) do
-      {:ok, _name} ->
-        nil
-
-      {:error, message} ->
-        ~s(Renamed from "#{found}" to #{Rules.suggest_name(found)}: #{why(message)})
+  defp renamed_note(found, name) do
+    case {Rules.name(found), Rules.suggest_name(found)} do
+      {{:error, message}, ^name} -> ~s(Renamed from "#{found}" to #{name}: #{why(message)})
+      _owners_choice -> ~s(Renamed from "#{found}" to #{name}.)
     end
   end
 

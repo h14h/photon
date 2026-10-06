@@ -54,6 +54,19 @@ defmodule Photon.Skills.SkillMdTest do
     assert description == "Say \"hi\", use a \\ and\na new line. \t Tabbed."
   end
 
+  test "reads the escapes that name a code point, and keeps one that doesn't as written" do
+    text = ~S"""
+    ---
+    name: x
+    description: "Caf\u00e9, \xe9t\xE9, \U0001F600; \u12 \uD800 \U00110000 \xzz."
+    ---
+    Body
+    """
+
+    assert {:ok, %{description: description}} = SkillMd.parse(text)
+    assert description == "Café, été, 😀; \\u12 \\uD800 \\U00110000 \\xzz."
+  end
+
   test "folds a quoted value over indented lines" do
     text = """
     ---
@@ -166,15 +179,15 @@ defmodule Photon.Skills.SkillMdTest do
   test "refuses text with no front matter" do
     assert SkillMd.parse("# PDF forms\n\nFill it.") ==
              {:error,
-              "A SKILL.md starts with front matter: a line `---`, then `name:` and " <>
-                "`description:`, then `---`."}
+              "A SKILL.md starts with front matter: a line with three dashes (---), " <>
+                "then name: and description: lines, then another ---."}
 
     assert {:error, "A SKILL.md starts" <> _} = SkillMd.parse("")
   end
 
   test "refuses front matter that never ends" do
     assert SkillMd.parse("---\nname: x\ndescription: y\n# Body\n") ==
-             {:error, "The front matter never ends: add a line `---` after it."}
+             {:error, "The front matter never ends: add a line with three dashes (---) after it."}
   end
 
   test "refuses an empty body" do

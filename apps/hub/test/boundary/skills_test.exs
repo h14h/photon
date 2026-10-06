@@ -110,7 +110,8 @@ defmodule Photon.SkillsTest do
                    "digits and hyphens."
                ],
                files_left_out: ["scripts/fill.py"],
-               error: nil
+               error: nil,
+               found: %{name: "PDF Forms", ignored: ["license"], files: [], notes: []}
              }
 
       params = Map.take(candidate, [:name, :description, :instructions])
@@ -120,11 +121,34 @@ defmodule Photon.SkillsTest do
       assert skill.install_notes == Enum.join(candidate.notes, "\n")
     end
 
+    test "notes made for the SKILL.md follow what the owner changed in the preview" do
+      {:ok, candidate} =
+        Skills.read("""
+        ---
+        name: PDF Forms
+        description: Fill in PDF forms.
+        ---
+
+        Run `scripts/fill.py` with the form.
+        """)
+
+      params = %{
+        "name" => "pdf-filler",
+        "description" => "Fill in PDF forms.",
+        "instructions" => "Fill the form by hand."
+      }
+
+      assert {:ok, %Skill{install_notes: notes, files_left_out: []}} =
+               Skills.install(params, candidate)
+
+      assert notes == ~s(Renamed from "PDF Forms" to pdf-filler.)
+    end
+
     test "text that isn't a SKILL.md is refused with the parser's message" do
       assert Skills.read("# Just notes") ==
                {:error,
-                "A SKILL.md starts with front matter: a line `---`, then `name:` and " <>
-                  "`description:`, then `---`."}
+                "A SKILL.md starts with front matter: a line with three dashes (---), " <>
+                  "then name: and description: lines, then another ---."}
 
       assert Skills.read("---\nname: x\ndescription: y\n---\n\n") ==
                {:error, "This SKILL.md has no instructions after its front matter."}

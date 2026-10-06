@@ -117,8 +117,8 @@ defmodule Photon.Assistant.PromptTest do
 
   describe "skills" do
     @skills [
-      %{name: "pdf-forms", version: 2, description: "Fill in PDF forms."},
-      %{name: "release-notes", version: 1, description: "Write release notes."}
+      %{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."},
+      %{id: "sk_notes", name: "release-notes", version: 1, description: "Write release notes."}
     ]
 
     test "with none turned on there is no Skills section" do

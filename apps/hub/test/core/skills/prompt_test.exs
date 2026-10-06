@@ -6,6 +6,7 @@ defmodule Photon.Skills.PromptTest do
   alias Photon.Skills.Prompt
 
   @pdf %{
+    id: "sk_pdf",
     name: "pdf-forms",
     version: 2,
     description: "Fill in PDF forms.\n  Use when the user asks to fill   or flatten one.",
@@ -14,6 +15,7 @@ defmodule Photon.Skills.PromptTest do
   }
 
   @notes %{
+    id: "sk_notes",
     name: "release-notes",
     version: 1,
     description: ~s(Write <release> notes & "changelogs" for the team's repos.),
@@ -26,31 +28,41 @@ defmodule Photon.Skills.PromptTest do
       assert Prompt.section([]) == nil
     end
 
-    test "lists each skill on a line, in the order given, escaped, on one line, with its version" do
+    test "lists each skill on a line, in the order given, escaped, on one line, with its ID and version" do
       section = Prompt.section([@pdf, @notes])
 
       assert String.starts_with?(section, "## Skills\n\nSkills are instructions for particular")
       assert section =~ "load it with load_skill before you start, and follow it."
       assert section =~ "it was turned off or deleted: stop following it."
+      assert section =~ "If a skill's id or version here differs from the one you loaded"
       assert section =~ "load it again before you use it."
 
       assert String.ends_with?(
                section,
                """
                <available_skills>
-               <skill><name>pdf-forms</name><version>2</version><description>Fill in PDF forms. Use when the user asks to fill or flatten one.</description></skill>
-               <skill><name>release-notes</name><version>1</version><description>Write &lt;release&gt; notes &amp; &#34;changelogs&#34; for the team&#39;s repos.</description></skill>
+               <skill><name>pdf-forms</name><version>2</version><id>sk_pdf</id><description>Fill in PDF forms. Use when the user asks to fill or flatten one.</description></skill>
+               <skill><name>release-notes</name><version>1</version><id>sk_notes</id><description>Write &lt;release&gt; notes &amp; &#34;changelogs&#34; for the team&#39;s repos.</description></skill>
                </available_skills>\
                """
              )
     end
   end
 
+  test "tells apart a skill deleted and another under its name, both at version 1" do
+    first = Prompt.section([%{@notes | id: "sk_first"}])
+    second = Prompt.section([%{@notes | id: "sk_second"}])
+
+    refute first == second
+    assert second =~ "<version>1</version><id>sk_second</id>"
+    assert Prompt.loaded(%{@notes | id: "sk_first"}) =~ ~s(id="sk_first" version="1")
+  end
+
   describe "loaded/1" do
     test "wraps the instructions in a skill element naming the version, and nothing after" do
       assert Prompt.loaded(@pdf) ==
                """
-               <skill name="pdf-forms" version="2">
+               <skill name="pdf-forms" id="sk_pdf" version="2">
                # PDF forms
 
                Fill each field.

@@ -33,7 +33,9 @@ defmodule PhotonWeb.SkillInstallLiveTest do
   Run `scripts/fill.py` with the form.
   """
 
-  @tree_main "api.github.com/repos/o/r/git/trees/main"
+  # The trees of the folders the tests link to (`Photon.Skills.Source.tree_url/1`).
+  @tree_skills "api.github.com/repos/o/r/git/trees/main:skills"
+  @tree_pdf "api.github.com/repos/o/r/git/trees/main:skills/pdf-forms"
   @raw_main "raw.githubusercontent.com/o/r/main/"
   @blob "https://github.com/o/r/blob/main/skills/pdf-forms/SKILL.md"
 
@@ -146,6 +148,57 @@ defmodule PhotonWeb.SkillInstallLiveTest do
       refute Skills.get_by_name("pdf-forms")
     end
 
+    test "shows a format example in the empty paste field, on several lines", %{conn: conn} do
+      view = open(conn)
+      textarea = field(view, "#install-paste")
+
+      assert textarea =~ "placeholder=\"---\nname: pdf-forms\ndescription:"
+      refute textarea =~ "\\n"
+    end
+
+    test "flags a missing description under its field as soon as the preview opens", %{
+      conn: conn
+    } do
+      view = open(conn)
+      _html = paste(view, "---\nname: notes\n---\n\nWrite notes.\n")
+
+      assert has_element?(view, "#install-form", "Say when an agent should use this skill.")
+      assert field(view, "#install-name") =~ ~s(value="notes")
+
+      # The message stays while it is empty, and goes once it is filled in.
+      _html = view |> form("#install-form", install: %{name: "notes-2"}) |> render_change()
+      assert has_element?(view, "#install-form", "Say when an agent should use this skill.")
+
+      _html = view |> form("#install-form", install: %{description: "Use it."}) |> render_change()
+      refute has_element?(view, "#install-form", "Say when an agent should use this skill.")
+    end
+
+    test "a read while a fetch runs cancels the fetch, so the paste stays", %{conn: conn} do
+      test = self()
+
+      Req.Test.stub(Skills, fn conn ->
+        send(test, {:waiting, self()})
+
+        receive do
+          :go -> Plug.Conn.send_resp(conn, 404, "Not Found")
+        end
+      end)
+
+      view = open(conn)
+      _html = view |> form("#install-url-form", link: %{url: @blob}) |> render_submit()
+      assert_receive {:waiting, stub}
+      ref = Process.monitor(stub)
+
+      _html = paste(view, @pdf_forms)
+      assert_receive {:DOWN, ^ref, :process, ^stub, _reason}
+      _html = render_async(view)
+
+      refute has_element?(view, "#install-fetching")
+      refute has_element?(view, "#install-fetch[disabled]")
+      assert field(view, "#install-name") =~ ~s(value="pdf-forms")
+      refute has_element?(view, "#install-error")
+    end
+
     test "that can't be read shows why under the field", %{conn: conn} do
       view = open(conn)
       _html = paste(view, "# Just notes")
@@ -207,14 +260,7 @@ defmodule PhotonWeb.SkillInstallLiveTest do
 
     test "a link to a SKILL.md previews it and installs it with its notes", %{conn: conn} do
       stub(%{
-        @tree_main =>
-          json(
-            tree([
-              "skills/pdf-forms/SKILL.md",
-              "skills/pdf-forms/scripts/fill.py",
-              "skills/pdf-forms/reference.md"
-            ])
-          ),
+        @tree_pdf => json(tree(["SKILL.md", "scripts/fill.py", "reference.md"])),
         (@raw_main <> "skills/pdf-forms/SKILL.md") => text(@pdf_forms)
       })
 
@@ -272,6 +318,19 @@ defmodule PhotonWeb.SkillInstallLiveTest do
       refute has_element?(view, "#install-form")
     end
 
+    test "a link's error stays with the link, not under the paste field", %{conn: conn} do
+      stub(%{})
+      view = open(conn)
+      _html = fetch(view, "https://github.com/o/r/tree/main/skills")
+      assert has_element?(view, "#install-url-form #install-error", "GitHub says there")
+
+      _html = view |> element("#install-tab-paste") |> render_click()
+      refute has_element?(view, "#install-error")
+
+      _html = view |> element("#install-tab-url") |> render_click()
+      assert has_element?(view, "#install-url-form #install-error", "GitHub says there")
+    end
+
     test "a link that isn't one shows the message under the field", %{conn: conn} do
       view = open(conn)
       _html = fetch(view, "ftp://example.com/SKILL.md")
@@ -290,15 +349,15 @@ defmodule PhotonWeb.SkillInstallLiveTest do
         })
 
       stub(%{
-        @tree_main =>
+        @tree_skills =>
           json(
             tree([
-              "skills/a/SKILL.md",
-              "skills/b/SKILL.md",
-              "skills/c/SKILL.md",
-              "skills/d/SKILL.md",
-              "skills/e/SKILL.md",
-              "skills/f/SKILL.md"
+              "a/SKILL.md",
+              "b/SKILL.md",
+              "c/SKILL.md",
+              "d/SKILL.md",
+              "e/SKILL.md",
+              "f/SKILL.md"
             ])
           ),
         (@raw_main <> "skills/a/SKILL.md") => text(skill_md("skill-a")),
@@ -410,13 +469,20 @@ defmodule PhotonWeb.SkillInstallLiveTest do
       _html = view |> element("#install-back-to-list") |> render_click()
       assert has_element?(view, "#install-candidate-4-reason", "no description")
 
+      _html = view |> form("#install-pick-form", picked: ["0"]) |> render_change()
       _html = view |> element("#install-candidate-4-alone") |> render_click()
 
-      {:ok, _view, _html} =
+      html =
         view
         |> form("#install-form", install: %{description: "Use for e."})
         |> render_submit()
-        |> follow_redirect(conn, ~p"/skills/skill-e")
+
+      # Back on the list, with that row installed and the pick kept.
+      assert html =~ "Installed skill-e. It&#39;s off everywhere until you turn it on."
+      refute has_element?(view, "#install-form")
+      assert has_element?(view, "#install-candidate-4-installed", "skill-e")
+      assert has_element?(view, "#install-picked", "1 picked.")
+      assert has_element?(view, "#install-candidate-1-reason", "already a skill called skill-b")
 
       assert %Skill{
                description: "Use for e.",
@@ -433,7 +499,8 @@ defmodule PhotonWeb.SkillInstallLiveTest do
         {@raw_main <> folder <> "/SKILL.md", text(skill_md(String.replace(folder, "/", "-")))}
       end)
 
-    stub(Map.put(answers, @tree_main, json(tree(Enum.map(folders, &(&1 <> "/SKILL.md"))))))
+    listed = Enum.map(folders, &String.replace_prefix(&1 <> "/SKILL.md", "skills/", ""))
+    stub(Map.put(answers, @tree_skills, json(tree(listed))))
 
     view = open(conn)
     _html = fetch(view, "https://github.com/o/r/tree/main/skills")

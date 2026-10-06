@@ -195,7 +195,9 @@ files use:
 - top-level `key: value` lines; a key is everything before the first `:`
 - values: plain (with indented continuation lines folded into one line),
   single-quoted (`''` is a quote), double-quoted (`\"`, `\\`, `\n`, `\t`
-  escapes), and block scalars `|`, `|-`, `>` and `>-` with their indented
+  escapes; (Review) and `\xNN`, `\uNNNN` and `\UNNNNNNNN` as the code
+  point they name, so `"caf\u00e9"` reads "café", with one that names
+  none kept as written), and block scalars `|`, `|-`, `>` and `>-` with their indented
   lines
 - a key whose value is a nested block (`metadata:` followed by indented
   lines) is skipped as a whole and counted as ignored
@@ -205,10 +207,14 @@ It returns `{:ok, %{name, description, instructions, ignored}}`, where
 `ignored` lists the other top-level keys in order (`["license",
 "allowed-tools"]`), or `{:error, message}`:
 
-- no front matter: "A SKILL.md starts with front matter: a line `---`,
-  then `name:` and `description:`, then `---`."
+- no front matter: "A SKILL.md starts with front matter: a line with
+  three dashes (---), then name: and description: lines, then another
+  ---."
 - front matter that never closes: "The front matter never ends: add a
-  line `---` after it."
+  line with three dashes (---) after it."
+
+  (Review) The messages are plain text, without Markdown code spans,
+  because the install page shows them as they are.
 - empty body: "This SKILL.md has no instructions after its front matter."
 
 A missing `name` or `description` is not a parse error: install opens the
@@ -256,7 +262,12 @@ download per SKILL.md:
 1. With no ref (a repo root link): `GET
    https://api.github.com/repos/<o>/<r>` for `default_branch`.
 2. `GET https://api.github.com/repos/<o>/<r>/git/trees/<ref>?recursive=1`:
-   the whole tree in one call. `Source.skills_in_tree(tree, path, kind)`
+   the whole tree in one call. (Review) For a link with a path, only the
+   folder it lists: `git/trees/<ref>:<folder>?recursive=1`, the linked
+   folder or a file's folder, so a link into a large repository isn't
+   refused because the rest of the repository is long. The answer's
+   paths are relative to that folder, and `skills_in_tree/3` puts the
+   folder back in front. `Source.skills_in_tree(tree, path, kind)`
    (pure) finds the candidates:
    - a file link: the file's folder is the skill's folder
    - a folder link whose folder has a `SKILL.md`: that folder
@@ -268,6 +279,9 @@ download per SKILL.md:
    - none: "There's no SKILL.md in that folder."
    - a tree GitHub marks `truncated`: "That repository is too big to list
      in one go. Link to the skill's folder or its SKILL.md instead."
+     (Review) For a folder link that is the folder's own tree, so the
+     message is "That folder is too big to list in one go. Link to a
+     folder deeper in it, or to a skill's SKILL.md." (`Source.too_big_to_list/1`).
 
    For each candidate, `left_out` is every other file under its folder,
    as paths relative to it (`scripts/fill.py`, `reference.md`), at most
@@ -289,6 +303,10 @@ For any other link, `Fetch` downloads it as a file.
 Every download:
 
 - `Req.get/2` with `retry: false`, `receive_timeout: 15_000`,
+  (Review) 15 seconds in all, in a task stopped at that deadline
+  (`Fetch.get/2`; `config :photon, Photon.Skills, deadline:` shortens it
+  in a test), so a server that sends a byte every few seconds can't
+  hold the page on Fetching,
   `redirect: true` with at most 3 redirects, and the app's
   `req_options` (`config :photon, Photon.Skills, req_options: [...]`,
   a `Req.Test` plug in tests, as `Photon.ChatGPT` does)
@@ -390,12 +408,17 @@ feature. Otherwise:
 
 Skills are instructions for particular kinds of task, written or installed by the user. When a task matches a skill's description, load it with load_skill before you start, and follow it. Load only the skills the task needs.
 
-Only the skills listed here are turned on. If you loaded a skill earlier in this conversation and it isn't listed any more, it was turned off or deleted: stop following it. If a skill's version here is higher than the one you loaded, load it again before you use it.
+Only the skills listed here are turned on. If you loaded a skill earlier in this conversation and it isn't listed any more, it was turned off or deleted: stop following it. If a skill's id or version here differs from the one you loaded, it has changed: load it again before you use it.
 
 <available_skills>
-<skill><name>pdf-forms</name><version>2</version><description>Fill in PDF forms. Use when the user asks to fill or flatten a PDF form.</description></skill>
+<skill><name>pdf-forms</name><version>2</version><id>sk_...</id><description>Fill in PDF forms. Use when the user asks to fill or flatten a PDF form.</description></skill>
 </available_skills>
 ```
+
+(Review) The skill's ID is in the listing and in `loaded/1`'s header, and
+the agent reloads when either differs. With the version alone, a skill
+deleted and another written under its name (back at version 1) looked
+unchanged, and the agent kept following the deleted text.
 
 The shape follows the node's old `SkillPrompt` (removed in step 1):
 XML-escaped names and descriptions inside `<available_skills>`, one
@@ -447,7 +470,7 @@ calls in a conversation always name a tool the profile has):
     read all of it"}}`, where `Prompt.loaded/1` is
 
     ```
-    <skill name="pdf-forms" version="2">
+    <skill name="pdf-forms" id="sk_..." version="2">
     ...the instructions...
     </skill>
     ```
@@ -1204,6 +1227,28 @@ between `Machines` and `Settings`. `Layouts.app`'s `active` takes
     installed; see why below."
   - While a list is open, the page follows `Skills.subscribe/0`, so a
     name taken elsewhere becomes unpickable.
+- (Review) Changes after the implementation review:
+  - Each tab keeps its own error (`url_error`, `paste_error`), shown as
+    `#install-error` only on its tab, so a fetch that fails while the
+    paste tab is open doesn't show its message under the paste field.
+  - `Read` cancels a fetch still running (`cancel_async/2`), so a slow
+    fetch can't replace a pasted preview the owner is editing.
+  - Installing a candidate opened with `Install on its own` comes back
+    to the list instead of going to the skill's page: its row is marked
+    installed, the picks are kept, and the flash says "Installed
+    skill-e. It's off everywhere until you turn it on."
+  - The preview shows the rule's message under a name or description
+    the SKILL.md lacks as soon as it opens, and keeps it while the field
+    is empty (`Skills.preview_errors/1`, which also gives the taken-name
+    message). `Skills.name_taken/1` gives that message for the list's
+    rows, so the words live only in `Skills.Rules`.
+  - The paste field's example front matter is on several lines (it
+    showed `\n` before).
+  - `install/2` says the notes again for what the owner saved
+    (`Source.saved/3`, from the facts the candidate keeps in `found`):
+    a name the owner changed reads `Renamed from "PDF Forms" to
+    pdf-filler.`, and the files the instructions mention, in the notes
+    and in `files_left_out`, are those the saved instructions mention.
 
 ### 6.6 The project page: skills and schedules
 
@@ -2280,3 +2325,66 @@ the notes say what this plan did instead.
   tests, after both). `Submission.background?/1` moves to K6, its
   only user now that `Threads.stop/1` doesn't change.
 
+
+## 14. Review of the implementation
+
+A review of the finished step raised sixteen findings, two of them
+reported twice (the repeating-to-once edit, and Blip's stopped
+schedules). Each was checked against the code; all fourteen distinct
+ones were real and are fixed, with tests. The sections they touch carry
+a "(Review)" note.
+
+- Editing a repeating schedule to Once at the slot it just fired left the
+  old timer firing every interval (major). `arm/4` returns `:finished`
+  there, and `update/3` kept the old task without retiring it. It now
+  retires a live old task and sets `task_id` to nil, which reads as
+  done (section 3.3). On the spec's variables this is `OwnerDelete`'s
+  step; the new config `Durable-schedule-retire-live.cfg` checks its
+  liveness (section 10, `specs/tla/Durable.md`).
+- A Blip schedule that stopped after an error vanished from the home page
+  and from `list_schedules` (major). Both now show it, with why, until
+  it is cancelled (section 3.6). No notice goes into Blip's
+  conversation: the finding offered that as optional, and the home page
+  and the tool already say it.
+- A schedule changed from waking a thread to starting new threads kept
+  that thread as `last_thread_id` and skipped while the owner worked in
+  it. `update/3` clears it (section 3.4).
+- Blip's `schedule` tool had no upper bounds, so a large value raised in
+  the commit or put a time past year 9999. It keeps the form's bounds
+  now, and both have a 10-year horizon for the first time (section 3.4).
+- A skill deleted and another written under its name looked unchanged to
+  an agent that had loaded the first. The listing and the loaded header
+  carry the skill's ID, and the agent reloads when the ID or version
+  differs (section 2.6).
+- A folder link into a large repository always failed, telling the owner
+  to link to a folder. The tree call now lists only the linked folder
+  (`git/trees/<ref>:<folder>`), and a folder too big to list says to
+  link deeper (section 2.4).
+- A slow server could hold the install page on Fetching for good. Every
+  request now has a 15-second deadline in all (section 2.4).
+- The SKILL.md reader garbled `\u`, `\U` and `\x` escapes. It decodes
+  them now (section 2.3).
+- The parse errors showed Markdown backticks on the install page. They
+  are plain text now (section 2.3).
+- On the install page: the paste field's example showed `\n`; a slow
+  fetch could replace a pasted preview, and its error showed under the
+  paste field; "Install on its own" left the list behind; the preview
+  didn't flag a missing name or description when it opened; and the
+  stored install notes described the SKILL.md as fetched, not as saved.
+  All fixed (sections 6.5 and 2.4's `Source.saved/3`).
+
+Deviations from the findings' suggested fixes:
+
+- The stopped Blip schedule's words on the home page are new: "Stopped
+  after an error: <reason>. Cancel it, and ask Blip to schedule it
+  again.", since there is no form to save it from
+  (`ScheduleText.state/3`).
+- For the woken-thread finding, `update/3` clears `last_thread_id` only
+  when the schedule becomes a new-thread one and the stored thread is the
+  one it woke, so the "started" link on the last-run line survives the
+  other edits.
+- The deadline is per request (`Fetch.get/2`), not one for the whole
+  fetch, so a folder of 30 skills still has 20 seconds per download.
+- Each install tab keeps its own error, but both still render as
+  `#install-error`, shown only on its own tab, so the page never has two
+  elements with that ID.

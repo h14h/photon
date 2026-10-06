@@ -12,7 +12,8 @@ defmodule Photon.Skills.SkillMd do
       first `:`
     * plain values, with indented continuation lines folded into one line
       and a ` #` comment dropped; single-quoted values (`''` is a quote);
-      double-quoted values (`\\"`, `\\\\`, `\\n`, `\\t` and other escapes);
+      double-quoted values (`\\"`, `\\\\`, `\\n`, `\\t`, the code points
+      `\\xNN`, `\\uNNNN` and `\\UNNNNNNNN`, and other escapes);
       and block scalars `|`, `|-`, `>` and `>-` with their indented lines
     * a key whose value is a nested block (`metadata:` followed by
       indented lines, or a list) is skipped as a whole
@@ -37,9 +38,13 @@ defmodule Photon.Skills.SkillMd do
           ignored: [String.t()]
         }
 
-  @no_front_matter "A SKILL.md starts with front matter: a line `---`, then `name:` and " <>
-                     "`description:`, then `---`."
-  @unclosed "The front matter never ends: add a line `---` after it."
+  # How many hex digits follow each escape that names a code point.
+  @hex_digits %{?x => 2, ?u => 4, ?U => 8}
+
+  # Plain text: the install page shows these as they are.
+  @no_front_matter "A SKILL.md starts with front matter: a line with three dashes (---), " <>
+                     "then name: and description: lines, then another ---."
+  @unclosed "The front matter never ends: add a line with three dashes (---) after it."
   @no_body "This SKILL.md has no instructions after its front matter."
 
   @doc "Parses a SKILL.md's text; see the moduledoc for what it reads."
@@ -154,11 +159,32 @@ defmodule Photon.Skills.SkillMd do
   defp quoted(<<?", rest::binary>>), do: double(rest, "")
   defp quoted(<<?', rest::binary>>), do: single(rest, "")
 
+  defp double(<<?\\, kind, rest::binary>>, acc) when is_map_key(@hex_digits, kind) do
+    {text, rest} = hex_escape(kind, Map.fetch!(@hex_digits, kind), rest)
+    double(rest, acc <> text)
+  end
+
   defp double(<<?\\, char::utf8, rest::binary>>, acc), do: double(rest, acc <> escape(char))
   defp double(<<?", _after::binary>>, acc), do: acc
   defp double(<<char::utf8, rest::binary>>, acc), do: double(rest, <<acc::binary, char::utf8>>)
   # An unclosed quote, or text that isn't UTF-8: keep what was read.
   defp double(_rest, acc), do: acc
+
+  # `\xNN`, `\uNNNN` and `\UNNNNNNNN` name a character by its code point.
+  # One that doesn't (too few hex digits, a surrogate, past Unicode) is
+  # kept as written.
+  defp hex_escape(kind, digits, rest) do
+    with <<hex::binary-size(^digits), after_hex::binary>> <- rest,
+         true <- String.match?(hex, ~r/\A[0-9a-fA-F]+\z/),
+         {:ok, char} <- character(String.to_integer(hex, 16)) do
+      {char, after_hex}
+    else
+      _not_a_code_point -> {<<?\\, kind>>, rest}
+    end
+  end
+
+  defp character(code) when code in 0xD800..0xDFFF or code > 0x10FFFF, do: :error
+  defp character(code), do: {:ok, <<code::utf8>>}
 
   defp escape(?n), do: "\n"
   defp escape(?t), do: "\t"

@@ -9,20 +9,26 @@ defmodule PhotonWeb.SkillInstallLive do
     * From a link: `Skills.fetch/1` runs in a `start_async/3` task (it
       makes HTTP requests, so never in a callback), with `Fetching...`
       shown until it answers. A refused link shows its message under the
+      link's field.
+    * Paste: `Skills.read/1` reads the text in the callback (no I/O),
+      and cancels a fetch still running, so its answer can't replace the
+      pasted one. A text that can't be read shows why under the paste
       field.
-    * Paste: `Skills.read/1` reads the text in the callback (no I/O).
 
   Both forms stay in the page while hidden, so switching tabs keeps what
-  was typed. A new fetch or read replaces the last answer.
+  was typed, and each keeps its own error, shown (as `#install-error`)
+  only on its own tab. A new fetch or read replaces
+  the last answer.
 
   What comes back are candidates (`assigns.candidates`), which install
   takes `origin`, `source_url`, the notes and the left-out files from;
   the forms give only names, descriptions and instructions.
 
     * One candidate opens the preview form, prefilled and editable, with
-      its notes and where it came from. A name another skill has is
-      flagged under the field as soon as it shows. `Install` goes to the
-      skill's page.
+      its notes and where it came from. A name or description the
+      SKILL.md lacks, and a name another skill has, are flagged under
+      their fields as soon as it shows (`Skills.preview_errors/1`).
+      `Install` goes to the skill's page.
     * Several (a folder of skills) are a list to pick from, under
       `fetch/1`'s notice when the folder had more than 30. One that
       can't be picked says why: its download failed, its SKILL.md has no
@@ -31,7 +37,8 @@ defmodule PhotonWeb.SkillInstallLive do
       that fails stays listed with its message, and the ones that went in
       are marked installed. A row that can't be picked but was read can
       be installed on its own: it opens in the preview form, to fix there,
-      with a way back to the list.
+      with a way back to the list. Installing it there comes back to the
+      list, with that row marked installed and the picks kept.
 
   While a list is open the page follows `Skills.subscribe/0`, so a name
   taken elsewhere becomes unpickable. Everything else the shell passes on
@@ -47,6 +54,19 @@ defmodule PhotonWeb.SkillInstallLive do
 
   @field_order [:name, :description, :instructions]
 
+  # The empty paste field's example, on several lines. A function, since
+  # the formatter turns a literal string in braces into a plain attribute,
+  # where "\n" isn't a line break.
+  @paste_example """
+  ---
+  name: pdf-forms
+  description: Fill in PDF forms. Use when ...
+  ---
+
+  # PDF forms
+  ...\
+  """
+
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: :ok = Skills.subscribe()
@@ -56,7 +76,7 @@ defmodule PhotonWeb.SkillInstallLive do
      |> assign(page_title: "Install a skill", source: "url", tab: "write")
      |> assign(url_form: to_form(%{"url" => ""}, as: :link))
      |> assign(paste_form: to_form(%{"text" => ""}, as: :paste))
-     |> assign(fetching?: false, error: nil)
+     |> assign(fetching?: false, url_error: nil, paste_error: nil)
      |> stream_configure(:candidates, dom_id: &"install-candidate-#{&1.n}")
      |> show([], nil)}
   end
@@ -80,7 +100,7 @@ defmodule PhotonWeb.SkillInstallLive do
       "instructions" => candidate.instructions || ""
     }
 
-    assign(socket, form: install_form(params, taken(params["name"])))
+    assign(socket, form: install_form(params, Skills.preview_errors(params)))
   end
 
   defp prefill(socket), do: assign(socket, form: nil)
@@ -119,18 +139,7 @@ defmodule PhotonWeb.SkillInstallLive do
   defp reason(%{description: nil}, nil, nil),
     do: "Its SKILL.md has no description. Install it on its own to add one."
 
-  defp reason(%{name: name}, nil, nil), do: taken(name)[:name]
-
-  # The form error for a name another skill has (the context checks it
-  # again when installing).
-  defp taken(name) when is_binary(name) and name != "" do
-    case Skills.get_by_name(String.trim(name)) do
-      nil -> %{}
-      _skill -> %{name: "There's already a skill called #{String.trim(name)}."}
-    end
-  end
-
-  defp taken(_name), do: %{}
+  defp reason(%{name: name}, nil, nil), do: Skills.name_taken(name)
 
   # The preview form over `params`, with `%{field => message}` errors.
   defp install_form(params, errors),
@@ -147,22 +156,27 @@ defmodule PhotonWeb.SkillInstallLive do
 
   @impl true
   def handle_event("source", %{"source" => source}, socket) when source in ["url", "paste"],
-    do: {:noreply, assign(socket, source: source, error: nil)}
+    do: {:noreply, assign(socket, source: source)}
 
   def handle_event("fetch", %{"link" => %{"url" => url} = params}, socket) do
     {:noreply,
      socket
-     |> assign(url_form: to_form(params, as: :link), fetching?: true, error: nil)
+     |> assign(url_form: to_form(params, as: :link), fetching?: true, url_error: nil)
      |> show([], nil)
      |> start_async(:fetch, fn -> Skills.fetch(String.trim(url)) end)}
   end
 
+  # A paste read while a fetch runs wins: the fetch is cancelled, so its
+  # answer can't replace this one.
   def handle_event("read", %{"paste" => %{"text" => text} = params}, socket) do
-    socket = assign(socket, paste_form: to_form(params, as: :paste))
+    socket =
+      socket
+      |> cancel_async(:fetch)
+      |> assign(paste_form: to_form(params, as: :paste), fetching?: false)
 
     case Skills.read(text) do
-      {:ok, candidate} -> {:noreply, socket |> assign(error: nil) |> show([candidate], nil)}
-      {:error, message} -> {:noreply, socket |> assign(error: message) |> show([], nil)}
+      {:ok, candidate} -> {:noreply, socket |> assign(paste_error: nil) |> show([candidate], nil)}
+      {:error, message} -> {:noreply, socket |> assign(paste_error: message) |> show([], nil)}
     end
   end
 
@@ -173,21 +187,15 @@ defmodule PhotonWeb.SkillInstallLive do
 
   def handle_event("edit", %{"install" => params}, socket) do
     params = clean(params)
-    {:noreply, assign(socket, form: install_form(params, taken(params["name"])))}
+    {:noreply, assign(socket, form: install_form(params, Skills.preview_errors(params)))}
   end
 
   def handle_event("install", %{"install" => params}, %{assigns: %{candidates: [c]}} = socket) do
     params = clean(params)
 
     case Skills.install(params, c) do
-      {:ok, skill} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Installed #{skill.name}. It's off everywhere; turn it on below.")
-         |> push_navigate(to: ~p"/skills/#{skill.name}")}
-
-      {:error, errors} ->
-        {:noreply, assign(socket, form: install_form(params, errors))}
+      {:ok, skill} -> {:noreply, installed(socket, skill, socket.assigns.back)}
+      {:error, errors} -> {:noreply, assign(socket, form: install_form(params, errors))}
     end
   end
 
@@ -202,20 +210,19 @@ defmodule PhotonWeb.SkillInstallLive do
   def handle_event("alone", %{"n" => n}, socket) do
     with {n, ""} <- Integer.parse(n),
          %{error: nil} = candidate <- Enum.at(socket.assigns.candidates, n) do
-      back = Map.take(socket.assigns, [:candidates, :notice, :installed, :failed])
+      back =
+        socket.assigns
+        |> Map.take([:candidates, :notice, :installed, :failed, :picked])
+        |> Map.put(:n, n)
+
       {:noreply, socket |> show([candidate], nil) |> assign(back: back)}
     else
       _other -> {:noreply, socket}
     end
   end
 
-  def handle_event("back", _params, %{assigns: %{back: %{} = back}} = socket) do
-    {:noreply,
-     socket
-     |> show(back.candidates, back.notice)
-     |> assign(installed: back.installed, failed: back.failed)
-     |> rows()}
-  end
+  def handle_event("back", _params, %{assigns: %{back: %{} = back}} = socket),
+    do: {:noreply, back_to_list(socket, back)}
 
   def handle_event("install_selected", params, socket) do
     picked = picks(params, socket)
@@ -230,6 +237,31 @@ defmodule PhotonWeb.SkillInstallLive do
   end
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # After the preview installs: the skill's page, or, for one installed on
+  # its own from a list, back to the list with its row marked installed,
+  # for the rest.
+  defp installed(socket, skill, nil) do
+    socket
+    |> put_flash(:info, "Installed #{skill.name}. It's off everywhere; turn it on below.")
+    |> push_navigate(to: ~p"/skills/#{skill.name}")
+  end
+
+  defp installed(socket, skill, back) do
+    socket
+    |> back_to_list(%{back | installed: Map.put(back.installed, back.n, skill.name)})
+    |> put_flash(:info, "Installed #{skill.name}. It's off everywhere until you turn it on.")
+  end
+
+  defp paste_example, do: @paste_example
+
+  # The list a candidate was opened from, as it was left.
+  defp back_to_list(socket, back) do
+    socket
+    |> show(back.candidates, back.notice)
+    |> assign(installed: back.installed, failed: back.failed, picked: back.picked)
+    |> rows()
+  end
 
   # The picks a form sent, as row numbers that can be picked.
   defp picks(params, socket) do
@@ -294,10 +326,13 @@ defmodule PhotonWeb.SkillInstallLive do
     do: {:noreply, socket |> assign(fetching?: false) |> show(candidates, notice)}
 
   def handle_async(:fetch, {:ok, {:error, message}}, socket),
-    do: {:noreply, assign(socket, fetching?: false, error: message)}
+    do: {:noreply, assign(socket, fetching?: false, url_error: message)}
+
+  # A read cancelled it; its answer was replaced already.
+  def handle_async(:fetch, {:exit, {:shutdown, :cancel}}, socket), do: {:noreply, socket}
 
   def handle_async(:fetch, {:exit, _reason}, socket),
-    do: {:noreply, assign(socket, fetching?: false, error: "The fetch stopped. Try again.")}
+    do: {:noreply, assign(socket, fetching?: false, url_error: "The fetch stopped. Try again.")}
 
   ## What changed elsewhere
 
@@ -377,7 +412,7 @@ defmodule PhotonWeb.SkillInstallLive do
                   class={[
                     field_class(),
                     "min-w-0 flex-1 font-mono text-[13px]",
-                    @source == "url" && @error && "border-bad/60"
+                    @source == "url" && @url_error && "border-bad/60"
                   ]}
                 />
                 <.button
@@ -390,7 +425,7 @@ defmodule PhotonWeb.SkillInstallLive do
                   <.icon name="hero-arrow-down-tray-micro" class="size-4" /> Fetch
                 </.button>
               </div>
-              <.install_error :if={@source == "url" && @error} message={@error} />
+              <.install_error :if={@source == "url" && @url_error} message={@url_error} />
               <p class="mt-2 text-xs leading-relaxed text-ink-faint">
                 A SKILL.md anywhere, or a skill's folder, a folder of skills or a repository on GitHub. Only SKILL.md files are downloaded.
               </p>
@@ -417,14 +452,17 @@ defmodule PhotonWeb.SkillInstallLive do
                   name={@paste_form[:text].name}
                   rows="12"
                   spellcheck="false"
-                  placeholder="---\nname: pdf-forms\ndescription: Fill in PDF forms. Use when ...\n---\n\n# PDF forms\n..."
+                  placeholder={paste_example()}
                   class={[
                     "block min-h-56 w-full resize-y rounded-lg border border-line bg-sunken/40 px-3 py-2.5 font-mono text-[13px] leading-relaxed text-ink outline-none transition",
                     "placeholder:text-ink-faint focus:border-accent/70 focus:bg-surface focus:ring-3 focus:ring-accent/15",
-                    @source == "paste" && @error && "border-bad/60"
+                    @source == "paste" && @paste_error && "border-bad/60"
                   ]}
                 >{Phoenix.HTML.Form.normalize_value("textarea", @paste_form[:text].value)}</textarea>
-                <.install_error :if={@source == "paste" && @error} message={@error} />
+                <.install_error
+                  :if={@source == "paste" && @paste_error}
+                  message={@paste_error}
+                />
               </div>
               <div class="mt-4 flex items-center justify-between gap-3 border-t border-line px-5 py-3">
                 <p class="text-[12.5px] leading-relaxed text-ink-faint">

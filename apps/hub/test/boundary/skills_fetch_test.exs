@@ -65,28 +65,21 @@ defmodule Photon.SkillsFetchTest do
   end
 
   @tree_main "api.github.com/repos/o/r/git/trees/main"
+  @tree_pdf @tree_main <> ":skills/pdf-forms"
+  @tree_skills @tree_main <> ":skills"
   @raw_main "raw.githubusercontent.com/o/r/main/"
 
   describe "a GitHub link" do
     test "to a SKILL.md: one tree call, one download, the rest of the folder left out" do
       stub(%{
-        @tree_main =>
-          json(
-            tree([
-              "README.md",
-              "skills/pdf-forms/SKILL.md",
-              "skills/pdf-forms/scripts/fill.py",
-              "skills/pdf-forms/reference.md",
-              "skills/other/SKILL.md"
-            ])
-          ),
+        @tree_pdf => json(tree(["SKILL.md", "scripts/fill.py", "reference.md"])),
         (@raw_main <> "skills/pdf-forms/SKILL.md") => text(@pdf_forms)
       })
 
       assert {:ok, [candidate], nil} =
                Skills.fetch("https://github.com/o/r/blob/main/skills/pdf-forms/SKILL.md")
 
-      assert asked() == [@tree_main, @raw_main <> "skills/pdf-forms/SKILL.md"]
+      assert asked() == [@tree_pdf, @raw_main <> "skills/pdf-forms/SKILL.md"]
 
       assert candidate == %{
                origin: "fetched",
@@ -102,13 +95,19 @@ defmodule Photon.SkillsFetchTest do
                  "The instructions mention scripts/fill.py, which wasn't installed."
                ],
                files_left_out: ["scripts/fill.py", "reference.md"],
-               error: nil
+               error: nil,
+               found: %{
+                 name: "pdf-forms",
+                 ignored: ["license"],
+                 files: ["reference.md", "scripts/fill.py"],
+                 notes: []
+               }
              }
     end
 
     test "to a skill's folder downloads its SKILL.md" do
       stub(%{
-        @tree_main => json(tree(["skills/pdf-forms/SKILL.md", "skills/pdf-forms/LICENSE"])),
+        @tree_pdf => json(tree(["SKILL.md", "LICENSE"])),
         (@raw_main <> "skills/pdf-forms/SKILL.md") => text(@pdf_forms)
       })
 
@@ -117,7 +116,28 @@ defmodule Photon.SkillsFetchTest do
       assert {:ok, [%{name: "pdf-forms", files_left_out: ["LICENSE"]}], nil} =
                Skills.fetch("https://github.com/o/r/tree/main/skills/pdf-forms")
 
-      assert asked() == [@tree_main, @raw_main <> "skills/pdf-forms/SKILL.md"]
+      assert asked() == [@tree_pdf, @raw_main <> "skills/pdf-forms/SKILL.md"]
+    end
+
+    test "to a folder in a repository too big to list whole lists only that folder" do
+      stub(%{
+        @tree_main => json(tree(["a/SKILL.md"], true)),
+        @tree_pdf => json(tree(["SKILL.md"])),
+        (@raw_main <> "skills/pdf-forms/SKILL.md") => text(@pdf_forms)
+      })
+
+      assert {:ok, [%{name: "pdf-forms", path: "skills/pdf-forms", error: nil}], nil} =
+               Skills.fetch("https://github.com/o/r/tree/main/skills/pdf-forms")
+
+      assert asked() == [@tree_pdf, @raw_main <> "skills/pdf-forms/SKILL.md"]
+
+      # A folder that is itself too big says to link deeper, not to a folder.
+      stub(%{@tree_skills => json(tree(["a/SKILL.md"], true))})
+
+      assert Skills.fetch("https://github.com/o/r/tree/main/skills") ==
+               {:error,
+                "That folder is too big to list in one go. Link to a folder deeper in it, " <>
+                  "or to a skill's SKILL.md."}
     end
 
     test "to a repository's root asks for its default branch first" do
@@ -141,8 +161,7 @@ defmodule Photon.SkillsFetchTest do
 
     test "to a folder of skills offers each, and one whose download fails keeps its error" do
       stub(%{
-        @tree_main =>
-          json(tree(["skills/a/SKILL.md", "skills/b/SKILL.md", "skills/c/SKILL.md", "x.md"])),
+        @tree_skills => json(tree(["a/SKILL.md", "b/SKILL.md", "c/SKILL.md", "x.md"])),
         (@raw_main <> "skills/a/SKILL.md") => text(skill_md("a")),
         (@raw_main <> "skills/b/SKILL.md") => status(500),
         (@raw_main <> "skills/c/SKILL.md") => text(skill_md("c"))
@@ -154,19 +173,19 @@ defmodule Photon.SkillsFetchTest do
       assert %{name: "b", instructions: nil, error: "The download failed: HTTP 500."} = b
       assert %{name: "c", instructions: "Do c.", error: nil} = c
 
-      assert [@tree_main | downloads] = asked()
+      assert [@tree_skills | downloads] = asked()
       assert length(downloads) == 3
     end
 
     test "to a folder of more than 30 skills offers 30 with a notice" do
-      files = for n <- 1..32, do: "s/#{String.pad_leading("#{n}", 2, "0")}/SKILL.md"
+      folders = for n <- 1..32, do: String.pad_leading("#{n}", 2, "0")
 
       answers =
-        Map.new(files, fn file ->
-          {@raw_main <> file, text(skill_md("s" <> String.slice(file, 2, 2)))}
+        Map.new(folders, fn folder ->
+          {@raw_main <> "s/#{folder}/SKILL.md", text(skill_md("s" <> folder))}
         end)
 
-      stub(Map.put(answers, @tree_main, json(tree(files))))
+      stub(Map.put(answers, @tree_main <> ":s", json(tree(Enum.map(folders, &"#{&1}/SKILL.md")))))
 
       assert {:ok, candidates, "This folder has 32 skills; showing the first 30." <> _} =
                Skills.fetch("https://github.com/o/r/tree/main/s")
@@ -177,7 +196,7 @@ defmodule Photon.SkillsFetchTest do
 
     test "a tree call that fails on a file link still downloads the file, with a note" do
       stub(%{
-        @tree_main => status(403, ~s({"message": "API rate limit exceeded"})),
+        @tree_pdf => status(403, ~s({"message": "API rate limit exceeded"})),
         (@raw_main <> "skills/pdf-forms/SKILL.md") => text(@pdf_forms)
       })
 
@@ -192,7 +211,7 @@ defmodule Photon.SkillsFetchTest do
     end
 
     test "a 403 from the API on a folder link is its limit" do
-      stub(%{@tree_main => status(403, ~s({"message": "API rate limit exceeded"}))})
+      stub(%{@tree_skills => status(403, ~s({"message": "API rate limit exceeded"}))})
 
       assert Skills.fetch("https://github.com/o/r/tree/main/skills") ==
                {:error,

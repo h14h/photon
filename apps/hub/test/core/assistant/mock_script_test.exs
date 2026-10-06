@@ -116,7 +116,7 @@ defmodule Photon.Assistant.MockScriptTest do
   describe "skills" do
     @system "You are an agent.\n\n" <>
               SkillsPrompt.section([
-                %{name: "pdf-forms", version: 2, description: "Fill in PDF forms."}
+                %{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."}
               ])
 
     test "skills says what the prompt lists, and load skill loads one" do
@@ -129,7 +129,7 @@ defmodule Photon.Assistant.MockScriptTest do
     end
 
     test "relays a loaded skill, and its help lists the phrasings" do
-      loaded = ~s(<skill name="pdf-forms" version="2">\nFill it.\n</skill>)
+      loaded = ~s(<skill name="pdf-forms" id="sk_pdf" version="2">\nFill it.\n</skill>)
       assert relay(loaded) == "```\n" <> loaded <> "\n```"
 
       help = Message.text_of(ask("tidy the shed"))
