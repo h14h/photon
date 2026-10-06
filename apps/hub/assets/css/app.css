@@ -131,6 +131,10 @@
   /* The page makes room for a pinned panel, and the flash moves out of its way. */
   html[data-blip-panel="pinned"] #app-main { margin-right: var(--blip-pin-w); }
   html[data-blip-panel="pinned"] #flash-group { right: calc(var(--blip-pin-w) + 12px); }
+  /* A page you read beside Blip (a thread's conversation, data-blip-room)
+     also keeps clear of the floating panel: its width, its margin and a
+     gap. Elsewhere the floating panel covers the page, like a dialog. */
+  html[data-blip-panel="open"] [data-blip-room] { padding-right: calc(440px + 24px + 16px); }
 }
 
 /* Blip itself: the button in the corner, then the face in the header. */

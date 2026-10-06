@@ -326,6 +326,11 @@ defmodule PhotonWeb.ThreadLiveTest do
     assert ids -- Enum.uniq(ids) == []
   end
 
+  test "the page keeps clear of Blip's floating panel", %{conn: conn, project: project} do
+    thread = idle_thread!(project, "Fix the pump")
+    assert has_element?(thread_page(conn, project, thread), "#thread-page[data-blip-room]")
+  end
+
   test "the header follows the project's name", %{conn: conn, project: project} do
     thread = idle_thread!(project, "Fix the pump")
     view = thread_page(conn, project, thread)

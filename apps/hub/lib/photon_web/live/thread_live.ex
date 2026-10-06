@@ -26,6 +26,10 @@ defmodule PhotonWeb.ThreadLive do
     * `{:projects_changed, id}` (through `PhotonWeb.Shell`'s subscription):
       for this project, reload it, since its name is in the header
 
+  With Blip's floating panel open on a wide screen, the page keeps clear
+  of it (`data-blip-room`, see app.css), so the conversation stays
+  readable beside it.
+
   Everything else the shell passes on (`{:durable_tasks, _}` among them)
   is ignored.
 
@@ -243,7 +247,8 @@ defmodule PhotonWeb.ThreadLive do
       socket={@socket}
       active={{:thread, @project.slug, @thread.id}}
     >
-      <div class="flex h-full flex-col">
+      <%!-- data-blip-room: Blip's floating panel opens beside the thread, not over it (app.css). --%>
+      <div id="thread-page" class="flex h-full flex-col" data-blip-room>
         <header class="shrink-0 border-b border-line bg-surface/70 px-3 py-3 backdrop-blur sm:px-4">
           <div class="mx-auto flex w-full max-w-3xl items-center gap-3">
             <div class="min-w-0 flex-1">
