@@ -13,6 +13,9 @@ defmodule Photon.Assistant.Transcript do
     * the in-flight answer (`live/2`): text, reasoning, web searches and
       tool calls being prepared, or a retry notice, until the response is
       committed
+    * the output of calls still running (`tool_output/2`): the last 8,000
+      characters of each, kept apart from the in-flight answer, since a
+      call runs after the answer that made it is committed
     * the web searches an answer ran (`searches/1`), and how each reads
       (`search_label/1`)
     * a tool call's status as the page shows it (`action_status/2`)
@@ -47,6 +50,9 @@ defmodule Photon.Assistant.Transcript do
           retry: String.t() | nil
         }
 
+  @typedoc "The tail of each running call's live output, by call ID."
+  @type outputs :: %{String.t() => String.t()}
+
   @typedoc "A web search the model ran: its ID, and what it did (nil while it runs)."
   @type search :: %{id: String.t(), action: map() | nil}
 
@@ -62,6 +68,11 @@ defmodule Photon.Assistant.Transcript do
         }
 
   @shown ~w(user assistant error reset)
+
+  # How much of a running call's output the page keeps (section 3.4 of
+  # docs/plans/step-1-machine-tools.md). The node sends at most 64 KB per
+  # stream a second; the page shows the latest of it.
+  @tail 8_000
 
   @doc "Whether an entry is shown in the conversation on its own."
   @spec shown?(Entry.t()) :: boolean()
@@ -191,6 +202,28 @@ defmodule Photon.Assistant.Transcript do
   def live(live, _event), do: live
 
   @doc """
+  Folds a `"tool_output"` live event into the running calls' output: each
+  call keeps the last 8,000 characters of what it printed, both streams in
+  the order they came. Other events change nothing.
+  """
+  @spec tool_output(outputs(), map()) :: outputs()
+  def tool_output(outputs, %{"type" => "tool_output", "call_id" => call_id, "text" => text})
+      when is_binary(call_id) and is_binary(text),
+      do: Map.update(outputs, call_id, tail(text), &tail(&1 <> text))
+
+  def tool_output(outputs, _event), do: outputs
+
+  # At most @tail characters fit in @tail bytes, so most texts skip the count.
+  defp tail(text) when byte_size(text) <= @tail, do: text
+
+  defp tail(text) do
+    case String.length(text) - @tail do
+      over when over > 0 -> String.slice(text, over..-1//1)
+      _short -> text
+    end
+  end
+
+  @doc """
   The web searches a committed assistant message ran, in order: they're
   kept with its reasoning items, so they can be handed back to the model.
   """
@@ -234,7 +267,8 @@ defmodule Photon.Assistant.Transcript do
   A tool call's status on the page, from its result entry's data (nil while
   it runs), the result's details, and how a later report settled its node
   work, if one did (`settle/3`): node work still running shows as running
-  until a report settles it, failed node work as an error.
+  until a report settles it, failed node work as an error. A machine
+  operation that failed is an error, and one that was canceled is stopped.
   """
   @spec action_status(map() | nil, map(), :done | :error | nil) ::
           :pending | :running | :done | :error | :stopped
@@ -249,6 +283,7 @@ defmodule Photon.Assistant.Transcript do
   defp status(nil, _details), do: :pending
   defp status(%{"status" => "ok"}, %{"status" => "running"}), do: :running
   defp status(%{"status" => "ok"}, %{"status" => "failed"}), do: :error
+  defp status(%{"status" => "ok"}, %{"status" => "canceled"}), do: :stopped
   defp status(%{"status" => "ok"}, _details), do: :done
   defp status(%{"status" => "aborted"}, _details), do: :stopped
   defp status(_result, _details), do: :error
