@@ -197,7 +197,35 @@ defmodule Photon.SchedulesTest do
     params = Schedules.new_params(~U[2026-10-08 14:05:40Z])
 
     assert %{"prompt" => "", "repeat" => "once", "target" => "new_thread"} = params
-    assert params["at"] == "2026-10-08T15:00:00.000000Z"
+    assert params["at"] == "2026-10-08T15:00:00Z"
+  end
+
+  test "edit_params/1 gives a schedule's form values back", %{project: project} do
+    thread_id = idle!(start!(project, "Fix the pump"))
+
+    schedule =
+      create!(project, %{
+        "prompt" => "Water the beds",
+        "at" => "2030-01-02T09:00:00.000Z",
+        "repeat" => "every",
+        "every" => "36",
+        "unit" => "hours",
+        "target" => thread_id
+      })
+
+    assert Schedules.edit_params(schedule) == %{
+             "prompt" => "Water the beds",
+             "at" => "2030-01-02T09:00:00Z",
+             "repeat" => "every",
+             "every" => "36",
+             "unit" => "hours",
+             "target" => thread_id
+           }
+
+    once = create!(project, %{"at" => "2030-01-02T09:00:00Z"})
+
+    assert %{"repeat" => "once", "every" => "1", "unit" => "days", "target" => "new_thread"} =
+             Schedules.edit_params(once)
   end
 
   describe "firing" do

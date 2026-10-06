@@ -118,7 +118,7 @@ defmodule PhotonWeb.PagesTest do
       assert has_element?(view, "#skill-back[href='/skills']")
 
       {:ok, view, _html} = live(conn, ~p"/projects/garden/schedules/#{schedule.id}")
-      assert has_element?(view, "#schedule-summary", "Check the backups")
+      assert view |> element("#schedule-prompt") |> render() =~ "Check the backups"
       assert has_element?(view, "#schedule-project[href='/projects/garden']", "Garden")
       assert has_element?(view, "#side-project-garden.font-medium")
     end

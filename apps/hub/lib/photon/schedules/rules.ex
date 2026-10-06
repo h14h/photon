@@ -310,6 +310,18 @@ defmodule Photon.Schedules.Rules do
   end
 
   @doc """
+  An interval in minutes as the form's `every` and `unit`, in the largest
+  of weeks, days, hours and minutes that divides it: 1440 is `{1,
+  "days"}`, 90 is `{90, "minutes"}`. The edit form starts from it, and
+  `schedule/2` reads it back to the same minutes.
+  """
+  @spec every_unit(pos_integer()) :: {pos_integer(), String.t()}
+  def every_unit(minutes) when is_integer(minutes) and minutes > 0 do
+    unit = Enum.find(["weeks", "days", "hours"], "minutes", &(rem(minutes, @units[&1]) == 0))
+    {div(minutes, @units[unit]), unit}
+  end
+
+  @doc """
   The first whole hour (UTC) after `now`: the schedule form's starting
   time.
   """

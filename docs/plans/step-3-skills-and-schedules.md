@@ -690,6 +690,13 @@ project_id}` on `"schedules"`.
   `Rules.next_hour/1`) as ISO 8601, `repeat` `"once"`, `every` `"1"` and
   `unit` `"days"` ready for Every, `target` `"new_thread"` and an empty
   prompt.
+- (K12) `edit_params(schedule)` returns the same keys for editing:
+  the prompt, `first_at`, `repeat` `"every"` with the interval in its
+  largest whole unit (`Rules.every_unit/1`: 1440 is `{1, "days"}`, 90
+  is `{90, "minutes"}`) or `"once"` with every day ready, and the
+  thread or `"new_thread"`. Both give `at` to the second
+  (`"2026-10-08T15:00:00Z"`), since some browsers' `Date` refuses six
+  fractional digits; `new_params/1` gave microseconds before.
 
 `Rules.schedule(params, %{now: now, thread_ids: ids})` (pure) reads the
 owner's form:
@@ -1334,6 +1341,41 @@ largest whole unit, so 1440 is "every day" and 2160 "every 36 hours".
   minutes, each firing announces, and rebuilding would wipe a prompt the
   owner is typing. When the schedule is gone (deleted in another tab), it
   returns to the project page with "That schedule was deleted."
+- (K12) As built:
+  - `#schedule-stale` also has `Keep my text` (`#schedule-keep`), as the
+    skill editor's banner does: it takes the stored version's number so
+    the next save writes over it. Without it a stale form could only be
+    thrown away.
+  - The form asks before leaving with unsaved changes through
+    `EditorComponents.guarded_form/1` ("Leave without saving? Your
+    changes to this schedule will be lost."), and shows "Unsaved
+    changes." (`#schedule-dirty`) in its footer. A change is anything a
+    save would keep: the trimmed prompt, the time as an instant, Once or
+    Every, the interval only with Every, and the thread.
+  - `Repeat` is a segmented Once/Every control (`#schedule-repeat`, a
+    radio group with `#schedule-repeat-once` and `#schedule-repeat-every`).
+    The interval's fields stay in the form while hidden, so switching
+    back keeps them; the units read in the singular for an interval of
+    one ("Every 1 day").
+  - Each field sits in a wrapper that its errors show in:
+    `#schedule-prompt-field`, `#schedule-at-field`,
+    `#schedule-repeat-field` (with the interval's errors) and
+    `#schedule-target-field`.
+  - `:edit`'s next and last run are a card, `#schedule-status`, with
+    `Run now` (`#schedule-run`, flashing `ScheduleText.ran/2`) beside
+    them. `#schedule-next` holds `schedule_when/1`, and `#schedule-last`
+    `last_run/1` or "Hasn't run yet." (nothing for a schedule whose
+    task failed, as on the project page). `Delete` (`#schedule-delete`,
+    the project page's `data-confirm`) is in the header and flashes
+    "Schedule deleted." on the project page.
+  - The saving line is `#schedule-restart-note`; `:new`'s footer says
+    "It shows on Garden's page, where you can run it, edit it or delete
+    it."
+  - `{:projects_changed, id}` for the project re-reads the project and
+    its threads, so a new or renamed thread shows in the list and the
+    last run's line.
+  - K7's `#schedule-summary` placeholder is gone; `pages_test.exs` checks
+    the prompt field instead.
 
 ### 6.8 The thread page and the home page
 
@@ -1422,9 +1464,9 @@ No changes.
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Schedules` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Repo, Photon.Settings, Photon.Threads, PhotonCore, Ecto], exports: [Schedule]` | `subscribe/0`, `list/1`, `get/1` (with `next_at` and `state`), `create/2`, `update/3` (id, params, version), `delete/1`, `run_now/1`, `consent?/0`, `new_params/1` (the form's defaults for a time), and for Blip's tools `blip_schedule_tx/5`, `delete_tx/3` and `when_text/1` (K6). Moduledoc: targets, the routine, the fence, consent and overlap, that there is no process. |
+| `Photon.Schedules` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Repo, Photon.Settings, Photon.Threads, PhotonCore, Ecto], exports: [Schedule]` | `subscribe/0`, `list/1`, `get/1` (with `next_at` and `state`), `create/2`, `update/3` (id, params, version), `delete/1`, `run_now/1`, `consent?/0`, `new_params/1` (the form's defaults for a time), `edit_params/1` (a schedule's form values, K12), and for Blip's tools `blip_schedule_tx/5`, `delete_tx/3` and `when_text/1` (K6). Moduledoc: targets, the routine, the fence, consent and overlap, that there is no process. |
 | `Photon.Schedules.Schedule` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 3.1. |
-| `Photon.Schedules.Rules` | core | `use Boundary, type: :strict, deps: []` | `schedule/2`, `from_tool/2`, `arm/4`, `fired_through/3`, `next_after/3`, `target/1` (a row's target), `fire/2`, `text/1` (`"[Scheduled] " <> prompt`), `skipped_note/2`, `request_id/3`, `when_text/2` (the tool's "first at ..., then every N minutes"), `datetime/1` (milliseconds to the row's `DateTime`), `next_hour/1` (the form's starting time, K5c). `now` is always Unix milliseconds passed in; the row's times (`first_at` in `schedule/2`'s and `from_tool/2`'s answer, `when_text/2`'s argument) are `DateTime`s. |
+| `Photon.Schedules.Rules` | core | `use Boundary, type: :strict, deps: []` | `schedule/2`, `from_tool/2`, `arm/4`, `fired_through/3`, `next_after/3`, `target/1` (a row's target), `fire/2`, `text/1` (`"[Scheduled] " <> prompt`), `skipped_note/2`, `request_id/3`, `when_text/2` (the tool's "first at ..., then every N minutes"), `datetime/1` (milliseconds to the row's `DateTime`), `next_hour/1` (the form's starting time, K5c), `every_unit/1` (minutes as the form's `every` and `unit`, K12). `now` is always Unix milliseconds passed in; the row's times (`first_at` in `schedule/2`'s and `from_tool/2`'s answer, `when_text/2`'s argument) are `DateTime`s. |
 | `Photon.Schedules.Routine` | worker logic (task kind, inside `Photon.Schedules`) | none of its own | Moved from `Photon.Assistant.Routine` (section 3.3). `task/3` (a row's task attributes, waiting first for the armed time; the optional third argument is Blip's tool call's request ID, K6), `step/3`, `on_fail/3`, and `fire_tx/3` (a firing's commit, shared with `run_now/1`). |
 | `Photon.Threads` | boundary | unchanged deps | `start_tx/4`, `send_tx/4` public with `:source` and `:request_id`. `stop/1` unchanged (section 3.7). |
 | `Photon.Durable.Submission` | data | unchanged | `background?/1`. |
@@ -2048,6 +2090,11 @@ K12. The schedule form. After K7 and K8.
   `{:schedules_changed, _}` handler that never touches the form);
   `Schedules.new_params/1` if K5c left it out.
 - Tests: `test/web/live/schedule_live_test.exs`.
+- (K12) Done as listed. `new_params/1` was there; K12 added
+  `Schedules.edit_params/1` and `Rules.every_unit/1` for the edit form,
+  and both give `at` to the second. The page's other choices
+  (`#schedule-keep`, the unsaved-changes guard, the status card) are
+  recorded in sections 3.4 and 6.7 under "(K12)".
 
 K13. End to end, docs and the final checks. After all of the above.
 - `apps/hub/test/integration/machine_tools_e2e_test.exs`: section 8.4.

@@ -193,17 +193,40 @@ defmodule Photon.Schedules do
     %{
       "prompt" => "",
       "at" =>
-        now
-        |> DateTime.to_unix(:millisecond)
-        |> Rules.next_hour()
-        |> Rules.datetime()
-        |> DateTime.to_iso8601(),
+        now |> DateTime.to_unix(:millisecond) |> Rules.next_hour() |> Rules.datetime() |> iso(),
       "repeat" => "once",
       "every" => "1",
       "unit" => "days",
       "target" => "new_thread"
     }
   end
+
+  @doc """
+  The schedule form's values for editing `schedule`, as `new_params/1`
+  gives them for a new one: its prompt, its first time, Once or Every
+  with the interval in its largest whole unit, and its thread or
+  `"new_thread"`. A one-off keeps every day ready for when the owner
+  picks Every.
+  """
+  @spec edit_params(Schedule.t()) :: %{String.t() => String.t()}
+  def edit_params(%Schedule{} = schedule) do
+    {every, unit} =
+      if schedule.every_minutes, do: Rules.every_unit(schedule.every_minutes), else: {1, "days"}
+
+    %{
+      "prompt" => schedule.prompt,
+      "at" => iso(schedule.first_at),
+      "repeat" => if(schedule.every_minutes, do: "every", else: "once"),
+      "every" => Integer.to_string(every),
+      "unit" => unit,
+      "target" => schedule.conversation_id || "new_thread"
+    }
+  end
+
+  # A form's time: ISO 8601 in UTC to the second, which every browser's
+  # Date parses (some refuse six fractional digits). The form's times are
+  # whole minutes, so nothing is lost.
+  defp iso(datetime), do: datetime |> DateTime.truncate(:second) |> DateTime.to_iso8601()
 
   ## Changing schedules
 

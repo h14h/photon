@@ -352,6 +352,38 @@ defmodule Photon.Schedules.RulesTest do
     end
   end
 
+  describe "every_unit/1" do
+    test "says an interval in the largest unit that divides it" do
+      assert Rules.every_unit(5) == {5, "minutes"}
+      assert Rules.every_unit(90) == {90, "minutes"}
+      assert Rules.every_unit(60) == {1, "hours"}
+      assert Rules.every_unit(2160) == {36, "hours"}
+      assert Rules.every_unit(1440) == {1, "days"}
+      assert Rules.every_unit(4320) == {3, "days"}
+      assert Rules.every_unit(20_160) == {2, "weeks"}
+    end
+
+    test "reads back through schedule/2 to the same minutes" do
+      now = DateTime.to_unix(~U[2026-10-08 14:00:00Z], :millisecond)
+
+      for minutes <- [5, 90, 60, 2160, 1440, 20_160] do
+        {every, unit} = Rules.every_unit(minutes)
+
+        params = %{
+          "prompt" => "Check",
+          "at" => "2026-10-08T15:00:00Z",
+          "repeat" => "every",
+          "every" => Integer.to_string(every),
+          "unit" => unit,
+          "target" => "new_thread"
+        }
+
+        assert {:ok, %{every_minutes: ^minutes}} =
+                 Rules.schedule(params, %{now: now, thread_ids: []})
+      end
+    end
+  end
+
   describe "next_hour/1" do
     test "is the first whole hour after now" do
       at = &DateTime.to_unix(&1, :millisecond)
