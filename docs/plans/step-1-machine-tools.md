@@ -1027,6 +1027,14 @@ apps/hub
     to a bridge process that joins the channel with `Phoenix.ChannelTest`
     and relays between it and the node's executor through a test
     `Executor.Link`. Say which one was used in the test's moduledoc.
+  - As built (A13): Bandit serves the node socket in the test env, so the
+    bridge isn't used. The test also covers Stop while a command runs on
+    the node (canceled, the row closed, the journal entry forgotten) and
+    Stop while `local` is offline (the join's `op.cancel` is answered
+    "canceled before it started", and nothing runs). Commands write a
+    `runs` file in the node's workspace, so the tests also check each
+    command ran once. The offline limit is a minute there, so a node
+    restarted on purpose is back before a call gives up.
 
 ### 6.2 PR B
 
