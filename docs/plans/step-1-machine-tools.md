@@ -417,8 +417,8 @@ are `replay: :safe`.
    task is unfinished and not marked for abort, hub rule 9) and, if the
    machine is online, asks its channel to push the op (hub rule 2).
 6. Park: `{:wait, %{"signal" => "op:" <> op_id, "until" => until}, state}`.
-   `until` and `state` come from `Wait.first/3` (pure), given whether the
-   machine is online now. The state is
+   `until` and `offline_since` come from `Wait.first/3` (pure), given
+   whether the machine is online now. The state is
    `%{"op_id", "machine", "kind", "summary", "offline_since"}`, where
    `summary` is the command or path for the UI and `offline_since` is the
    time the call first saw the machine offline, or null.
@@ -429,7 +429,8 @@ Its `resume(state, api)`:
    snapshot}`, `{:open, confirmed?}` or `:closed`.
 2. Finished: return `{:commit, fun}`. Inside the commit,
    `Machines.claim_tx/2` marks the row closed and clears its snapshot, and
-   the result is `Translate.result/3` of the snapshot.
+   the result is `{:ok, Translate.result/3, Translate.details/3}` of the
+   snapshot.
 3. Open: `Wait.next/4` decides from the state, whether the machine is online
    now, the time, and the limits: `{:park, until, state}` or `:give_up`.
    - Park while online: first ask the channel to push the op again
@@ -441,8 +442,8 @@ Its `resume(state, api)`:
      applies `Machines.Rules.on_abandon/2`. An open row gets `cancel`, and
      `op.cancel` goes to the channel if one is registered now (hub rule 7);
      `abandon_tx` returns `{:abandoned, facts}` (`pushed`, `confirmed`,
-     `online`), and `Wait.offline_message/2` (pure) picks the text from
-     section 2.4. A row that finished meanwhile is claimed the way
+     `online`), and `Wait.offline_message/3` (pure) picks the text from
+     section 2.4, naming the offline limit it is given. A row that finished meanwhile is claimed the way
      `claim_tx` does it (`{:claimed, snapshot}`), and the call returns the
      real result instead of the offline error.
 4. Closed: only possible if the result was already recorded, which also
@@ -484,8 +485,11 @@ in its final commit, so a rerun is harmless.
 
 ### 3.4 Results and output bounds
 
-`Translate.result(kind, snapshot, machine)` returns the tool result, ported
-from the node's `Tools.Bash.format/2` and `Tools.ViewImage.format/2`.
+`Translate.result(kind, snapshot, machine)` returns the tool result's
+content (message parts), ported from the node's `Tools.Bash.format/2` and
+`Tools.ViewImage.format/2`; `Translate.details/3` returns its details. A
+failed or canceled op is still an ok result whose text starts with
+`Error:`, so its details reach the UI.
 
 Shell, completed:
 - stdout, then `Stderr:` and stderr, then `Exit code: N` when not 0, or
@@ -493,8 +497,11 @@ Shell, completed:
 - Each stream is bounded on the node to `max_output_length` code points
   (head and tail around a marker giving the omitted size and the path of the
   full file on that machine). The hub bounds each field again with
-  `PhotonCore.Output.bound!/3` at the same limit, so a misbehaving node can't
-  flood the model.
+  `PhotonCore.Output.bound!/3` at the same limit plus 1,000 code points of
+  room for the node's marker, so a misbehaving node can't flood the model
+  and a well-behaved node's truncated output isn't cut a second time. The
+  limit is the snapshot's `max_output_length` (the call's own), capped at
+  1,000,000, or 40,000 if the snapshot has none.
 
 Shell, failed or canceled: `Error: <terminal_error>`, bounded the same way.
 
@@ -644,8 +651,8 @@ Registered names after PR B: `PhotonNode.OpRegistry` (owners `PhotonNode`,
 | `Photon.MachineTools` | boundary | `deps: [Photon.Durable, Photon.Machines, PhotonCore]`, `exports: []` | A | Module doc, `tools/0` returning the three tool modules, and the `signal_key/1` helper. |
 | `Photon.MachineTools.Shell`, `.ViewImage`, `.ListMachines` | boundary (durable tools) | inside MachineTools | A | Section 3.1. `Shell` and `ViewImage` delegate to `Call`. |
 | `Photon.MachineTools.Call` | boundary | inside MachineTools | A | Section 3.2: `execute/3`, `resume/2`, `on_interrupt/2`, reading the limits from config. |
-| `Photon.MachineTools.Translate` | core | strict, `deps: [PhotonCore]` | A | `shell_args/1`, `view_image_args/1` (ported checks: limit range, NUL bytes, blank path, and a command over 100,000 bytes; return op `args` with `directory: nil`), `result/3` (section 3.4), `details/3` (with `full_output` for shell results, section 3.6), and the error texts for unknown and outdated machines. |
-| `Photon.MachineTools.Wait` | core | strict, `deps: []` | A | `op_id/1` (`t_<suffix>` to `op_<suffix>`), `first(online?, now, limits)`, `next(state, online?, now, limits) :: {:park, until, state} \| :give_up`, and `offline_message(machine, facts)` with the three texts of section 2.4 (`facts` from `abandon_tx`). Time and limits are arguments (rule 29). |
+| `Photon.MachineTools.Translate` | core | strict, `deps: [PhotonCore]` | A | `shell_args/1`, `view_image_args/1` (ported checks: limit range, NUL bytes, blank command or path, and a command over 100,000 bytes; return op `args` with `directory: nil`, and for `view_image` `max_size` from `max_size/0`), `result/3` (section 3.4; the content parts, so `Call` returns `{:ok, result, details}`), `details/3` (string keys: `machine`, `op_id`, `kind`, `status`, then `command`, `exit_code`, `out_truncated`, `err_truncated` and `full_output` for shell, or `path` for view_image; `full_output` is set only when the snapshot has both output paths, section 3.6), and the error texts `unknown_machine(machine, known_ids)` and `outdated_machine(machine)`. |
+| `Photon.MachineTools.Wait` | core | strict, `deps: []` | A | `op_id/1` (`t_<suffix>` to `op_<suffix>`), `first(online?, now, limits) :: {until, offline_since}` (`offline_since` is `now` when offline, nil when online; `Call` puts it in its state), `next(state, online?, now, limits) :: {:park, until, state} \| :give_up` (gives up once `now - offline_since` reaches the limit, so a limit of 0 gives up at the first offline sighting), and `offline_message(machine, facts, limit_ms)` with the three texts of section 2.4 (`facts` from `abandon_tx`), naming the limit ("10 minutes", or "250 milliseconds" in tests). Times are Unix milliseconds; `limits` is `%{check_ms:, offline_limit_ms:}`. Time and limits are arguments (rule 29). |
 | `PhotonWeb.NodeChannel` | boundary (Phoenix channel, the per-node server) | unchanged | A, B | PR A: `handle_in("op.snapshot")` and `handle_in("op.output")` call `Machines.snapshot/2` and `Machines.output/3` and push what they return; `handle_info(:joined)` also pushes `Machines.joined/1`; a new `{:push_op, op_id}` clause pushes what `Machines.push_for/1` returns, and the `{:command, event, payload}` clause already pushes `op.cancel`. A new clause before the generic one drops `{:command, "op.start", _}` with a log line, so the channel never pushes an `op.start` built by another process. It doesn't catch failures from `Machines`: a failed call crashes the channel, and the node's rejoin resends everything (node rule 8). Live output routes (`op_id` to conversation and call) are cached in assigns, a map dropped per op on its terminal snapshot. Each callback stays within 15 lines (rule 30). PR B: removes `event`, `live` and `input_rejected`, the `pushed_inputs` and `sessions` assigns, and the `sync` reply. |
 | `PhotonWeb.Endpoint` | lifecycle config | unchanged | A | `max_frame_size: 8_000_000` on the `/node` socket's websocket options. PR B removes `plug PhotonWeb.NodeAuthPlug`. |
 | `Photon.Assistant` | boundary | adds `Photon.MachineTools` to deps; PR B drops `Photon.NodeSessions` and `Photon.Nodes` | A, B | `@tools` gains `MachineTools.tools()` (PR A) and loses the node tools (PR B). Moduledoc updated. |
@@ -911,7 +918,7 @@ apps/hub
   100,000-byte command cap, and `full_output` in shell details.
 - `test/core/machine_tools/wait_test.exs`: `op_id/1`; park while online;
   first offline sighting sets `offline_since`; online clears it; past the
-  limit gives `:give_up`; `offline_message/2` gives "didn't run" only when
+  limit gives `:give_up`; `offline_message/3` gives "didn't run" only when
   neither `pushed` nor `confirmed`, and the hedged texts otherwise (offline
   and online again); `until` never passes the limit.
 - `test/core/durable/context_test.exs`: a conversation with many shell and
@@ -1186,7 +1193,7 @@ A8. `Photon.Machines` and the channel. After A7.
 A9. Machine tool core. After A1.
 - New `apps/hub/lib/photon/machine_tools/translate.ex` (with the command
   cap and `full_output`) and `machine_tools/wait.ex` (`next/4` returning
-  `:give_up`, and `offline_message/2`).
+  `:give_up`, and `offline_message/3`).
 - Tests: `test/core/machine_tools/{translate,wait}_test.exs`.
 
 A10. Machine tools for Blip. After A8, A9.
