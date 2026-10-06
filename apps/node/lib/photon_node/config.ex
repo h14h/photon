@@ -82,6 +82,13 @@ defmodule PhotonNode.Config do
   @spec sessions_dir(t()) :: String.t()
   def sessions_dir(config), do: Path.join(config.data_dir, "sessions")
 
+  @doc """
+  The hub's operations: `<op_id>/`, holding the executor's journal entry
+  (`op.json`) and a shell command's files.
+  """
+  @spec ops_dir(t()) :: String.t()
+  def ops_dir(config), do: Path.join(config.data_dir, "ops")
+
   @doc "The hub's model relay, reached through the same host as the websocket."
   @spec llm_base_url(t()) :: String.t()
   def llm_base_url(config) do
