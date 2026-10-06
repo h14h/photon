@@ -727,7 +727,12 @@ Blip's own. Three moves:
   `"thread-"`), since both live on one document. `action/1` takes an
   `image_path` function attr (`fn entry_id, index -> path end`) so each
   page points at its own image route. Labels and icons for the four
-  context-file tools join the existing ones.
+  context-file tools join the existing ones; like the machine calls',
+  they're in the present while the call runs ("Reading notes.md"). As
+  built, `composer/1` also takes `placeholder` (default "Ask Blip
+  anything...") and `class` (added to its outer row, for the thread
+  page's `blip-clear-x`), and `sign_in_to_talk/1` takes `who` (default
+  "Blip"), so neither has Blip's words built in.
 - `PhotonWeb.ConversationView` (plain functions over a socket, no
   process, in the web layer): `mount_conversation(socket, entries, opts)`
   (assigns `results`, `calls`, `outputs`, `empty?`, `live`, `shown`,

@@ -21,7 +21,7 @@ defmodule PhotonWeb.Router do
     end
   end
 
-  # Images Blip's page loads on their own; checked like the pages.
+  # Images a conversation's page loads on their own; checked like the pages.
   pipeline :gui_files do
     plug :fetch_session
     plug PhotonWeb.Auth
@@ -31,7 +31,7 @@ defmodule PhotonWeb.Router do
   scope "/blip", PhotonWeb do
     pipe_through :gui_files
 
-    get "/images/:entry_id/:index", BlipImageController, :show
+    get "/images/:entry_id/:index", ConversationImageController, :blip
   end
 
   # For the platform's health checks; needs no password.

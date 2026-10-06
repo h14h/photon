@@ -1,0 +1,557 @@
+defmodule PhotonWeb.ConversationComponents do
+  @moduledoc """
+  The pieces of a durable conversation on screen, shared by Blip's panel
+  (`PhotonWeb.BlipLive`) and a project's thread page: the entries, each tool
+  call as a line inside the answer that made it, web searches, the
+  in-flight answer, the composer and what shows in its place until there's
+  a model to talk to.
+
+  Blip's panel and a thread page can be on one document, so every
+  component that renders an ID takes an `id_prefix` (default `""`, which
+  keeps Blip's IDs: `#composer`, `#stop`, `#action-<call id>`,
+  `#live-output`). A thread page passes `"thread-"`. An image a call
+  returned is loaded from the page's own image route, through the
+  `image_path` function (`fn entry_id, index -> path end`), since the
+  results a page keeps carry no image data.
+
+  A call on a machine names the machine, `local` included, and says what
+  it is doing until it ends: "Running `uptime` on mm1", then "Ran `uptime`
+  on mm1" (`Photon.Transcript.machine_action/4`). The context-file calls
+  read "Checked the context files", "Read notes.md", "Wrote notes.md" and
+  "Edited notes.md", in the present while they run.
+
+  The events these components send (`send`, `toggle_mode`, `stop`,
+  `withdraw`) go to the LiveView that renders them; the socket side of the
+  conversation is `PhotonWeb.ConversationView`.
+  """
+
+  use PhotonWeb, :html
+
+  alias Photon.{Markdown, Transcript}
+  alias PhotonCore.Message
+
+  @file_tools ~w(list_context_files read_context_file write_context_file edit_context_file)
+
+  @doc "One entry of the conversation: a message, an answer with its calls, an error or a reset."
+  attr :entry, :map, required: true
+  attr :results, :map, required: true
+  attr :outputs, :map, default: %{}, doc: "the tail of each running call's output"
+  attr :id_prefix, :string, default: ""
+  attr :image_path, :any, required: true, doc: "fn entry_id, index -> the image's path end"
+
+  @spec entry(map()) :: Phoenix.LiveView.Rendered.t()
+  def entry(%{entry: %{kind: "user"}} = assigns) do
+    assigns =
+      assign(assigns,
+        source: assigns.entry.data["source"] || %{},
+        text: Transcript.typed(assigns.entry.data["message"], assigns.entry.data["source"])
+      )
+
+    ~H"""
+    <%= case @source["kind"] do %>
+      <% "routine" -> %>
+        <div class="flex items-start gap-3 text-sm">
+          <span class="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-sunken text-ink-faint">
+            <.icon name="hero-clock" class="size-4" />
+          </span>
+          <div class="min-w-0 pt-1">
+            <span class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">Scheduled</span>
+            <p class="mt-0.5 text-ink-soft">{String.replace_prefix(@text, "[Scheduled] ", "")}</p>
+          </div>
+        </div>
+      <% _ -> %>
+        <div class="flex flex-col items-end gap-1 pl-10">
+          <div class="max-w-full rounded-2xl rounded-br-md bg-sunken px-3.5 py-2 text-[14.5px] leading-relaxed text-ink ring-1 ring-line">
+            <span phx-no-format class="whitespace-pre-wrap">{@text}</span>
+          </div>
+        </div>
+    <% end %>
+    """
+  end
+
+  def entry(%{entry: %{kind: "assistant"}} = assigns) do
+    message = assigns.entry.data["message"]
+
+    assigns =
+      assign(assigns,
+        text: Message.text_of(message),
+        calls: Message.tool_calls(message),
+        searches: Transcript.searches(message)
+      )
+
+    ~H"""
+    <div class="min-w-0 space-y-2.5">
+      <div :if={@searches != []} class="space-y-1">
+        <.search :for={search <- @searches} action={search.action} />
+      </div>
+      <div :if={@text != ""} class="markdown-body text-ink">{raw(Markdown.to_html(@text))}</div>
+      <div :if={@calls != []} class="space-y-1.5">
+        <.action
+          :for={call <- @calls}
+          call={call}
+          result={@results[call["id"]]}
+          tail={@outputs[call["id"]]}
+          id_prefix={@id_prefix}
+          image_path={@image_path}
+        />
+      </div>
+    </div>
+    """
+  end
+
+  def entry(%{entry: %{kind: "error"}} = assigns) do
+    assigns = assign(assigns, quiet: Transcript.quiet?(assigns.entry.data))
+
+    ~H"""
+    <div class={[
+      "flex items-start gap-2 rounded-xl px-3.5 py-2.5 text-sm",
+      if(@quiet, do: "bg-sunken text-ink-soft", else: "bg-bad-soft text-ink")
+    ]}>
+      <.icon
+        name={
+          cond do
+            @entry.data["notice"] -> "hero-clock"
+            @quiet -> "hero-stop-circle"
+            true -> "hero-exclamation-triangle"
+          end
+        }
+        class={["mt-0.5 size-4 shrink-0", if(@quiet, do: "text-ink-faint", else: "text-bad")]}
+      />
+      <span class="leading-relaxed">{@entry.data["message"]}</span>
+    </div>
+    """
+  end
+
+  def entry(%{entry: %{kind: "reset"}} = assigns) do
+    ~H"""
+    <div class="flex items-center gap-3 py-2 text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
+      <span class="h-px flex-1 bg-line" /> Fresh context <span class="h-px flex-1 bg-line" />
+    </div>
+    """
+  end
+
+  @doc """
+  One tool call: a line saying what it did, which opens to show the result.
+  Under the line, while it runs, the end of what it has printed; once it's
+  done, any image it returned.
+  """
+  attr :call, :map, required: true
+  attr :result, :map, default: nil
+  attr :tail, :string, default: nil, doc: "the end of the call's output while it runs"
+  attr :id_prefix, :string, default: ""
+  attr :image_path, :any, required: true, doc: "fn entry_id, index -> the image's path end"
+
+  @spec action(map()) :: Phoenix.LiveView.Rendered.t()
+  def action(assigns) do
+    args =
+      case Message.arguments(assigns.call) do
+        {:ok, args} -> args
+        _ -> %{}
+      end
+
+    message = assigns.result && assigns.result["message"]
+    details = (assigns.result && assigns.result["details"]) || %{}
+    status = Transcript.action_status(assigns.result, details)
+
+    assigns =
+      assign(assigns,
+        dom_id: "#{assigns.id_prefix}action-#{assigns.call["id"]}",
+        args: args,
+        details: details,
+        status: status,
+        output: message && Message.text_of(message),
+        images: Message.images(message),
+        tail: status == :pending && assigns.tail
+      )
+
+    ~H"""
+    <div
+      id={@dom_id}
+      data-status={@status}
+      data-tool={@call["name"]}
+      class="overflow-hidden rounded-xl border border-line bg-surface shadow-xs transition-shadow has-[details[open]]:shadow-sm"
+    >
+      <%!-- Re-rendered as output streams in or results land; the browser's open state stays. --%>
+      <details
+        id={"#{@dom_id}-details"}
+        class="group"
+        phx-mounted={JS.ignore_attributes(["open"])}
+      >
+        <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2 text-[13px] select-none">
+          <span class={[
+            "grid size-6 shrink-0 place-items-center rounded-md",
+            @status == :pending && "bg-accent-soft text-accent-strong",
+            @status == :done && "bg-ok-soft text-ok",
+            @status == :error && "bg-bad-soft text-bad",
+            @status == :stopped && "bg-sunken text-ink-faint"
+          ]}>
+            <.spinner :if={@status == :pending} class="size-3.5" />
+            <.icon :if={@status == :done} name={action_icon(@call["name"])} class="size-3.5" />
+            <.icon :if={@status == :error} name="hero-exclamation-triangle-micro" class="size-3.5" />
+            <.icon :if={@status == :stopped} name="hero-stop-micro" class="size-3.5" />
+          </span>
+          <span class="min-w-0 flex-1 truncate text-ink-soft">
+            <.action_label name={@call["name"]} args={@args} details={@details} status={@status} />
+          </span>
+          <span
+            :if={@details["exit_code"] not in [nil, 0]}
+            class="shrink-0 rounded bg-warn-soft px-1.5 py-0.5 font-mono text-[11px] text-warn"
+          >
+            exit {@details["exit_code"]}
+          </span>
+          <.icon
+            name="hero-chevron-down-micro"
+            class="size-4 shrink-0 text-ink-faint transition group-open:rotate-180"
+          />
+        </summary>
+        <div class="border-t border-line px-3.5 py-2.5">
+          <pre class="max-h-72 overflow-auto font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink-soft">{@output || "Waiting for the result."}</pre>
+        </div>
+      </details>
+      <%!-- Reversed, so it stays scrolled to the newest line as output comes in. --%>
+      <div
+        :if={@tail}
+        id={"#{@dom_id}-tail"}
+        class="flex max-h-40 flex-col-reverse overflow-auto border-t border-line bg-sunken/60 px-3.5 py-2"
+      >
+        <pre class="font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink-soft">{@tail}</pre>
+      </div>
+      <img
+        :for={{_image, index} <- Enum.with_index(@images)}
+        id={"#{@dom_id}-image-#{index}"}
+        src={@image_path.(@result["entry_id"], index)}
+        loading="lazy"
+        alt={@output || "An image from #{@args["machine"]}"}
+        class="max-h-80 w-full border-t border-line bg-sunken object-contain"
+      />
+    </div>
+    """
+  end
+
+  @doc """
+  A web search the model ran (OpenAI runs it): what it looked for, or the
+  page it read, linked.
+  """
+  attr :action, :map, default: nil, doc: "what the search did; nil while it runs"
+
+  @spec search(map()) :: Phoenix.LiveView.Rendered.t()
+  def search(assigns) do
+    ~H"""
+    <p class="flex min-w-0 items-center gap-2 text-[13px] text-ink-faint" data-search>
+      <span :if={is_nil(@action)} class="text-accent-strong"><.spinner class="size-3.5" /></span>
+      <.icon :if={@action} name="hero-globe-alt-micro" class="size-3.5 shrink-0" />
+      <%= if @action && @action["url"] do %>
+        <a
+          href={@action["url"]}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="min-w-0 truncate hover:text-ink hover:underline"
+        >
+          {Transcript.search_label(@action)}
+        </a>
+      <% else %>
+        <span class="min-w-0 truncate">{Transcript.search_label(@action)}</span>
+      <% end %>
+    </p>
+    """
+  end
+
+  @doc """
+  What a call did, in a line. A machine call names its command or path,
+  and the machine; a context-file call names the file. Both are in the
+  present while they run.
+  """
+  attr :name, :string, required: true
+  attr :args, :map, required: true
+  attr :details, :map, default: %{}
+  attr :status, :atom, default: :done
+
+  @spec action_label(map()) :: Phoenix.LiveView.Rendered.t()
+  def action_label(%{name: name} = assigns) when name in ~w(shell view_image) do
+    %{verb: verb, subject: subject, machine: machine} =
+      Transcript.machine_action(name, assigns.args, assigns.details, assigns.status)
+
+    assigns = assign(assigns, verb: verb, subject: truncate(subject), machine: machine)
+
+    ~H"""
+    <span phx-no-format>{@verb} <code class="font-mono text-[12.5px] text-ink">{@subject}</code><span :if={@machine}> on <span class="font-medium text-ink">{@machine}</span></span></span>
+    """
+  end
+
+  def action_label(%{name: name} = assigns) when name in @file_tools do
+    assigns =
+      assign(assigns,
+        verb: file_verb(name, assigns.status),
+        file: truncate(assigns.details["file"] || assigns.args["name"])
+      )
+
+    ~H"""
+    <span phx-no-format>{@verb}<span :if={@file != ""}> <span class="font-medium text-ink">{@file}</span></span></span>
+    """
+  end
+
+  def action_label(assigns) do
+    assigns = assign(assigns, :text, label_text(assigns.name, assigns.args))
+
+    ~H"""
+    {@text}
+    """
+  end
+
+  defp label_text("list_machines", _), do: "Checked your machines"
+
+  defp label_text("update_memory", args),
+    do: "Memory: #{args["action"]} #{truncate(args["text"])}"
+
+  defp label_text("schedule", args), do: "Scheduled: #{truncate(args["prompt"])}"
+  defp label_text("list_schedules", _), do: "Checked the schedule"
+  defp label_text("cancel_schedule", args), do: "Cancelled #{args["schedule_id"]}"
+  defp label_text(name, _), do: name
+
+  # Listing names no file; the others name the one they touched.
+  defp file_verb("list_context_files", :pending), do: "Checking the context files"
+  defp file_verb("list_context_files", _status), do: "Checked the context files"
+  defp file_verb("read_context_file", :pending), do: "Reading"
+  defp file_verb("read_context_file", _status), do: "Read"
+  defp file_verb("write_context_file", :pending), do: "Writing"
+  defp file_verb("write_context_file", _status), do: "Wrote"
+  defp file_verb("edit_context_file", :pending), do: "Editing"
+  defp file_verb("edit_context_file", _status), do: "Edited"
+
+  defp action_icon("shell"), do: "hero-command-line-micro"
+  defp action_icon("view_image"), do: "hero-photo-micro"
+  defp action_icon("list_machines"), do: "hero-server-stack-micro"
+  defp action_icon("update_memory"), do: "hero-bookmark-micro"
+  defp action_icon("list_context_files"), do: "hero-document-duplicate-micro"
+  defp action_icon("read_context_file"), do: "hero-document-text-micro"
+  defp action_icon("write_context_file"), do: "hero-document-plus-micro"
+  defp action_icon("edit_context_file"), do: "hero-pencil-square-micro"
+
+  defp action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
+    do: "hero-clock-micro"
+
+  defp action_icon(_), do: "hero-check-micro"
+
+  # One line of at most 90 characters; anything that isn't text is nothing.
+  defp truncate(text) when not is_binary(text), do: ""
+
+  defp truncate(text) do
+    text = text |> String.replace(~r/\s+/, " ") |> String.trim()
+    if String.length(text) > 90, do: String.slice(text, 0, 87) <> "...", else: text
+  end
+
+  @doc """
+  What the model is up to between answers: waiting on a run (the thinking
+  dots), or the answer as it streams.
+  """
+  attr :live, :map, required: true
+  attr :shown, :map, required: true, doc: "the finished blocks of the in-flight answer"
+  attr :mood, :atom, required: true
+  attr :id_prefix, :string, default: ""
+
+  @spec live_output(map()) :: Phoenix.LiveView.Rendered.t()
+  def live_output(%{live: nil} = assigns) do
+    ~H"""
+    <div id={"#{@id_prefix}live-output"} data-mood={@mood} class="mt-5">
+      <div :if={@mood == :thinking} class="flex h-6 items-center"><.thinking /></div>
+    </div>
+    """
+  end
+
+  # The answer as it streams: whole blocks, each fading in as it arrives
+  # (`data-streaming`, see app.css), with the thinking dots under them while
+  # more is on its way.
+  def live_output(assigns) do
+    ~H"""
+    <div id={"#{@id_prefix}live-output"} data-mood={@mood} class="mt-5 space-y-2">
+      <p
+        :if={@live.retry}
+        class="flex items-center gap-2 rounded-lg bg-warn-soft px-3 py-2 text-[13px] text-ink-soft"
+      >
+        <.icon name="hero-arrow-path" class="size-4 animate-spin text-warn" /> {@live.retry}
+      </p>
+      <p
+        :if={@shown.reasoning != "" and @shown.text == ""}
+        class="line-clamp-3 text-[13px] leading-relaxed text-ink-faint italic"
+      >
+        {@shown.reasoning |> String.slice(-400, 400)}
+      </p>
+      <div :if={@live.searches != []} id={"#{@id_prefix}live-searches"} class="space-y-1">
+        <.search :for={search <- Enum.reverse(@live.searches)} action={search.action} />
+      </div>
+      <div
+        :if={@shown.text != ""}
+        id={"#{@id_prefix}live-text"}
+        class="markdown-body text-ink"
+        data-streaming
+      >
+        {raw(Markdown.to_html(@shown.text))}
+      </div>
+      <div
+        :for={{_index, name} <- @live.tools}
+        class="flex items-center gap-2 text-[13px] text-ink-faint"
+      >
+        <.spinner class="size-3.5" /> Preparing {name}
+      </div>
+      <div :if={@live.tools == %{} and is_nil(@live.retry)} class="flex h-6 items-center">
+        <.thinking />
+      </div>
+    </div>
+    """
+  end
+
+  @doc "Three breathing dots."
+  @spec thinking(map()) :: Phoenix.LiveView.Rendered.t()
+  def thinking(assigns) do
+    ~H"""
+    <div class="flex items-center gap-1.5 text-ink-faint" aria-label="Thinking">
+      <span class="size-1.5 animate-breathe rounded-full bg-current" />
+      <span class="size-1.5 animate-breathe rounded-full bg-current [animation-delay:0.2s]" />
+      <span class="size-1.5 animate-breathe rounded-full bg-current [animation-delay:0.4s]" />
+    </div>
+    """
+  end
+
+  @doc "In place of the composer until there's a model to talk to."
+  attr :chatgpt, :map, required: true
+  attr :who, :string, default: "Blip", doc: "who needs the sign-in, as the sentence's subject"
+  attr :id_prefix, :string, default: ""
+
+  @spec sign_in_to_talk(map()) :: Phoenix.LiveView.Rendered.t()
+  def sign_in_to_talk(assigns) do
+    ~H"""
+    <div class="shrink-0 border-t border-line px-4 pt-3 pb-4">
+      <div
+        id={"#{@id_prefix}sign-in-to-talk"}
+        class="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-canvas px-4 py-3"
+      >
+        <p class="text-[14px] text-ink-soft">
+          {if(@chatgpt.state == :signed_in,
+            do: "Photon isn't allowed to use your ChatGPT plan yet.",
+            else: "#{@who} needs a ChatGPT sign-in to think."
+          )}
+        </p>
+        <.button navigate={~p"/settings"} variant="primary" size="sm">
+          {if(@chatgpt.state == :signed_in, do: "Fix in Settings", else: "Sign in with ChatGPT")}
+        </.button>
+      </div>
+    </div>
+    """
+  end
+
+  @doc """
+  The message box, with the queued messages above it and, while the
+  conversation is busy, the steer or follow-up toggle and Stop. Enter
+  sends; Shift+Enter starts a new line.
+  """
+  attr :form, :any, required: true
+  attr :busy, :boolean, required: true
+  attr :mode, :string, required: true
+  attr :queued, :list, required: true
+  attr :id_prefix, :string, default: ""
+  attr :placeholder, :string, default: "Ask Blip anything..."
+  attr :class, :any, default: nil, doc: "added to the outer row"
+
+  @spec composer(map()) :: Phoenix.LiveView.Rendered.t()
+  def composer(assigns) do
+    ~H"""
+    <div class={["shrink-0 px-3 pt-1 pb-3 sm:px-4 sm:pb-4", @class]}>
+      <div class="mx-auto w-full max-w-3xl">
+        <div :if={@queued != []} id={"#{@id_prefix}queued"} class="mb-2 flex flex-wrap gap-1.5">
+          <span
+            :for={s <- @queued}
+            id={"#{@id_prefix}queued-#{s.id}"}
+            class="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-surface py-1 pr-1 pl-3 text-[12px] text-ink-soft"
+          >
+            <span class="font-medium text-ink-faint">{if(s.mode == "steer", do: "Steer", else: "Next")}</span>
+            <span class="max-w-60 truncate">
+              {Transcript.typed(s.content["parts"], s.content["source"])}
+            </span>
+            <button
+              phx-click="withdraw"
+              phx-value-id={s.id}
+              class="rounded-full p-0.5 hover:bg-sunken"
+              title="Withdraw"
+            >
+              <.icon name="hero-x-mark-micro" class="size-3.5" />
+            </button>
+          </span>
+        </div>
+
+        <.form
+          for={@form}
+          id={"#{@id_prefix}composer"}
+          phx-submit="send"
+          class="rounded-2xl border border-line bg-canvas transition focus-within:border-accent/60 focus-within:bg-surface focus-within:shadow-md focus-within:shadow-accent/10"
+        >
+          <textarea
+            id={"#{@id_prefix}composer-input"}
+            name={@form[:text].name}
+            phx-hook=".Composer"
+            rows="1"
+            placeholder={if(@busy, do: "Add to the conversation...", else: @placeholder)}
+            class="block max-h-60 min-h-11 w-full resize-none bg-transparent px-3.5 pt-2.5 pb-1 text-[14.5px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
+          >{@form[:text].value}</textarea>
+          <div class="flex items-center gap-2 px-2 pb-2">
+            <button
+              :if={@busy}
+              type="button"
+              id={"#{@id_prefix}mode-toggle"}
+              phx-click="toggle_mode"
+              class={[
+                "rounded-full px-2.5 py-1 text-[12px] transition",
+                @mode == "steer" && "bg-accent-soft font-medium text-accent-strong",
+                @mode != "steer" && "text-ink-faint hover:bg-sunken hover:text-ink-soft"
+              ]}
+              title="Steer joins the current work after its next step. Otherwise your message waits for the current answer."
+            >
+              {if(@mode == "steer", do: "Steer current work", else: "Send after this answer")}
+            </button>
+            <span class="flex-1" />
+            <.button
+              :if={@busy}
+              type="button"
+              id={"#{@id_prefix}stop"}
+              variant="secondary"
+              size="sm"
+              phx-click="stop"
+            >
+              <.icon name="hero-stop-solid" class="size-3.5" /> Stop
+            </.button>
+            <.button
+              type="submit"
+              id={"#{@id_prefix}send"}
+              variant="primary"
+              size="sm"
+              class="size-8 rounded-full px-0"
+              title="Send"
+            >
+              <.icon name="hero-arrow-up" class="size-4" />
+            </.button>
+          </div>
+        </.form>
+      </div>
+
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".Composer">
+        export default {
+          mounted() {
+            const grow = () => {
+              this.el.style.height = "auto"
+              this.el.style.height = Math.min(this.el.scrollHeight, 240) + "px"
+            }
+            this.el.addEventListener("input", grow)
+            this.el.addEventListener("keydown", e => {
+              if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+                e.preventDefault()
+                if (this.el.value.trim() !== "") this.el.form.requestSubmit()
+              }
+            })
+            this.el.form.addEventListener("submit", () => setTimeout(() => { this.el.value = ""; grow() }, 0))
+            grow()
+          }
+        }
+      </script>
+    </div>
+    """
+  end
+end
