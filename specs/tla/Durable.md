@@ -3,19 +3,28 @@
 `Durable.tla` models `Photon.Durable` (Store, Tx, Runtime, Scheduler,
 Generation, ToolTask) with the tool calls a conversation makes: a machine
 call (`shell` or `view_image`, both `Photon.MachineTools.Call`), a plain
-tool that isn't safe to rerun, and the assistant's `Routine`. Faults are
-hub crashes, Scheduler crashes, step crashes, a machine call's own code
+tool that isn't safe to rerun, and the routine task behind a schedule,
+which may repeat and which the owner may edit or delete. Faults are hub
+crashes, Scheduler crashes, step crashes, a machine call's own code
 raising, and user Stops. The machine's result can arrive at any time. It
-follows the code after build step 1.
+follows the code after build step 1, and for schedules step 3's plan
+(`docs/plans/step-3-skills-and-schedules.md`, sections 3.3 and 3.4),
+written before that code: `schedules/routine.ex` (`Routine`, moved from
+`assistant/routine.ex`) and `schedules.ex` (`Schedules.update/3`,
+`delete/1`). See "What changed in build step 3".
 
 The first version modeled the harness with the assistant's node work
 (`run_on_node`, `NodeWork`, `NodeWatch`) and found ten bugs (F1 to F10
 below), all fixed in the code. Modeling the first fix for F10 found a flaw
 in it (F10b), which is fixed too. Build step 1 replaced node work with
 machine calls, and PR B deleted node sessions, so the spec now models the
-machine call in its place (see "What changed in build step 1"). Every
-config is expected to finish with no error. `docs/verification.md` lists
-the ExUnit regression test for each finding.
+machine call in its place (see "What changed in build step 1"). Build
+step 3 added repeating routines and the owner's edits and deletes (see
+"What changed in build step 3"); TLC found no problem in the plan's
+rules. Every config is expected to finish with no error, except the two
+`Durable-bug-*` configs, which put a defect back and must fail.
+`docs/verification.md` lists the ExUnit regression test for each
+finding.
 
 Paths below are relative to `apps/hub/lib/photon/`.
 
@@ -35,12 +44,19 @@ interleaves those freely).
 | `claims`, `opResult` | ghosts: how often a finished row's result was taken into a tool result, and whether the call's result is its op's |
 | `steps`, `inc` | step processes under `Durable.TaskSupervisor`, and which Scheduler incarnation started them |
 | `untilPassed`, `rechecks` | wall clock relative to each waiting task's `until`, and how often a machine call has parked again |
+| `carrier` | the schedule's row in `schedules` (`schedules/schedule.ex`), reduced to the routine its `task_id` names; `"none"` once the row is deleted |
+| `task[r].fired` | a routine's checkpoint `"runs"`: how often it has fired |
+| `fires`, `retired` | firing commits per routine (with `Target = "thread"`, the threads it started), and whether an edit or delete replaced it |
+| `lateFire`, `dupFire` | ghosts: a fire step's commit landed after its routine was retired; two firing commits landed for one routine and checkpoint |
 
 Ids are fixed so the state space stays small. Tool task `t1`'s op is keyed
 by `t1` too, since the op ID is derived from the task ID
-(`Wait.op_id/1`). A routine `r1` posts the submission `rs_r1`. Generations
-`g1, g2, ...` are allocated as `submit_tx` and `continue_inbox` create
-them.
+(`Wait.op_id/1`). A routine `r1`'s `k`-th firing posts the submission
+`rs_r1_k` (the code's request ID is `"schedule:<id>:<task id>:<runs>"`,
+with `runs = k - 1`). `Routines` holds the routine the schedule starts
+with (at most one), and `Spares` the routines an edit may create.
+Generations `g1, g2, ...` are allocated as `submit_tx` and
+`continue_inbox` create them.
 
 The machine is reduced to what the harness sees of it: the row, its
 cancel flag and its signal. Pushes, the channel, the websocket and the
@@ -64,7 +80,7 @@ applies.
 | Action | Code |
 |---|---|
 | `UserSubmit` | `Durable.submit/submit_tx` with `Inbox.submit_action/3`: request-id dedupe, busy means queued, idle means placed plus a new generation |
-| `UserAbort` | `Assistant.stop` -> `Durable.abort/2`: withdraw the user's queued input (routine prompts stay, `Assistant.background_input?/1`), `Tx.request_abort` the active run |
+| `UserAbort` | `Assistant.stop` -> `Durable.abort/2`: withdraw the user's queued input (scheduled prompts stay, `Submission.background?/1`), `Tx.request_abort` the active run. This is Blip's Stop; a thread's (`Threads.stop/1`) also withdraws scheduled prompts, which is the withdraw of any queued input |
 | `SchedStart` | `Scheduler.start_pending`/`start` (`Policy.start_action/4`, `startable?/1`, `start/1`): pending to running, `runs + 1`, a new `updated_at` (`tok`), spawn the step |
 | `SchedWake` | `Scheduler.wake_waiting`, `wake?/2` and `fail_fast/2`, with `Policy.wakeable?/1`, `wake?/3` (and its `on_ready?/3`) and `fail_fast_aborts/2` |
 | `SchedKill`, `SchedAbort` | `Scheduler.stop_aborted`: `terminate_child` for `Policy.steps_to_kill/2`, then abort bottom-up (`Policy.ready_to_abort/1`, `abort_tx/2` with `Policy.abort?/1`) with `on_abort`, then `Durable.continue_inbox/2` for a run |
@@ -77,7 +93,10 @@ applies.
 | `MRepark` | the `{:wait, ...}` transition of a parked call checked again (after `Machines.repush/1` when online, hub rule 11) |
 | `MClaim` | `{:commit, fun}` from `resume/2`: `Machines.claim_tx/2` or `abandon_tx/2` inside the commit that records the result. A finished row is closed and its result returned (hub rule 8); otherwise the result is an error and the row is canceled as `cancel_tx/2` does (hub rules 7 and 10) |
 | `PlainRun`, `ToolFinish` | a tool with the default `replay :unsafe` (a rerun after a crash reports "interrupted": `ToolCall.plan/3`); `ToolTask.finish`. A machine call's error result (`Call.fail/2`) and a rescued raise (`ToolTask.raised/3`) run `cancel_tx/2` in that commit |
-| `RoutineStart`, `RoutineFire` | `Routine` one-off (`first_wait/1`, `after_fire/2`) |
+| `RoutineStart` | `Routine.step("start")`: `first_wait/1` |
+| `RoutineFire` | `Routine.step("fire")`: one `Runtime.commit` that reads the row, applies `Rules.fire/2`, posts `RS(r, k)` (`Target = "conv"`: `Durable.submit_tx/4`, through `Threads.send_tx/4` for a thread) or starts a thread (`Target = "thread"`: `Threads.start_tx/4`, counted in `fires`), records the outcome on the row, announces, and returns `after_fire/2`: wait again while `fired < MaxFires`, else `{:done, ...}`. A row that is gone finishes the task and writes nothing (`{:done, %{"gone" => true}}`). `BugFireIgnoresAbort` drops the abort mark from this commit's fence |
+| `OwnerEdit` | `Schedules.update/3`: one commit that marks the row's task for abort (`Tx.request_abort/3` with `background: true`), arms a new routine (pending, phase `"start"`) and names it on the row. `BugEditKeepsOld` skips the mark |
+| `OwnerDelete` | `Schedules.delete/1` (and Blip's `cancel_schedule`, `delete_tx/3`): one commit that marks the task for abort and deletes the row |
 | `OpFinish` | the machine's terminal snapshot: `Machines.snapshot/3` with `Rules.on_snapshot/3` in one Store commit, so an open row becomes `finished` (or `closed` if it was canceled) and the signal fires together (hub rule 4) |
 | `Tick` | a waiting task's deadline passes |
 
@@ -105,6 +124,9 @@ which for a machine call is `cancel_tx/2` (`OnAbortRow`): an open row gets
   or between `Machines.start/1` and the park). `ToolTask` rescues a raise
   and records an error result whose commit runs `on_interrupt/2`.
 * `UserAbort`: Stop at any time.
+* `OwnerEdit`, `OwnerDelete`: the owner edits or deletes the schedule at
+  any time, between any two commits, so also while a fire step is
+  running, before or after a hub crash or a Scheduler restart.
 * The machine may finish an op any time after its row exists, and a check
   may find it offline (`MachineOffline`).
 
@@ -147,12 +169,28 @@ Message loss and the node's side are `HubOps.tla`'s and `Executor.tla`'s.
   before the row exists) are left out; they are the same with no row.
   Since step 2, a parked call whose machine has come back outdated ends
   the same way (an error and `cancel_tx/2`), so it is this action too.
-* Recurring routines, `cancel_schedule`, `when_busy: "reject"`,
-  `withdraw/1`, documents, entry ordering, PubSub, live events and
-  `on_fail/3` returning `:retry` are left out. Nothing returns `:retry`
-  since `NodeWatch` was deleted, though `Policy.after_failure/1` still
-  supports it. No task kind waits with `fail_fast`; `GenPolicy` lets the
-  generation use it as a what-if.
+* `when_busy: "reject"`, `withdraw/1`, documents, entry ordering,
+  PubSub, live events and `on_fail/3` returning `:retry` are left out.
+  Nothing returns `:retry` since `NodeWatch` was deleted, though
+  `Policy.after_failure/1` still supports it. No task kind waits with
+  `fail_fast`; `GenPolicy` lets the generation use it as a what-if.
+* Schedules: one schedule, reduced to the routine its row names. Times
+  aren't modeled, so `Rules.arm/4`'s minute of grace, `fired_through/3`
+  and `next_after/3` (which time a new or edited routine waits for, and
+  that an edit neither skips nor repeats a slot) are checked by
+  `test/core/schedules/rules_test.exs`, not here. A repeating routine is
+  bounded by `MaxFires`, after which it finishes like a one-off. Consent
+  and the overlap rules (`Rules.fire/2`, plan section 3.5) are decisions
+  inside the firing commit over committed state, so they only choose
+  between posting and skipping; the model always posts, which allows
+  more behaviors. The row's `last_*` columns, `Routine.on_fail/3` (which
+  records `"failed"` on the row in the commit that fails the task) and
+  the announcements write nothing the properties read. Run now
+  (`Schedules.run_now/1`) is one commit that submits with a fresh request
+  ID and doesn't touch the task, like `UserSubmit` of background input.
+  An edit that keeps a one-off's time after it fired arms nothing
+  (`arm/4` says `:finished`) and changes nothing modeled, so it is left
+  out; every other edit replaces the routine.
 
 ### Fairness
 
@@ -161,8 +199,9 @@ after every step result or `:DOWN`, and on its timer, so its actions are
 weakly fair. Steps keep running, and time passes. An op eventually ends on
 its machine (`OpFinish`): the command finishes, or is canceled, once the
 machine is back. A running command has no timeout, so without that
-assumption a call may wait for good, as designed. The user and faults get
-no fairness. The crash budgets are finite.
+assumption a call may wait for good, as designed. The user, the owner's
+edits and deletes, and faults get no fairness. The crash budgets are
+finite.
 
 `FairnessFine` states that per action and per task. `Spec` uses one
 weak-fairness condition on all system actions (`SysNext`). That is weaker,
@@ -185,7 +224,10 @@ Safety (invariants):
 | `OneResultPerCall` | a machine call's result is recorded once, and when it is its op's result, the row was claimed in that commit and is closed |
 | `ClaimedOnce` | a finished op's result reaches at most one tool result |
 | `NoOpenRowAfterDone` | once a call has ended, however it ended, its row is not open without `cancel`, so nothing may still start its op |
-| `BackgroundNotWithdrawn` | a Stop never withdraws a routine's prompt |
+| `BackgroundNotWithdrawn` | Blip's Stop never withdraws a scheduled prompt (`RS(r, k)`); a thread's Stop does, by design (plan section 3.7) |
+| `OneCarrier` | at most one routine is live and not marked for abort, and it is the one the row names: an edit or delete never leaves the old timer running beside the new one |
+| `NoFireAfterRetire` | no fire step's commit lands for a routine after the commit that retired it (an edit or delete), whether it would post, start a thread, or find the row gone |
+| `FireOncePerSlot` | no two firing commits for the same routine and checkpoint, across hub crashes, Scheduler restarts and step crashes; with `Target = "thread"` there is no request ID to fall back on |
 
 Liveness:
 
@@ -198,6 +240,7 @@ Liveness:
 | `AbortCompletes` | a task marked for abort finishes |
 | `FinishedLeavesNoLiveWork` | a finished task's foreground children all finish |
 | `RowsClose` | every op row eventually closes, so no result (up to 5 MB for an image) is kept for good |
+| `RetiredEnds` | a routine an edit or delete retired while it was live ends `aborted` |
 
 ## How to run
 
@@ -209,15 +252,26 @@ java -XX:+UseParallelGC -cp ~/.local/share/tla/tla2tools.jar tlc2.TLC -workers a
 
 Swap `Durable.cfg` for any variant below, and add `-lncheck final` for
 configs with `PROPERTIES`. `-deadlock` turns off deadlock checking: a
-conversation that has answered everything is supposed to stop.
+conversation that has answered everything is supposed to stop. The
+`Durable-bug-*` configs are expected to fail; run them with `-workers 1`
+to get the traces below (with more workers TLC may report another trace
+of the same length first).
 
 ## Results
 
-TLC 2.19, Java 21, 6 workers on the shared 12-core machine, 2026-10-05.
-Every config: no error. "Safety set" is `TypeOK`, `AtMostOneActiveRun`,
-`ToolResultIffFinished`, `AbortedHasNoLiveFgChildren`, `UnsafeAtMostOnce`,
-`PlacedTracked`, `NoOrphanCalls`, `AbortEndsAborted`, `OneResultPerCall`,
-`ClaimedOnce` and `NoOpenRowAfterDone`.
+TLC 2.19, Java 21, 6 workers on the shared 12-core machine, 2026-10-05,
+for the configs before step 3. Every config: no error. "Safety set" is
+`TypeOK`, `AtMostOneActiveRun`, `ToolResultIffFinished`,
+`AbortedHasNoLiveFgChildren`, `UnsafeAtMostOnce`, `PlacedTracked`,
+`NoOrphanCalls`, `AbortEndsAborted`, `OneResultPerCall`, `ClaimedOnce` and
+`NoOpenRowAfterDone`; the schedule configs add `OneCarrier`,
+`NoFireAfterRetire`, `FireOncePerSlot` and `BackgroundNotWithdrawn`.
+
+On 2026-10-06 (step 3) all 15 older configs were rerun with the new
+constants at their old values, 4 workers, with the machine's load
+average around 40 from other work: each passed with exactly the distinct
+state count below, the slowest being `Durable-parallel.cfg` (1m10s). The
+step 3 configs ran the same day, under the same load:
 
 | Config | Shape | Checks | Distinct states | Time |
 |---|---|---|---|---|
@@ -236,6 +290,20 @@ Every config: no error. "Safety set" is `TypeOK`, `AtMostOneActiveRun`,
 | `Durable-abortfail.cfg` | F7: 1 plain call, 1 Stop | `AbortEndsAborted` | 122 | 2s |
 | `Durable-maxrounds.cfg` | F8: MaxRounds = 2 | `NoOrphanCalls` | 27 | 2s |
 | `Durable-schedcrash.cfg` | F10: 2 user inputs, 1 Scheduler crash | `PlacedTracked` `AtMostOneActiveRun` `ToolResultIffFinished`; `PlacedSettles` | 378 | 2s |
+| `Durable-schedule.cfg` | step 3: a routine firing twice into the conversation, 1 edit, 1 delete, no user input, 1 hub crash, 1 Scheduler crash, 1 step crash, 1 Stop | safety set and the schedule invariants | 7,283,126 | 5m17s (6 workers) |
+| `Durable-schedule-thread.cfg` | step 3: the same, each firing starting a new thread, with 1 user input | safety set and the schedule invariants | 9,441,068 | 8m22s (4 workers) |
+| `Durable-schedule-live.cfg` | step 3: a routine firing twice into the conversation, 1 edit, 1 user input, 1 hub crash, 1 Stop | `RetiredEnds` `PlacedSettles` `NoRunningForever` | 1,151,648 | 43m27s (4 workers; 2m44s of it the temporal check) |
+| `Durable-bug-edit-keeps-old.cfg` | `Durable-schedule.cfg` with `BugEditKeepsOld` | fails `OneCarrier` (expected) | 2-state trace | 1s |
+| `Durable-bug-fire-after-retire.cfg` | `Durable-schedule.cfg` with `BugFireIgnoresAbort` | fails `NoFireAfterRetire` (expected) | 8-state trace | 2s |
+
+`Durable-schedule.cfg` has no user input, unlike the plan's first shape:
+with one, TLC had covered 160M distinct states in two hours, the queue
+still growing, when the run was stopped. The user's input adds nothing
+the schedule properties read that the scheduled prompts don't already
+do (they queue behind each other's runs, and the Stop finds them
+queued), and `Durable-routine.cfg` covers a user's input beside a
+routine. `Durable-schedule-thread.cfg` keeps its user input, since there
+the conversation would otherwise be empty.
 
 The state spaces are smaller than with node work (`Durable.cfg` had 6.1M
 states, `Durable-parallel.cfg` 15.2M in 18 minutes): a machine call has no
@@ -245,9 +313,10 @@ offline machine, which it had to leave out before.
 
 ## Checks that the properties bite
 
-Every config passes, so each machine-call property was checked once
-against a copy of the spec with one of the code's rules broken. Each
-failed on the property meant to catch it:
+Every config passes, so each machine-call property, and in step 3 each
+schedule property that has no bug config of its own, was checked once
+against a copy of the spec (or config) with one of the code's rules
+broken. Each failed on the property meant to catch it:
 
 | Rule broken | Config | Fails |
 |---|---|---|
@@ -256,6 +325,63 @@ failed on the property meant to catch it:
 | an error result or a rescued raise leaves the row alone (hub rule 10, HubOps H8) | `Durable-crash.cfg` | `NoOpenRowAfterDone`, 8 states |
 | `cancel_tx/2` leaves a finished row as it is (HubOps H4) | `Durable-stop.cfg` | `RowsClose`, 11 states then stuttering: the op finishes between Stop and the abort commit |
 | `claim_tx/2` doesn't close the row it claims (hub rule 8) | `Durable-double.cfg` | `OneResultPerCall`, 12 states |
+| step 3: the fire step's commit isn't fenced on its start, only on the abort mark (F10 put back for routines) | `Durable-schedule-thread.cfg` without edits or deletes | `FireOncePerSlot`, 10 states: a Scheduler crash while the fire step runs, the routine starts again, and both steps commit their firing; with `Target = "thread"` that is two threads |
+| step 3: an edit doesn't mark the old routine (`BugEditKeepsOld`) | `Durable-schedule-live.cfg` with no user input, hub crash or Stop, checking `RetiredEnds` only | `RetiredEnds`, 30 states then stuttering: the retired routine fires both times and ends `done` |
+
+## What changed in build step 3
+
+Step 3 moves Blip's routines into `Photon.Schedules`: a schedule is a
+row, and its timer is a `"routine"` task that repeats, which the owner
+can edit or delete from the project page at any time
+(`docs/plans/step-3-skills-and-schedules.md`, sections 3.3 and 3.4). The
+plan's claim is that the step fence alone (`Runtime.commit`, `Ignored`)
+makes each firing happen once and never after its schedule was edited
+or deleted. A new-thread firing (`Target = "thread"`) has no request ID
+to dedupe on, so the fence is all there is. The spec was extended before
+the code, as `HubOps.tla` was in step 1:
+
+* Constants `Spares`, `MaxFires`, `MaxEdits`, `MaxDeletes`, `Target`,
+  and the bug switches `BugEditKeepsOld` and `BugFireIgnoresAbort`.
+  `Routines` now holds at most one routine, the schedule's first.
+* Variables `carrier`, `fires`, `retired`, the ghosts `lateFire` and
+  `dupFire`, the budgets `edits` and `deletes`, and the task field
+  `fired` (the checkpoint's `"runs"`), which steps carry from their
+  start.
+* `RoutineFire` repeats: in one fenced commit it posts `RS(r, k)` or
+  starts a thread, then waits again while `fired < MaxFires`, else
+  finishes; a row that is gone finishes the task and writes nothing.
+  `SubIds` has `RS(r, k)` for `k` in `1..MaxFires` (none with
+  `Target = "thread"`).
+* New actions `OwnerEdit` and `OwnerDelete`; new invariants
+  `OneCarrier`, `NoFireAfterRetire` and `FireOncePerSlot`; new liveness
+  property `RetiredEnds`. `BackgroundNotWithdrawn` now covers every
+  `RS(r, k)`.
+* Five configs: `Durable-schedule`, `-schedule-thread`, `-schedule-live`
+  and the bug configs `-bug-edit-keeps-old` and `-bug-fire-after-retire`
+  (see "Results" for why `Durable-schedule` has no user input).
+  Every older config sets `Spares = {}`, `MaxFires = 1`, `MaxEdits = 0`,
+  `MaxDeletes = 0`, `Target = "conv"` and both bug switches `FALSE`,
+  which is the old model; all 15 reach exactly the state counts recorded
+  before.
+
+TLC found no problem in sections 3.3 and 3.4 of the plan, so they stand
+as written.
+
+The modeled conversation is Blip's: its Stop keeps scheduled prompts. A
+thread's Stop withdraws them too (plan section 3.7), which is the
+existing withdraw of a queued submission, so `BackgroundNotWithdrawn` is
+about Blip. Times are left out (see "Abstractions"): `Rules.arm/4` and
+`fired_through/3`, which decide the time an edited schedule waits for so
+that an edit made in the second a schedule is due neither skips nor
+repeats that firing, are pure and tested in
+`test/core/schedules/rules_test.exs`.
+
+### The bug configs
+
+| Config | Defect put back | Fails |
+|---|---|---|
+| `Durable-bug-edit-keeps-old.cfg` | `Schedules.update/3` arms the new routine without marking the old one for abort | `OneCarrier`, 2 states: the edit itself leaves `r1` pending beside its replacement `r2`. Without `OneCarrier` in the config, `NoFireAfterRetire` fails in 8 states: the old routine goes on to fire |
+| `Durable-bug-fire-after-retire.cfg` | the fire step's commit is fenced only on its start (`updated_at`), not on the abort mark | `NoFireAfterRetire`, 8 states (`-workers 1`): `r1` wakes and its fire step starts, the owner edits the schedule, then the step's commit posts `rs_r1_1` for the retired routine. The delete variant (the step finds the row gone) is as short, and also breaks `AbortEndsAborted`: the task marked for abort finishes `done` |
 
 ## What changed in build step 1
 

@@ -2,9 +2,11 @@
 (***************************************************************************)
 (* The hub's durable agent harness (the Photon.Durable modules), with a    *)
 (* machine tool (Photon.MachineTools.Call: shell and view_image) and the   *)
-(* assistant's Routine, as implemented in apps/hub/lib after build step 1  *)
-(* (Durable.md lists the findings and how they were fixed).  One           *)
-(* conversation.                                                          *)
+(* routine task behind a schedule (Photon.Schedules.Routine), as built in  *)
+(* apps/hub/lib after build step 1, with step 3's schedules: a routine     *)
+(* that repeats, and the owner's edits and deletes that replace or retire  *)
+(* it (Photon.Schedules.update/3, delete/1).  Durable.md lists the         *)
+(* findings and how they were fixed.  One conversation.                    *)
 (*                                                                         *)
 (* Granularity: every Store.commit is one atomic step (the Store runs     *)
 (* commits one at a time, each in a DB transaction: Tx.run/1).  Work done  *)
@@ -31,7 +33,17 @@ EXTENDS Naturals, FiniteSets, Sequences, TLC
 CONSTANTS
     Users,          \* user submissions (Photon.Assistant.send), model values
     NTools,         \* tool-call task ids available to the model
-    Routines,       \* routine task ids (strings); {} leaves routines out
+    Routines,       \* the routine task carrying the schedule at the start (at
+                    \*   most one; {} leaves schedules out)
+    Spares,         \* routine task ids an edit can create; {} leaves edits out
+    MaxFires,       \* firings of a routine before it finishes (1: a one-off)
+    MaxEdits,       \* owner edits of the schedule (Schedules.update/3)
+    MaxDeletes,     \* owner deletes of the schedule (Schedules.delete/1)
+    Target,         \* "conv": a firing posts into the modeled conversation
+                    \*   (Blip's, or a thread a schedule wakes); "thread": it
+                    \*   starts a new thread, another conversation (a count)
+    BugEditKeepsOld,     \* bug switch: an edit doesn't mark the old routine
+    BugFireIgnoresAbort, \* bug switch: the fire commit ignores the abort mark
     MaxRounds,      \* Turn.max_rounds/0 (60, in durable/turn.ex)
     MaxCalls,       \* most tool calls in one model response
     ToolTypes,      \* subset of {"machine", "plain"}
@@ -49,24 +61,34 @@ CONSTANTS
 ASSUME MaxRounds >= 1 /\ MaxCalls >= 1 /\ NTools >= 0 /\ MaxRechecks >= 0
 ASSUME ToolTypes \subseteq {"machine", "plain"} /\ ToolTypes # {}
 ASSUME GenPolicy \in {"all_settled", "fail_fast"}
+ASSUME Cardinality(Routines) <= 1 /\ Routines \cap Spares = {}
+ASSUME MaxFires >= 1 /\ MaxEdits >= 0 /\ MaxDeletes >= 0
+ASSUME (Spares # {} \/ MaxEdits > 0 \/ MaxDeletes > 0) => Routines # {}
+ASSUME Target \in {"conv", "thread"}
+ASSUME BugEditKeepsOld \in BOOLEAN /\ BugFireIgnoresAbort \in BOOLEAN
 
 -----------------------------------------------------------------------------
 (* Identifiers.  Ids are deterministic so the state space stays small:    *)
 (* tool task i is "t<i>", and a machine call's op row and signal are keyed *)
 (* by its task (the op ID is derived from the task ID, Wait.op_id/1).  A   *)
-(* routine r posts the submission "rs_<r>".                               *)
+(* routine r's k-th firing posts the submission "rs_<r>_<k>" (its request *)
+(* ID is "schedule:<id>:<task id>:<runs>", runs = k - 1).                 *)
 
 ToolAt(i)  == "t" \o ToString(i)
 ToolIds    == {ToolAt(i) : i \in 1..NTools}
-RS(r)      == "rs_" \o r
-SubIds     == Users \cup {RS(r) : r \in Routines}
+RoutineIds == Routines \cup Spares
+RS(r, k)   == "rs_" \o r \o "_" \o ToString(k)
+\* Only a firing into the modeled conversation makes a submission here; a
+\* new-thread firing's input is in the thread it starts.
+RSIds      == IF Target = "conv" THEN {RS(r, k) : r \in RoutineIds, k \in 1..MaxFires} ELSE {}
+SubIds     == Users \cup RSIds
 \* A generation is only created by submit_tx placing a new submission while
 \* idle (Durable.submit_tx/4, Inbox.submit_action/3), so there are never more
 \* of them than submissions.
 NGen       == Cardinality(SubIds)
 GenAt(i)   == "g" \o ToString(i)
 GenIds     == {GenAt(i) : i \in 1..NGen}
-TaskIds    == GenIds \cup ToolIds \cup Routines
+TaskIds    == GenIds \cup ToolIds \cup RoutineIds
 
 Kind(id) == CASE id \in GenIds   -> "gen"
               [] id \in ToolIds  -> "tool"
@@ -92,7 +114,15 @@ VARIABLES
     rechecks,     \* per machine call: times it parked again (bounded, see MaxRechecks)
     steps,        \* live step processes under Durable.TaskSupervisor
     inc,          \* Scheduler incarnation (bumped by a Scheduler-only crash)
-    hubCrashes, schedCrashes, stepCrashes, aborts
+    hubCrashes, schedCrashes, stepCrashes, aborts,
+    carrier,      \* the routine the schedule's row names (task_id), "none" once
+                  \*   the row is deleted
+    fires,        \* firing commits per routine (with Target "thread", the
+                  \*   threads it started)
+    retired,      \* an edit or delete replaced the routine
+    lateFire,     \* ghost: a fire step's commit landed after its routine was retired
+    dupFire,      \* ghost: two firing commits for one routine and checkpoint
+    edits, deletes
 
 dbVars    == <<task, sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd>>
 rowVars   == <<row, rcx, signal>>
@@ -100,7 +130,8 @@ ghostVars == <<claims, opResult, execCount>>
 timeVars  == <<untilPassed, rechecks>>
 procVars  == <<steps, inc>>
 faultVars == <<hubCrashes, schedCrashes, stepCrashes, aborts>>
-vars      == <<dbVars, rowVars, ghostVars, timeVars, procVars, faultVars>>
+schedVars == <<carrier, fires, retired, lateFire, dupFire, edits, deletes>>
+vars      == <<dbVars, rowVars, ghostVars, timeVars, procVars, faultVars, schedVars>>
 
 -----------------------------------------------------------------------------
 (* Records *)
@@ -108,12 +139,17 @@ vars      == <<dbVars, rowVars, ghostVars, timeVars, procVars, faultVars>>
 \* tok: which start of the task this is (Tx.transition/4 fences on the
 \* updated_at the step started with; only a new start or an abort changes
 \* a running task).  off: a machine call's "offline_since" is set (its
-\* parked state, Call.park/4 and Wait.next/4).
+\* parked state, Call.park/4 and Wait.next/4).  fired: a routine's
+\* checkpoint "runs", how often it has fired.
 NoTask(id) ==
     [status |-> "none", phase |-> "none", runs |-> 0, tok |-> 0, abort |-> FALSE,
      owner |-> "none", bg |-> Kind(id) = "routine",
      wOn |-> {}, wSig |-> "none", wUntil |-> FALSE,
-     subs |-> {}, rounds |-> 0, ttype |-> "none", off |-> FALSE]
+     subs |-> {}, rounds |-> 0, ttype |-> "none", off |-> FALSE, fired |-> 0]
+
+\* A routine as Schedules creates it, with the row or on an edit: pending,
+\* phase "start", background.
+NewRoutine(id) == [NoTask(id) EXCEPT !.status = "pending", !.phase = "start"]
 
 \* submit_tx's generation (Durable.submit_tx/4, Inbox.run/2)
 NewGen(id, s) == [NoTask(id) EXCEPT !.status = "pending", !.phase = "request",
@@ -257,7 +293,7 @@ StepExit(st)   == (steps \ {st}) \cup ExitSet(st)
 \* A Runtime.commit that came back :ignored: nothing is written.
 IgnoredCommit(st) ==
     /\ steps' = StepExit(st)
-    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars>>
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
 
 ---------------------------------------------------------------------------
 (* Generation (durable/generation.ex, decisions in durable/turn.ex) *)
@@ -271,7 +307,7 @@ GenRequest(st) ==
     /\ IF Ignored(st) THEN IgnoredCommit(st)
        ELSE
        /\ steps' = StepDone(st)
-       /\ UNCHANGED <<toolResults, rowVars, ghostVars, timeVars, inc, faultVars>>
+       /\ UNCHANGED <<toolResults, rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
        /\ \/ \* answer without tool calls: settle "done", continue with the
              \* inbox (Generation.follow/5, continue_with_inbox/3)
              LET sb1 == Settle(sub, st.subs, "done")
@@ -327,7 +363,7 @@ GenAfterTools(st) ==
             /\ task' = NextIn(task, g, "request", st.subs \cup steers, st.rounds)
             /\ steps' = StepDone(st)
             /\ UNCHANGED <<toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                           rowVars, ghostVars, timeVars, inc, faultVars>>
+                           rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
 
 ---------------------------------------------------------------------------
 (* ToolTask (durable/tool_task.ex, durable/tool_call.ex) with the         *)
@@ -353,7 +389,7 @@ MStart(st) ==
             /\ steps' = StepTo(st, "park")
        ELSE /\ steps' = StepTo(st, "fin_err")
             /\ UNCHANGED row
-    /\ UNCHANGED <<dbVars, rcx, signal, ghostVars, timeVars, inc, faultVars>>
+    /\ UNCHANGED <<dbVars, rcx, signal, ghostVars, timeVars, inc, faultVars, schedVars>>
 
 \* {:wait, %{"signal" => "op:<id>", "until" => ...}, state} committed by
 \* Runtime.transition (ToolCall.park/2), with offline_since if the machine
@@ -367,7 +403,7 @@ MPark(st) ==
             /\ untilPassed' = [untilPassed EXCEPT ![t] = FALSE]
             /\ steps' = StepDone(st)
             /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                           rowVars, ghostVars, rechecks, inc, faultVars>>
+                           rowVars, ghostVars, rechecks, inc, faultVars, schedVars>>
 
 \* Call.resume/2 reads the row (Machines.op_state/1) and, for an open one,
 \* whether the machine is online, then decides with Wait.next/4: finished
@@ -388,7 +424,7 @@ MResume(st) ==
     IN
     /\ IsMachine(st) /\ st.phase = "resume" /\ st.pc = "go"
     /\ \E nxt \in choices : steps' = StepTo(st, nxt)
-    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars>>
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
 
 \* Park again: Runtime.transition with {:wait, ...}.
 MRepark(st) ==
@@ -400,7 +436,7 @@ MRepark(st) ==
             /\ rechecks' = [rechecks EXCEPT ![t] = @ + 1]
             /\ steps' = StepDone(st)
             /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                           rowVars, ghostVars, inc, faultVars>>
+                           rowVars, ghostVars, inc, faultVars, schedVars>>
 
 \* {:commit, fun} from Call.resume/2: the commit that records the result
 \* decides on the row as it is then.  claim_tx/2 (and abandon_tx/2, for a
@@ -424,7 +460,7 @@ MClaim(st) ==
                ELSE /\ CancelRow(t)
                     /\ UNCHANGED <<claims, opResult>>
             /\ UNCHANGED <<sub, orphanCalls, nextGen, nextTool, nextOrd, signal,
-                           execCount, timeVars, inc, faultVars>>
+                           execCount, timeVars, inc, faultVars, schedVars>>
 
 \* A plain tool with replay :unsafe: a rerun (runs > 1) reports
 \* "interrupted" instead of executing again (ToolCall.plan/3).
@@ -436,7 +472,7 @@ PlainRun(st) ==
             /\ UNCHANGED execCount
        ELSE /\ execCount' = [execCount EXCEPT ![t] = @ + 1]
             /\ steps' = StepTo(st, "fin_ok")
-    /\ UNCHANGED <<dbVars, rowVars, claims, opResult, timeVars, inc, faultVars>>
+    /\ UNCHANGED <<dbVars, rowVars, claims, opResult, timeVars, inc, faultVars, schedVars>>
 
 \* ToolTask.finish: the tool_result entry and {:done} in one Runtime.commit.
 \* A machine call's error result cancels its op in the same commit
@@ -452,12 +488,15 @@ ToolFinish(st) ==
             /\ steps' = StepDone(st)
             /\ CancelRow(t)
             /\ UNCHANGED <<sub, orphanCalls, nextGen, nextTool, nextOrd, signal,
-                           ghostVars, timeVars, inc, faultVars>>
+                           ghostVars, timeVars, inc, faultVars, schedVars>>
 
 ---------------------------------------------------------------------------
-(* Routine (assistant/routine.ex) *)
+(* The routine behind a schedule (schedules/routine.ex), and the owner's  *)
+(* edits and deletes (schedules.ex).  The schedule's row is reduced to     *)
+(* `carrier`, the routine its task_id names; times are left out (a wait's  *)
+(* "until" passes at any moment: Tick).                                    *)
 
-\* step("start"): sleep until first_at (Routine.first_wait/1)
+\* step("start"): sleep until the first time (Routine.first_wait/1)
 RoutineStart(st) ==
     LET r == st.t IN
     /\ Kind(r) = "routine" /\ st.phase = "start" /\ st.pc = "go"
@@ -466,22 +505,93 @@ RoutineStart(st) ==
             /\ untilPassed' = [untilPassed EXCEPT ![r] = FALSE]
             /\ steps' = StepDone(st)
             /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                           rowVars, ghostVars, rechecks, inc, faultVars>>
+                           rowVars, ghostVars, rechecks, inc, faultVars, schedVars>>
 
-\* step("fire") of a one-off routine: submit_tx + {:done} (Routine.after_fire/2)
+\* The fence of the fire step's Runtime.commit: Ignored(st), or with
+\* BugFireIgnoresAbort a fence that only checks the start token.
+FireIgnored(st) ==
+    IF BugFireIgnoresAbort
+    THEN task[st.t].status # "running" \/ task[st.t].tok # st.tok
+    ELSE Ignored(st)
+
+\* Routine.after_fire/2 on the task table tk: wait for the next time (phase
+\* "fire", checkpoint runs + 1), or finish once it has fired MaxFires times
+\* (a one-off when MaxFires = 1).
+AfterFire(tk, r, k) ==
+    IF k < MaxFires
+    THEN [WaitIn(tk, r, {}, "none", TRUE, "fire", {}, 0) EXCEPT ![r].fired = k]
+    ELSE [FinishIn(tk, r, "done") EXCEPT ![r].fired = k]
+
+\* step("fire"): one Runtime.commit that reads the row, applies Rules.fire/2
+\* (left out: consent and the overlap rules only choose a skip over committed
+\* state), records the outcome on the row, announces, and returns
+\* after_fire/2.  With Target "conv" the firing is submit_tx of RS(r, k)
+\* (Durable.submit_tx/4 through Threads.send_tx/4, or Blip's), deduped on
+\* its request ID; with "thread" it is Threads.start_tx/4, a new thread in
+\* another conversation with no request ID to dedupe on, so only `fires`
+\* records it.  A row that is gone (carrier "none") finishes the task and
+\* writes nothing ({:done, %{"gone" => true}}); with the fence intact that
+\* commit can't land, which NoFireAfterRetire checks too.
 RoutineFire(st) ==
     LET r == st.t
-        s == RS(r)
+        k == st.fired + 1
+        s == RS(r, k)
     IN
     /\ Kind(r) = "routine" /\ st.phase = "fire" /\ st.pc = "go"
-    /\ IF Ignored(st) THEN IgnoredCommit(st)
-       ELSE /\ task' = FinishIn(SubmitTk(task, sub, s), r, "done")
-            /\ sub' = SubmitSb(task, sub, s, "follow_up")
-            /\ nextGen' = SubmitGen(task, sub, s)
-            /\ nextOrd' = SubmitOrd(sub, s)
-            /\ steps' = StepDone(st)
-            /\ UNCHANGED <<toolResults, orphanCalls, nextTool, rowVars, ghostVars,
-                           timeVars, inc, faultVars>>
+    /\ IF FireIgnored(st) THEN IgnoredCommit(st)
+       ELSE
+       /\ steps' = StepDone(st)
+       /\ lateFire' = (lateFire \/ retired[r])
+       /\ IF carrier = "none"
+          THEN /\ task' = FinishIn(task, r, "done")
+               /\ UNCHANGED <<sub, nextGen, nextOrd, untilPassed, fires, dupFire>>
+          ELSE /\ fires' = [fires EXCEPT ![r] = @ + 1]
+               /\ dupFire' = (dupFire \/ fires[r] > st.fired)
+               /\ untilPassed' = IF k < MaxFires THEN [untilPassed EXCEPT ![r] = FALSE]
+                                 ELSE untilPassed
+               /\ IF Target = "conv"
+                  THEN /\ task' = AfterFire(SubmitTk(task, sub, s), r, k)
+                       /\ sub' = SubmitSb(task, sub, s, "follow_up")
+                       /\ nextGen' = SubmitGen(task, sub, s)
+                       /\ nextOrd' = SubmitOrd(sub, s)
+                  ELSE /\ task' = AfterFire(task, r, k)
+                       /\ UNCHANGED <<sub, nextGen, nextOrd>>
+       /\ UNCHANGED <<toolResults, orphanCalls, nextTool, rowVars, ghostVars, rechecks,
+                      inc, faultVars, carrier, retired, edits, deletes>>
+
+\* Schedules.update/3 (the project page's form), in one commit: the old
+\* task is marked for abort, background included (Tx.request_abort/3 with
+\* background: true; a no-op on a finished task), and a new routine is
+\* armed and named on the row.  With BugEditKeepsOld the mark is skipped.
+\* An edit of a one-off that already fired at the time it keeps arms
+\* nothing (Rules.arm/4 says :finished) and changes nothing modeled here,
+\* so it is left out.
+OwnerEdit ==
+    /\ edits < MaxEdits
+    /\ carrier # "none"
+    /\ \E n \in Spares : task[n].status = "none"
+    /\ LET n   == CHOOSE x \in Spares : task[x].status = "none"
+           tk1 == IF BugEditKeepsOld THEN task ELSE ReqAbort(task, carrier)
+       IN  /\ task' = [tk1 EXCEPT ![n] = NewRoutine(n)]
+           /\ carrier' = n
+    /\ retired' = [retired EXCEPT ![carrier] = TRUE]
+    /\ edits' = edits + 1
+    /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd, rowVars,
+                   ghostVars, timeVars, procVars, faultVars, fires, lateFire, dupFire,
+                   deletes>>
+
+\* Schedules.delete/1 (and Blip's cancel_schedule, delete_tx/3), in one
+\* commit: the task is marked for abort and the row deleted.
+OwnerDelete ==
+    /\ deletes < MaxDeletes
+    /\ carrier # "none"
+    /\ task' = ReqAbort(task, carrier)
+    /\ carrier' = "none"
+    /\ retired' = [retired EXCEPT ![carrier] = TRUE]
+    /\ deletes' = deletes + 1
+    /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd, rowVars,
+                   ghostVars, timeVars, procVars, faultVars, fires, lateFire, dupFire,
+                   edits>>
 
 StepAct(st) ==
     \/ GenRequest(st) \/ GenAfterTools(st)
@@ -503,9 +613,9 @@ SchedStart(id) ==
     /\ steps' = steps \cup {[t |-> id, inc |-> inc, pc |-> "go", tok |-> task[id].tok + 1,
                              phase |-> task[id].phase, runs |-> task[id].runs + 1,
                              subs |-> task[id].subs, rounds |-> task[id].rounds,
-                             off |-> task[id].off]}
+                             off |-> task[id].off, fired |-> task[id].fired]}
     /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                   rowVars, ghostVars, timeVars, inc, faultVars>>
+                   rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
 
 \* Scheduler.wake?/2 and Policy.wake?/3 (its on_ready?/3); a missing task counts
 \* as done
@@ -532,7 +642,7 @@ SchedWake(id) ==
     /\ WakeReady(id)
     /\ task' = [FailFastIn(task, id) EXCEPT ![id].status = "pending"]
     /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                   rowVars, ghostVars, timeVars, procVars, faultVars>>
+                   rowVars, ghostVars, timeVars, procVars, faultVars, schedVars>>
 
 \* stop_aborted/2, first half: terminate_child for a marked task whose step
 \* this Scheduler is running (Policy.steps_to_kill/2).  A step that already
@@ -540,7 +650,7 @@ SchedWake(id) ==
 SchedKill(id) ==
     /\ task[id].abort /\ LiveIn(task, id)
     /\ \E st \in CurSteps(id) : st.pc # "exited" /\ steps' = steps \ {st}
-    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars>>
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
 
 \* on_abort/on_fail hooks run in the commit that ends the task that way.
 \* Generation settles its submissions; ToolTask records the result, and a
@@ -565,7 +675,7 @@ SchedAbort(id) ==
     /\ toolResults' = OnAbortTr(id)
     /\ OnAbortRow(id)
     /\ UNCHANGED <<orphanCalls, nextTool, nextOrd, signal, ghostVars, timeVars,
-                   procVars, faultVars>>
+                   procVars, faultVars, schedVars>>
 
 \* A step's result or :DOWN: if the task is still "running" the step ended
 \* without a transition (or crashed), so it fails (Scheduler.fail/2 with
@@ -583,7 +693,7 @@ SchedExit(st) ==
             /\ OnAbortRow(st.t)
             /\ UNCHANGED <<orphanCalls, nextTool, nextOrd, signal>>
        ELSE UNCHANGED <<dbVars, rowVars>>
-    /\ UNCHANGED <<ghostVars, timeVars, inc, faultVars>>
+    /\ UNCHANGED <<ghostVars, timeVars, inc, faultVars, schedVars>>
 
 ---------------------------------------------------------------------------
 (* The user, the machine, and time *)
@@ -597,10 +707,12 @@ UserSubmit(u) ==
          /\ nextGen' = SubmitGen(task, sub, u)
          /\ nextOrd' = SubmitOrd(sub, u)
     /\ UNCHANGED <<toolResults, orphanCalls, nextTool, rowVars, ghostVars, timeVars,
-                   procVars, faultVars>>
+                   procVars, faultVars, schedVars>>
 
 \* Assistant.stop -> Durable.abort/2: withdraw the user's queued input
-\* (routine prompts stay, Assistant.background_input?/1), mark the run.
+\* (scheduled prompts stay, Submission.background?/1), mark the run.  This
+\* is Blip's Stop; a thread's Stop (Threads.stop/1) withdraws scheduled
+\* prompts too, which is the withdraw of any queued input.
 UserAbort ==
     /\ aborts < MaxAborts
     /\ aborts' = aborts + 1
@@ -609,7 +721,7 @@ UserAbort ==
     /\ task' = IF IdleIn(task) THEN task
                ELSE ReqAbort(task, CHOOSE r \in ActiveRunsIn(task) : TRUE)
     /\ UNCHANGED <<toolResults, orphanCalls, nextGen, nextTool, nextOrd, rowVars,
-                   ghostVars, timeVars, procVars, hubCrashes, schedCrashes, stepCrashes>>
+                   ghostVars, timeVars, procVars, hubCrashes, schedCrashes, stepCrashes, schedVars>>
 
 \* The machine's terminal snapshot: Machines.snapshot/3 with
 \* Rules.on_snapshot/3 (hub rule 4) in one Store commit: an open row
@@ -619,7 +731,7 @@ OpFinish(t) ==
     /\ row[t] = "open"
     /\ row' = [row EXCEPT ![t] = IF rcx[t] THEN "closed" ELSE "finished"]
     /\ signal' = [signal EXCEPT ![t] = TRUE]
-    /\ UNCHANGED <<dbVars, rcx, ghostVars, timeVars, procVars, faultVars>>
+    /\ UNCHANGED <<dbVars, rcx, ghostVars, timeVars, procVars, faultVars, schedVars>>
 
 \* A waiting task's deadline passes; the Scheduler's timer (arm_timer/1,
 \* Policy.timer_delay/2) then reconciles.  A machine call's rechecks are
@@ -628,7 +740,7 @@ Tick(id) ==
     /\ task[id].status = "waiting" /\ task[id].wUntil /\ ~untilPassed[id]
     /\ Kind(id) = "tool" => rechecks[id] < MaxRechecks
     /\ untilPassed' = [untilPassed EXCEPT ![id] = TRUE]
-    /\ UNCHANGED <<dbVars, rowVars, ghostVars, rechecks, procVars, faultVars>>
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, rechecks, procVars, faultVars, schedVars>>
 
 ---------------------------------------------------------------------------
 (* Faults *)
@@ -645,7 +757,7 @@ HubCrash ==
     /\ steps' = {}
     /\ task' = RunningToPending
     /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                   rowVars, ghostVars, timeVars, inc, schedCrashes, stepCrashes, aborts>>
+                   rowVars, ghostVars, timeVars, inc, schedCrashes, stepCrashes, aborts, schedVars>>
 
 \* Only the Scheduler process dies; its supervisor (Durable.Supervisor,
 \* one_for_one) restarts it.  Steps run under the separate Durable.TaskSupervisor via
@@ -659,7 +771,7 @@ SchedCrash ==
     /\ steps' = {st \in steps : st.pc # "exited"}
     /\ task' = RunningToPending
     /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                   rowVars, ghostVars, timeVars, hubCrashes, stepCrashes, aborts>>
+                   rowVars, ghostVars, timeVars, hubCrashes, stepCrashes, aborts, schedVars>>
 
 \* A step exits abnormally before finishing (the :DOWN path), or, in a
 \* machine call's own code, raises: ToolTask rescues the raise and records
@@ -671,14 +783,13 @@ StepCrash(st) ==
     /\ stepCrashes' = stepCrashes + 1
     /\ \/ steps' = StepExit(st)
        \/ IsMachine(st) /\ st.pc \in RaisePcs /\ steps' = StepTo(st, "fin_err")
-    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, hubCrashes, schedCrashes, aborts>>
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, hubCrashes, schedCrashes, aborts,
+                   schedVars>>
 
 ---------------------------------------------------------------------------
 
 Init ==
-    /\ task = [id \in TaskIds |-> IF id \in Routines
-                                  THEN [NoTask(id) EXCEPT !.status = "pending", !.phase = "start"]
-                                  ELSE NoTask(id)]
+    /\ task = [id \in TaskIds |-> IF id \in Routines THEN NewRoutine(id) ELSE NoTask(id)]
     /\ sub = [s \in SubIds |-> NoSub]
     /\ toolResults = [t \in ToolIds |-> 0]
     /\ orphanCalls = 0
@@ -694,10 +805,17 @@ Init ==
     /\ steps = {}
     /\ inc = 0
     /\ hubCrashes = 0 /\ schedCrashes = 0 /\ stepCrashes = 0 /\ aborts = 0
+    /\ carrier = IF Routines = {} THEN "none" ELSE CHOOSE r \in Routines : TRUE
+    /\ fires = [r \in RoutineIds |-> 0]
+    /\ retired = [r \in RoutineIds |-> FALSE]
+    /\ lateFire = FALSE /\ dupFire = FALSE
+    /\ edits = 0 /\ deletes = 0
 
 Next ==
     \/ \E u \in Users : UserSubmit(u)
     \/ UserAbort
+    \/ OwnerEdit
+    \/ OwnerDelete
     \/ \E id \in TaskIds : SchedStart(id)
     \/ \E id \in TaskIds : SchedWake(id)
     \/ \E id \in TaskIds : SchedKill(id)
@@ -716,7 +834,8 @@ Next ==
 \* running; time passes; and an op eventually ends on its machine (the
 \* command finishes, or is canceled, once the machine is back; there is no
 \* timeout on a running command, so without this a call may wait for
-\* good).  The user and faults get no fairness.
+\* good).  The user, the owner's edits and deletes, and faults get no
+\* fairness.
 SysNext ==
     \/ \E id \in TaskIds : SchedStart(id) \/ SchedWake(id) \/ SchedKill(id) \/ SchedAbort(id)
     \/ \E st \in steps : SchedExit(st) \/ StepAct(st)
@@ -756,6 +875,8 @@ TypeOK ==
     /\ \A t \in ToolIds : row[t] \in {"none", "open", "finished", "closed"}
     /\ nextGen \in 1..(NGen + 1) /\ nextTool \in 1..(NTools + 1)
     /\ \A st \in steps : st.t \in TaskIds
+    /\ carrier \in RoutineIds \cup {"none"}
+    /\ \A r \in RoutineIds : fires[r] \in Nat
 
 \* At most one active run (non-background, conversation-owned, unfinished)
 AtMostOneActiveRun == Cardinality(ActiveRunsIn(task)) <= 1
@@ -800,8 +921,25 @@ ClaimedOnce == \A t \in ToolIds : claims[t] <= 1
 NoOpenRowAfterDone ==
     \A t \in ToolIds : task[t].status \in Terminal => ~(row[t] = "open" /\ ~rcx[t])
 
-\* Stop withdraws only the user's own queued input: a routine's prompt stays.
-BackgroundNotWithdrawn == \A r \in Routines : sub[RS(r)].status # "withdrawn"
+\* Blip's Stop withdraws only the user's own queued input: a scheduled
+\* prompt stays.
+BackgroundNotWithdrawn == \A s \in RSIds : sub[s].status # "withdrawn"
+
+\* At most one routine is live and not marked for abort, and it is the one
+\* the schedule's row names: an edit or delete never leaves the old timer
+\* running beside the new one.
+OneCarrier ==
+    \A r \in RoutineIds : LiveIn(task, r) /\ ~task[r].abort => r = carrier
+
+\* No fire step's commit lands for a routine after the commit that retired
+\* it (an edit or delete): the step fence alone stops a firing that was in
+\* flight.
+NoFireAfterRetire == ~lateFire
+
+\* No two firing commits for the same routine and checkpoint, across hub
+\* crashes, Scheduler restarts and step crashes; with Target "thread" there
+\* is no request ID to fall back on.
+FireOncePerSlot == ~dupFire
 
 \* Liveness
 
@@ -827,5 +965,10 @@ FinishedLeavesNoLiveWork ==
 \* rule 8; a finished row whose call ended another way is closed by
 \* cancel_tx/2).
 RowsClose == \A t \in ToolIds : row[t] # "none" ~> row[t] = "closed"
+
+\* A routine retired while it was live (marked for abort by the edit or
+\* delete) ends aborted.
+RetiredEnds ==
+    \A r \in RoutineIds : (retired[r] /\ LiveIn(task, r)) ~> task[r].status = "aborted"
 
 =============================================================================

@@ -1536,8 +1536,8 @@ Configs:
 
 | Config | Shape | Checks |
 |---|---|---|
-| `Durable-schedule.cfg` | 1 user input, no tool calls, `Routines = {"r1"}`, `Spares = {"r2"}`, `MaxFires = 2`, `Target = "conv"`, 1 edit, 1 delete, 1 hub crash, 1 Scheduler crash, 1 step crash, 1 Stop | the safety set, `OneCarrier`, `NoFireAfterRetire`, `FireOncePerSlot`, `BackgroundNotWithdrawn` |
-| `Durable-schedule-thread.cfg` | the same with `Target = "thread"` | the same |
+| `Durable-schedule.cfg` | no user input (K1: with one, TLC passed 160M states in two hours without finishing; the scheduled prompts queue behind each other instead), no tool calls, `Routines = {"r1"}`, `Spares = {"r2"}`, `MaxFires = 2`, `Target = "conv"`, 1 edit, 1 delete, 1 hub crash, 1 Scheduler crash, 1 step crash, 1 Stop | the safety set, `OneCarrier`, `NoFireAfterRetire`, `FireOncePerSlot`, `BackgroundNotWithdrawn` |
+| `Durable-schedule-thread.cfg` | the same with `Target = "thread"`, and 1 user input so the conversation isn't empty | the same |
 | `Durable-schedule-live.cfg` | 1 user input, `MaxFires = 2`, 1 edit, 1 hub crash, 1 Stop | `RetiredEnds`, `PlacedSettles`, `NoRunningForever` |
 | `Durable-bug-edit-keeps-old.cfg` | `Durable-schedule.cfg` with `BugEditKeepsOld = TRUE` | expected to fail `OneCarrier` |
 | `Durable-bug-fire-after-retire.cfg` | `Durable-schedule.cfg` with `BugFireIgnoresAbort = TRUE` | expected to fail `NoFireAfterRetire` |
@@ -1560,6 +1560,11 @@ a step 3 entry in `docs/verification.md`. If TLC finds a problem in the
 plan's rules, fix section 3.3 or 3.4 of this plan before K5a starts; K1
 comes first for that reason. `HubOps.tla` and `Executor.tla` don't
 change.
+
+K1's result: every config passed, the two bug configs failed on the
+property meant to catch them, and the 15 older configs reached their old
+state counts. TLC found no problem in sections 3.3 and 3.4, which stand
+as written. `specs/tla/Durable.md` has the numbers.
 
 ## 11. Ordered tasks
 
