@@ -8,8 +8,9 @@
 (* docs/plans/step-1-machine-tools.md. Faults: executor crashes at any    *)
 (* point inside any of its handlers, operation process crashes, abrupt    *)
 (* node crashes (commands survive), node stops (a shell kills its command *)
-(* and leaves the `stopped` marker), dropped connections, and commands    *)
-(* that leave background children or never exit. Executor.md has the     *)
+(* and leaves the `stopped` marker, or leaves the `unstarted` marker when  *)
+(* it was waiting to start one), dropped connections, and commands that   *)
+(* leave background children or never exit. Executor.md has the          *)
 (* mapping to the code, the results and the findings.                     *)
 (*                                                                         *)
 (* HubOps.tla models the protocol end to end with the executor as one     *)
@@ -108,9 +109,10 @@ NoProc == [proc |-> "none", init |-> "none", snap |-> "none", call |-> "none",
 NewProc(st) == [NoProc EXCEPT !.proc = "init", !.init = st, !.snap = st]
 
 \* The command. exit: the wrapper's exit file; pidf: its pid file; stopped:
-\* the `stopped` marker; self: the command exited on its own (a ghost).
+\* the `stopped` marker; unst: the `unstarted` marker (a start that never
+\* spawned); self: the command exited on its own (a ghost).
 NoOS == [cmd |-> "none", bg |-> FALSE, exit |-> FALSE, execs |-> 0,
-         pidf |-> FALSE, stopped |-> FALSE, self |-> FALSE]
+         pidf |-> FALSE, stopped |-> FALSE, unst |-> FALSE, self |-> FALSE]
 
 Msg(k, c, kn) == [k |-> k, c |-> c, kn |-> kn]
 
@@ -334,7 +336,8 @@ Report(q, st, nxt) == [q EXCEPT !.proc = "rep", !.call = st, !.snap = st,
 
 \* The wrapper starts the command and writes its pid file.
 Spawn(o) == [cmd |-> "running", bg |-> FALSE, exit |-> FALSE, execs |-> o.execs + 1,
-             pidf |-> ~Bug("no_pid_file"), stopped |-> FALSE, self |-> FALSE]
+             pidf |-> ~Bug("no_pid_file"), stopped |-> FALSE, unst |-> FALSE,
+             self |-> FALSE]
 
 \* kill_group/3: the whole group goes. The wrapper records the killed
 \* command's exit status (143).
@@ -345,9 +348,15 @@ KillIf(o, pgid) == IF pgid THEN KillOS(o) ELSE o
 \* recorded_pgid/1: from the snapshot, else from the pid file.
 PgidKnown(q, o) == q.snap = "proc1" \/ o.pidf
 
+\* prepare/1: remove the leftover files (the `unstarted` marker among them),
+\* then ask for the `process` checkpoint.
+Prepare(c, q, o) ==
+  Become(c, [q EXCEPT !.proc = "ck", !.call = "ck", !.ans = "none"], [o EXCEPT !.unst = FALSE])
+
 \* recover/1 after any pid-file checkpoint, then reattach/2.
 RecoverTo(c, q, o, pgid) ==
   IF o.stopped THEN Become(c, Report(q, "failed", "exit"), KillIf(o, pgid))  \* node rule 10
+  ELSE IF ~pgid /\ o.unst THEN Prepare(c, q, o)           \* never started (node rule 4)
   ELSE IF ~pgid THEN Become(c, Report(q, "failed", "exit"), o)       \* outcome unknown
   ELSE IF o.exit THEN Become(c, Report(q, "read", "complete"), KillOS(o))
   ELSE IF o.cmd = "running" \/ o.bg THEN Become(c, [q EXCEPT !.proc = "polling"], o)
@@ -361,7 +370,7 @@ OpInit(c) ==
      IN CASE q.init = "ready" ->
                IF Bug("double_exec")
                THEN Become(c, Report([q EXCEPT !.port = TRUE], "proc0", "spawning"), Spawn(o))
-               ELSE Become(c, [q EXCEPT !.proc = "ck", !.call = "ck", !.ans = "none"], o)
+               ELSE Prepare(c, q, o)
           [] q.init = "proc0" /\ o.pidf -> Become(c, Report(q, "proc1", "recover"), o)
           [] q.init = "proc1" \/ (q.init = "proc0" /\ ~o.pidf) ->
                RecoverTo(c, q, o, q.init = "proc1")
@@ -377,7 +386,8 @@ OpCkDone(c) ==
                Become(c, [q EXCEPT !.proc = "spawning", !.snap = "proc0", !.port = TRUE,
                                    !.call = "none", !.ans = "none"], Spawn(o))
           [] q.ans = "cancel" -> Become(c, Report(q, "canceled", "exit"), o)
-          [] OTHER -> Exit(c, o, "normal")              \* :ignored: stop, run nothing
+          [] OTHER ->                     \* :ignored: the marker, then stop, run nothing
+               Exit(c, [o EXCEPT !.unst = TRUE], "normal")
 
 \* A report call returned (:ok, or :down if the executor died); go on.
 OpReturn(c) ==
@@ -429,10 +439,18 @@ Poll(c) ==
         /\ IF o.exit THEN Become(c, Report(q, "read", "complete"), KillOS(o))
            ELSE Become(c, Report(q, "failed", "exit"), o)
 
-\* The stopped marker, then the kill, when the port is open (terminate/2).
+\* A shell that reattached to its command and still waits for it (the
+\* `reattached` flag with an `awaiting` snapshot): polling, or reporting a
+\* resend on the way back to polling.
+Reattached(q) == q.proc = "polling" \/ (q.proc = "rep" /\ q.nxt = "polling")
+
+Marked(o) == [o EXCEPT !.stopped = IF Bug("no_stopped_marker") THEN @ ELSE TRUE]
+
+\* terminate/2: the stopped marker, then the kill, when the port is open or
+\* the shell reattached (its snapshot has the pgid).
 Terminated(q, o) ==
-  IF q.port
-  THEN [KillIf(o, PgidKnown(q, o)) EXCEPT !.stopped = IF Bug("no_stopped_marker") THEN @ ELSE TRUE]
+  IF q.port THEN Marked(KillIf(o, PgidKnown(q, o)))
+  ELSE IF Reattached(q) THEN Marked(KillOS(o))
   ELSE o
 
 \* An operation process crashes (a bug in its own code, so never while it
@@ -467,9 +485,15 @@ NodeCrash ==
 
 \* A stop on purpose: shutdown runs in reverse start order, so the
 \* Connection and the executor stop first, then every shell's terminate/2.
+\* A shell still waiting in its checkpoint call gets :ignored when the
+\* executor stops, and writes the `unstarted` marker as it stops.
+Stopped(q, o) ==
+  IF q.proc = "ck" /\ q.ans \in {"none", "ignored", "exit"} THEN [o EXCEPT !.unst = TRUE]
+  ELSE Terminated(q, o)
+
 NodeStop ==
   /\ nodeUp /\ cnt.stop < MaxNodeStop
-  /\ os' = [c \in Ops |-> Terminated(p[c], os[c])]
+  /\ os' = [c \in Ops |-> Stopped(p[c], os[c])]
   /\ p' = AllOps(NoProc)
   /\ monCur' = AllOps(FALSE) /\ downq' = AllOps(<<>>) /\ rst' = AllOps(FALSE)
   /\ es' = "off" /\ nodeUp' = FALSE

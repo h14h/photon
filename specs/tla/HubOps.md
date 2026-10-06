@@ -74,7 +74,7 @@ running it twice is harmless.
 | `NodeRecv` (`RecvStart`, `RecvCancel`, `RecvAck`) | `Executor.start/1`, `cancel/1`, `ack/1` (node rules 1, 2, 3, 6, 7) |
 | `OpCheckpoint`, `OpSpawn`, `OpKill`, `CmdExit`, `OpFinish` | `Ops.Shell`: the `process` checkpoint the executor journals unless the journal says canceled (node rule 4), the spawn, a kill on cancel, the command's exit, the terminal snapshot |
 | `OpJournal` | spawn-before-journal bug only |
-| `NodeResume` | the executor's start-up scan, a restart after a clean exit, or node rule 2: resume an unfinished journaled op with no process, and tell it to cancel if the journal says so. `Ops.Shell`'s recovery: reattach, finish from the `exit` file, or fail when the outcome is unknown or the node stopped the command (the `stopped` marker, node rule 10) |
+| `NodeResume` | the executor's start-up scan, a restart after a clean exit, or node rule 2: resume an unfinished journaled op with no process, and tell it to cancel if the journal says so. `Ops.Shell`'s recovery: reattach, finish from the `exit` file, or fail when the outcome is unknown or the node stopped the command (the `stopped` marker, node rule 10). The `unstarted` marker's start (node rule 4) needs an executor crash, which this spec leaves out |
 
 ### Modeling choices worth knowing
 
@@ -121,12 +121,14 @@ exit). Its main effect on an op is `NodeResume`: a resumed op is told to
 cancel when its journal says so. The code has one more, which the
 hub-plus-node test found. If the executor dies after it journals a
 shell's `process` checkpoint but before it answers, the shell gets
-`:ignored` and stops without spawning, and the resumed op fails with
-"shell execution outcome is unknown because process start was not
-recorded". The command never ran, so at most once holds, but the call
-gets a `failed` result that `ResultFromOwnOp` allows only after a node
-restart. Op-process crashes are left out too (a
-`failed` snapshot, `Executor.Rules.down/3`). `Executor.tla` models both
+`:ignored` and stops without spawning. In PR A's code the resumed op
+then failed with "shell execution outcome is unknown because process
+start was not recorded": the command never ran, so at most once held,
+but the call got a `failed` result that `ResultFromOwnOp` allows only
+after a node restart. Since G1 the shell writes an `unstarted` marker
+before it stops, and the resumed shell starts the command (node rule 4),
+so the call gets the command's own result. Op-process crashes are left
+out too (a `failed` snapshot, `Executor.Rules.down/3`). `Executor.tla` models both
 kinds of crash, with the executor's handlers, journal and operation
 processes opened up, and checks that neither breaks at most once or the
 call's result; that case is one of its reachability checks.

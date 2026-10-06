@@ -35,7 +35,7 @@ specs with them:
   keeps the operation-process part and adds executor crashes. Its bug
   configs put back F3, F8, F9, F11 and K1, and node rule 10's `stopped`
   marker, and fail as they should. It found two gaps in the current code
-  (E1 and K2, not fixed: see the step 1 table).
+  (E1, not fixed, and K2, partly fixed in G1: see the step 1 table).
 - `Durable.tla` lost node work (`run_on_node`, `NodeWork`, `NodeWatch`)
   and models a machine call in its place: its op row, its signal, the
   periodic recheck, the offline give-up, and Stop with the row's cancel
@@ -122,7 +122,8 @@ cancel ends even a command that would run forever, and every finished
 entry is forgotten.
 
 Like `HubOps`, its `-bug-*` configs are expected to fail, and so are its
-two `-known-*` configs, which show E1 and K2 in the code as it is.
+two `-known-*` configs, which show E1 and what is left of K2 in the code
+as it is.
 
 Details: `specs/tla/Executor.md`.
 
@@ -215,11 +216,12 @@ config of the three specs was run:
   reach exactly their old state counts. Five copies of the spec with one
   of the machine call's rules broken each fail on the property meant to
   catch it.
-- `Executor.tla`, 14 configs: the 6 clean ones pass, the largest being
-  `Executor-two.cfg` (two ops, 71.8M, 13m10s with 11 workers),
-  `Executor-faults.cfg` (4.0M, 2m15s) and `Executor.cfg` (330K with
-  liveness, 1m24s). The 6 bug configs and 2 known configs each fail on
-  their property within 3 seconds, with traces of 5 to 23 states.
+- `Executor.tla`, 14 configs, rerun on the merged code after G1: the 6
+  clean ones pass, the largest being `Executor-two.cfg` (two ops, 90.8M,
+  16m29s with 11 workers), `Executor-faults.cfg` (4.6M, 2m35s) and
+  `Executor.cfg` (371K with liveness, 1m41s). The 6 bug configs and 2
+  known configs each fail on their property within 3 seconds, with
+  traces of 5 to 23 states.
 - `HubOps.tla`, 19 configs, rerun unchanged with 11 workers: every one
   ends as in PR A, the clean ones with the same state counts and the bug
   configs with the same traces; the slowest were `HubOps-errors.cfg`
@@ -286,7 +288,7 @@ the spec column then names the config as it was.
 | --- | --- | --- | --- | --- |
 | Coordinator F3 | a shell command could start twice: it started before its `process` checkpoint was stored | the shell asks its owner (the executor since step 1, the coordinator before) to persist the checkpoint by a call (`Owner.checkpoint/2`) and starts only on `:ok` (`:cancel` if the journal says canceled; otherwise it stops and is started again from the journal) | `shell_test.exs`: "a command doesn't start until its owner has stored the checkpoint" | `Executor-bug-double-exec` |
 | Coordinator F8 | a cancel that reached a shell before its PID was known didn't kill the command, so the stop (now the cancel) never finished | the `pid` handler kills the group if a cancel came first | `shell_test.exs`: "a cancel that arrives before the command's PID is known still kills it" | `Executor-bug-cancel-before-pid` |
-| Coordinator F9 | a crashed operation process went unnoticed; its call never got a result | the owner monitors operation processes; a `:DOWN` fails a live operation (a clean exit before starting is restarted, once: `Executor.Rules.down/3`) | `executor_test.exs`: "an operation process killed with :kill fails its operation", "an operation process that exits cleanly before its result is restarted once"; `executor/rules_test.exs`: "a crash fails the operation" | `Executor-bug-op-crash` |
+| Coordinator F9 | a crashed operation process went unnoticed; its call never got a result | the owner monitors operation processes; a `:DOWN` fails a live operation (a clean exit before starting is restarted, once: `Executor.Rules.down/3`) | `executor_test.exs`: "an operation process killed with :kill fails its operation", "a reattached command shut down before its result is restarted once and reported stopped"; `executor/rules_test.exs`: "a crash fails the operation" | `Executor-bug-op-crash` |
 | Coordinator F11 | a shell reattached after a node restart waited for background children of a command that had exited | `poll_recovered/1` checks the exit file first, then kills the group | `shell_test.exs`: "a reattached command that exits leaving background children finishes" | `Executor-bug-bg-reattach` |
 | K1 (known upstream gap) | a node crash after the `process` checkpoint but before the PGID one left the command running unwatched (the session went `idle`; now the op would fail while it runs) | the wrapper writes the command's PID to a `pid` file; recovery reads it when the snapshot has no PGID | `shell_test.exs`: "a command started just before a crash is found through its pid file"; `executor_test.exs`: "the scan finds a command started just before a crash through its pid file" | `Executor-bug-pid-file` |
 | node-op-stale-registry (review) | `Registry.lookup/2` still lists a process that has just exited, so `Ops.add/2` could resend to a dead operation process; the owner's monitor got `:noproc` and failed the operation though its command never ran | `Ops.add/2` starts a new process if the listed one isn't alive; `:noproc` counts as a clean exit (restarted once) | `shell_test.exs`: "an operation whose old process has just exited is started again"; `executor/rules_test.exs`: "a clean exit before the result restarts once, canceled if the entry says so" | - (no registry in the model) |
@@ -330,7 +332,8 @@ each was fixed in the plan before the code was written, so the code never
 had them. The tests pin each fix in the code. H2 is a property of how the
 code is built (the channel's reads are `Durable.commit/1` calls, so they
 wait for a commit in progress), and no test can force the interleaving.
-`Executor.tla` found E1 and K2 in the code as built; neither is fixed.
+`Executor.tla` found E1 and K2 in the code as built. G1 fixed part of
+K2 (a crash while polling); E1 and the rest of K2 are open.
 Test files are under `apps/hub/test` unless they name the node.
 
 | ID | Problem | Fix (plan section 2.3) | Test | Spec |
@@ -346,7 +349,8 @@ Test files are under `apps/hub/test` unless they name the node.
 | rules the plan had | an early `op.ack`, a spawn before the journal, an `op.start` after a cancel, no `known` flag | hub rules 4 and 7, node rules 3 and 4 | `boundary/machines_test.exs`: "a result is stored with its signal, then acked", "a join resends op.cancel for a canceled row, and never op.start"; node `boundary/executor_test.exs`: "an operation the hub has seen but the node has no record of fails without running", "a cancel journaled before the command's start means it never spawns"; node `boundary/shell_test.exs`: "a command doesn't start until its owner has stored the checkpoint" | `HubOps-bug-ack-early`, `-bug-spawn-before-journal`, `-bug-start-after-cancel`, `-bug-no-known` |
 | node rule 10 | a node stopped on purpose killed its running commands, and the resumed op reported a killed command `completed` (the wrapper records exit 143) | `terminate/2` writes a `stopped` marker before it kills, and `recover/1` checks it before the exit file | node `boundary/shell_test.exs`: "a command killed when its shell is shut down is reported as stopped, not completed"; node `boundary/executor_test.exs`: "a node stopped while a command runs reports the command as killed after it restarts" | `Executor-bug-stopped-marker` |
 | E1 (open) | a command killed by a cancel is reported `completed` (exit 143) when the executor or the node dies after the kill and before the `canceled` snapshot is journaled: the resumed shell's `recover/1` finds the exit file before it handles the `:cancel` that follows `Ops.add/2` | not fixed. Low severity: the hub closes a canceled row without showing its result, unless the commit that canceled it rolled back. A fix would let recovery see the journal's `cancel` flag, or mark a cancel's kill as a stop's is marked | - | `Executor-known-cancel-completed` (fails `CompletedMeansExited`) |
-| K2 (open) | a shell that reattached to a command after a node crash has no port, so if it crashes its `terminate/2` kills nothing; the op fails and the command runs on unwatched | not fixed. Low severity: it takes a node crash and then a crash in the shell's own code. A fix would kill the recorded pgid in `terminate/2` whenever there is one | - | `Executor-known-orphan-reattached` (fails `ResultPhysical`) |
+| K2 (partly open) | a shell resumed after a node crash has no port to the command the previous VM started, so if it crashes its `terminate/2` kills nothing; the op fails and the command runs on unwatched | G1: once `reattach/2` finds the group alive the shell is `reattached`, and `terminate/2` kills a reattached command whose op is still `awaiting`, after the `stopped` marker (node rule 10). Still open: a crash in `recover/1` before that point. Low severity: it takes a node crash and then a crash there. A fix would kill the recorded pgid in `terminate/2` whenever the op is `awaiting` in phase `process` | node `boundary/shell_test.exs`: "a reattached command is killed and reported as stopped when its shell is shut down"; node `boundary/executor_test.exs`: "a reattached command shut down before its result is restarted once and reported stopped" | `Executor-known-orphan-reattached` (fails `ResultPhysical` through a crash in `recover/1`; `Executor.md` records the check that a crash while polling no longer orphans the command) |
+| G1 unstarted | an executor crash after it journaled a `process` checkpoint and before it answered left a shell that stopped without spawning, and the resumed op failed as "outcome unknown" though the command never ran | node rule 4: on `:ignored` the shell writes an `unstarted` marker before it stops; a resume with no process group, no `pid` file and the marker starts the command through the checkpoint again; every start removes the marker before its checkpoint, and `Journal.forget/2` deletes it | node `boundary/shell_test.exs`: "a command whose stored start was never confirmed runs once when resumed", "a stored start with no process group, pid file or marker fails as unknown"; node `boundary/executor_test.exs`: "a command whose journaled start the executor never confirmed runs once" | `Executor` and `-faults`, `-two` (`AtMostOnceExec` with the marker path; `Executor.md` records that it is reached) |
 
 ### Core: model client and message format
 

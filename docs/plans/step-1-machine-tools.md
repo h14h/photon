@@ -892,9 +892,12 @@ Specs (`specs/tla/`):
   the same properties with the fixes in. It adds `-bug-stopped-marker`
   (node rule 10), and `-known-cancel-completed` and
   `-known-orphan-reattached`, which fail on two gaps it found in the code
-  (E1, K2 in `Executor.md`; not fixed). `-witness` went: its witnesses
-  were session paths, and the new spec's reachability checks ran once
-  with temporary invariants. `Durable` also got `NoOpenRowAfterDone`,
+  (E1, K2 in `Executor.md`; E1 is open, and G1 fixed K2 except for a
+  crash in `recover/1` before the shell reattaches, which the config
+  still fails on). After G1 the spec also models the `unstarted` marker
+  and the kill of a reattached command (node rules 4 and 10). `-witness`
+  went: its witnesses were session paths, and the new spec's
+  reachability checks ran once with temporary invariants. `Durable` also got `NoOpenRowAfterDone`,
   `RowsClose` and `BackgroundNotWithdrawn`, the constants
   `MachineOffline` and `MaxRechecks`, a raise in a machine call's code as
   a step fault, and `Durable-offline.cfg`; `-stop-stranded` and
@@ -1569,6 +1572,12 @@ B7. Specs. After B1 and B5 (they describe the deleted code).
   updated: `HubOps.md`'s pointers to the deleted specs, and in
   `docs/verification.md` the core rows for `ChatCompletions`, which an
   earlier change had already removed, are marked retired.
+- At the merge after G1: `Executor.tla` gained the `unstarted` marker
+  (written on `:ignored` and by a node stop during the checkpoint call,
+  read by recovery, removed by `prepare/1`) and the kill of a reattached
+  command in `terminate/2`; every `Executor` config was rerun.
+  `Executor.md`, `HubOps.md` and `docs/verification.md` describe K2 as
+  partly fixed and the marker path as reached.
 
 B8. Docs and final checks. After all of the above.
 - `docs/architecture.md`, `AGENTS.md` layout lines,
@@ -1599,3 +1608,9 @@ choices made here that the user may want to know about, all reversible:
   executor died in between, runs when the op resumes (moments later),
   rather than failing as "outcome unknown", since its files prove it never
   ran (node rule 4).
+- Two low-severity gaps `Executor.tla` found stay open (`Executor.md`):
+  a command killed by a cancel can be reported `completed` (exit 143) if
+  the executor or node dies before the `canceled` snapshot is journaled
+  (E1; the hub doesn't show a canceled row's result), and a shell resumed
+  after a node crash that itself crashes in `recover/1`, before it
+  reattaches, leaves its command running (what is left of K2).
