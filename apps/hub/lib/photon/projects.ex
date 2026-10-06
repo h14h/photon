@@ -27,7 +27,8 @@ defmodule Photon.Projects do
   is stored, and a commit that rolls back announces nothing:
 
     * `"projects"` (`subscribe/0`): `{:projects_changed, project_id}` when a
-      project is created or edited
+      project is created or edited, or a thread is started in it or sent a
+      message (`threads_changed_tx/2`)
     * `"project:" <> id` (`subscribe_files/1`):
       `{:project_files_changed, project_id, key}` when a context file is
       created, written, edited or deleted, by the user or a thread
@@ -137,6 +138,16 @@ defmodule Photon.Projects do
       end
     end)
   end
+
+  @doc """
+  Inside a commit that started a thread in project `project_id` or sent
+  one a message: announces `{:projects_changed, project_id}`, since the
+  project's list of threads, ordered by their last activity, changed.
+  `Photon.Threads` calls it.
+  """
+  @spec threads_changed_tx(Tx.t(), String.t()) :: :ok
+  def threads_changed_tx(tx, project_id),
+    do: Tx.announce(tx, @topic, {:projects_changed, project_id})
 
   ## Context files, for the user
 

@@ -75,6 +75,10 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Projects.Project",
                    "Photon.Projects.ContextFile",
                    "Photon.Projects.Rules",
+                   "Photon.Threads.Thread",
+                   "Photon.Threads.Rules",
+                   "Photon.Threads.Prompt",
+                   "Photon.Threads.MockScript",
                    "Photon.Provision.Jobs",
                    "Photon.Provision.Script",
                    "Photon.Provision.Lines",
@@ -151,7 +155,8 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Projects",
                    "Photon.Provision",
                    "Photon.Settings",
-                   "Photon.Tailnet"
+                   "Photon.Tailnet",
+                   "Photon.Threads"
                  ],
                  names: [
                    {"Photon.Supervisor", ["Photon.Application"]},

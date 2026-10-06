@@ -489,7 +489,7 @@ reach the project page only once it is stored. `Photon.Projects` and
 
 The `{:durable_tasks, _}` check keeps the sidebar's cost in proportion
 (rule 73): a busy hub changes tasks often, and the shell rebuilds the
-sidebar (two queries, section 5.2) only when a changed task's
+sidebar (three small queries, section 5.2) only when a changed task's
 `conversation_id` is a listed thread. A thread that
 isn't listed can only start running through a submission, which moves its
 `active_at` and announces `{:projects_changed, _}`, so the shell rebuilds
@@ -577,13 +577,15 @@ also marks its project's row).
 
 The data comes from `PhotonWeb.Shell`: `@shell.projects`, from
 `Threads.sidebar(5)`, a list of `%{project: %{id, slug, name}, threads:
-[%{id, title}], more: n}`, and `@shell.running`, a `MapSet` of the listed
-threads that are running. `sidebar/1` first reads which threads are
+[%{id, title, running?}], more: n}` with the projects by name, and
+`@shell.running`, a `MapSet` of the listed threads that are running,
+built from their `running?`. `sidebar/1` first reads which threads are
 running (`Durable.busy_in_profile("thread")`, one query over the live
 runs, so bounded by what is running), then each project's five most
-recently active threads plus the running ones (one query with a
-`row_number()` window over `[project_id, active_at]`), and the count of
-the rest. Shell subscribes to `Projects.subscribe/0` and rebuilds both on
+recently active threads plus the running ones, with each project's
+thread count for "N more" (one query with `row_number()` and `count()`
+windows over `[project_id, active_at]`), and the projects
+(`Projects.list/0`, so a project with no threads is listed too). Shell subscribes to `Projects.subscribe/0` and rebuilds both on
 `{:projects_changed, _}`, and on `{:durable_tasks, tasks}` when one of
 `tasks` belongs to a listed thread (section 4), so a thread listed only
 because it ran drops back under "N more" once it stops. `BlipLive` mounts
@@ -860,13 +862,13 @@ No Boundary or Credo list changes.
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Projects` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Repo, PhotonCore, Ecto], exports: [Project, ContextFile]` (not `Rules`: callers outside get its answers through the API) | `subscribe/0`, `subscribe_files/1`, `list/0`, `get/1`, `get_by_slug/1`, `create/1`, `update/2`, `list_files/1`, `get_file/2` (by name, case-insensitive through `key`), `create_file/2`, `save_file/4` (name, content, version), `delete_file/2`, and for thread tools inside their commit `write_file_tx/5`, `edit_file_tx/6`. Results: `{:ok, struct}`, `{:error, %{field => message}}` for form input, `{:error, :stale \| :exists \| :not_found}` for saves, `{:error, message}` for tool writes, returned from inside the commit. Validates once with `Projects.Rules` (rule 64), including for `write_file_tx/5` and `edit_file_tx/6`, so the thread tools check nothing themselves; every write is a `Durable.commit/1` that applies the rule's answer and calls `Tx.announce/3`. Moduledoc: what a project is, the slug rules' reason, and that there is no process. |
+| `Photon.Projects` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Repo, PhotonCore, Ecto], exports: [Project, ContextFile]` (not `Rules`: callers outside get its answers through the API) | `subscribe/0`, `subscribe_files/1`, `list/0`, `get/1`, `get_by_slug/1`, `create/1`, `update/2`, `list_files/1`, `get_file/2` (by name, case-insensitive through `key`), `create_file/2`, `save_file/4` (name, content, version), `delete_file/2`, and for thread tools inside their commit `write_file_tx/5`, `edit_file_tx/6`, and for `Photon.Threads` inside its commits `threads_changed_tx/2` (announces `{:projects_changed, id}` when a thread is started or sent a message, so the topic stays this module's). Results: `{:ok, struct}`, `{:error, %{field => message}}` for form input, `{:error, :stale \| :exists \| :not_found}` for saves, `{:error, message}` for tool writes, returned from inside the commit. Validates once with `Projects.Rules` (rule 64), including for `write_file_tx/5` and `edit_file_tx/6`, so the thread tools check nothing themselves; every write is a `Durable.commit/1` that applies the rule's answer and calls `Tx.announce/3`. Moduledoc: what a project is, the slug rules' reason, and that there is no process. |
 | `Photon.Projects.Project` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 2.1. |
 | `Photon.Projects.ContextFile` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 2.3. |
 | `Photon.Projects.Rules` | core | `use Boundary, type: :strict, deps: [Photon.Projects.Project, Photon.Projects.ContextFile]` | `project/2`, `name_from/1`, `slug/1`, `unique_slug/2`, `file_name/1`, `key/1` (the lookup key: `.md` added, downcased), `content/2`, `save_check/2`, `edit/4`, `count/1` ("1,234"). The file's name is an argument of `content/2` and `edit/4` for their messages. IDs and times are arguments. |
-| `Photon.Threads` | boundary (API and the `"thread"` profile) | `use Boundary, deps: [Photon.ChatGPT, Photon.Durable, Photon.MachineTools, Photon.Projects, Photon.Repo, Photon.Settings, Photon.Transcript, PhotonCore, PhotonCore.LLM, Ecto], exports: [Thread]` (`Photon.Transcript` for `image/3`, as `Assistant.image/2` uses it; never `Photon.Assistant`, which depends on `Photon.Threads`) | API: `start/2`, `get/1`, `list/1`, `sidebar/1`, `running/1`, `project_id!/1`, `send/3`, `stop/1`, `withdraw/1`, `entries/1`, `busy?/1`, `queued/1`, `subscribe/1`, `image/3`, `latest_answer/1`. Profile: `llm/1`, `system_prompt/1`, `tools/1`, `workdir/1` (section 3.1). `start/2` checks the text isn't blank and creates the conversation, the row and the first submission in one commit (`Tx.create_conversation/2`, `Repo.insert!`, `Durable.submit_tx/4`), and announces `{:projects_changed, project_id}`. `send/3` submits and sets `active_at` in one commit and announces the same. |
+| `Photon.Threads` | boundary (API and the `"thread"` profile) | `use Boundary, deps: [Photon.ChatGPT, Photon.Durable, Photon.MachineTools, Photon.Projects, Photon.Repo, Photon.Settings, Photon.Transcript, PhotonCore, PhotonCore.LLM, Ecto], exports: [Thread]` (`Photon.Transcript` for `image/3`, as `Assistant.image/2` uses it; never `Photon.Assistant`, which depends on `Photon.Threads`) | API: `start/2`, `get/1`, `list/1`, `sidebar/1`, `running/1`, `project_id!/1`, `send/3`, `stop/1`, `withdraw/1`, `entries/1`, `busy?/1`, `queued/1`, `subscribe/1`, `image/3`, `latest_answer/1`. Profile: `llm/1`, `system_prompt/1`, `tools/1`, `workdir/1` (section 3.1). `start/2` checks the text isn't blank and creates the conversation, the row and the first submission in one commit (`Tx.create_conversation/2`, `Repo.insert!`, `Durable.submit_tx/4`), and announces `{:projects_changed, project_id}` (`Projects.threads_changed_tx/2`); it returns `{:ok, thread}` or `{:error, :blank \| :not_found}`. `send/3` submits and sets `active_at` in one commit and announces the same; it returns `{:ok, submission}` or `{:error, :blank \| :not_found \| :busy}`. `running(thread_ids)` is the `MapSet` of those running (`Durable.busy/1`). |
 | `Photon.Threads.Thread` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 2.4. |
-| `Photon.Threads.Rules` | core | `use Boundary, type: :strict, deps: []` | `title/1`, `listing/3`, `file_header/2` (the first line of a read). |
+| `Photon.Threads.Rules` | core | `use Boundary, type: :strict, deps: []` | `title/1`, `listing/3`, `file_header/3` (the first line of a read; the reading thread's ID and the other threads' titles name who changed the file, as in `listing/3`), `missing_file/2` (a read's error, listing the names there are), `characters/1` ("1,234 characters"; `Projects.Rules.count/1` isn't exported). |
 | `Photon.Threads.Prompt` | core | `use Boundary, type: :strict, deps: [Photon.MachineTools]` (reaches `Guide` through its parent's export; section 3.6) | `system_prompt(project, now)` (section 3.2); takes a map with `name`, `slug`, `purpose`. |
 | `Photon.Threads.MockScript` | core | `use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM, Photon.MachineTools]` | Section 3.5. |
 | `Photon.Threads.Tools.ListContextFiles`, `.ReadContextFile`, `.WriteContextFile`, `.EditContextFile` | boundary (durable tools) | inside `Photon.Threads` | Section 3.3. |
