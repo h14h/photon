@@ -55,9 +55,10 @@ defmodule Photon.MachineTools.MockPhrases do
   defp call(tool, args, intro), do: Message.assistant(intro, [Mock.call(tool, args)])
 
   @doc """
-  What a script says after a tool result: the result's text, with
-  "Error: ..." turned into "That didn't work: ...", or for an image
-  "Here it is." and its line of size and path.
+  What a script says after a tool result: the result's text (in a code
+  block when it runs over several lines), with "Error: ..." turned into
+  "That didn't work: ...", or for an image "Here it is." and its line of
+  size and path.
   """
   @spec relay_result(Message.t()) :: String.t()
   def relay_result(result) do
@@ -68,5 +69,17 @@ defmodule Photon.MachineTools.MockPhrases do
   end
 
   defp relay("Error: " <> error), do: "That didn't work: " <> error
-  defp relay(text), do: text
+
+  # Output of several lines reads as printed, in a code block. Its blank
+  # lines go, so the block stays one paragraph (Blip's bubble shows one).
+  defp relay(text) do
+    lines = String.trim_trailing(text)
+
+    if String.contains?(lines, "\n") do
+      fence = if String.contains?(lines, "```"), do: "````", else: "```"
+      "#{fence}\n#{String.replace(lines, ~r/\n\s*\n/, "\n")}\n#{fence}"
+    else
+      text
+    end
+  end
 end

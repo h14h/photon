@@ -45,6 +45,11 @@ defmodule Photon.MachineTools.MockPhrasesTest do
   test "relays a result, an error and an image" do
     assert MockPhrases.relay_result(Message.tool_result("c1", "hello")) == "hello"
 
+    assert MockPhrases.relay_result(Message.tool_result("c1", "a\n\nb\n")) ==
+             "```\na\nb\n```"
+
+    assert MockPhrases.relay_result(Message.tool_result("c1", "```\nx")) == "````\n```\nx\n````"
+
     assert MockPhrases.relay_result(Message.tool_result("c1", "Error: mm1 is offline")) ==
              "That didn't work: mm1 is offline"
 
