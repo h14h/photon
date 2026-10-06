@@ -24,7 +24,9 @@ defmodule PhotonWeb.OverviewLiveTest do
     assert page_title(view) =~ "Overview"
   end
 
-  test "shows connected machines and known offline ones, and points at Blip", %{view: view} do
+  test "shows connected machines and known offline ones, and points at Blip and projects", %{
+    view: view
+  } do
     {:ok, _key} = NodeKeys.issue("nas")
     :ok = Machines.register("box", %{"hostname" => "box.lan", "platform" => "linux"})
     Machines.broadcast()
@@ -34,7 +36,8 @@ defmodule PhotonWeb.OverviewLiveTest do
     assert has_element?(view, "#machine-box", "box.lan · linux")
     assert has_element?(view, "#machine-nas", "offline")
     assert has_element?(view, "#overview-summary", "1 of 2 machines online.")
-    assert has_element?(view, "#work-hint", "Blip")
+    assert has_element?(view, "#work-hint", "Ask Blip")
+    assert has_element?(view, ~s(#work-hint-new-project[href="/projects/new"]), "start a project")
   end
 
   test "lists schedules, which can be cancelled", %{view: view} do

@@ -14,7 +14,9 @@ defmodule PhotonWeb.ThreadLive do
   images from the thread's own route, and `PhotonWeb.ConversationView`
   folding in what the page hears. Under it, the composer, with the steer or
   follow-up toggle, Stop and the queued messages while the thread runs.
-  Stop is `Photon.Threads.stop/1`.
+  Stop is `Photon.Threads.stop/1`. Without a model the composer gives way
+  to the sign-in, and Stop moves to the header, so a running command can
+  still be stopped.
 
   What it hears, and from where:
 
@@ -35,7 +37,7 @@ defmodule PhotonWeb.ThreadLive do
 
   import PhotonWeb.ConversationComponents
 
-  alias Photon.{Projects, Threads, Transcript}
+  alias Photon.{Markdown, Projects, Threads, Transcript}
   alias Photon.Projects.Project
   alias Photon.Threads.Thread
   alias PhotonWeb.ConversationView
@@ -184,13 +186,13 @@ defmodule PhotonWeb.ThreadLive do
               <h1 id="thread-new-heading" class="mt-3 text-xl font-semibold tracking-tight text-ink">
                 New thread in {@project.name}
               </h1>
-              <p
+              <div
                 id="thread-new-purpose"
-                class="mt-2 line-clamp-3 text-[14px] leading-relaxed whitespace-pre-line text-ink-soft"
+                class="markdown-body mt-2 line-clamp-3 text-[14px] text-ink-soft"
                 title={@project.purpose}
               >
-                {@project.purpose}
-              </p>
+                {raw(Markdown.to_html(@project.purpose))}
+              </div>
             </div>
           </div>
 
@@ -255,6 +257,17 @@ defmodule PhotonWeb.ThreadLive do
               </h1>
             </div>
             <.status busy={@busy} />
+            <%!-- Without a model the composer, and its Stop, give way to the sign-in. --%>
+            <.button
+              :if={@busy and !@shell.model_ready}
+              type="button"
+              id="thread-stop"
+              variant="secondary"
+              size="sm"
+              phx-click="stop"
+            >
+              <.icon name="hero-stop-solid" class="size-3.5" /> Stop
+            </.button>
           </div>
         </header>
 
@@ -303,6 +316,7 @@ defmodule PhotonWeb.ThreadLive do
           chatgpt={@shell.chatgpt}
           who="This thread"
           id_prefix="thread-"
+          class="blip-clear-x"
         />
       </div>
     </Layouts.app>

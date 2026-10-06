@@ -437,11 +437,12 @@ defmodule PhotonWeb.ConversationComponents do
   attr :chatgpt, :map, required: true
   attr :who, :string, default: "Blip", doc: "who needs the sign-in, as the sentence's subject"
   attr :id_prefix, :string, default: ""
+  attr :class, :any, default: nil, doc: "added to the outer row"
 
   @spec sign_in_to_talk(map()) :: Phoenix.LiveView.Rendered.t()
   def sign_in_to_talk(assigns) do
     ~H"""
-    <div class="shrink-0 border-t border-line px-4 pt-3 pb-4">
+    <div class={["shrink-0 border-t border-line px-4 pt-3 pb-4", @class]}>
       <div
         id={"#{@id_prefix}sign-in-to-talk"}
         class="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-canvas px-4 py-3"
@@ -472,7 +473,10 @@ defmodule PhotonWeb.ConversationComponents do
   attr :id_prefix, :string, default: ""
   attr :placeholder, :string, default: "Ask Blip anything..."
   attr :class, :any, default: nil, doc: "added to the outer row"
-  attr :autofocus, :boolean, default: false, doc: "whether the message box takes focus on load"
+
+  attr :autofocus, :boolean,
+    default: false,
+    doc: "whether the message box takes focus when it mounts, after a live navigation too"
 
   slot :context,
     doc: "what goes with the next message, shown inside the box above the text (Blip's page chip)"
@@ -515,6 +519,7 @@ defmodule PhotonWeb.ConversationComponents do
             name={@form[:text].name}
             phx-hook=".Composer"
             autofocus={@autofocus}
+            phx-mounted={@autofocus && JS.focus()}
             rows="1"
             placeholder={if(@busy, do: "Add to the conversation...", else: @placeholder)}
             class="block max-h-60 min-h-11 w-full resize-none bg-transparent px-3.5 pt-2.5 pb-1 text-[14.5px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"

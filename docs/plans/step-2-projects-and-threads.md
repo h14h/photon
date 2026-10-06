@@ -546,7 +546,10 @@ only finds entries in that thread's conversation.
 
 - The brand, as today.
 - `Home` (`#nav-home`, links to `/`, today's overview). It replaces
-  `#nav-overview`; step 4 replaces the page behind it.
+  `#nav-overview`; step 4 replaces the page behind it. Its hint under the
+  machines (`#work-hint`) now reads "Ask Blip to run something on any of
+  these, or start a project for longer work.", linking to
+  `/projects/new` (`#work-hint-new-project`).
 - `Projects` heading with a "+" (`#new-project`, to `/projects/new`,
   title "Start a project").
 - Each project (`#side-project-<slug>`, to `/projects/<slug>`), with a "+"
@@ -701,9 +704,11 @@ concerns it), and the edit form.
 
 `PhotonWeb.ThreadLive`, action `:new`, at `/projects/:slug/threads/new`:
 the heading "New thread in Garden" (`#thread-new-heading`), the purpose
-clamped to three lines (`#thread-new-purpose`), and the composer (section
-5.8) with the placeholder "What should this thread work on?", focused on
-load, and under it a line saying the thread works in the project's folder
+rendered as Markdown, as on the project page, and clamped to three lines
+(`#thread-new-purpose`), and the composer (section 5.8) with the
+placeholder "What should this thread work on?", focused on load (through
+`phx-mounted={JS.focus()}`, since a live navigation ignores the HTML
+`autofocus`), and under it a line saying the thread works in the project's folder
 on whichever machine is named. Sending calls `Threads.start(project_id,
 text)` and navigates to the new thread. Without a model it shows the
 sign-in panel (`#thread-sign-in-to-talk`, the shared `sign_in_to_talk/1`
@@ -734,9 +739,13 @@ thread page does the same.
   which withdraws everything queued (a thread has no background input).
   A withdraw is only passed on for a message in the page's own queue,
   since `Threads.withdraw/1` doesn't check whose submission it is.
-- The composer row keeps clear of Blip's face in the corner
-  (`blip-clear-x`), and the page makes room for a pinned Blip panel as
-  every page does.
+- Without a model the sign-in panel replaces the composer (section 5.6),
+  and while the thread runs `Stop` (`#thread-stop`) moves to the header
+  beside `#thread-status`, so a long command can still be stopped.
+- The composer row, and the sign-in panel in its place, keep clear of
+  Blip's face in the corner (`blip-clear-x`; `sign_in_to_talk/1` takes a
+  `class` as `composer/1` does), and the page makes room for a pinned Blip
+  panel as every page does.
 
 It subscribes with `Threads.subscribe/1` and folds `{:durable, ...}` and
 `{:live, ...}` exactly as `BlipLive` does, through the shared helpers in

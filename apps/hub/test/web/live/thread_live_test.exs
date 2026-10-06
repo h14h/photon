@@ -82,6 +82,8 @@ defmodule PhotonWeb.ThreadLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}/threads/new")
       assert view |> element("#thread-new-heading") |> render() =~ "New thread in Garden"
       assert has_element?(view, "#thread-new-purpose", "Keep the garden watered.")
+      # Focused on mount, which a live navigation runs too (autofocus alone doesn't).
+      assert has_element?(view, "#thread-composer-input[autofocus][phx-mounted]")
       assert has_element?(view, ~s(#thread-project[href="/projects/garden"]))
 
       assert has_element?(
@@ -102,6 +104,15 @@ defmodule PhotonWeb.ThreadLiveTest do
       :ok = Threads.subscribe(thread.id)
       await_idle(thread.id)
       assert has_element?(view, "#thread-entries", "This project has no context files yet.")
+    end
+
+    test "shows the purpose as Markdown", %{conn: conn, project: project} do
+      {:ok, _project} =
+        Projects.update(project.id, %{"purpose" => "## Goals\n- keep zone 2 **dry**"})
+
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}/threads/new")
+      assert has_element?(view, "#thread-new-purpose h2", "Goals")
+      assert has_element?(view, "#thread-new-purpose li strong", "dry")
     end
 
     test "a blank message starts nothing", %{conn: conn, project: project} do
@@ -198,6 +209,7 @@ defmodule PhotonWeb.ThreadLiveTest do
       view = thread_page(conn, project, thread)
       assert has_element?(view, "#thread-status[data-state=idle]")
       refute has_element?(view, "#thread-stop")
+      refute has_element?(view, "#thread-composer-input[phx-mounted]")
       _run = busy!(thread.id)
       %{thread: thread, view: view}
     end
@@ -242,6 +254,31 @@ defmodule PhotonWeb.ThreadLiveTest do
       assert id == submission.id
       :ok = Threads.stop(other.id)
     end
+  end
+
+  test "without a model, Stop moves to the header and the sign-in keeps clear of Blip", %{
+    conn: conn,
+    project: project
+  } do
+    thread = idle_thread!(project, "Fix the pump")
+    Photon.ChatGPTStub.reset!()
+    Application.put_env(:photon, :mock_model, false)
+    on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+
+    view = thread_page(conn, project, thread)
+    assert has_element?(view, ".blip-clear-x > #thread-sign-in-to-talk")
+    refute has_element?(view, "#thread-composer")
+    refute has_element?(view, "#thread-stop")
+
+    _run = busy!(thread.id)
+    _ = render(view)
+    assert has_element?(view, "header #thread-stop")
+
+    view |> element("#thread-stop") |> render_click()
+    await_change(thread.id, &Enum.any?(&1.tasks, fn t -> t.status == "aborted" end))
+    _ = render(view)
+    refute has_element?(view, "#thread-stop")
+    assert has_element?(view, "#thread-status[data-state=idle]")
   end
 
   test "Blip's panel and the thread share the page without sharing an ID", %{
