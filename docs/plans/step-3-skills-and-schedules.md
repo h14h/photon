@@ -462,7 +462,8 @@ calls in a conversation always name a tool the profile has):
     file.
   - not found or not on: `{:error, "There's no skill called pdf-form
     turned on here. Turned on here: pdf-forms, release-notes."}`, or
-    "No skills are turned on here." with none.
+    "No skills are turned on here." with none (the whole message:
+    with nothing on, there is no list to name).
 
 **Older results.** `Photon.Durable.Context` shortens text over 4,000
 code points in tool results from earlier runs, which includes a long
@@ -847,8 +848,8 @@ Both scripted models learn the same skill phrasings, from
 `Photon.Skills.MockPhrases` (pure, exported by `Photon.Skills`, used the
 way `Photon.MachineTools.MockPhrases` is):
 
-- `skills`: answers from the request's `system` text, without a tool
-  call: "Skills turned on here: pdf-forms (version 2), release-notes
+- `skills` (or `list skills`, as `list machines`): answers from the
+  request's `system` text, without a tool call: "Skills turned on here: pdf-forms (version 2), release-notes
   (version 1)." or "No skills are turned on here." It reads the
   `<skill><name>...</name><version>...</version>` lines, so LiveView and
   end-to-end tests can see what the prompt listed.
@@ -1148,8 +1149,10 @@ words for each state, above), and `target(schedule, thread_title)`. Times are re
 
 `PhotonWeb.ConversationComponents` gets a label and icon for
 `load_skill`: "Loading the pdf-forms skill" while it runs, "Loaded the
-pdf-forms skill" after, "Couldn't load pdf-form" on an error, icon
-`hero-book-open`. Clicking the line shows the result as other tool lines
+pdf-forms skill" after, "Couldn't load pdf-form" on an error ("Stopped
+loading the pdf-forms skill" for a stopped call), icon
+`hero-book-open-micro`. The name is the stored one from the result's
+details, or the argument as typed when there is none. Clicking the line shows the result as other tool lines
 do. Nothing else changes for skills or schedules.
 
 ### 6.10 Settings
@@ -1250,6 +1253,11 @@ Every `handle_event`, `handle_info`, `handle_params` and
 - `ProcessNameOwnership` `api_modules`: add `"Photon.Schedules"` and
   `"Photon.Skills"`. No new `names`.
 - No `PreferCall`, `NoSleep` or `DiscardNeedsReason` entries.
+- `Photon.Threads` goes over `ModuleDependencies`' 20 with
+  `Photon.Skills` (21: it is both the context's API and the `"thread"`
+  profile, as `Photon.Assistant` is for Blip). K4 disables that check on
+  the module, with the reason above it, rather than split the profile
+  out.
 
 `apps/core` and `apps/node`: unchanged.
 

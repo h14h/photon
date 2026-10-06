@@ -3,6 +3,7 @@ defmodule Photon.Threads.MockScriptTest do
 
   use Photon.Case, async: true
 
+  alias Photon.Skills.Prompt, as: SkillsPrompt
   alias Photon.Threads.MockScript
 
   defp ask(text), do: MockScript.respond(%{messages: [Message.user(text)]})
@@ -80,5 +81,30 @@ defmodule Photon.Threads.MockScriptTest do
     assert help =~ "Sign in with ChatGPT"
     assert calls(ask("tidy the shed")) == []
     assert Message.text_of(MockScript.respond(%{messages: []})) =~ "scripted model"
+  end
+
+  describe "skills" do
+    @system "You are an agent.\n\n" <>
+              SkillsPrompt.section([
+                %{name: "pdf-forms", version: 2, description: "Fill in PDF forms."}
+              ])
+
+    test "skills says what the prompt lists, and load skill loads one" do
+      listed = MockScript.respond(%{system: @system, messages: [Message.user("skills")]})
+      assert calls(listed) == []
+      assert Message.text_of(listed) == "Skills turned on here: pdf-forms (version 2)."
+
+      assert Message.text_of(ask("skills")) == "No skills are turned on here."
+      assert calls(ask("load skill pdf-forms")) == [{"load_skill", %{"name" => "pdf-forms"}}]
+    end
+
+    test "relays a loaded skill, and its help lists the phrasings" do
+      loaded = ~s(<skill name="pdf-forms" version="2">\nFill it.\n</skill>)
+      assert relay(loaded) == "```\n" <> loaded <> "\n```"
+
+      help = Message.text_of(ask("tidy the shed"))
+      assert help =~ "`skills`"
+      assert help =~ "`load skill <name>`"
+    end
   end
 end

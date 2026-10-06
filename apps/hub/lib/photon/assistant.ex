@@ -5,7 +5,9 @@ defmodule Photon.Assistant do
 
   It runs commands and looks at images on the user's machines itself, with
   the machine tools (`Photon.MachineTools`: `shell`, `view_image`,
-  `list_machines`), and keeps a memory and a list of schedules.
+  `list_machines`), and keeps a memory and a list of schedules. Its prompt
+  lists the skills turned on for Blip (`Photon.Skills`), and `load_skill`
+  loads one.
 
   This module is the assistant's API, which the web pages use, and its
   `Photon.Durable.Profile`. Behind it, by layer:
@@ -35,6 +37,7 @@ defmodule Photon.Assistant do
       Photon.MachineTools,
       Photon.Projects,
       Photon.Settings,
+      Photon.Skills,
       Photon.Threads,
       Photon.Transcript,
       PhotonCore,
@@ -45,7 +48,7 @@ defmodule Photon.Assistant do
   @behaviour Photon.Durable.Profile
 
   alias Photon.Assistant.{Memory, Page, Prompt, Tools}
-  alias Photon.{Durable, MachineTools, Projects, Settings, Threads, Transcript}
+  alias Photon.{Durable, MachineTools, Projects, Settings, Skills, Threads, Transcript}
   alias Photon.Durable.{Entry, Submission, TaskRecord}
   alias Photon.Projects.Project
   alias PhotonCore.Message
@@ -54,7 +57,8 @@ defmodule Photon.Assistant do
     Tools.UpdateMemory,
     Tools.Schedule,
     Tools.ListSchedules,
-    Tools.CancelSchedule
+    Tools.CancelSchedule,
+    Tools.LoadSkill
   ]
 
   @doc "The assistant's conversation, created on first use."
@@ -308,6 +312,6 @@ defmodule Photon.Assistant do
   def system_prompt(_conversation) do
     settings = Settings.load()
     now = DateTime.utc_now()
-    Prompt.system_prompt(settings, memory(), now)
+    Prompt.system_prompt(settings, memory(), now, Skills.enabled(:blip))
   end
 end

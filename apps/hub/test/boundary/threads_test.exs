@@ -223,7 +223,7 @@ defmodule Photon.ThreadsTest do
   end
 
   describe "the thread profile" do
-    test "has the machine tools and the four context-file tools, nothing else", %{
+    test "has the machine tools, the four context-file tools and load_skill, nothing else", %{
       project: project
     } do
       thread = start!(project, "hello")
@@ -231,7 +231,7 @@ defmodule Photon.ThreadsTest do
 
       assert conversation |> Threads.tools() |> Enum.map(& &1.name()) |> Enum.sort() ==
                Enum.sort(~w(shell view_image list_machines list_context_files read_context_file
-                   write_context_file edit_context_file))
+                   write_context_file edit_context_file load_skill))
     end
 
     test "works in the project's folder, and searches the web with the model in Settings", %{

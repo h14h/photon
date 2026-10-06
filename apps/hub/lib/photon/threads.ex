@@ -1,3 +1,8 @@
+# This module is two things on purpose, as `Photon.Assistant` is for Blip:
+# the threads context's API and the `"thread"` profile. The profile alone
+# reaches the model, Settings, the machine tools, skills and the prompt,
+# and splitting it out would only move the same calls behind a facade.
+# credo:disable-for-next-line Credo.Check.Refactor.ModuleDependencies
 defmodule Photon.Threads do
   @moduledoc """
   Threads: durable agent conversations inside a project (sections 2.4 and
@@ -14,8 +19,9 @@ defmodule Photon.Threads do
   `view_image`, `list_machines`) in its project's folder on whichever
   machine a call names (`workdir/1` is the project's slug), and reads and
   writes the project's context files with four tools of its own
-  (`Photon.Threads.Tools`). It can search the web, and uses the model and
-  reasoning level in Settings.
+  (`Photon.Threads.Tools`). Its prompt lists the skills turned on for its
+  project (`Photon.Skills`), and `load_skill` loads one. It can search the
+  web, and uses the model and reasoning level in Settings.
 
   This module is the threads context's API, which the web pages use, and
   the `"thread"` profile's module, as `Photon.Assistant` is both for Blip.
@@ -25,9 +31,10 @@ defmodule Photon.Threads do
     * functional core (pure): `Photon.Threads.Rules` (titles, and how the
       tools describe files), `Photon.Threads.Prompt` (the system prompt),
       `Photon.Threads.MockScript` (the scripted model)
-    * boundary: the context-file tools in `Photon.Threads.Tools`, which
-      write through `Photon.Projects` inside the commit that records their
-      result
+    * boundary: the tools in `Photon.Threads.Tools`: the context-file
+      tools, which write through `Photon.Projects` inside the commit that
+      records their result, and `load_skill`, which reads through
+      `Photon.Skills` the same way
 
   Starting a thread makes the row, the conversation and the first message
   in one commit, so there is never a thread without its first message or a
@@ -56,6 +63,7 @@ defmodule Photon.Threads do
       Photon.Projects,
       Photon.Repo,
       Photon.Settings,
+      Photon.Skills,
       Photon.Transcript,
       PhotonCore,
       PhotonCore.LLM,
@@ -67,7 +75,7 @@ defmodule Photon.Threads do
 
   import Ecto.Query
 
-  alias Photon.{Durable, MachineTools, Projects, Repo, Settings, Transcript}
+  alias Photon.{Durable, MachineTools, Projects, Repo, Settings, Skills, Transcript}
   alias Photon.Durable.{Entry, Submission, Tx}
   alias Photon.Projects.Project
   alias Photon.Threads.{Prompt, Rules, Thread, Titling, Tools}
@@ -82,7 +90,8 @@ defmodule Photon.Threads do
     Tools.ListContextFiles,
     Tools.ReadContextFile,
     Tools.WriteContextFile,
-    Tools.EditContextFile
+    Tools.EditContextFile,
+    Tools.LoadSkill
   ]
 
   @typedoc "A project as the sidebar shows it, with its most recently active threads."
@@ -426,8 +435,10 @@ defmodule Photon.Threads do
   def tools(_conversation), do: MachineTools.tools() ++ @tools
 
   @impl true
-  def system_prompt(conversation),
-    do: conversation.id |> project!() |> Prompt.system_prompt(DateTime.utc_now())
+  def system_prompt(conversation) do
+    project = project!(conversation.id)
+    Prompt.system_prompt(project, DateTime.utc_now(), Skills.enabled({:project, project.id}))
+  end
 
   @impl true
   def workdir(conversation), do: project!(conversation.id).slug

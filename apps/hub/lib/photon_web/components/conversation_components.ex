@@ -284,8 +284,8 @@ defmodule PhotonWeb.ConversationComponents do
 
   @doc """
   What a call did, in a line. A machine call names its command or path,
-  and the machine; a context-file call names the file. Both are in the
-  present while they run.
+  and the machine; a context-file call names the file, and `load_skill`
+  the skill. They are in the present while they run.
   """
   attr :name, :string, required: true
   attr :args, :map, required: true
@@ -324,6 +324,21 @@ defmodule PhotonWeb.ConversationComponents do
     """
   end
 
+  def action_label(%{name: "load_skill"} = assigns) do
+    {verb, rest} = skill_words(assigns.status)
+
+    assigns =
+      assign(assigns,
+        verb: verb,
+        rest: rest,
+        skill: truncate(assigns.details["skill"] || String.trim(assigns.args["name"] || ""))
+      )
+
+    ~H"""
+    <span phx-no-format>{@verb} <span class="font-medium text-ink">{@skill}</span>{@rest}</span>
+    """
+  end
+
   def action_label(assigns) do
     assigns = assign(assigns, :text, label_text(assigns.name, assigns.args))
 
@@ -341,6 +356,13 @@ defmodule PhotonWeb.ConversationComponents do
   defp label_text("list_schedules", _), do: "Checked the schedule"
   defp label_text("cancel_schedule", args), do: "Cancelled #{args["schedule_id"]}"
   defp label_text(name, _), do: name
+
+  # The words around a skill's name: "Loading the pdf-forms skill",
+  # "Couldn't load pdf-form".
+  defp skill_words(:pending), do: {"Loading the", " skill"}
+  defp skill_words(:error), do: {"Couldn't load", ""}
+  defp skill_words(:stopped), do: {"Stopped loading the", " skill"}
+  defp skill_words(_done), do: {"Loaded the", " skill"}
 
   # Listing names no file; the others name the one they touched.
   defp file_verb("list_context_files", :pending), do: "Checking the context files"
@@ -360,6 +382,7 @@ defmodule PhotonWeb.ConversationComponents do
   defp action_icon("read_context_file"), do: "hero-document-text-micro"
   defp action_icon("write_context_file"), do: "hero-document-plus-micro"
   defp action_icon("edit_context_file"), do: "hero-pencil-square-micro"
+  defp action_icon("load_skill"), do: "hero-book-open-micro"
 
   defp action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
     do: "hero-clock-micro"

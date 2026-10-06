@@ -1,13 +1,14 @@
 defmodule Photon.Assistant.Prompt do
   @moduledoc """
   The assistant's system prompt, as a pure function of the
-  hub settings, the memory text and the time. `Photon.Assistant` reads those
-  and calls these.
+  hub settings, the memory text, the time and the skills turned on for
+  Blip. `Photon.Assistant` reads those and calls these.
 
   The prompt opens with Blip's voice (who it is and how it talks), then how
   the hub works (including the note of the page the user has open that a
-  message may start with, `Photon.Assistant.Page`), the memory, and the
-  time. The lines about how a `shell`
+  message may start with, `Photon.Assistant.Page`), Blip's skills
+  (`Photon.Skills.Prompt.section/1`, left out when none are on), the
+  memory, and the time. The lines about how a `shell`
   call behaves are `Photon.MachineTools.Guide.shell/1`'s, shared with a
   thread's prompt.
 
@@ -16,14 +17,18 @@ defmodule Photon.Assistant.Prompt do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [Photon.Assistant.Memory, Photon.MachineTools]
+  use Boundary, type: :strict, deps: [Photon.Assistant.Memory, Photon.MachineTools, Photon.Skills]
 
   alias Photon.Assistant.Memory
   alias Photon.MachineTools.Guide
+  alias Photon.Skills.Prompt, as: SkillsPrompt
 
-  @doc "The system prompt for `settings`, `memory` and the time `now`."
-  @spec system_prompt(map(), String.t(), DateTime.t()) :: String.t()
-  def system_prompt(settings, memory, now) do
+  @doc """
+  The system prompt for `settings`, `memory`, the time `now` and `skills`,
+  the skills turned on for Blip, by name.
+  """
+  @spec system_prompt(map(), String.t(), DateTime.t(), [SkillsPrompt.listed()]) :: String.t()
+  def system_prompt(settings, memory, now, skills) do
     """
     #{voice(owner(settings))}
 
@@ -39,7 +44,7 @@ defmodule Photon.Assistant.Prompt do
     - Never invent results. If a machine is offline or a command failed, say so plainly.
     - The user talks to you from a panel that floats over the hub's pages. A message may start with a note of the page they have open, beginning "[Looking at"; "this" and "here" mean that page. You can't read or change projects, context files or threads with tools yet, but you can look in a project's folder on any machine with shell.
 
-    ## Memory
+    #{skills_section(skills)}## Memory
 
     #{Memory.shown(memory)}
 
@@ -48,6 +53,14 @@ defmodule Photon.Assistant.Prompt do
     It's about #{Calendar.strftime(now, "%H:00 UTC on %A, %B %-d, %Y")}.#{name(settings)}#{timezone(settings)}#{instructions(settings)}
     """
     |> String.trim()
+  end
+
+  # The Skills section and the blank line after it, or nothing.
+  defp skills_section(skills) do
+    case SkillsPrompt.section(skills) do
+      nil -> ""
+      section -> section <> "\n\n"
+    end
   end
 
   # Whose hub this is, as the voice says it: "Henry's", or "the user's".

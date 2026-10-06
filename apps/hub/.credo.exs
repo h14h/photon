@@ -86,6 +86,8 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Skills.Rules",
                    "Photon.Skills.SkillMd",
                    "Photon.Skills.Source",
+                   "Photon.Skills.Prompt",
+                   "Photon.Skills.MockPhrases",
                    "Photon.Provision.Jobs",
                    "Photon.Provision.Script",
                    "Photon.Provision.Lines",

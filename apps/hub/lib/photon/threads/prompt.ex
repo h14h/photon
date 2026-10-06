@@ -1,26 +1,32 @@
 defmodule Photon.Threads.Prompt do
   @moduledoc """
-  A thread's system prompt, as a pure function of its project and the
-  time (section 3.2 of `docs/plans/step-2-projects-and-threads.md`).
-  `Photon.Threads` reads the project and calls this.
+  A thread's system prompt, as a pure function of its project, the time
+  and the skills turned on for the project (section 3.2 of
+  `docs/plans/step-2-projects-and-threads.md`, and section 2.6 of
+  `docs/plans/step-3-skills-and-schedules.md`). `Photon.Threads` reads the
+  project and its skills and calls this.
 
   It says who the thread is, the project's name and purpose, how it works
-  (the machine tools in the project's folder, the context files, the web)
-  and the time to the hour. It changes only when the project's name or
-  purpose changes, or on the hour, so provider prompt caches stay warm;
-  that's also why it doesn't list the context files, which the model
-  lists with a tool.
+  (the machine tools in the project's folder, the context files, the web),
+  the project's skills (`Photon.Skills.Prompt.section/1`, left out when
+  none are on) and the time to the hour. It changes only when the
+  project's name or purpose changes, a skill is turned on or off or
+  changed, or on the hour, so provider prompt caches stay warm; that's
+  also why it doesn't list the context files, which the model lists with
+  a tool.
 
   Nothing about the user goes in: not Blip's voice, not the user's name,
-  time zone or instructions from Settings, and not Blip's memory. The
+  time zone or instructions from Settings, and not Blip's memory. A skill
+  is the user's text, but the user turned it on for this project. The
   lines about how a `shell` call behaves are
   `Photon.MachineTools.Guide.shell/1`'s, shared with Blip's prompt.
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [Photon.MachineTools]
+  use Boundary, type: :strict, deps: [Photon.MachineTools, Photon.Skills]
 
   alias Photon.MachineTools.Guide
+  alias Photon.Skills.Prompt, as: SkillsPrompt
 
   @typedoc "What the prompt needs of a project: a `Photon.Projects.Project` will do."
   @type project :: %{
@@ -30,9 +36,12 @@ defmodule Photon.Threads.Prompt do
           optional(atom()) => term()
         }
 
-  @doc "The system prompt for a thread in `project` at the time `now`."
-  @spec system_prompt(project(), DateTime.t()) :: String.t()
-  def system_prompt(project, now) do
+  @doc """
+  The system prompt for a thread in `project` at the time `now`, with
+  `skills` the skills turned on for the project, by name.
+  """
+  @spec system_prompt(project(), DateTime.t(), [SkillsPrompt.listed()]) :: String.t()
+  def system_prompt(project, now, skills) do
     """
     You are an agent working on one project in Photon, a hub that runs work on a set of machines. You work in this thread. Other threads in the project may be working on it at the same time.
 
@@ -54,10 +63,18 @@ defmodule Photon.Threads.Prompt do
     - Never invent results. If a machine is offline or a command failed, say so plainly.
     - Use Markdown when it helps. Say the result first, then the detail.
 
-    ## Now
+    #{skills_section(skills)}## Now
 
     It's about #{Calendar.strftime(now, "%H:00 UTC on %A, %B %-d, %Y")}.
     """
     |> String.trim()
+  end
+
+  # The Skills section and the blank line after it, or nothing.
+  defp skills_section(skills) do
+    case SkillsPrompt.section(skills) do
+      nil -> ""
+      section -> section <> "\n\n"
+    end
   end
 end

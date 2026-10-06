@@ -23,6 +23,15 @@ defmodule Photon.Skills do
   once it is stored: when a skill is created, installed, saved or deleted,
   or turned on or off anywhere.
 
+  Agents see the skills on for their scope through
+  `Photon.Skills.Prompt` (the prompt's Skills section, which both profiles
+  build from `enabled/1` on every model request), and load one with
+  `load_skill`: Blip's and a thread's tools call `load_tx/3` inside the
+  commit that records the call's result, so a load and a toggle are
+  ordered by the Store and a load never returns a skill that was already
+  off. `Photon.Skills.MockPhrases` are the skill phrasings both scripted
+  models share.
+
   Installing starts from a candidate: `read/1` makes one from a pasted
   SKILL.md, and `fetch/1` downloads them from a link (through
   `Photon.Skills.Fetch`, with `Photon.Skills.Source` deciding what a link
@@ -41,17 +50,18 @@ defmodule Photon.Skills do
       Photon.Projects,
       Photon.Repo,
       PhotonCore,
+      PhotonCore.LLM,
       Ecto,
       Jason,
       Req
     ],
-    exports: [Skill]
+    exports: [Skill, Prompt, MockPhrases]
 
   import Ecto.Query
 
   alias Photon.{Durable, Events, Projects, Repo}
   alias Photon.Durable.Tx
-  alias Photon.Skills.{Enablement, Fetch, Rules, Skill, Source}
+  alias Photon.Skills.{Enablement, Fetch, Prompt, Rules, Skill, Source}
 
   @topic "skills"
   @blip "blip"
@@ -135,6 +145,33 @@ defmodule Photon.Skills do
     |> Repo.all()
     |> Enum.map(&scope/1)
     |> blip_first()
+  end
+
+  @doc """
+  For the `load_skill` tools, inside the commit that records the call's
+  result: the skill called `name` (trimmed and downcased) if it is on in
+  `scope`, as the tool's result (`Photon.Skills.Prompt.loaded/1`, with the
+  skill's name and version and how to load it again in the details), or
+  an error that names the skills that are on.
+  """
+  @spec load_tx(Tx.t(), scope(), String.t()) ::
+          {:ok, String.t(), %{String.t() => term()}} | {:error, String.t()}
+  def load_tx(_tx, scope, name) do
+    name = name |> String.trim() |> String.downcase()
+    skills = enabled(scope)
+
+    case Enum.find(skills, &(&1.name == name)) do
+      %Skill{} = skill ->
+        {:ok, Prompt.loaded(skill),
+         %{
+           "skill" => skill.name,
+           "version" => skill.version,
+           "full_output" => Prompt.full_output_hint(skill.name)
+         }}
+
+      nil ->
+        {:error, Prompt.not_loaded(name, Enum.map(skills, & &1.name))}
+    end
   end
 
   defp scopes_order(query), do: order_by(query, [e], asc: e.inserted_at, asc: e.scope)
