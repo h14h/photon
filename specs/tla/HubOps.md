@@ -17,8 +17,8 @@ failure. Four more bug configs put back defects the
 plan already ruled out (an early ack, a spawn before the journal, a start
 after a cancel, no `known` flag), to show the properties catch them.
 
-So, unlike `NodeSync` and `Durable`, the bug configs here are expected to
-fail. Every other config is expected to pass.
+So, unlike `Durable`'s configs, the bug configs here are expected to
+fail, as `Executor.tla`'s are. Every other config is expected to pass.
 
 ## What is modeled
 
@@ -126,7 +126,10 @@ shell's `process` checkpoint but before it answers, the shell gets
 recorded". The command never ran, so at most once holds, but the call
 gets a `failed` result that `ResultFromOwnOp` allows only after a node
 restart. Op-process crashes are left out too (a
-`failed` snapshot, `Executor.Rules.down/3`, the Coordinator spec's F9).
+`failed` snapshot, `Executor.Rules.down/3`). `Executor.tla` models both
+kinds of crash, with the executor's handlers, journal and operation
+processes opened up, and checks that neither breaks at most once or the
+call's result; that case is one of its reachability checks.
 A step that raises is not a crash: `ToolTask` rescues it and records an
 error result. That, and every error result `Call` returns, is
 `StepError`. A step process that exits for another reason ends in
@@ -250,6 +253,14 @@ ran two at a time.
 | `HubOps-bug-spawn-before-journal.cfg` | node rule 4 broken; 1 node restart | `AtMostOnceSpawn` | fails, 12-state trace | 643 | 1s |
 | `HubOps-bug-start-after-cancel.cfg` | hub rule 7 broken; 1 disconnect, 1 Stop | `NoStartAfterCancel` | fails, 9-state trace | 248 | 1s |
 | `HubOps-bug-no-known.cfg` | node rule 3 broken; 1 data loss | `KnownNotRerun` | fails, 17-state trace | 2,168 | 1s |
+
+Rerun in PR B (task B7, 2026-10-06), unchanged spec, 11 workers (3 for
+the bug configs) on the same machine with the CPUs mostly idle: every
+config ended as above, and each clean one with the same distinct-state
+count. The clean ones took 1m35s (`HubOps.cfg`), 2m07s (`-live`), 1m49s (`-live-node`),
+3m51s (`-cancel`), 1m38s (`-wipe`), 9m08s (`-errors`) and 8m30s (`-two`);
+each bug config failed on its property within 6 seconds, with a trace of
+the length given above.
 
 "All safety" includes `OfflineNotRun`. Every config but `HubOps-errors.cfg`
 sets `MaxErrors` and `MaxRepush` to 0 (and the H8 bug config sets
@@ -443,8 +454,8 @@ that a property catches each one:
 `view_image`, `op.output` and live output; argument checks, unknown and
 outdated machines; the machine check on snapshots (a node can only report
 op IDs it was sent); executor-only crashes and op-process crashes (see
-above and the Coordinator spec, which keeps the op-process detail: the pid
-file, background children, F3, F8, F9, F11, K1); power loss (the journal
+above and `Executor.tla`, which keeps the op-process detail: the pid
+file, background children, the `stopped` marker, F3, F8, F9, F11, K1); power loss (the journal
 writes are fsynced before they are acted on); journal write failures
 (node rule 8: they answer `failed` or forward without journaling, and run
 nothing; a `canceled` entry for an `op.cancel` with no journal that can't

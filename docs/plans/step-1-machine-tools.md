@@ -882,6 +882,24 @@ Specs (`specs/tla/`):
   F* tables mark NodeSync and session findings as retired with the code they
   covered; keep the rows for findings still covered (F3, F8, F9, F11, K1 and
   the durable core).
+- As built (B7): `Executor.tla` models the executor's handlers as ordered
+  effects, so it crashes after any prefix of them (executor crashes, which
+  `HubOps.tla` leaves out), with operation-process crashes, node crashes
+  and stops, dropped connections and a stand-in hub. `OpSpawn` and
+  `OpCancelAck` became the answers in `OpCkDone`. Its bug configs put each
+  bug back with a `Bugs` switch and fail, as `HubOps`'s do, rather than
+  pass as `Coordinator`'s regression configs did; the clean configs check
+  the same properties with the fixes in. It adds `-bug-stopped-marker`
+  (node rule 10), and `-known-cancel-completed` and
+  `-known-orphan-reattached`, which fail on two gaps it found in the code
+  (E1, K2 in `Executor.md`; not fixed). `-witness` went: its witnesses
+  were session paths, and the new spec's reachability checks ran once
+  with temporary invariants. `Durable` also got `NoOpenRowAfterDone`,
+  `RowsClose` and `BackgroundNotWithdrawn`, the constants
+  `MachineOffline` and `MaxRechecks`, a raise in a machine call's code as
+  a step fault, and `Durable-offline.cfg`; `-stop-stranded` and
+  `-withdraw` keep their faults with a routine's prompt in place of a
+  node report.
 
 Docs: `docs/architecture.md` (module map), `AGENTS.md` (the layout lines for
 `apps/core` and `apps/node`), and a note at the top of
@@ -1547,6 +1565,10 @@ B7. Specs. After B1 and B5 (they describe the deleted code).
 - Section 5.2 "Specs": delete NodeSync, `Coordinator` to `Executor`,
   re-model `Durable`, rewrite `docs/verification.md`. Run TLC on every
   remaining config.
+- As built: section 5.2's last bullet says what the specs became. Also
+  updated: `HubOps.md`'s pointers to the deleted specs, and in
+  `docs/verification.md` the core rows for `ChatCompletions`, which an
+  earlier change had already removed, are marked retired.
 
 B8. Docs and final checks. After all of the above.
 - `docs/architecture.md`, `AGENTS.md` layout lines,
