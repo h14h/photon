@@ -422,7 +422,7 @@ ChanCmd ==
                    step, skn, orph, okn, pend, ron, chan, hpend, n2h, nodeV,
                    execs, nodeCx, cxEver, runCx, everJ, exitOk, wipeConf, preWipe, budget>>
 
-\* handle_in("op.snapshot") -> Machines.snapshot/2: one Store commit
+\* handle_in("op.snapshot") -> Machines.snapshot/3: one Store commit
 \* applying Machines.Rules.on_snapshot (rules 3-6), then the pushes.
 HubRecv ==
     /\ chan = "up" /\ n2h # <<>> /\ ~Busy /\ hpend = <<>>

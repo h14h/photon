@@ -102,7 +102,7 @@ defmodule Photon.AssistantTest do
 
   describe "node work" do
     test "work on an offline node is refused", %{conversation: c} do
-      {:ok, s} = Assistant.send("on ghost: $ uptime")
+      {:ok, s} = Assistant.send("on ghost: check the uptime")
       await_settled(c, s.id)
       assert [result] = texts(c, "tool_result")
       assert result =~ "offline or unknown"
@@ -110,7 +110,7 @@ defmodule Photon.AssistantTest do
 
     test "hands work to a node and returns a quick answer", %{conversation: c} do
       fake_node("box")
-      {:ok, s} = Assistant.send("on box: $ uptime")
+      {:ok, s} = Assistant.send("on box: check the uptime")
 
       assert_receive {:command, "input",
                       %{"session_id" => session_id, "input" => %{"id" => input_id}}},

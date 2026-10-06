@@ -7,12 +7,17 @@ defmodule Photon.Assistant.Transcript do
     * which entries are shown (`shown?/1`); tool results aren't shown on
       their own but inside the assistant entry whose call they answer, so
       the page keeps an index of results by call ID and of calls by ID
-      (`index/1`, `add_result/2`, `add_calls/2`)
+      (`index/1`, `add_result/2`, `add_calls/2`). The index leaves image
+      data out: the page loads each image by its result's entry ID
+      (`image/2`), so the page's state and its renders stay small
     * node work a call left running, settled by the report that comes in
       later (`settle/3`)
     * the in-flight answer (`live/2`): text, reasoning, web searches and
       tool calls being prepared, or a retry notice, until the response is
       committed
+    * the output of calls still running (`tool_output/2`): the last 8,000
+      characters of each, kept apart from the in-flight answer, since a
+      call runs after the answer that made it is committed
     * the web searches an answer ran (`searches/1`), and how each reads
       (`search_label/1`)
     * a tool call's status as the page shows it (`action_status/2`)
@@ -47,6 +52,9 @@ defmodule Photon.Assistant.Transcript do
           retry: String.t() | nil
         }
 
+  @typedoc "The tail of each running call's live output, by call ID."
+  @type outputs :: %{String.t() => String.t()}
+
   @typedoc "A web search the model ran: its ID, and what it did (nil while it runs)."
   @type search :: %{id: String.t(), action: map() | nil}
 
@@ -62,6 +70,13 @@ defmodule Photon.Assistant.Transcript do
         }
 
   @shown ~w(user assistant error reset)
+
+  @image_types ~w(image/png image/jpeg image/gif image/webp)
+
+  # How much of a running call's output the page keeps (section 3.4 of
+  # docs/plans/step-1-machine-tools.md). The node sends at most 64 KB per
+  # stream a second; the page shows the latest of it.
+  @tail 8_000
 
   @doc "Whether an entry is shown in the conversation on its own."
   @spec shown?(Entry.t()) :: boolean()
@@ -92,12 +107,51 @@ defmodule Photon.Assistant.Transcript do
     end)
   end
 
-  @doc "Adds a tool result entry to the results by call ID; other entries change nothing."
+  @doc """
+  Adds a tool result entry to the results by call ID; other entries change
+  nothing. The result keeps its entry's ID as `"entry_id"` and loses its
+  images' data (`image/2` gives an image back from the entry).
+  """
   @spec add_result(map(), Entry.t()) :: map()
   def add_result(results, %{kind: "tool_result"} = entry),
-    do: Map.put(results, call_id(entry), entry.data)
+    do: Map.put(results, call_id(entry), shown_result(entry))
 
   def add_result(results, _entry), do: results
+
+  defp shown_result(%{id: id, data: data}) do
+    data =
+      case data["message"] do
+        %{"content" => parts} when is_list(parts) ->
+          put_in(data, ["message", "content"], Enum.map(parts, &without_data/1))
+
+        _other ->
+          data
+      end
+
+    Map.put(data, "entry_id", id)
+  end
+
+  defp without_data(%{"type" => "image"} = part), do: Map.delete(part, "data")
+  defp without_data(part), do: part
+
+  @doc """
+  The image at `index` among a tool result entry's images, decoded:
+  `{:ok, mime, bytes}`. `:error` when there is no such image, its data
+  isn't base64, or it isn't a PNG, JPEG, GIF or WebP image, the types
+  `view_image` returns, so nothing else is served as one.
+  """
+  @spec image(Entry.t(), non_neg_integer()) :: {:ok, String.t(), binary()} | :error
+  def image(%{kind: "tool_result", data: %{"message" => message}}, index) do
+    with %{"mime" => mime, "data" => data} when mime in @image_types and is_binary(data) <-
+           Enum.at(Message.images(message), index),
+         {:ok, bytes} <- Base.decode64(data) do
+      {:ok, mime, bytes}
+    else
+      _missing_or_bad -> :error
+    end
+  end
+
+  def image(_entry, _index), do: :error
 
   @doc "Adds an assistant entry's calls to the calls by ID; other entries change nothing."
   @spec add_calls(map(), Entry.t()) :: map()
@@ -191,6 +245,28 @@ defmodule Photon.Assistant.Transcript do
   def live(live, _event), do: live
 
   @doc """
+  Folds a `"tool_output"` live event into the running calls' output: each
+  call keeps the last 8,000 characters of what it printed, both streams in
+  the order they came. Other events change nothing.
+  """
+  @spec tool_output(outputs(), map()) :: outputs()
+  def tool_output(outputs, %{"type" => "tool_output", "call_id" => call_id, "text" => text})
+      when is_binary(call_id) and is_binary(text),
+      do: Map.update(outputs, call_id, tail(text), &tail(&1 <> text))
+
+  def tool_output(outputs, _event), do: outputs
+
+  # At most @tail characters fit in @tail bytes, so most texts skip the count.
+  defp tail(text) when byte_size(text) <= @tail, do: text
+
+  defp tail(text) do
+    case String.length(text) - @tail do
+      over when over > 0 -> String.slice(text, over..-1//1)
+      _short -> text
+    end
+  end
+
+  @doc """
   The web searches a committed assistant message ran, in order: they're
   kept with its reasoning items, so they can be handed back to the model.
   """
@@ -234,7 +310,8 @@ defmodule Photon.Assistant.Transcript do
   A tool call's status on the page, from its result entry's data (nil while
   it runs), the result's details, and how a later report settled its node
   work, if one did (`settle/3`): node work still running shows as running
-  until a report settles it, failed node work as an error.
+  until a report settles it, failed node work as an error. A machine
+  operation that failed is an error, and one that was canceled is stopped.
   """
   @spec action_status(map() | nil, map(), :done | :error | nil) ::
           :pending | :running | :done | :error | :stopped
@@ -249,6 +326,7 @@ defmodule Photon.Assistant.Transcript do
   defp status(nil, _details), do: :pending
   defp status(%{"status" => "ok"}, %{"status" => "running"}), do: :running
   defp status(%{"status" => "ok"}, %{"status" => "failed"}), do: :error
+  defp status(%{"status" => "ok"}, %{"status" => "canceled"}), do: :stopped
   defp status(%{"status" => "ok"}, _details), do: :done
   defp status(%{"status" => "aborted"}, _details), do: :stopped
   defp status(_result, _details), do: :error

@@ -17,6 +17,7 @@ defmodule Photon.Case do
     * `test/web` - the outer boundary: the node channel, LiveViews,
       controllers and plugs (`PhotonWeb.ConnCase`)
     * `test/property` - StreamData properties of both
+    * `test/integration` - the hub with a real node over a websocket
   """
 
   # Test support sits outside the layering (compiled only for tests).

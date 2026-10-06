@@ -1,5 +1,5 @@
-defmodule PhotonNode.Harness.OutputTest do
-  use PhotonNode.Case, async: true
+defmodule PhotonCore.OutputTest do
+  use PhotonCore.Case, async: true
 
   test "keeps head and tail around a byte count and path" do
     assert {"h...2 bytes truncated; complete output in /x/out...lo", true} =

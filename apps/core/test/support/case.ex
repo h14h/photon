@@ -18,7 +18,7 @@ defmodule PhotonCore.Case do
 
   using do
     quote do
-      alias PhotonCore.{ID, LLM, Message}
+      alias PhotonCore.{ID, LLM, Message, Operation, Output}
       alias PhotonCore.LLM.{Error, HTTPError, Mock, MockAgent, Relay, Responses, Retry, SSE}
       alias PhotonCore.LLM.Relay.Wire
       alias PhotonCore.LLM.Responses.{Request, Response}

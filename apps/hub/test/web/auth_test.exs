@@ -36,6 +36,13 @@ defmodule PhotonWeb.AuthTest do
       assert {:ok, _view, _html} = live(recycle(signed_in), ~p"/")
     end
 
+    test "guards Blip's images like the pages", %{conn: conn} do
+      assert get(conn, ~p"/blip/images/e_none/0").status == 401
+
+      signed_in = get(basic(conn, "s3cret"), ~p"/")
+      assert get(recycle(signed_in), ~p"/blip/images/e_none/0").status == 404
+    end
+
     test "refuses a session that isn't signed in, over HTTP and LiveView", %{conn: conn} do
       conn = conn |> Plug.Test.init_test_session(%{"photon_auth" => "stale"})
       assert get(conn, ~p"/").status == 401

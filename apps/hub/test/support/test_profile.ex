@@ -1,9 +1,14 @@
 defmodule Photon.TestProfile do
   @moduledoc """
-  A conversation profile for harness tests: a scripted model and a `wait`
-  tool that parks durably until the signal `"go"` fires.
+  A conversation profile for harness tests: a scripted model, a `wait`
+  tool that parks durably until the signal `"go"` fires, a `raise` tool
+  that raises, and a `shell_then_raise` tool that starts a shell op like
+  `shell` and raises when it resumes.
 
     * `"wait"` calls the wait tool, then answers `"waited"`
+    * `"raise"` calls the raise tool, then answers `"waited"`
+    * `"shell then raise on <machine>"` calls `shell_then_raise` there,
+      then answers `"waited"`
     * `"fail"` makes the model request fail
     * anything else is echoed as `"echo: <text>"`
   """
@@ -25,7 +30,8 @@ defmodule Photon.TestProfile do
   def system_prompt(_conversation), do: "test"
 
   @impl Photon.Durable.Profile
-  def tools(_conversation), do: [Photon.TestProfile.Wait]
+  def tools(_conversation),
+    do: [Photon.TestProfile.Wait, Photon.TestProfile.Raise, Photon.TestProfile.ShellThenRaise]
 
   @impl PhotonCore.LLM.Mock
   def respond(request) do
@@ -36,6 +42,14 @@ defmodule Photon.TestProfile do
   end
 
   defp reply("wait"), do: Message.assistant("", [Mock.call("wait", %{})])
+  defp reply("raise"), do: Message.assistant("", [Mock.call("raise", %{})])
+
+  defp reply("shell then raise on " <> machine),
+    do:
+      Message.assistant("", [
+        Mock.call("shell_then_raise", %{"machine" => machine, "command" => "sleep 30"})
+      ])
+
   defp reply("fail"), do: {:error, "model down"}
   defp reply(text), do: Message.assistant("echo: " <> text)
 end

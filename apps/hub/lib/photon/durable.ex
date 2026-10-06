@@ -132,6 +132,10 @@ defmodule Photon.Durable do
   def entries(conversation_id, after_seq \\ 0),
     do: Repo.all(Queries.entries(conversation_id, after_seq))
 
+  @doc "One of a conversation's entries by its ID, or nil."
+  @spec entry(String.t(), String.t()) :: Entry.t() | nil
+  def entry(conversation_id, id), do: Repo.get_by(Entry, conversation_id: conversation_id, id: id)
+
   @spec doc(String.t(), String.t(), map()) :: map()
   def doc(scope, kind, default \\ %{}) do
     case Repo.get_by(Doc, scope: scope, kind: kind) do

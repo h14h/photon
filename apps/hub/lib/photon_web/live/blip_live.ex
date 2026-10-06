@@ -25,11 +25,23 @@ defmodule PhotonWeb.BlipLive do
   session's page, the message box offers that session as context for the
   next message.
 
+  Each tool call shows inside the answer that made it, as a line saying
+  what it did; it opens to show the result. A call on a machine names the
+  machine: "Ran `uptime` on mm1", "Looked at shot.png on mm1". While a
+  `shell` call runs, the end of its output shows under it, as the node
+  streams it (`@outputs`, by call ID, dropped when the result comes); the
+  hub stores none of it, so a page opened mid-command shows output from
+  then on. An image a `view_image` call returns shows under its line,
+  loaded from `PhotonWeb.BlipImageController`: the results this page keeps
+  (`@results`) carry no image data, so neither its state nor a re-render
+  of the answer holds megabytes of base64.
+
   What the conversation shows, how live events fold into the in-flight
-  answer, and Blip's mood are `Photon.Assistant.Transcript`. The mood comes
-  from what is happening now, except for an outcome (a finish or a
-  failure), which is held for a moment so it can be seen: `@outcome`,
-  cleared by a `{:blip_rest, ref}` timer.
+  answer and the running calls' output, and Blip's mood are
+  `Photon.Assistant.Transcript`. The mood comes from what is happening
+  now, except for an outcome (a finish or a failure), which is held for a
+  moment so it can be seen: `@outcome`, cleared by a `{:blip_rest, ref}`
+  timer.
   """
 
   use PhotonWeb, :live_view
@@ -65,6 +77,7 @@ defmodule PhotonWeb.BlipLive do
         results: results,
         settled: settled,
         calls: calls,
+        outputs: %{},
         empty?: Transcript.empty?(entries),
         live: nil,
         shown: nil,
@@ -191,6 +204,20 @@ defmodule PhotonWeb.BlipLive do
     {:noreply, socket}
   end
 
+  # A running call's output, kept as a tail under it. Output that comes
+  # after the result (or for no call on the page) has nowhere to go.
+  def handle_info(
+        {:live, conversation, %{"type" => "tool_output", "call_id" => call_id} = event},
+        %{assigns: %{conversation: conversation}} = socket
+      ) do
+    if Map.has_key?(socket.assigns.results, call_id) do
+      {:noreply, socket}
+    else
+      {:noreply,
+       socket |> update(:outputs, &Transcript.tool_output(&1, event)) |> show_call(call_id)}
+    end
+  end
+
   def handle_info(
         {:live, conversation, event},
         %{assigns: %{conversation: conversation}} = socket
@@ -279,14 +306,15 @@ defmodule PhotonWeb.BlipLive do
     end
   end
 
-  # A tool result re-renders the assistant entry whose call it answers.
+  # A tool result re-renders the assistant entry whose call it answers, in
+  # place of the output the call streamed while it ran.
   defp add_entry(socket, %{kind: "tool_result"} = entry) do
-    socket = update(socket, :results, &Transcript.add_result(&1, entry))
+    call_id = Transcript.call_id(entry)
 
-    case socket.assigns.calls[Transcript.call_id(entry)] do
-      nil -> socket
-      parent -> stream_insert(socket, :entries, parent)
-    end
+    socket
+    |> update(:results, &Transcript.add_result(&1, entry))
+    |> update(:outputs, &Map.delete(&1, call_id))
+    |> show_call(call_id)
   end
 
   defp add_entry(socket, %{kind: "assistant"} = entry) do
@@ -302,6 +330,14 @@ defmodule PhotonWeb.BlipLive do
     if Transcript.shown?(entry),
       do: socket |> assign(empty?: false) |> stream_insert(:entries, entry),
       else: socket
+  end
+
+  # Re-renders the assistant entry that made a call, if it's on the page.
+  defp show_call(socket, call_id) do
+    case socket.assigns.calls[call_id] do
+      nil -> socket
+      parent -> stream_insert(socket, :entries, parent)
+    end
   end
 
   # A node report settles the calls that left its work running, and
@@ -389,7 +425,7 @@ defmodule PhotonWeb.BlipLive do
                 id={dom_id}
                 class={entry.kind != "assistant" && "animate-rise"}
               >
-                <.entry entry={entry} results={@results} settled={@settled} />
+                <.entry entry={entry} results={@results} settled={@settled} outputs={@outputs} />
               </div>
             </div>
 
@@ -706,7 +742,7 @@ defmodule PhotonWeb.BlipLive do
     <div id="empty-state" class="pt-6 pb-8">
       <h2 class="text-xl font-semibold tracking-tight">Hi. I'm Blip.</h2>
       <p class="mt-2 text-[14.5px] leading-relaxed text-ink-soft">
-        I'm a photon living on this hub. I can't run commands myself, so I hand work to your machines and tell you what they actually did.
+        I'm a photon living on this hub. I run commands on your machines and tell you what actually happened.
       </p>
       <p :if={!@shell.model_ready} class="mt-3 text-sm text-ink-soft">
         First I need a model to think with. Sign in with ChatGPT and I'll use your plan.
@@ -744,6 +780,7 @@ defmodule PhotonWeb.BlipLive do
   attr :entry, :map, required: true
   attr :results, :map, required: true
   attr :settled, :map, required: true
+  attr :outputs, :map, default: %{}, doc: "the tail of each running call's output"
 
   defp entry(%{entry: %{kind: "user"}} = assigns) do
     source = assigns.entry.data["source"] || %{}
@@ -803,6 +840,7 @@ defmodule PhotonWeb.BlipLive do
           call={call}
           result={@results[call["id"]]}
           settled={@settled[call["id"]]}
+          tail={@outputs[call["id"]]}
         />
       </div>
     </div>
@@ -873,7 +911,11 @@ defmodule PhotonWeb.BlipLive do
   attr :call, :map, required: true
   attr :result, :map, default: nil
   attr :settled, :atom, default: nil
+  attr :tail, :string, default: nil, doc: "the end of the call's output while it runs"
 
+  # One tool call: a line saying what it did, which opens to show the
+  # result. Under the line, while it runs, the end of what it has printed;
+  # once it's done, any image it returned.
   defp action(assigns) do
     args =
       case Message.arguments(assigns.call) do
@@ -881,6 +923,7 @@ defmodule PhotonWeb.BlipLive do
         _ -> %{}
       end
 
+    message = assigns.result && assigns.result["message"]
     details = (assigns.result && assigns.result["details"]) || %{}
     status = Transcript.action_status(assigns.result, details, assigns.settled)
 
@@ -889,47 +932,80 @@ defmodule PhotonWeb.BlipLive do
         args: args,
         details: details,
         status: status,
-        label: action_label(assigns.call["name"], args),
-        output: assigns.result && Message.text_of(assigns.result["message"])
+        output: message && Message.text_of(message),
+        images: Message.images(message),
+        tail: status in [:pending, :running] && assigns.tail
       )
 
     ~H"""
-    <details
+    <div
       id={"action-#{@call["id"]}"}
       data-status={@status}
-      class="group rounded-xl border border-line bg-surface shadow-xs open:shadow-sm"
+      data-tool={@call["name"]}
+      class="overflow-hidden rounded-xl border border-line bg-surface shadow-xs transition-shadow has-[details[open]]:shadow-sm"
     >
-      <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2 text-[13px] select-none">
-        <span class={[
-          "grid size-6 shrink-0 place-items-center rounded-md",
-          @status in [:running, :pending] && "bg-accent-soft text-accent-strong",
-          @status == :done && "bg-ok-soft text-ok",
-          @status == :error && "bg-bad-soft text-bad",
-          @status == :stopped && "bg-sunken text-ink-faint"
-        ]}>
-          <.spinner :if={@status in [:running, :pending]} class="size-3.5" />
-          <.icon :if={@status == :done} name={action_icon(@call["name"])} class="size-3.5" />
-          <.icon :if={@status == :error} name="hero-exclamation-triangle-micro" class="size-3.5" />
-          <.icon :if={@status == :stopped} name="hero-stop-micro" class="size-3.5" />
-        </span>
-        <span class="min-w-0 flex-1 truncate text-ink-soft">{@label}</span>
-        <span :if={@status == :running} class="shrink-0 text-[11px] text-accent-strong">working on it</span>
-        <.link
-          :if={@details["session_id"]}
-          navigate={~p"/sessions/#{@details["session_id"]}"}
-          class="shrink-0 rounded px-1.5 py-0.5 text-[12px] text-accent-strong hover:bg-accent-soft"
-        >
-          Open
-        </.link>
-        <.icon
-          name="hero-chevron-down-micro"
-          class="size-4 shrink-0 text-ink-faint transition group-open:rotate-180"
-        />
-      </summary>
-      <div class="border-t border-line px-3.5 py-2.5">
-        <pre class="max-h-72 overflow-auto font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink-soft">{@output || "Waiting for the result."}</pre>
+      <%!-- Re-rendered as output streams in or results land; the browser's open state stays. --%>
+      <details
+        id={"action-#{@call["id"]}-details"}
+        class="group"
+        phx-mounted={JS.ignore_attributes(["open"])}
+      >
+        <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2 text-[13px] select-none">
+          <span class={[
+            "grid size-6 shrink-0 place-items-center rounded-md",
+            @status in [:running, :pending] && "bg-accent-soft text-accent-strong",
+            @status == :done && "bg-ok-soft text-ok",
+            @status == :error && "bg-bad-soft text-bad",
+            @status == :stopped && "bg-sunken text-ink-faint"
+          ]}>
+            <.spinner :if={@status in [:running, :pending]} class="size-3.5" />
+            <.icon :if={@status == :done} name={action_icon(@call["name"])} class="size-3.5" />
+            <.icon :if={@status == :error} name="hero-exclamation-triangle-micro" class="size-3.5" />
+            <.icon :if={@status == :stopped} name="hero-stop-micro" class="size-3.5" />
+          </span>
+          <span class="min-w-0 flex-1 truncate text-ink-soft">
+            <.action_label name={@call["name"]} args={@args} />
+          </span>
+          <span :if={@status == :running} class="shrink-0 text-[11px] text-accent-strong">working on it</span>
+          <span
+            :if={@details["exit_code"] not in [nil, 0]}
+            class="shrink-0 rounded bg-warn-soft px-1.5 py-0.5 font-mono text-[11px] text-warn"
+          >
+            exit {@details["exit_code"]}
+          </span>
+          <.link
+            :if={@details["session_id"]}
+            navigate={~p"/sessions/#{@details["session_id"]}"}
+            class="shrink-0 rounded px-1.5 py-0.5 text-[12px] text-accent-strong hover:bg-accent-soft"
+          >
+            Open
+          </.link>
+          <.icon
+            name="hero-chevron-down-micro"
+            class="size-4 shrink-0 text-ink-faint transition group-open:rotate-180"
+          />
+        </summary>
+        <div class="border-t border-line px-3.5 py-2.5">
+          <pre class="max-h-72 overflow-auto font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink-soft">{@output || "Waiting for the result."}</pre>
+        </div>
+      </details>
+      <%!-- Reversed, so it stays scrolled to the newest line as output comes in. --%>
+      <div
+        :if={@tail}
+        id={"action-#{@call["id"]}-tail"}
+        class="flex max-h-40 flex-col-reverse overflow-auto border-t border-line bg-sunken/60 px-3.5 py-2"
+      >
+        <pre class="font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink-soft">{@tail}</pre>
       </div>
-    </details>
+      <img
+        :for={{image, index} <- Enum.with_index(@images)}
+        id={"action-#{@call["id"]}-image-#{index}"}
+        src={~p"/blip/images/#{@result["entry_id"]}/#{index}"}
+        loading="lazy"
+        alt={@output || "An image from #{@args["machine"]}"}
+        class="max-h-80 w-full border-t border-line bg-sunken object-contain"
+      />
+    </div>
     """
   end
 
@@ -958,27 +1034,62 @@ defmodule PhotonWeb.BlipLive do
     """
   end
 
-  defp action_label("run_on_node", args),
+  attr :name, :string, required: true
+  attr :args, :map, required: true
+
+  # What a call did, in a line. A machine call names its command or path,
+  # and the machine.
+  defp action_label(%{name: name} = assigns) when name in ~w(shell view_image) do
+    {verb, subject} =
+      if name == "shell",
+        do: {"Ran", assigns.args["command"]},
+        else: {"Looked at", assigns.args["path"]}
+
+    machine = assigns.args["machine"]
+
+    assigns =
+      assign(assigns,
+        verb: verb,
+        subject: truncate(subject),
+        machine: is_binary(machine) && machine != "" && machine
+      )
+
+    ~H"""
+    <span phx-no-format>{@verb} <code class="font-mono text-[12.5px] text-ink">{@subject}</code><span :if={@machine}> on <span class="font-medium text-ink">{@machine}</span></span></span>
+    """
+  end
+
+  defp action_label(assigns) do
+    assigns = assign(assigns, :text, label_text(assigns.name, assigns.args))
+
+    ~H"""
+    {@text}
+    """
+  end
+
+  defp label_text("run_on_node", args),
     do: "#{args["node"]}: #{args["title"] || truncate(args["task"])}"
 
-  defp action_label("message_node_session", args),
+  defp label_text("message_node_session", args),
     do: "Message to #{args["session_id"]}: #{truncate(args["message"])}"
 
-  defp action_label("check_node_session", args), do: "Looked at #{args["session_id"]}"
-  defp action_label("stop_node_session", args), do: "Stopped #{args["session_id"]}"
-  defp action_label("list_nodes", _), do: "Checked your machines"
+  defp label_text("check_node_session", args), do: "Looked at #{args["session_id"]}"
+  defp label_text("stop_node_session", args), do: "Stopped #{args["session_id"]}"
+  defp label_text("list_nodes", _), do: "Checked your machines"
+  defp label_text("list_machines", _), do: "Checked your machines"
 
-  defp action_label("update_memory", args),
+  defp label_text("update_memory", args),
     do: "Memory: #{args["action"]} #{truncate(args["text"])}"
 
-  defp action_label("schedule", args), do: "Scheduled: #{truncate(args["prompt"])}"
-  defp action_label("list_schedules", _), do: "Checked the schedule"
-  defp action_label("cancel_schedule", args), do: "Cancelled #{args["schedule_id"]}"
-  defp action_label(name, _), do: name
+  defp label_text("schedule", args), do: "Scheduled: #{truncate(args["prompt"])}"
+  defp label_text("list_schedules", _), do: "Checked the schedule"
+  defp label_text("cancel_schedule", args), do: "Cancelled #{args["schedule_id"]}"
+  defp label_text(name, _), do: name
 
-  defp action_icon("run_on_node"), do: "hero-command-line-micro"
+  defp action_icon(name) when name in ~w(run_on_node shell), do: "hero-command-line-micro"
+  defp action_icon("view_image"), do: "hero-photo-micro"
   defp action_icon("message_node_session"), do: "hero-chat-bubble-left-micro"
-  defp action_icon("list_nodes"), do: "hero-server-stack-micro"
+  defp action_icon(name) when name in ~w(list_nodes list_machines), do: "hero-server-stack-micro"
   defp action_icon("update_memory"), do: "hero-bookmark-micro"
 
   defp action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
@@ -986,7 +1097,8 @@ defmodule PhotonWeb.BlipLive do
 
   defp action_icon(_), do: "hero-check-micro"
 
-  defp truncate(nil), do: ""
+  # One line of at most 90 characters; anything that isn't text is nothing.
+  defp truncate(text) when not is_binary(text), do: ""
 
   defp truncate(text) do
     text = text |> String.replace(~r/\s+/, " ") |> String.trim()

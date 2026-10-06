@@ -16,6 +16,7 @@ defmodule PhotonNode.ConfigTest do
              config()
 
     assert Config.sessions_dir(config()) == "/tmp/photon-config-test/sessions"
+    assert Config.ops_dir(config()) == "/tmp/photon-config-test/ops"
   end
 
   test "the heartbeat takes a non-negative integer, or keeps its default" do

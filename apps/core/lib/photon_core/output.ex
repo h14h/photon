@@ -1,16 +1,14 @@
-defmodule PhotonNode.Harness.Output do
+defmodule PhotonCore.Output do
   @moduledoc """
   Caps on what a tool result shows the model. Limits count Unicode code
   points. Text over the limit keeps its head and tail around a marker that
   says how many bytes were skipped and, when there is one, where the complete
   output is.
 
-  Pure. `PhotonNode.Harness.Ops.Shell` reads only the two ends of a large
-  output file and joins them with `truncated/5`.
+  Pure. Both sides use it: the node's `Ops.Shell` reads only the two ends of
+  a large output file and joins them with `truncated/5`, and the hub bounds
+  what a machine tool's result shows.
   """
-
-  # Functional core (see PhotonNode.Harness): no processes, no I/O.
-  use Boundary, type: :strict, deps: []
 
   @default 40_000
   @max 1_000_000

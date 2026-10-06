@@ -3,8 +3,8 @@ defmodule PhotonNode.Harness.Tools.ViewImage do
 
   @behaviour PhotonNode.Harness.Tools
 
-  alias PhotonCore.Message
-  alias PhotonNode.Harness.{Operation, Tools}
+  alias PhotonCore.{Message, Operation}
+  alias PhotonNode.Harness.Tools
 
   @max_size 4_999_000
 

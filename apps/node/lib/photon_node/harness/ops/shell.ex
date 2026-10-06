@@ -10,16 +10,30 @@ defmodule PhotonNode.Harness.Ops.Shell do
   the command exits, the whole group gets SIGTERM, then SIGKILL after five
   seconds, so background children don't outlive it. There is no timeout.
 
+  Snapshots go to the operation's owner (`PhotonNode.Harness.Ops.Owner`).
   Checkpoints: `awaiting` in phase `process` (files ready), then with the
   process group ID once started, phase `read` with the exit code, and
   finally `completed` with the bounded output. The command starts only once
-  the coordinator has stored the `process` checkpoint, so a crash before
-  that point leaves a `ready` operation that never ran, and a command is
-  started at most once. On recovery after a node restart, a command whose
-  `exit` file exists is finished normally; one still running is waited for;
-  otherwise it failed with its outcome unknown. A process group not yet
+  the owner has stored the `process` checkpoint (`Owner.checkpoint/2`
+  returns `:ok`), so a crash before that point leaves a `ready` operation
+  that never ran, and a command is started at most once. An owner that
+  couldn't store it (`{:error, reason}`) fails the operation, and the
+  command never runs.
+
+  On recovery after a node restart, a command that was killed because this
+  process stopped (a `stopped` file in its directory, see below) failed,
+  whatever its `exit` file says. Otherwise a command whose `exit` file
+  exists is finished normally; one still running is waited for; and any
+  other failed with its outcome unknown. A process group not yet
   checkpointed is read from the `pid` file, so a command started just
   before a crash is still waited for (or killed by a stop).
+
+  A shell that stops while its command runs (its supervisor shuts it down
+  when the node stops, or it crashes) kills the command's process group in
+  `terminate/2`. It first writes a `stopped` file next to the output, so a
+  resumed operation reports that photon-node stopped and killed the command.
+  Without it, the wrapper, which is outside the killed group, records exit
+  143 and recovery would report the command `completed` with partial output.
 
   A cancel that arrives before the wrapper reports the PID kills the group
   as soon as it does.
@@ -33,7 +47,7 @@ defmodule PhotonNode.Harness.Ops.Shell do
   wait. If that step stops the process, they are dropped, as they were
   before. Only `terminate/2` still waits in place for a kill under way,
   since shutdown can't take messages. It doesn't run the waiting step: the
-  session's coordinator is shut down first and couldn't take its report.
+  owner may be shut down first and couldn't take its report.
 
   While it runs, new output streams to the hub as live events (not stored),
   sampled once a second in chunks of at most 64 KB per stream.
@@ -43,7 +57,9 @@ defmodule PhotonNode.Harness.Ops.Shell do
 
   require Logger
 
-  alias PhotonNode.Harness.{Coordinator, Env, Link, Operation, Ops, Output}
+  alias PhotonCore.{Operation, Output}
+  alias PhotonNode.Harness.{Env, Ops}
+  alias PhotonNode.Harness.Ops.Owner
 
   # Job control gives the command its own process group (pgid == pid).
   # bash honours `set -m` without a terminal; for shells that don't, setsid
@@ -76,18 +92,18 @@ defmodule PhotonNode.Harness.Ops.Shell do
   @tick_ms 1_000
   @live_chunk 65_536
 
-  @spec start_link({Operation.t(), String.t()}) :: GenServer.on_start()
-  def start_link({op, session_id}) do
-    GenServer.start_link(__MODULE__, {op, session_id}, name: Ops.via(op["id"]))
+  @spec start_link({Operation.t(), Owner.t()}) :: GenServer.on_start()
+  def start_link({op, owner}) do
+    GenServer.start_link(__MODULE__, {op, owner}, name: Ops.via(op["id"]))
   end
 
   @impl true
-  def init({op, session_id}) do
+  def init({op, owner}) do
     Process.flag(:trap_exit, true)
 
     state = %{
       op: op,
-      session_id: session_id,
+      owner: owner,
       port: nil,
       exit_code: nil,
       canceled: false,
@@ -119,8 +135,8 @@ defmodule PhotonNode.Harness.Ops.Shell do
     end
   end
 
-  # Empty output files only this user can read, and no exit or pid file
-  # left from an earlier start.
+  # Empty output files only this user can read, and no exit, pid or stopped
+  # file left from an earlier start.
   defp prepare_files(op) do
     dir = dir(op)
 
@@ -130,13 +146,14 @@ defmodule PhotonNode.Harness.Ops.Shell do
          :ok <- File.write(err_path(op), "", [:write]),
          :ok <- File.chmod(out_path(op), 0o600),
          :ok <- File.chmod(err_path(op), 0o600),
-         :ok <- remove_stale(exit_path(op)) do
+         :ok <- remove_stale(exit_path(op)),
+         :ok <- remove_stale(stopped_path(op)) do
       remove_stale(pid_path(op))
     end
   end
 
-  # A leftover exit or pid file would make recovery think this start already
-  # ran, so one that can't be removed fails the operation.
+  # A leftover exit, pid or stopped file would make recovery think this
+  # start already ran, so one that can't be removed fails the operation.
   defp remove_stale(path) do
     case File.rm(path) do
       :ok -> :ok
@@ -154,12 +171,20 @@ defmodule PhotonNode.Harness.Ops.Shell do
   end
 
   defp start_when_confirmed(state, op) do
-    case Coordinator.checkpoint(state.session_id, op) do
-      :ok -> spawn_command(%{state | op: op})
-      :cancel -> cancel(state)
-      # Not confirmed: never start the command. The coordinator starts the
+    case Owner.checkpoint(state.owner, op) do
+      :ok ->
+        spawn_command(%{state | op: op})
+
+      :cancel ->
+        cancel(state)
+
+      {:error, reason} ->
+        fail(state, "couldn't record the command's start, so it didn't run: #{reason}")
+
+      # Not confirmed: never start the command. The owner starts the
       # operation again from what it has on record.
-      _ignored_or_down -> {:stop, :normal, state}
+      :ignored ->
+        {:stop, :normal, state}
     end
   end
 
@@ -248,7 +273,7 @@ defmodule PhotonNode.Harness.Ops.Shell do
   def handle_info(:poll, state), do: poll_recovered(state)
 
   def handle_info(:resend, state) do
-    Coordinator.report_op(state.session_id, state.op)
+    report(state.owner, state.op)
     {:noreply, state}
   end
 
@@ -263,14 +288,37 @@ defmodule PhotonNode.Harness.Ops.Shell do
   def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
   def handle_info(_message, state), do: {:noreply, state}
 
+  # A running command (the port is open) is killed, after the stopped
+  # marker. Once it has exited, a kill under way is only for children it
+  # left behind, so its exit file stands.
   @impl true
+  def terminate(_reason, %{port: port} = state) when port != nil do
+    mark_stopped(state.op)
+
+    case state.killing do
+      %{} = killing -> await_group_exit_now(killing.pgid, killing.deadline, killing.backoff)
+      nil -> kill_group_now(recorded_pgid(state.op))
+    end
+  end
+
   def terminate(_reason, %{killing: %{} = killing}),
     do: await_group_exit_now(killing.pgid, killing.deadline, killing.backoff)
 
-  def terminate(_reason, %{port: port} = state) when port != nil,
-    do: kill_group_now(state.op["state"]["pgid"])
-
   def terminate(_reason, _state), do: :ok
+
+  # Written before the group is signalled, so a resume can't find the
+  # wrapper's exit 143 without it.
+  defp mark_stopped(op) do
+    case File.write(stopped_path(op), "") do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "shell #{op["id"]}: couldn't write #{stopped_path(op)}: #{:file.format_error(reason)}"
+        )
+    end
+  end
 
   # Canceled before the PID was known: kill it now.
   defp kill_if_canceled(%{canceled: true} = state, pgid),
@@ -298,6 +346,14 @@ defmodule PhotonNode.Harness.Ops.Shell do
         do: checkpoint(state, "awaiting", %{"pgid" => pgid}),
         else: state
 
+    # The stopped marker comes before the exit file: the wrapper records
+    # exit 143 for a command this process killed as it stopped.
+    if File.exists?(stopped_path(state.op)),
+      do: kill_group(state, pgid, &fail(&1, stopped_message(read_exit(&1.op)))),
+      else: reattach(state, pgid)
+  end
+
+  defp reattach(state, pgid) do
     cond do
       pgid in [nil, 0] ->
         fail(state, "shell execution outcome is unknown because process start was not recorded")
@@ -314,6 +370,11 @@ defmodule PhotonNode.Harness.Ops.Shell do
         fail(state, "shell execution was interrupted before an exit status was recorded")
     end
   end
+
+  defp stopped_message(nil),
+    do: "photon-node stopped while the command was running, so the command was killed."
+
+  defp stopped_message(code), do: stopped_message(nil) <> " Its exit status was #{code}."
 
   defp recorded_pgid(op) do
     case op["state"]["pgid"] do
@@ -549,8 +610,15 @@ defmodule PhotonNode.Harness.Ops.Shell do
 
   defp checkpoint(state, status, changes) do
     op = Operation.advance(state.op, status, changes)
-    Coordinator.report_op(state.session_id, op)
+    report(state.owner, op)
     %{state | op: op}
+  end
+
+  defp report(owner, op) do
+    # :down means no owner took the snapshot. This process keeps it and
+    # resends it when its owner asks (`Ops.add/2` sends :resend).
+    _ = Owner.report(owner, op)
+    :ok
   end
 
   defp stream_live(state) do
@@ -587,18 +655,13 @@ defmodule PhotonNode.Harness.Ops.Shell do
     end
   end
 
-  defp send_live_output(state, stream, data) do
-    Link.live(state.session_id, %{
-      "type" => "op_output",
-      "op" => state.op["id"],
-      "stream" => to_string(stream),
-      "text" => Output.sanitize(data)
-    })
-  end
+  defp send_live_output(state, stream, data),
+    do: Owner.output(state.owner, state.op["id"], to_string(stream), Output.sanitize(data))
 
   defp dir(op), do: Path.join(op["state"]["base_directory"], op["id"])
   defp out_path(op), do: Path.join(dir(op), "out")
   defp err_path(op), do: Path.join(dir(op), "err")
   defp exit_path(op), do: Path.join(dir(op), "exit")
   defp pid_path(op), do: Path.join(dir(op), "pid")
+  defp stopped_path(op), do: Path.join(dir(op), "stopped")
 end

@@ -6,7 +6,9 @@ defmodule PhotonWeb.NodeChannelTest do
   # Records are ingested through the durable store.
   @moduletag :durable
 
-  alias Photon.{Nodes, NodeSessions}
+  import Photon.MachineOps, only: [live_task: 0, new_op: 2, snapshot: 2, snapshot: 3]
+
+  alias Photon.{Durable, Machines, Nodes, NodeSessions}
 
   @endpoint PhotonWeb.Endpoint
 
@@ -170,5 +172,89 @@ defmodule PhotonWeb.NodeChannelTest do
     Nodes.command("box2", "stop", %{"session_id" => session.id})
     assert_push "stop", _
     refute_push "input", _
+  end
+
+  describe "operations" do
+    test "the join pushes open ops; a result is recorded, then acked" do
+      task = live_task()
+      %{id: id} = op = new_op(task, "box")
+      :ok = Machines.start(op)
+
+      {:ok, _reply, socket} = join("box")
+      assert_push "op.start", %{"id" => ^id, "kind" => "shell", "known" => false}
+
+      push(socket, "op.snapshot", snapshot(id, "awaiting"))
+      push(socket, "op.snapshot", snapshot(id, "completed", %{"result" => %{"out" => "hi"}}))
+      assert_push "op.ack", %{"id" => ^id}
+      assert {:finished, %{"status" => "completed"}} = Machines.op_state(id)
+      assert Durable.signal_payload(Machines.signal_key(id)) != nil
+    end
+
+    test "an op started while the node is connected is pushed by its channel, with known" do
+      {:ok, _reply, socket} = join("box")
+      %{id: id} = op = new_op(live_task(), "box")
+      :ok = Machines.start(op)
+      assert_push "op.start", %{"id" => ^id, "known" => false}
+
+      push(socket, "op.snapshot", snapshot(id, "awaiting"))
+      :ok = Machines.repush(id)
+      assert_push "op.start", %{"id" => ^id, "known" => true}
+
+      :ok = Durable.commit(&Machines.cancel_tx(&1, id))
+      assert_push "op.cancel", %{"id" => ^id}
+      :ok = Machines.repush(id)
+      _ = :sys.get_state(socket.channel_pid)
+      refute_push "op.start", _
+    end
+
+    test "output goes to the tool call's conversation" do
+      task = live_task()
+      %{id: id, call_id: call_id} = op = new_op(task, "box")
+      :ok = Machines.start(op)
+      c = task.conversation_id
+      Durable.subscribe(c)
+
+      {:ok, _reply, socket} = join("box")
+      push(socket, "op.output", %{"id" => id, "stream" => "out", "text" => "one"})
+      push(socket, "op.output", %{"id" => id, "stream" => "err", "text" => "two"})
+
+      assert_receive {:live, ^c,
+                      %{"type" => "tool_output", "call_id" => ^call_id, "text" => "one"}}
+
+      assert_receive {:live, ^c, %{"stream" => "err", "text" => "two"}}
+    end
+
+    @tag capture_log: true
+    test "a node can't finish another node's op, or stream into its call" do
+      task = live_task()
+      %{id: id} = op = new_op(task, "other")
+      :ok = Machines.start(op)
+      Durable.subscribe(task.conversation_id)
+
+      {:ok, _reply, socket} = join("box")
+      push(socket, "op.snapshot", snapshot(id, "completed"))
+      push(socket, "op.output", %{"id" => id, "stream" => "out", "text" => "spoofed"})
+
+      _ = :sys.get_state(socket.channel_pid)
+      refute_push "op.ack", _
+      refute_received {:live, _, _}
+      assert Machines.op_state(id) == {:open, false}
+    end
+
+    @tag capture_log: true
+    test "an op.start built anywhere but the channel is dropped" do
+      {:ok, _reply, socket} = join("box")
+      %{id: id} = new_op(live_task(), "box")
+
+      Nodes.command("box", "op.start", %{
+        "id" => id,
+        "kind" => "shell",
+        "args" => %{},
+        "known" => false
+      })
+
+      _ = :sys.get_state(socket.channel_pid)
+      refute_push "op.start", _
+    end
   end
 end

@@ -4,7 +4,7 @@ defmodule PhotonNode.Harness.Tools do
   call and turn it into a status plus operations (`translate/2`), and format
   a recorded status plus operation snapshots into what the model sees
   (`format/2`). They run inside the session core and do no I/O; the only
-  impurity is the operation ID `PhotonNode.Harness.Operation.new/4` mints.
+  impurity is the operation ID `PhotonCore.Operation.new/4` mints.
 
   A status is `%{"error" => text, "waiting_for" => [operation id]}`; an error
   status has no operations.
@@ -13,9 +13,9 @@ defmodule PhotonNode.Harness.Tools do
   # Functional core (see PhotonNode.Harness): no processes, no I/O.
   use Boundary,
     type: :strict,
-    deps: [PhotonNode.Harness.Operation, PhotonNode.Harness.Output, PhotonCore, Jason]
+    deps: [PhotonCore, Jason]
 
-  alias PhotonNode.Harness.{Operation, Output}
+  alias PhotonCore.{Operation, Output}
   alias PhotonNode.Harness.Tools.{Bash, SkillUse, ViewImage}
 
   @static [Bash, ViewImage, SkillUse]

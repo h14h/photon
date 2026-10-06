@@ -36,6 +36,29 @@ defmodule PhotonCore.Fixtures do
     )
   end
 
+  ## Operations
+
+  @doc "A `ready` shell operation snapshot; `overrides` replace its fields."
+  def shell_op(overrides \\ []) do
+    Map.merge(
+      %{
+        "id" => "op_1",
+        "type" => "shell",
+        "version" => 1,
+        "status" => "ready",
+        "max_output_length" => nil,
+        "state" => %{
+          "input" => %{"command" => "true", "shell" => "/bin/sh", "directory" => "/work"},
+          "phase" => "",
+          "pgid" => 0,
+          "result" => nil,
+          "terminal_error" => ""
+        }
+      },
+      Map.new(overrides, fn {key, value} -> {to_string(key), value} end)
+    )
+  end
+
   ## Stream events
 
   def text_delta(text), do: %{"type" => "response.output_text.delta", "delta" => text}

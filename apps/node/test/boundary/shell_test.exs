@@ -1,10 +1,14 @@
 defmodule PhotonNode.Harness.ShellTest do
   @moduledoc """
-  Regression tests for the shell operation, with the test process standing
-  in for the session's coordinator (registered under the session ID).
+  Regression tests for the shell operation, with the test process as its
+  owner (`PhotonNode.TestOwner`): it gets the snapshots and answers the
+  checkpoints.
   """
 
   use PhotonNode.HarnessCase, async: false
+
+  import PhotonNode.TestOwner,
+    only: [owner: 0, owner: 1, await_status: 1, await_status: 2, await_pgid: 0]
 
   alias PhotonNode.Harness.{Env, Ops, Store}
   alias PhotonNode.Harness.Tools.Bash
@@ -37,40 +41,6 @@ defmodule PhotonNode.Harness.ShellTest do
     end
   end
 
-  # Answers checkpoint calls with `:ok` until a snapshot with `status` arrives.
-  defp await_status(status, timeout \\ 10_000) do
-    receive do
-      {:"$gen_call", from, {:op_update, _op}} ->
-        GenServer.reply(from, :ok)
-        await_status(status, timeout)
-
-      {:op_update, %{"status" => ^status} = op} ->
-        op
-
-      {:op_update, _op} ->
-        await_status(status, timeout)
-    after
-      timeout -> flunk("no #{status} snapshot")
-    end
-  end
-
-  # Answers checkpoint calls with `:ok` until a snapshot with a process group arrives.
-  defp await_pgid(timeout \\ 10_000) do
-    receive do
-      {:"$gen_call", from, {:op_update, _op}} ->
-        GenServer.reply(from, :ok)
-        await_pgid(timeout)
-
-      {:op_update, %{"state" => %{"pgid" => pgid}} = op} when pgid > 0 ->
-        op
-
-      {:op_update, _op} ->
-        await_pgid(timeout)
-    after
-      timeout -> flunk("no snapshot with a process group")
-    end
-  end
-
   defp gone?(pattern) do
     {output, _status} = System.cmd("pgrep", ["-f", pattern])
     output == ""
@@ -80,12 +50,15 @@ defmodule PhotonNode.Harness.ShellTest do
 
   # Coordinator F3: the command started before its "process" checkpoint was
   # stored, so a coordinator that was down could later start it again.
-  test "a command doesn't start until its coordinator has stored the checkpoint", %{
+  test "a command doesn't start until its owner has stored the checkpoint", %{
     workspace: workspace
   } do
     marker = Path.join(workspace, "ran")
     op = translated_op("nobody_home", "touch #{marker}", workspace)
-    _ = Ops.add(op, "nobody_home")
+    nobody = spawn(fn -> :ok end)
+    ref = Process.monitor(nobody)
+    assert_receive {:DOWN, ^ref, :process, ^nobody, _}
+    _ = Ops.add(op, owner(nobody))
 
     if pid = op_pid(op["id"]) do
       ref = Process.monitor(pid)
@@ -100,12 +73,11 @@ defmodule PhotonNode.Harness.ShellTest do
   test "a cancel that arrives before the command's PID is known still kills it", %{
     workspace: workspace
   } do
-    {:ok, _} = Registry.register(PhotonNode.SessionRegistry, "fake8", nil)
     pattern = "sleep 61.#{System.unique_integer([:positive])}"
     on_exit(fn -> kill_all(pattern) end)
     op = translated_op("fake8", pattern, workspace)
 
-    Ops.add(op, "fake8")
+    {:ok, _pid} = Ops.add(op, owner())
     send(op_pid(op["id"]), :cancel)
 
     assert %{"state" => %{"terminal_error" => "shell operation canceled"}} =
@@ -159,7 +131,6 @@ defmodule PhotonNode.Harness.ShellTest do
   test "a reattached command that exits leaving background children finishes", %{
     workspace: workspace
   } do
-    {:ok, _} = Registry.register(PhotonNode.SessionRegistry, "fake11", nil)
     pattern = "sleep 62.#{System.unique_integer([:positive])}"
     on_exit(fn -> kill_all(pattern) end)
 
@@ -168,7 +139,7 @@ defmodule PhotonNode.Harness.ShellTest do
     File.mkdir_p!(dir)
     pgid = start_group(dir, pattern)
 
-    _ = Ops.add(recovered(op, dir, pgid), "fake11")
+    {:ok, _pid} = Ops.add(recovered(op, dir, pgid), owner())
     # Once it has handled its start, it has reattached to the running group.
     _ = :sys.get_state(op_pid(op["id"]))
     File.write!(Path.join(dir, "go"), "")
@@ -183,7 +154,6 @@ defmodule PhotonNode.Harness.ShellTest do
   test "a command started just before a crash is found through its pid file", %{
     workspace: workspace
   } do
-    {:ok, _} = Registry.register(PhotonNode.SessionRegistry, "fakek1", nil)
     pattern = "sleep 63.#{System.unique_integer([:positive])}"
     on_exit(fn -> kill_all(pattern) end)
 
@@ -193,7 +163,7 @@ defmodule PhotonNode.Harness.ShellTest do
     pgid = start_group(dir, pattern)
     File.write!(Path.join(dir, "pid"), "#{pgid}\n")
 
-    _ = Ops.add(recovered(op, dir, 0), "fakek1")
+    {:ok, _pid} = Ops.add(recovered(op, dir, 0), owner())
     _ = :sys.get_state(op_pid(op["id"]))
     File.write!(Path.join(dir, "go"), "")
 
@@ -207,12 +177,11 @@ defmodule PhotonNode.Harness.ShellTest do
   test "a shell stays responsive while a killed group takes its time to exit", %{
     workspace: workspace
   } do
-    {:ok, _} = Registry.register(PhotonNode.SessionRegistry, "fakekill", nil)
     pattern = "sleep 64.#{System.unique_integer([:positive])}"
     on_exit(fn -> kill_all(pattern) end)
     op = translated_op("fakekill", "trap '' TERM; #{pattern}", workspace)
 
-    {:ok, pid} = Ops.add(op, "fakekill")
+    {:ok, pid} = Ops.add(op, owner())
     await_pgid()
     send(pid, :cancel)
 
@@ -220,11 +189,114 @@ defmodule PhotonNode.Harness.ShellTest do
     assert %{killing: %{}} = :sys.get_state(pid, 1_000)
     send(pid, :resend)
 
-    assert_receive {:op_update, %{"status" => "awaiting"}}, 10_000
+    assert_receive {:report, %{"status" => "awaiting"}}, 10_000
 
     assert %{"state" => %{"terminal_error" => "shell operation canceled"}} =
              await_status("canceled")
 
     assert gone?(pattern)
+  end
+
+  # Node rule 8: a checkpoint the owner couldn't store never runs anything.
+  test "a command whose start the owner couldn't record fails without running", %{
+    workspace: workspace
+  } do
+    marker = Path.join(workspace, "ran")
+    op = translated_op("unrecorded", "touch #{marker}", workspace)
+
+    {:ok, pid} = Ops.add(op, owner())
+    ref = Process.monitor(pid)
+
+    assert %{"state" => %{"terminal_error" => error}} =
+             await_status("failed", {:error, "write op.json: no space left on device"})
+
+    assert error ==
+             "couldn't record the command's start, so it didn't run: " <>
+               "write op.json: no space left on device"
+
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+    refute File.exists?(marker)
+  end
+
+  # Node rule 10: a command killed because photon-node stopped was resumed
+  # as completed with exit 143, since the wrapper outside the killed group
+  # recorded that status.
+  test "a command killed when its shell is shut down is reported as stopped, not completed", %{
+    workspace: workspace
+  } do
+    pattern = "sleep 65.#{System.unique_integer([:positive])}"
+    on_exit(fn -> kill_all(pattern) end)
+    op = translated_op("stopped", pattern, workspace)
+    dir = Path.join(op["state"]["base_directory"], op["id"])
+
+    {:ok, pid} = Ops.add(op, owner())
+    running = await_pgid()
+
+    :ok = DynamicSupervisor.terminate_child(PhotonNode.Harness.OpSupervisor, pid)
+    assert gone?(pattern)
+    assert File.exists?(Path.join(dir, "stopped"))
+
+    # What the wrapper records once its command is killed by SIGTERM; written
+    # here too, since the wrapper may not have got to it yet.
+    File.write!(Path.join(dir, "exit"), "143\n")
+
+    {:ok, _pid} = Ops.add(running, owner())
+
+    assert %{"state" => %{"terminal_error" => error}} = await_status("failed")
+
+    assert error ==
+             "photon-node stopped while the command was running, so the command was killed. " <>
+               "Its exit status was 143."
+  end
+
+  test "a fresh start clears a stopped marker left by an earlier one", %{workspace: workspace} do
+    op = translated_op("restarted", "echo hi", workspace)
+    dir = Path.join(op["state"]["base_directory"], op["id"])
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, "stopped"), "")
+
+    {:ok, _pid} = Ops.add(op, owner())
+
+    assert %{"state" => %{"result" => %{"out" => "hi\n", "exit_code" => 0}}} =
+             await_status("completed")
+
+    refute File.exists?(Path.join(dir, "stopped"))
+  end
+
+  # What the hub's `shell` tool tells the model: background children die
+  # with the command's group, nohup or not, and a job started in its own
+  # group with `bash -c 'set -m; nohup ...'` keeps running.
+  test "background children are killed when the command exits, unless in a group of their own",
+       %{workspace: workspace} do
+    unique = System.unique_integer([:positive])
+    child = "sleep 63.#{unique}"
+    server = "sleep 64.#{unique}"
+    on_exit(fn -> for p <- [child, server], do: kill_all(p) end)
+
+    command =
+      "nohup #{child} >/dev/null 2>&1 & bash -c 'set -m; nohup #{server} >/dev/null 2>&1 &'"
+
+    op = translated_op("detach", command, workspace)
+    {:ok, _pid} = Ops.add(op, owner())
+
+    assert %{"state" => %{"result" => %{"exit_code" => 0}}} = await_status("completed")
+    assert gone?(child)
+    refute gone?(server)
+  end
+
+  test "new output streams to the owner while the command runs", %{workspace: workspace} do
+    go = Path.join(workspace, "go")
+
+    op =
+      translated_op("live", "echo started; while [ ! -f #{go} ]; do sleep 0.05; done", workspace)
+
+    op_id = op["id"]
+
+    {:ok, _pid} = Ops.add(op, owner())
+    await_pgid()
+
+    assert_receive {:output, ^op_id, "out", "started\n"}, 5_000
+    File.write!(go, "")
+    await_status("completed")
   end
 end

@@ -6,9 +6,11 @@ defmodule Photon.Durable.ToolTask do
   park itself durably (`{:wait, ...}`) and continue in `"resume"`. The result
   is committed as a `"tool_result"` entry together with the task finishing.
   A call interrupted by a hub restart reruns only if the tool says it's safe;
-  otherwise the model is told it was interrupted. A call that is aborted or
-  fails gives its tool's `on_interrupt/2` a chance to hand off what it
-  started.
+  otherwise the model is told it was interrupted. A call that ends without a
+  result from its tool (it is aborted, its task fails, or the tool raises in
+  `execute/2` or `resume/2`) gives the tool's `on_interrupt/2` a chance to
+  hand off or cancel what it started, in the same commit that records the
+  call's result. A raise is rescued here and recorded as an error result.
 
   This module is the task kind's boundary: it finds the tool, runs it, and
   commits. Whether a call runs and how its result is recorded is
@@ -51,6 +53,7 @@ defmodule Photon.Durable.ToolTask do
   defp run(runtime, task, fun) do
     case call_tool(task, fun) do
       {:wait, waiting, state} -> Runtime.transition(runtime, ToolCall.park(waiting, state))
+      {:raised, message} -> raised(runtime, task, message)
       result -> finish(runtime, task, result)
     end
   end
@@ -65,7 +68,17 @@ defmodule Photon.Durable.ToolTask do
           Exception.format(:error, e, __STACKTRACE__)
       )
 
-      {:error, Exception.message(e)}
+      {:raised, Exception.message(e)}
+  end
+
+  # The raise may have come after the tool started something (an operation
+  # on a machine), so its `on_interrupt/2` runs in the commit that records
+  # the error, as it does for an abort or a failed task.
+  defp raised(runtime, task, message) do
+    Runtime.commit(runtime, fn tx ->
+      interrupted(task, tx)
+      ToolCall.done(record(tx, task, {:error, message}))
+    end)
   end
 
   # A `{:commit, fun}` result is decided inside the commit that records it.

@@ -31,22 +31,32 @@ defmodule PhotonNode.Harness.Coordinator do
   coordinator. Operation processes are monitored, and their `:DOWN` goes
   to `Session.op_down/3`.
 
+  It owns its session's operations (`PhotonNode.Harness.Ops.Owner`, with
+  the session ID as the owner ID): it starts them with
+  `Ops.add(op, {Coordinator, session_id})` and implements the callbacks
+  they report through. An operation process never dies because of its
+  coordinator: `checkpoint/2` catches every exit and returns `:ignored`,
+  and `report/2` and `output/4` are plain sends.
+
   Messages: deliveries and an operation's `process` checkpoint are calls,
-  answered once the record is persisted. Operation snapshots
-  (`report_op/2`) are plain sends, on purpose: the operation keeps its
-  latest snapshot and `Ops.add/2` asks it to resend that snapshot when a
-  restarted coordinator catches up, so a snapshot lost with a dead
-  coordinator is recovered. Only an operation's own process sends them, a
-  few per operation.
+  answered once the record is persisted. Operation snapshots (`report/2`)
+  are plain sends, on purpose: the operation keeps its latest snapshot and
+  `Ops.add/2` asks it to resend that snapshot when a restarted coordinator
+  catches up, so a snapshot lost with a dead coordinator is recovered. Only
+  an operation's own process sends them, a few per operation. Its live
+  output (`output/4`) goes straight to the hub link as `op_output` data.
   """
 
   use GenServer, restart: :transient
 
+  @behaviour PhotonNode.Harness.Ops.Owner
+
   require Logger
 
-  alias PhotonCore.LLM
+  alias PhotonCore.{LLM, Operation}
   alias PhotonNode.Config
-  alias PhotonNode.Harness.{Env, Link, ModelRequest, Operation, Ops, Session, Skills, Store}
+  alias PhotonNode.Harness.{Env, Link, ModelRequest, Ops, Session, Skills, Store}
+  alias PhotonNode.Harness.Ops.Owner
 
   @slurp_idle_ms 1
   @slurp_max 100
@@ -167,8 +177,9 @@ defmodule PhotonNode.Harness.Coordinator do
   end
 
   @doc "Reports an operation snapshot; dropped if the coordinator isn't running."
-  @spec report_op(String.t(), Operation.t()) :: :ok
-  def report_op(id, op) do
+  @impl Owner
+  @spec report(String.t(), Operation.t()) :: :ok
+  def report(id, op) do
     if pid = whereis(id), do: send(pid, {:op_update, op})
     :ok
   end
@@ -176,16 +187,23 @@ defmodule PhotonNode.Harness.Coordinator do
   @doc """
   Has an operation's checkpoint persisted before the operation acts on it.
   Returns `:ok` once it is in the log, `:cancel` if a hard stop is under
-  way (the operation should cancel instead), `:ignored` if the session
-  doesn't know the operation or has finished it, or `:down` if no
-  coordinator answered.
+  way (the operation should cancel instead), or `:ignored` if the session
+  doesn't know the operation or has finished it, or no coordinator
+  answered (any exit, so the operation never dies because of it).
   """
-  @spec checkpoint(String.t(), Operation.t()) :: :ok | :cancel | :ignored | :down
+  @impl Owner
+  @spec checkpoint(String.t(), Operation.t()) :: :ok | :cancel | :ignored
   def checkpoint(id, op) do
     GenServer.call(via(id), {:op_update, op}, @checkpoint_timeout)
   catch
-    :exit, _ -> :down
+    :exit, _ -> :ignored
   end
+
+  @doc "Streams an operation's new output to the hub as the session's live `op_output` data."
+  @impl Owner
+  @spec output(String.t(), String.t(), String.t(), String.t()) :: :ok
+  def output(id, op_id, stream, text),
+    do: Link.live(id, %{"type" => "op_output", "op" => op_id, "stream" => stream, "text" => text})
 
   @doc "A summary of the session's state (`Session.info/1`), for status reports and tests."
   @spec info(String.t()) :: map()
@@ -381,7 +399,7 @@ defmodule PhotonNode.Harness.Coordinator do
   end
 
   defp execute({:dispatch, op}, state) do
-    case Ops.add(op, state.session.id) do
+    case Ops.add(op, {__MODULE__, state.session.id}) do
       {:ok, pid} -> monitor_op(state, op["id"], pid)
       {:error, reason} -> run(state, &Session.dispatch_failed(&1, op, to_string(reason)))
     end
