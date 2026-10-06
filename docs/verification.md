@@ -34,8 +34,9 @@ specs with them:
   gone; its operation processes now belong to the executor. The new spec
   keeps the operation-process part and adds executor crashes. Its bug
   configs put back F3, F8, F9, F11 and K1, and node rule 10's `stopped`
-  marker, and fail as they should. It found two gaps in the current code
-  (E1, not fixed, and K2, partly fixed in G1: see the step 1 table).
+  marker, and fail as they should. It found two gaps in the code as first
+  built (E1 and K2, see the step 1 table); both are fixed, and each now
+  has a bug config that puts it back.
 - `Durable.tla` lost node work (`run_on_node`, `NodeWork`, `NodeWatch`)
   and models a machine call in its place: its op row, its signal, the
   periodic recheck, the offline give-up, and Stop with the row's cancel
@@ -107,7 +108,7 @@ The node side of the protocol, opened up: the executor's handlers
 start-up scan) as ordered effects, so it can crash after any prefix of
 them; its journal; the `Ops.Shell` processes it owns, with their calls
 into it; and the commands with their process groups, background children
-and `exit`, `pid` and `stopped` files. The hub is a stand-in that follows
+and `exit`, `pid`, `stopped`, `canceled` and `unstarted` files. The hub is a stand-in that follows
 the plan's hub rules. Faults: executor crashes inside any handler,
 operation process crashes, abrupt node crashes (commands survive), node
 stops (shells kill their commands), dropped connections, extra `op.start`
@@ -121,9 +122,8 @@ after a cancel, `failed` only after a fault); every op gets its result, a
 cancel ends even a command that would run forever, and every finished
 entry is forgotten.
 
-Like `HubOps`, its `-bug-*` configs are expected to fail, and so are its
-two `-known-*` configs, which show E1 and what is left of K2 in the code
-as it is.
+Like `HubOps`, its `-bug-*` configs are expected to fail, the E1 and K2
+ones (`-bug-cancel-marker`, `-bug-orphan-reattached`) among them.
 
 Details: `specs/tla/Executor.md`.
 
@@ -187,8 +187,7 @@ where `<Spec>` is `Durable`, `HubOps` or `Executor` and `<Cfg>` is one of
 its `.cfg` files. Add `-lncheck final` for configs with `PROPERTIES`.
 `-deadlock` is needed because every modeled behavior ends (the `HubOps`
 and `Executor` configs also turn deadlock checking off themselves). The
-`HubOps-bug-*`, `Executor-bug-*` and `Executor-known-*` configs are meant
-to fail; each spec's notes list the property each one breaks.
+`HubOps-bug-*` and `Executor-bug-*` configs are meant to fail; each spec's notes list the property each one breaks.
 
 To run every config of every spec:
 
@@ -203,6 +202,29 @@ done
 ```
 
 ## Results
+
+### Step 1 review: E1 and K2 fixed (2026-10-06)
+
+`Executor.tla` models the two fixes (the `canceled` marker, and
+`terminate/2` killing any command on record for a snapshot still
+awaiting its process), with the old behaviour as
+`Executor-bug-cancel-marker` and `Executor-bug-orphan-reattached`, which
+replace the two `-known-*` configs. `ResultTruthful` lost its exception
+for canceled ops, and `Executor-faults.cfg` now checks `ResultPhysical`.
+TLC 2.19 reran all 14 configs on the shared 12-core machine (load
+average 37 to 50 from other work), 6 workers, or 11 for `Executor-two`:
+
+- The 6 clean configs pass: `Executor-two.cfg` (two ops, 90.8M distinct
+  states, as before, 17m10s), `Executor-faults.cfg` (4.4M, 2m18s), `Executor.cfg`
+  (375K with liveness, 1m55s), `Executor-two-live.cfg` (258K, 2m07s),
+  `Executor-node.cfg` and `Executor-cancel.cfg` (116K each, 41s and
+  31s).
+- The 8 bug configs each fail on their property within 2 seconds, with
+  traces of 10 to 23 states: E1's in 23 states (`ResultTruthful`) and
+  K2's in 13 (`ResultPhysical`), as the `-known-*` configs did. With
+  their switches off, the same two shapes pass.
+
+Per-config counts and traces are in `specs/tla/Executor.md`.
 
 ### Build step 1, PR B (2026-10-05)
 
@@ -333,7 +355,8 @@ had them. The tests pin each fix in the code. H2 is a property of how the
 code is built (the channel's reads are `Durable.commit/1` calls, so they
 wait for a commit in progress), and no test can force the interleaving.
 `Executor.tla` found E1 and K2 in the code as built. G1 fixed part of
-K2 (a crash while polling); E1 and the rest of K2 are open.
+K2 (a crash while polling); G2, after the PR B review, fixed E1 and the
+rest of K2.
 Test files are under `apps/hub/test` unless they name the node.
 
 | ID | Problem | Fix (plan section 2.3) | Test | Spec |
@@ -348,8 +371,8 @@ Test files are under `apps/hub/test` unless they name the node.
 | H8 | a call that ended in an error (a raise, or an error result after the row existed) left its row open for the next join to start | hub rule 10: every error result after the op ID cancels the op in its commit; a rescued raise runs `on_interrupt/2`; a rerun that finds the row parks | `boundary/machine_tools_test.exs`: "a raise after the op exists ends with an error, and cancels the op", "parks without checking the machine, even if it is now unknown"; `boundary/durable_test.exs`: "ends its call with an error, and its on_interrupt runs in the same commit" | `HubOps-bug-error-skips-cancel`; `Durable-crash` (`NoOpenRowAfterDone`) |
 | rules the plan had | an early `op.ack`, a spawn before the journal, an `op.start` after a cancel, no `known` flag | hub rules 4 and 7, node rules 3 and 4 | `boundary/machines_test.exs`: "a result is stored with its signal, then acked", "a join resends op.cancel for a canceled row, and never op.start"; node `boundary/executor_test.exs`: "an operation the hub has seen but the node has no record of fails without running", "a cancel journaled before the command's start means it never spawns"; node `boundary/shell_test.exs`: "a command doesn't start until its owner has stored the checkpoint" | `HubOps-bug-ack-early`, `-bug-spawn-before-journal`, `-bug-start-after-cancel`, `-bug-no-known` |
 | node rule 10 | a node stopped on purpose killed its running commands, and the resumed op reported a killed command `completed` (the wrapper records exit 143) | `terminate/2` writes a `stopped` marker before it kills, and `recover/1` checks it before the exit file | node `boundary/shell_test.exs`: "a command killed when its shell is shut down is reported as stopped, not completed"; node `boundary/executor_test.exs`: "a node stopped while a command runs reports the command as killed after it restarts" | `Executor-bug-stopped-marker` |
-| E1 (open) | a command killed by a cancel is reported `completed` (exit 143) when the executor or the node dies after the kill and before the `canceled` snapshot is journaled: the resumed shell's `recover/1` finds the exit file before it handles the `:cancel` that follows `Ops.add/2` | not fixed. Low severity: the hub closes a canceled row without showing its result, unless the commit that canceled it rolled back. A fix would let recovery see the journal's `cancel` flag, or mark a cancel's kill as a stop's is marked | - | `Executor-known-cancel-completed` (fails `CompletedMeansExited`) |
-| K2 (partly open) | a shell resumed after a node crash has no port to the command the previous VM started, so if it crashes its `terminate/2` kills nothing; the op fails and the command runs on unwatched | G1: once `reattach/2` finds the group alive the shell is `reattached`, and `terminate/2` kills a reattached command whose op is still `awaiting`, after the `stopped` marker (node rule 10). Still open: a crash in `recover/1` before that point. Low severity: it takes a node crash and then a crash there. A fix would kill the recorded pgid in `terminate/2` whenever the op is `awaiting` in phase `process` | node `boundary/shell_test.exs`: "a reattached command is killed and reported as stopped when its shell is shut down"; node `boundary/executor_test.exs`: "a reattached command shut down before its result is restarted once and reported stopped" | `Executor-known-orphan-reattached` (fails `ResultPhysical` through a crash in `recover/1`; `Executor.md` records the check that a crash while polling no longer orphans the command) |
+| E1 | a command killed by a cancel is reported `completed` (exit 143) when the executor or the node dies after the kill and before the `canceled` snapshot is journaled: the resumed shell's `recover/1` finds the exit file before it handles the `:cancel` that follows `Ops.add/2`. Low severity: the hub closes a canceled row without showing its result, unless the commit that canceled it rolled back | G2: the shell writes a `canceled` marker before a cancel's kill, and `recover/1` checks it before the `stopped` marker and the exit file and finishes the op as `canceled`; a fresh start removes it and `Journal.forget/2` deletes it | node `boundary/shell_test.exs`: "a command killed by a cancel is resumed as canceled, not completed", "a reattached command killed by a cancel is resumed as canceled", "a fresh start clears a canceled marker left by an earlier one"; node `boundary/journal_test.exs`: "forget/2 deletes the entry and the command's bookkeeping, and keeps its output" | `Executor-bug-cancel-marker` (fails `ResultTruthful`, which no longer excepts canceled ops) |
+| K2 | a shell resumed after a node crash has no port to the command the previous VM started, so if it crashes its `terminate/2` kills nothing; the op fails and the command runs on unwatched. Low severity: it takes a node crash and then a crash in the shell's own code | G1: `terminate/2` killed a command the shell had reattached to (a crash while polling). G2: `terminate/2` kills the recorded process group (snapshot or `pid` file) whenever the port is open or the snapshot is still `awaiting` in phase `process`, so a crash in `recover/1` before it reattaches kills it too; the `stopped` marker comes first unless the `exit` file is already there | node `boundary/shell_test.exs`: "a resumed shell that crashes before it reattaches kills its command", "a resumed shell that crashes after its command exited leaves no stopped marker", "a reattached command is killed and reported as stopped when its shell is shut down"; node `boundary/executor_test.exs`: "a reattached command shut down before its result is restarted once and reported stopped" | `Executor-bug-orphan-reattached` (puts back G1's `terminate/2`; fails `ResultPhysical` through a crash in `recover/1`). `Executor-faults` now checks `ResultPhysical` too |
 | G1 unstarted | an executor crash after it journaled a `process` checkpoint and before it answered left a shell that stopped without spawning, and the resumed op failed as "outcome unknown" though the command never ran | node rule 4: on `:ignored` the shell writes an `unstarted` marker before it stops; a resume with no process group, no `pid` file and the marker starts the command through the checkpoint again; every start removes the marker before its checkpoint, and `Journal.forget/2` deletes it | node `boundary/shell_test.exs`: "a command whose stored start was never confirmed runs once when resumed", "a stored start with no process group, pid file or marker fails as unknown"; node `boundary/executor_test.exs`: "a command whose journaled start the executor never confirmed runs once" | `Executor` and `-faults`, `-two` (`AtMostOnceExec` with the marker path; `Executor.md` records that it is reached) |
 
 ### Core: model client and message format
@@ -411,8 +434,8 @@ were reported; they went with those specs (in git history).
   (node rule 8), output, `view_image`, the frame budget and the sweep;
   ExUnit covers them (`executor_test.exs`). Its hub is a stand-in, and
   `HubOps.tla` leaves out executor and operation-process crashes, so no
-  one spec has both a hub crash and an executor crash. E1 needs both to
-  be visible to a model, which is why it is open but low.
+  one spec has both a hub crash and an executor crash. E1 needed both to
+  be visible to a model, which is why it was low.
 - `Durable.tla` reduces the machine to its row and signal, and bounds a
   call's rechecks (`MaxRechecks`); `HubOps.tla` models the rest of the
   protocol.

@@ -10,7 +10,8 @@ crashes at any point inside any of its handlers, operation process
 crashes, abrupt node crashes (commands survive), node stops (a shell kills
 its command and leaves the `stopped` marker, or leaves the `unstarted`
 marker if it was still waiting to start one), dropped connections, extra
-`op.start` pushes, and commands that leave background children or never
+`op.start` pushes, cancels (a shell leaves the `canceled` marker before a
+cancel's kill), and commands that leave background children or never
 exit.
 
 It replaces `Coordinator.tla`, which modeled one node session's
@@ -23,7 +24,8 @@ keeps the operation-process part of the old one (its actions `OpInit`,
 `CallResult`) with the executor as the checkpoint sink in place of the
 coordinator. The session parts went with the code. The findings that
 spec made about operations (F3, F8, F9, F11, K1) each have a bug config
-here.
+here, and so do the two this spec found in the code as first built (E1,
+K2), both fixed since.
 
 `HubOps.tla` models the protocol end to end, with the executor as one
 party that never crashes. This spec opens the executor up: it adds what
@@ -57,7 +59,7 @@ One or two ops, each from its own tool call on the hub (its own op ID).
 | `es` | the executor process: `up`, `scan` (`init/1` done, `handle_continue(:scan)` pending), `down` (crashed, the supervisor hasn't restarted it yet) or `off` (the node is down) |
 | `monCur[c]`, `downq[c]`, `rst[c]` | the executor's memory: whether it monitors the op's live process, the `:DOWN` messages in its mailbox, and `restarted` |
 | `p[c]` | the op's `Ops.Shell` process, if any (the registry allows one): where it is (`init`, in its checkpoint call `ck`, in a report call `rep`, or waiting for messages in `spawning`, `running` or `polling`), the snapshot it holds, the answer to its call, a `:cancel` or `:resend` waiting, its `canceled` flag, and whether its port is open |
-| `os[c]` | the command: running or exited, background children left in its group, the `exit`, `pid`, `stopped` and `unstarted` files, how often it was spawned, and a ghost `self` (it exited on its own) |
+| `os[c]` | the command: running or exited, background children left in its group, the `exit`, `pid`, `stopped`, `canceled` and `unstarted` files, how often it was spawned, and a ghost `self` (it exited on its own) |
 | `conn`, `h2n`, `n2h` | the `Connection` joined to the hub's channel, and the messages in flight each way, FIFO, lost when the socket drops |
 | `hrow`, `hcx`, `hconf`, `hres` | the hub's op row: `open` or `done`, its `cancel` flag, whether the hub has seen a snapshot (`known`), and the result it recorded |
 
@@ -73,11 +75,11 @@ One or two ops, each from its own tool call on the hub (its own op ID).
 | `ExecCrash`, `ExecRestart` | the executor dies (between handlers, or after any prefix of a handler's effects: the `crash` mode of each step above); `PhotonNode` is `:rest_for_one`, so the `Connection` restarts with it |
 | `CallNoproc` | a call made while the executor isn't registered exits at once |
 | `NodeCrash`, `NodeStop`, `NodeBoot` | the VM dies abruptly (also after any prefix of a handler's effects: the `node` mode), or stops on purpose (the executor stops first, so a shell waiting in its checkpoint call gets `:ignored` and writes the `unstarted` marker; every other shell's `terminate/2` runs), and starts again |
-| `OpInit` | `Shell.handle_continue(:start)`: `prepare/1` removes the leftover files (the `unstarted` marker among them) and asks for the `process` checkpoint; `recover/1` (with a checkpoint for a pgid found in the `pid` file), `reattach/2`, which starts the command through `prepare/1` when there is no pgid and the `unstarted` marker is there; `finish/2` |
+| `OpInit` | `Shell.handle_continue(:start)`: `prepare/1` removes the leftover files (the `unstarted` and `canceled` markers among them) and asks for the `process` checkpoint; `recover/1` (with a checkpoint for a pgid found in the `pid` file), which checks the `canceled` marker (finishing as canceled, `cancel/1`) and then the `stopped` one before the exit file; `reattach/2`, which starts the command through `prepare/1` when there is no pgid and the `unstarted` marker is there; `finish/2` |
 | `OpCkDone` | `start_when_confirmed/2`: `:ok` spawns the command (the wrapper writes its `pid` file), `:cancel` cancels without spawning, `:ignored` writes the `unstarted` marker and stops without spawning |
 | `OpReturn` | a report call returns (`:ok`, or `:down` if the executor died), and the shell goes on from where it called |
-| `PidLine`, `PortExit`, `OpCancel`, `OpResend`, `Poll` | the `pid` line handler (with `kill_if_canceled/2`), `{:exit_status, _}` (`exited/2` after `kill_group/3`), `:cancel`, `:resend`, `:poll` (`poll_recovered/1`) |
-| `OpCrash` | a crash of the shell's own code; `terminate/2` writes the `stopped` marker and kills the group if the port is open or the shell reattached to the command and still waits for it (`polling`, or reporting a resend on the way back to it); the monitor reports it |
+| `PidLine`, `PortExit`, `OpCancel`, `OpResend`, `Poll` | the `pid` line handler (with `kill_if_canceled/2`), `{:exit_status, _}` (`exited/2` after `kill_group/3`), `:cancel` (the `canceled` marker, then the kill), `:resend`, `:poll` (`poll_recovered/1`) |
+| `OpCrash` | a crash of the shell's own code; `terminate/2` kills the group if the port is open, or if the snapshot is still `awaiting` in phase `process` (`proc0` or `proc1`) with a pgid on record in it or in the `pid` file, so a resumed shell kills its command whether or not it has reattached yet. It writes the `stopped` marker first unless the command's exit file is already there. The monitor reports the crash |
 | `CmdExit`, `BgExit` | the command (and any background child) exiting; the wrapper writes `exit` |
 | `HubStart`, `HubRepush`, `HubCancel`, `HubRecv`, `Join`, `Disconnect` | the hub: a call's row and its `op.start` (hub rules 1 and 2), an online recheck's push (rule 11), a cancel (rule 7), `Machines.snapshot/3` (rules 3 to 6); a join, on which the node pushes `Executor.snapshots/0` and the hub `op.start` or `op.cancel` for its open rows; a dropped socket |
 
@@ -158,8 +160,7 @@ Safety:
 | --- | --- |
 | `AtMostOnceExec` | each op's command is spawned at most once |
 | `ResultPhysical` | once the hub has an op's result, nothing of its command (the command or a background child) is running |
-| `ResultTruthful` | the result says what happened: `completed` only for a command that exited on its own (or for an op the hub canceled, whose result the hub doesn't show; see E1), `canceled` only if the hub canceled, `failed` only after a fault, never "no record" |
-| `CompletedMeansExited` | `ResultTruthful`'s first clause without the exception for canceled ops (E1) |
+| `ResultTruthful` | the result says what happened: `completed` only for a command that exited on its own, canceled or not (before E1 was fixed this clause excepted canceled ops, and `CompletedMeansExited` checked the strict form), `canceled` only if the hub canceled, `failed` only after a fault, never "no record" |
 
 Liveness:
 
@@ -171,42 +172,49 @@ Liveness:
 
 ## Results
 
-TLC 2.19, Java 21, on the shared 12-core machine, 2026-10-06, rerun on
-the merged code after G1 (the `unstarted` marker and the kill of a
-reattached command): 6 workers, or 11 for `Executor-two.cfg`. The load
-average sat around 38 from other work, though the CPUs were mostly idle.
-Safety is `TypeOK`, `AtMostOnceExec`, `ResultPhysical` and
-`ResultTruthful`; liveness is `CallResult`, `CancelTakesEffect` and
-`ResultsForgotten`. The configs with an executor crash, a node stop or an
-operation process crash after a node crash reach more states than before
-G1 (B7's first run: `Executor` 329,968, `-node` and `-cancel` 108,598,
-`-faults` 3,979,767, `-two` 71,796,716); `-two-live` reaches the same
-count. A failing config's count is how far TLC got, so those moved a
-little too.
+TLC 2.19, Java 21, on the shared 12-core machine, 2026-10-06, rerun after
+the E1 and K2 fixes (the `canceled` marker, and `terminate/2` killing any
+command on record for a snapshot still awaiting its process): 6 workers,
+or 11 for `Executor-two.cfg`. The load average sat between 37 and 50
+from other work. Safety is `TypeOK`, `AtMostOnceExec`, `ResultPhysical`
+and `ResultTruthful` (now without the exception for canceled ops);
+liveness is `CallResult`, `CancelTakesEffect` and `ResultsForgotten`.
+`Executor-faults.cfg` now checks `ResultPhysical` too, which K2 kept it
+from before. Compared with the run after G1 (`Executor` 371,131,
+`-node` and `-cancel` 118,549, `-faults` 4,593,304, `-two` 90,834,364),
+the configs with a node crash or stop reach fewer states, since a
+resumed shell that crashes or stops now kills its command, and the
+configs with a cancel reach a few more, from the marker. `-two` and
+`-two-live`, with neither, reach the same counts. A failing config's count is how far TLC got.
 
 | Config | Shape | Checks | Expected | Distinct states | Time |
 | --- | --- | --- | --- | --- | --- |
-| `Executor.cfg` | 1 op; 1 executor crash, 1 operation process crash, 1 dropped connection, 1 extra `op.start`, 1 cancel; background children | safety, liveness | pass | 371,131 | 1m41s |
-| `Executor-node.cfg` | 1 op; 1 node crash, 1 node stop, 1 executor crash, 1 cancel; background children | safety, liveness | pass | 118,549 | 34s |
-| `Executor-cancel.cfg` | as `-node`, commands may run forever | safety, `CancelTakesEffect`, `ResultsForgotten` | pass | 118,549 | 26s |
-| `Executor-faults.cfg` | 1 op; 2 executor crashes and one of every other fault | `TypeOK`, `AtMostOnceExec`, `ResultTruthful` | pass | 4,593,304 | 2m35s |
-| `Executor-two.cfg` | 2 ops; 1 executor crash | safety | pass | 90,834,364 | 16m29s |
-| `Executor-two-live.cfg` | 2 ops; 1 cancel | safety, liveness | pass | 258,210 | 1m46s |
-| `Executor-bug-double-exec.cfg` | F3 put back; 1 executor crash | `AtMostOnceExec` | fails, 18-state trace | 2,179 | 1s |
+| `Executor.cfg` | 1 op; 1 executor crash, 1 operation process crash, 1 dropped connection, 1 extra `op.start`, 1 cancel; background children | safety, liveness | pass | 374,709 | 1m55s |
+| `Executor-node.cfg` | 1 op; 1 node crash, 1 node stop, 1 executor crash, 1 cancel; background children | safety, liveness | pass | 115,637 | 41s |
+| `Executor-cancel.cfg` | as `-node`, commands may run forever | safety, `CancelTakesEffect`, `ResultsForgotten` | pass | 115,637 | 31s |
+| `Executor-faults.cfg` | 1 op; 2 executor crashes and one of every other fault | safety | pass | 4,403,682 | 2m18s |
+| `Executor-two.cfg` | 2 ops; 1 executor crash | safety | pass | 90,834,364 | 17m10s |
+| `Executor-two-live.cfg` | 2 ops; 1 cancel | safety, liveness | pass | 258,210 | 2m07s |
+| `Executor-bug-double-exec.cfg` | F3 put back; 1 executor crash | `AtMostOnceExec` | fails, 18-state trace | 2,094 | 2s |
 | `Executor-bug-cancel-before-pid.cfg` | F8 put back; 1 cancel, commands may run forever | `CancelTakesEffect` | fails, 15 states then stuttering | 321 | 1s |
-| `Executor-bug-op-crash.cfg` | F9 put back; 1 operation process crash | `CallResult` | fails, 5 states then stuttering | 81 | 1s |
-| `Executor-bug-bg-reattach.cfg` | F11 put back; 1 node crash, background children | `CallResult` | fails, 16 states then stuttering | 1,319 | 2s |
-| `Executor-bug-pid-file.cfg` | K1 put back; 1 node crash | `ResultPhysical` | fails, 13-state trace | 646 | 1s |
-| `Executor-bug-stopped-marker.cfg` | node rule 10 broken; 1 node stop | `ResultTruthful` | fails, 17-state trace | 1,000 | 1s |
-| `Executor-known-cancel-completed.cfg` | E1, the code as it is; 1 executor crash, 1 cancel | `CompletedMeansExited` | fails, 23-state trace | 13,903 | 2s |
-| `Executor-known-orphan-reattached.cfg` | what is left of K2, the code as it is; 1 node crash, 1 operation process crash | `ResultPhysical` | fails, 13-state trace | 1,302 | 1s |
+| `Executor-bug-op-crash.cfg` | F9 put back; 1 operation process crash | `CallResult` | fails, 10 states then stuttering | 81 | 1s |
+| `Executor-bug-bg-reattach.cfg` | F11 put back; 1 node crash, background children | `CallResult` | fails, 17 states then stuttering | 1,319 | 2s |
+| `Executor-bug-pid-file.cfg` | K1 put back; 1 node crash | `ResultPhysical` | fails, 13-state trace | 729 | 1s |
+| `Executor-bug-stopped-marker.cfg` | node rule 10 broken; 1 node stop | `ResultTruthful` | fails, 18-state trace | 966 | 1s |
+| `Executor-bug-cancel-marker.cfg` | E1 put back; 1 executor crash, 1 cancel | `ResultTruthful` | fails, 23-state trace | 13,754 | 2s |
+| `Executor-bug-orphan-reattached.cfg` | K2 put back (G1's `terminate/2`); 1 node crash, 1 operation process crash | `ResultPhysical` | fails, 13-state trace | 1,494 | 2s |
+
+Each of the two new bug configs differs from the clean code only by its
+switch, so its trace also shows the fixed path is reached: with `Bugs =
+{}` the same shapes pass (E1's 16,126 states, K2's 2,833).
 
 A failing config stops at its first violation, so its state count is how
 far TLC got, and with several workers the trace it reports can differ by
 a state or two between runs.
 
 The configs are sized to finish within about 15 minutes (`Executor-two.cfg`
-now takes a little longer, since G1's marker path adds states). Two ops
+takes a little longer, since G1's marker path adds states, and 17m10s on
+this loaded machine). Two ops
 interleave freely, so the state space is roughly the square of one op's:
 with a cancel or a node crash as well as the executor crash,
 `Executor-two.cfg` passed 50M states with its queue still growing after
@@ -320,12 +328,10 @@ the command `completed` with partial output.
 Fixed: `terminate/2` writes the `stopped` marker before it kills, and
 `recover/1` checks the marker before the exit file and fails the op.
 
-## Findings
+### E1. A command killed by a cancel was reported `completed`
 
-### E1. A command killed by a cancel can be reported `completed`
-
-`Executor-known-cancel-completed.cfg`, `CompletedMeansExited`, 23 states.
-Found by this spec, against the code as it is; not fixed. The hub cancels
+`Executor-bug-cancel-marker.cfg` (`no_cancel_marker`), `ResultTruthful`,
+23 states. Found by this spec in the code as first built. The hub cancels
 a running command. The shell kills its group, so the wrapper records exit
 143, and the shell reports `canceled`. The executor crashes before it
 journals that, so the report returns `:down` and the shell stops. The
@@ -334,46 +340,46 @@ resumes the op and follows `Ops.add/2` with `Ops.cancel/1` (node rule 2),
 but the new shell runs `recover/1` in its `handle_continue` before it
 handles `:cancel`. Recovery finds the exit file and reports the command
 `completed`, exit code 143, with whatever output it wrote. An abrupt node
-crash at the same point does the same.
+crash at the same point does the same. It was low severity: every cancel
+comes from a commit that ends the call, and `Photon.Machines` closes a
+canceled row without showing its result, so the hub saw it only if that
+commit rolled back.
 
-Severity: low. Every cancel comes from a commit that ends the call, and
-`Photon.Machines` closes a canceled row without showing its result. The
-model sees it only if that commit rolled back (a hub crash: `HubOps.md`
-traces how a rerun then receives the node's snapshot), and even then the
-result says exit code 143. Two ways to fix it, both on the node: let
-recovery take the journal's `cancel` flag (start the resumed shell
-canceled, so a found exit file reports `canceled`), or have the shell
-write a marker before a cancel's kill, as it does before a stop's.
-`ResultTruthful` allows this case, so the clean configs pass; the known
-config checks the strict form.
+Fixed: the shell writes a `canceled` marker before a cancel's kill
+(`handle_info(:cancel, _)`, and `cancel/1` while the snapshot is
+`awaiting` in phase `process`), and `recover/1` checks it before the
+`stopped` marker and the exit file and finishes the op as canceled. A
+fresh start removes a stale marker, and `Journal.forget/2` deletes it.
+`ResultTruthful` no longer excepts canceled ops from its first clause.
 
-### K2. A crashed shell that didn't start its command leaves it running
+### K2. A shell that crashed before it reattached left its command running
 
-`Executor-known-orphan-reattached.cfg`, `ResultPhysical`, 13 states.
-Partly fixed in G1. After a node crash, a shell resumed from `proc0` or
-`proc1` doesn't own a port: it reattaches to a command the previous VM
-started. Before G1, if that shell crashed (in `recover/1` or while
-polling, for example when `System.cmd/2` raises), its `terminate/2`
-killed nothing, since it only killed when the port was open. The executor
-fails the op ("the operation process exited"), the hub records it, and
-the command runs on with nothing watching it. `Coordinator.tla` had the
-same gap, unreported (its op-crash configs didn't check `IdlePhysical`).
+`Executor-bug-orphan-reattached.cfg` (`kill_reattached_only`),
+`ResultPhysical`, 13 states. Found by this spec; `Coordinator.tla` had
+the same gap, unreported (its op-crash configs didn't check
+`IdlePhysical`). After a node crash, a shell resumed from `proc0` or
+`proc1` owns no port: it waits for a command the previous VM started. Its
+`terminate/2` killed the group only when the port was open or, as G1
+built it, once `reattach/2` had found the group alive (the `reattached`
+flag). A crash in `recover/1` before that point killed nothing, which is
+the trace: the node crashes after the spawn, the resumed shell crashes in
+its `handle_continue` (`OpCrash` in `init`), the executor fails the op
+("the operation process exited"), the hub records it, and the command
+runs on with nothing watching it. Before G1 a crash while polling did the
+same. It was low severity: it took a node crash and then a crash in the
+shell's own code.
 
-G1 sets the shell's `reattached` flag once `reattach/2` finds the group
-alive, and `terminate/2` kills a reattached command whose op is still
-`awaiting`, after the `stopped` marker. What is left is a crash in
-`recover/1` before that point, which is the trace TLC reports: the node
-crashes after the spawn, the resumed shell crashes in its
-`handle_continue` (`OpCrash` in `init`), and the command runs on. A copy
-of the spec that only lets a shell crash in `init` on a fresh start
-(`ready`) passes this config (2,609 states) with G1's `terminate/2`, and
-fails it with the old one (15 states: the crash comes while `polling`).
-That copy was run in `/tmp` and isn't committed.
+Fixed: `terminate/2` kills the recorded process group (from the snapshot,
+or the `pid` file) whenever the port is open or the snapshot is still
+`awaiting` in phase `process`, after the `stopped` marker. The `reattached`
+flag is gone. The marker is left out when the command's exit file is
+already there: the command has exited, the kill is only for children it
+left, and its exit status stands.
 
-Severity: low; it takes a node crash and then a crash in `recover/1`
-before it reattaches. A fix: `terminate/2` kills the recorded pgid
-(from the snapshot or the `pid` file) whenever the op is still
-`awaiting` in phase `process`, not only once the shell has reattached.
+## Findings
+
+This spec found two gaps in the code as first built, E1 and K2. Both are
+fixed, and each is a bug config above.
 
 ### Observations (not traced)
 
@@ -381,9 +387,9 @@ before it reattaches. A fix: `terminate/2` kills the recorded pgid
   its shell had no port, so `terminate/2` wrote no marker and killed
   nothing, and the next start reattached to it again. Since G1 it is
   killed and reported as stopped (node rule 10), like a command the
-  stopping VM started. A stop that comes while a resumed shell is still
-  in `recover/1`, before it reattaches, still leaves the command running
-  for the next start; nothing goes wrong.
+  stopping VM started. Since K2 was fixed, so is a command whose resumed
+  shell is stopped while still in `recover/1`, before it reattaches
+  (before, it was left running for the next start, which was harmless).
 - An executor crash after it journals a `process` checkpoint and before it
   answers leaves a shell that stops without spawning. Before G1 the
   resumed op failed with "outcome is unknown because process start was

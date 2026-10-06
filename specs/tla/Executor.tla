@@ -10,8 +10,9 @@
 (* node crashes (commands survive), node stops (a shell kills its command *)
 (* and leaves the `stopped` marker, or leaves the `unstarted` marker when  *)
 (* it was waiting to start one), dropped connections, and commands that   *)
-(* leave background children or never exit. Executor.md has the          *)
-(* mapping to the code, the results and the findings.                     *)
+(* leave background children or never exit. A cancel's kill leaves the    *)
+(* `canceled` marker. Executor.md has the mapping to the code, the        *)
+(* results and the findings.                                              *)
 (*                                                                         *)
 (* HubOps.tla models the protocol end to end with the executor as one     *)
 (* atomic party; this spec opens the executor up and leaves the hub        *)
@@ -34,6 +35,12 @@
 (*   "no_pid_file"        the wrapper writes no pid file (K1)             *)
 (*   "no_stopped_marker"  a stopping shell kills its command without the  *)
 (*                        `stopped` marker (node rule 10)                  *)
+(*   "no_cancel_marker"   a cancel kills the command without the           *)
+(*                        `canceled` marker, so a resume after the kill    *)
+(*                        reports exit 143 as completed (E1)               *)
+(*   "kill_reattached_only" terminate/2 kills a command without a port     *)
+(*                        only once the shell has reattached to it, so one *)
+(*                        that crashes in recovery leaves it running (K2)  *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets, TLC
 
@@ -50,7 +57,8 @@ CONSTANTS
   Bugs            \* defects to put back (see above)
 
 BugNames == {"double_exec", "cancel_before_pid", "unmonitored", "poll_order",
-             "no_pid_file", "no_stopped_marker"}
+             "no_pid_file", "no_stopped_marker", "no_cancel_marker",
+             "kill_reattached_only"}
 ASSUME Bugs \subseteq BugNames
 ASSUME NOps \in 1..2
 
@@ -109,10 +117,12 @@ NoProc == [proc |-> "none", init |-> "none", snap |-> "none", call |-> "none",
 NewProc(st) == [NoProc EXCEPT !.proc = "init", !.init = st, !.snap = st]
 
 \* The command. exit: the wrapper's exit file; pidf: its pid file; stopped:
-\* the `stopped` marker; unst: the `unstarted` marker (a start that never
-\* spawned); self: the command exited on its own (a ghost).
+\* the `stopped` marker; cxm: the `canceled` marker (a cancel's kill); unst:
+\* the `unstarted` marker (a start that never spawned); self: the command
+\* exited on its own (a ghost).
 NoOS == [cmd |-> "none", bg |-> FALSE, exit |-> FALSE, execs |-> 0,
-         pidf |-> FALSE, stopped |-> FALSE, unst |-> FALSE, self |-> FALSE]
+         pidf |-> FALSE, stopped |-> FALSE, cxm |-> FALSE, unst |-> FALSE,
+         self |-> FALSE]
 
 Msg(k, c, kn) == [k |-> k, c |-> c, kn |-> kn]
 
@@ -336,8 +346,8 @@ Report(q, st, nxt) == [q EXCEPT !.proc = "rep", !.call = st, !.snap = st,
 
 \* The wrapper starts the command and writes its pid file.
 Spawn(o) == [cmd |-> "running", bg |-> FALSE, exit |-> FALSE, execs |-> o.execs + 1,
-             pidf |-> ~Bug("no_pid_file"), stopped |-> FALSE, unst |-> FALSE,
-             self |-> FALSE]
+             pidf |-> ~Bug("no_pid_file"), stopped |-> FALSE, cxm |-> FALSE,
+             unst |-> FALSE, self |-> FALSE]
 
 \* kill_group/3: the whole group goes. The wrapper records the killed
 \* command's exit status (143).
@@ -348,14 +358,20 @@ KillIf(o, pgid) == IF pgid THEN KillOS(o) ELSE o
 \* recorded_pgid/1: from the snapshot, else from the pid file.
 PgidKnown(q, o) == q.snap = "proc1" \/ o.pidf
 
-\* prepare/1: remove the leftover files (the `unstarted` marker among them),
-\* then ask for the `process` checkpoint.
+\* prepare/1: remove the leftover files (the `unstarted` and `canceled`
+\* markers among them), then ask for the `process` checkpoint.
 Prepare(c, q, o) ==
-  Become(c, [q EXCEPT !.proc = "ck", !.call = "ck", !.ans = "none"], [o EXCEPT !.unst = FALSE])
+  Become(c, [q EXCEPT !.proc = "ck", !.call = "ck", !.ans = "none"],
+         [o EXCEPT !.unst = FALSE, !.cxm = FALSE])
 
-\* recover/1 after any pid-file checkpoint, then reattach/2.
+\* The `canceled` marker, written before a cancel's kill (E1).
+CxMarked(o) == [o EXCEPT !.cxm = IF Bug("no_cancel_marker") THEN @ ELSE TRUE]
+
+\* recover/1 after any pid-file checkpoint, then reattach/2. The markers
+\* come before the exit file, the cancel's first.
 RecoverTo(c, q, o, pgid) ==
-  IF o.stopped THEN Become(c, Report(q, "failed", "exit"), KillIf(o, pgid))  \* node rule 10
+  IF o.cxm THEN Become(c, Report(q, "canceled", "exit"), KillIf(o, pgid))   \* cancel/1
+  ELSE IF o.stopped THEN Become(c, Report(q, "failed", "exit"), KillIf(o, pgid)) \* rule 10
   ELSE IF ~pgid /\ o.unst THEN Prepare(c, q, o)           \* never started (node rule 4)
   ELSE IF ~pgid THEN Become(c, Report(q, "failed", "exit"), o)       \* outcome unknown
   ELSE IF o.exit THEN Become(c, Report(q, "read", "complete"), KillOS(o))
@@ -414,11 +430,11 @@ PortExit(c) ==
      Become(c, IF q.canceled THEN Report(q, "canceled", "exit") ELSE Report(q, "read", "complete"),
             [os[c] EXCEPT !.bg = FALSE])
 
-\* handle_info(:cancel, _)
+\* handle_info(:cancel, _): the `canceled` marker, then the kill.
 OpCancel(c) ==
   /\ nodeUp /\ p[c].cancel /\ p[c].proc \in {"spawning", "running", "polling"}
   /\ LET q == [p[c] EXCEPT !.cancel = FALSE]
-         o == os[c]
+         o == CxMarked(os[c])
      IN CASE q.proc = "spawning" -> Become(c, [q EXCEPT !.canceled = TRUE], o)  \* kill_group(nil)
           [] q.proc = "running"  -> Become(c, [q EXCEPT !.canceled = TRUE], KillOS(o))
           [] OTHER -> Become(c, Report(q, "canceled", "exit"), KillOS(o))      \* port nil: cancel/1
@@ -439,18 +455,28 @@ Poll(c) ==
         /\ IF o.exit THEN Become(c, Report(q, "read", "complete"), KillOS(o))
            ELSE Become(c, Report(q, "failed", "exit"), o)
 
-\* A shell that reattached to its command and still waits for it (the
+\* A shell that reattached to its command and still waits for it (G1's
 \* `reattached` flag with an `awaiting` snapshot): polling, or reporting a
-\* resend on the way back to polling.
+\* resend on the way back to polling. Only the K2 bug config uses it.
 Reattached(q) == q.proc = "polling" \/ (q.proc = "rep" /\ q.nxt = "polling")
 
 Marked(o) == [o EXCEPT !.stopped = IF Bug("no_stopped_marker") THEN @ ELSE TRUE]
 
+\* stop_command/2: the stopped marker, unless the command has already
+\* exited (its exit file stands; the kill is only for children it left).
+StopMarked(o, killed) == IF o.exit THEN killed ELSE Marked(killed)
+
 \* terminate/2: the stopped marker, then the kill, when the port is open or
-\* the shell reattached (its snapshot has the pgid).
+\* the snapshot still awaits its process (proc0 or proc1) with a pgid on
+\* record, in the snapshot or the pid file (K2). The bug config puts back
+\* G1's code: without a port, only a reattached shell killed anything.
 Terminated(q, o) ==
-  IF q.port THEN Marked(KillIf(o, PgidKnown(q, o)))
-  ELSE IF Reattached(q) THEN Marked(KillOS(o))
+  IF Bug("kill_reattached_only")
+  THEN IF q.port THEN Marked(KillIf(o, PgidKnown(q, o)))
+       ELSE IF Reattached(q) THEN Marked(KillOS(o))
+       ELSE o
+  ELSE IF q.port THEN StopMarked(o, KillIf(o, PgidKnown(q, o)))
+  ELSE IF q.snap \in {"proc0", "proc1"} /\ PgidKnown(q, o) THEN StopMarked(o, KillOS(o))
   ELSE o
 
 \* An operation process crashes (a bug in its own code, so never while it
@@ -670,20 +696,15 @@ ResultPhysical == \A c \in Ops : hrow[c] = "done" => CmdGone(c)
 Faults == cnt.exc + cnt.opc + cnt.node + cnt.stop
 
 \* The result says what happened: `completed` only for a command that
-\* exited on its own, unless the hub had canceled the op (the hub closes a
-\* canceled row's result without showing it; see E1 in Executor.md),
-\* `canceled` only if the hub canceled, `failed` only after a fault, and
-\* never "no record" (the node loses no data here).
+\* exited on its own, canceled or not (E1), `canceled` only if the hub
+\* canceled, `failed` only after a fault, and never "no record" (the node
+\* loses no data here).
 ResultTruthful ==
   \A c \in Ops :
-    /\ hres[c] = "completed" => os[c].self \/ hcx[c]
+    /\ hres[c] = "completed" => os[c].self
     /\ hres[c] = "canceled" => hcx[c]
     /\ hres[c] = "failed" => Faults > 0
     /\ hres[c] # "lost"
-
-\* The strict form of the first clause: `completed` only for a command that
-\* exited on its own, canceled or not (E1).
-CompletedMeansExited == \A c \in Ops : hres[c] = "completed" => os[c].self
 
 \* Every op the hub started gets its result.
 CallResult == \A c \in Ops : hrow[c] = "open" ~> hrow[c] = "done"

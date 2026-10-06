@@ -99,7 +99,7 @@ transport. No LiveView does I/O in `render/1`.
 | `PhotonNode.Executor.Link` | contract (behaviour for the hub link: `snapshot/1`, `output/3`; dispatches to the config's `:link`, `Connection` by default) | reads `PhotonNode.config/0` | `Config` |
 | `PhotonNode.Ops` | boundary (API over operation processes, each started for an `Ops.Owner`: `add/2`, `cancel/1`, `running?/1`; owns their `:resend` and `:cancel` messages and the via tuples into `PhotonNode.OpRegistry`) | does I/O (Registry, DynamicSupervisor, sends) | `Ops.Shell`, `Ops.Job`, `Ops.ViewImage`, `Ops.Owner` |
 | `PhotonNode.Ops.Owner` | contract (behaviour for whatever owns operations: `checkpoint/2`, `report/2`, `output/4`; the executor, or a test owner) | pure dispatch on the `{module, owner_id}` pair | `PhotonCore.Operation` |
-| `PhotonNode.Ops.Shell` | worker (one per command) | is a process; Port, files (`pid`, `exit`, and the `stopped` and `unstarted` markers), `/bin/sh` kill (polled with `send_after`, not slept on), live output | `Ops.Env`, `Ops`, `Ops.Owner`, `PhotonCore.Operation`, `PhotonCore.Output` |
+| `PhotonNode.Ops.Shell` | worker (one per command) | is a process; Port, files (`pid`, `exit`, and the `canceled`, `stopped` and `unstarted` markers), `/bin/sh` kill (polled with `send_after`, not slept on), live output | `Ops.Env`, `Ops`, `Ops.Owner`, `PhotonCore.Operation`, `PhotonCore.Output` |
 | `PhotonNode.Ops.Job` | worker (one-shot operations, behaviour for jobs) | is a process; runs `job.run/1` once and reports | `Ops`, `Ops.Owner`, `PhotonCore.Operation` |
 | `PhotonNode.Ops.ViewImage` | boundary (job: reads the image file) | does I/O (file) | `Ops.Image`, `PhotonCore.Operation`, `Ops.Job` |
 | `PhotonNode.Ops.Image` | functional core (image formats and sizes from a file's header) | pure | none |
@@ -277,7 +277,8 @@ PhotonNode.AppSupervisor  one_for_one     (PhotonNode.Application)
 - An `OpSupervisor` or `OpRegistry` crash takes the executor and the
   connection with it; the restarted executor resumes the operations from
   the journal. So does a node VM restart, where a shell command's outcome
-  comes from its `stopped`, `exit`, `pid` and `unstarted` files.
+  comes from its `canceled`, `stopped`, `exit`, `pid` and `unstarted`
+  files.
 - Config sits in `:persistent_term` and every name is global, so a VM runs
   at most one node.
 
