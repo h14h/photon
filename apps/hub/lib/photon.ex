@@ -6,7 +6,8 @@ defmodule Photon do
   The contexts (the APIs the web layer and nodes use):
 
     * `Photon.Assistant`: the assistant's conversation, memory and
-      schedules, and its profile for the durable harness
+      schedules, the page the user has open under it, and its profile for
+      the durable harness
     * `Photon.Durable`: the durable agent harness the assistant and threads
       run on
     * `Photon.Machines`: the machines the hub knows, which are connected,

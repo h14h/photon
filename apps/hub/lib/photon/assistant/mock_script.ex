@@ -10,6 +10,12 @@ defmodule Photon.Assistant.MockScript do
     * `remember <fact>` adds to memory
     * `in <n> minutes: <prompt>` and `every <n> minutes: <prompt>` schedule
     * `schedules` lists schedules
+    * `here` says the first line of the page note the message came with
+      (`Photon.Assistant.Page.note/2`), or that it doesn't know the page
+
+  It reads the last text part of the user's message, which is what the
+  user typed: a message sent from a page has the page's note in front of
+  it, as a part of its own.
 
   After a tool result it relays the result. An image result gets "Here it
   is." and its dimensions line.
@@ -37,6 +43,7 @@ defmodule Photon.Assistant.MockScript do
   - `remember <fact>` saves something to memory
   - `in 2 minutes: <prompt>` or `every 30 minutes: <prompt>` schedules a prompt
   - `schedules` lists what's scheduled
+  - `here` tells you which page you're on, as I see it
 
   Sign in with ChatGPT and I can do the rest.
   """
@@ -49,15 +56,33 @@ defmodule Photon.Assistant.MockScript do
       %{"role" => "tool"} = result ->
         result |> MockPhrases.relay_result() |> Message.assistant()
 
-      %{"role" => "user"} = message ->
-        message |> Message.text_of() |> String.trim() |> plan()
+      %{"role" => "user", "content" => content} ->
+        {note, typed} = split(content)
+        typed |> String.trim() |> plan(note)
 
       _ ->
         Message.assistant(@help)
     end
   end
 
-  defp plan("[Scheduled] " <> prompt), do: plan(prompt)
+  # The note of the page (nil without one) and what the user typed: the
+  # last text part.
+  defp split(content) when is_list(content) do
+    case for(%{"type" => "text", "text" => text} <- content, do: text) do
+      [] -> {nil, ""}
+      [typed] -> {nil, typed}
+      ["[Looking at" <> _ = note | _] = texts -> {note, List.last(texts)}
+      texts -> {nil, List.last(texts)}
+    end
+  end
+
+  defp split(content), do: {nil, Message.text_of(content)}
+
+  defp plan("[Scheduled] " <> prompt, note), do: plan(prompt, note)
+
+  defp plan(text, note) do
+    if Regex.match?(~r/\Ahere\??\z/i, text), do: here(note), else: plan(text)
+  end
 
   defp plan(text) do
     Enum.find_value(phrasings(), Message.assistant(@help), fn {pattern, reply} ->
@@ -79,6 +104,9 @@ defmodule Photon.Assistant.MockScript do
         {~r/\A(?:schedules|list schedules)\z/, &list_schedules/1}
       ]
   end
+
+  defp here(nil), do: Message.assistant("I don't know which page you're on.")
+  defp here(note), do: note |> String.split("\n", parts: 2) |> hd() |> Message.assistant()
 
   defp remember([fact]), do: call("update_memory", %{"action" => "add", "text" => fact}, "Noted.")
 

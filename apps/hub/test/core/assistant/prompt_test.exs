@@ -77,8 +77,15 @@ defmodule Photon.Assistant.PromptTest do
              - Keep durable facts about the user, their machines and their preferences in memory with update_memory. Your memory is below.
              - Use schedule for anything recurring or for later. A scheduled prompt arrives here as a message starting with "[Scheduled]", and you act on it then.
              - Never invent results. If a machine is offline or a command failed, say so plainly.
+             - The user talks to you from a panel that floats over the hub's pages. A message may start with a note of the page they have open, beginning "[Looking at"; "this" and "here" mean that page. You can't read or change projects, context files or threads with tools yet, but you can look in a project's folder on any machine with shell.
              """
              |> String.trim_trailing()
+  end
+
+  test "says what a page note at the start of a message means" do
+    prompt = Prompt.system_prompt(settings(), "", @now)
+    assert prompt =~ ~s(beginning "[Looking at"; "this" and "here" mean that page)
+    assert prompt =~ "you can look in a project's folder on any machine with shell"
   end
 
   test "opens with Blip's voice, in the owner's name when it's set" do

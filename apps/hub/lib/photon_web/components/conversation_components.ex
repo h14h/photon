@@ -20,6 +20,11 @@ defmodule PhotonWeb.ConversationComponents do
   read "Checked the context files", "Read notes.md", "Wrote notes.md" and
   "Edited notes.md", in the present while they run.
 
+  A message the user sent to Blip from a page inside a project shows only
+  what they typed, with a small "About Garden / Fix the pump" line under
+  it (`source["page"]`, see `Photon.Assistant.Page`); the note the model
+  saw in front of it isn't shown.
+
   The events these components send (`send`, `toggle_mode`, `stop`,
   `withdraw`) go to the LiveView that renders them; the socket side of the
   conversation is `PhotonWeb.ConversationView`.
@@ -41,10 +46,13 @@ defmodule PhotonWeb.ConversationComponents do
 
   @spec entry(map()) :: Phoenix.LiveView.Rendered.t()
   def entry(%{entry: %{kind: "user"}} = assigns) do
+    source = assigns.entry.data["source"] || %{}
+
     assigns =
       assign(assigns,
-        source: assigns.entry.data["source"] || %{},
-        text: Transcript.typed(assigns.entry.data["message"], assigns.entry.data["source"])
+        source: source,
+        text: Transcript.typed(assigns.entry.data["message"], assigns.entry.data["source"]),
+        about: get_in(source, ["page", "label"])
       )
 
     ~H"""
@@ -62,8 +70,21 @@ defmodule PhotonWeb.ConversationComponents do
       <% _ -> %>
         <div class="flex flex-col items-end gap-1 pl-10">
           <div class="max-w-full rounded-2xl rounded-br-md bg-sunken px-3.5 py-2 text-[14.5px] leading-relaxed text-ink ring-1 ring-line">
-            <span phx-no-format class="whitespace-pre-wrap">{@text}</span>
+            <span
+              id={"#{@id_prefix}message-#{@entry.id}"}
+              phx-no-format
+              class="whitespace-pre-wrap"
+            >{@text}</span>
           </div>
+          <p
+            :if={is_binary(@about)}
+            id={"#{@id_prefix}message-#{@entry.id}-about"}
+            class="flex max-w-full items-center gap-1 pr-1 text-[11.5px] text-ink-faint"
+            title="Blip saw a note of this page with the message"
+          >
+            <.icon name="hero-eye-micro" class="size-3 shrink-0" />
+            <span class="min-w-0 truncate">About {@about}</span>
+          </p>
         </div>
     <% end %>
     """
@@ -453,6 +474,9 @@ defmodule PhotonWeb.ConversationComponents do
   attr :class, :any, default: nil, doc: "added to the outer row"
   attr :autofocus, :boolean, default: false, doc: "whether the message box takes focus on load"
 
+  slot :context,
+    doc: "what goes with the next message, shown inside the box above the text (Blip's page chip)"
+
   @spec composer(map()) :: Phoenix.LiveView.Rendered.t()
   def composer(assigns) do
     ~H"""
@@ -485,6 +509,7 @@ defmodule PhotonWeb.ConversationComponents do
           phx-submit="send"
           class="rounded-2xl border border-line bg-canvas transition focus-within:border-accent/60 focus-within:bg-surface focus-within:shadow-md focus-within:shadow-accent/10"
         >
+          <div :if={@context != []} class="flex px-2.5 pt-2.5">{render_slot(@context)}</div>
           <textarea
             id={"#{@id_prefix}composer-input"}
             name={@form[:text].name}

@@ -756,7 +756,7 @@ Blip's own. Three moves:
   they're in the present while the call runs ("Reading notes.md"). As
   built, `composer/1` also takes `placeholder` (default "Ask Blip
   anything..."), `class` (added to its outer row, for the thread
-  page's `blip-clear-x`) and `autofocus` (the new-thread page's), and `sign_in_to_talk/1` takes `who` (default
+  page's `blip-clear-x`), `autofocus` (the new-thread page's) and a `context` slot (Blip's page chip, section 5.9), and `sign_in_to_talk/1` takes `who` (default
   "Blip"), so neither has Blip's words built in.
 - `PhotonWeb.ConversationView` (plain functions over a socket, no
   process, in the web layer): `mount_conversation(socket, entries, opts)`
@@ -805,17 +805,26 @@ projects and threads.
   `Page.of_thread/2`: `%{"kind", "project_id", "slug", "name",
   "thread_id", "title", "file", "label"}`, where `label` is "Garden",
   "Garden / notes.md" or "Garden / Fix the pump". Anything not found
-  gives nil.
+  gives nil. Path segments aren't URL-decoded: slugs and file names only
+  use characters a browser leaves as they are.
 - The composer shows the page as a chip (`#page-chip`, "About Garden /
   Fix the pump") with a × (`#page-chip-dismiss`) that leaves it out of
-  the next message.
+  the next message. The chip is `BlipLive`'s own; it goes in through the
+  shared `composer/1`'s `context` slot, shown inside the box above the
+  text.
 - `Assistant.send(text, when_busy: mode, page: page)` reads the page's
   facts fresh at send time and submits two text parts:
   `[Message.text(Page.note(page, facts)), Message.text(text)]`, with
   `source: %{"kind" => "user", "page" => page}`. The model sees the note
   first; the conversation shows only what was typed
   (`Transcript.typed/2`) and a small "About Garden / Fix the pump" line
-  under it. Nothing has to be parsed back out of the text.
+  under it. Nothing has to be parsed back out of the text. As built,
+  `send/2` makes the page again from the rows it reads, so a renamed
+  project or file is stored and labelled by its name at send time; a page
+  whose project is gone is left out, and the message goes alone. The user
+  bubble's text is `#message-<entry id>` and the "About" line
+  `#message-<entry id>-about` (with the `id_prefix`, so the thread page's
+  are `#thread-message-...`).
 - The facts (read by `Photon.Assistant` through `Photon.Projects` and
   `Photon.Threads`): for a project, its purpose, its context files'
   names and its threads' titles with running or idle; for a file, also
@@ -839,6 +848,16 @@ projects and threads.
   The thread is idle. The end of its latest answer: "...the zone 2 valve is stuck open; it needs replacing."
   ```
 
+  As built: on a thread's page the threads line is "Other threads: ..."
+  (left out when there are none), and on the others "Threads: ...", each
+  title with "(running)" or "(idle)". No files or threads reads "none
+  yet". A whole answer is "Its latest answer: "..."", a cut one "The end
+  of its latest answer: "...<last 1,500>"", and a thread with none says
+  "It hasn't answered yet." A file's content follows "notes.md as last
+  saved, between the lines:" between two `-----` lines, with the cut note
+  after them; an empty file says so, and a file deleted since the page
+  was read says "notes.md doesn't exist anymore; it was deleted."
+
 - Blip's prompt gains one line under "How you work": a message may start
   with a note of the page the user has open, beginning "[Looking at";
   "this" and "here" mean that page. Blip can't read or change projects
@@ -847,7 +866,8 @@ projects and threads.
 - Blip's `MockScript` matches on the last text part (the typed text), so
   the note doesn't hide its phrasings, and learns `here`: it answers with
   the note's first line, or "I don't know which page you're on." without
-  one. The LiveView test uses it.
+  one. The LiveView test uses it. (`here?` and any letter case count
+  too.)
 
 ## 6. Module plan
 

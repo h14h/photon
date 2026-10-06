@@ -65,6 +65,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Transcript",
                    "Photon.Assistant.Notice",
                    "Photon.Assistant.MockScript",
+                   "Photon.Assistant.Page",
                    "Photon.Machines.Op",
                    "Photon.Machines.Rules",
                    "Photon.Machines.Roster",

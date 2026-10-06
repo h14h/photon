@@ -5,7 +5,9 @@ defmodule Photon.Assistant.Prompt do
   and calls these.
 
   The prompt opens with Blip's voice (who it is and how it talks), then how
-  the hub works, the memory, and the time. The lines about how a `shell`
+  the hub works (including the note of the page the user has open that a
+  message may start with, `Photon.Assistant.Page`), the memory, and the
+  time. The lines about how a `shell`
   call behaves are `Photon.MachineTools.Guide.shell/1`'s, shared with a
   thread's prompt.
 
@@ -35,6 +37,7 @@ defmodule Photon.Assistant.Prompt do
     - Keep durable facts about the user, their machines and their preferences in memory with update_memory. Your memory is below.
     - Use schedule for anything recurring or for later. A scheduled prompt arrives here as a message starting with "[Scheduled]", and you act on it then.
     - Never invent results. If a machine is offline or a command failed, say so plainly.
+    - The user talks to you from a panel that floats over the hub's pages. A message may start with a note of the page they have open, beginning "[Looking at"; "this" and "here" mean that page. You can't read or change projects, context files or threads with tools yet, but you can look in a project's folder on any machine with shell.
 
     ## Memory
 

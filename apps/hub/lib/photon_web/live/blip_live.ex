@@ -20,6 +20,14 @@ defmodule PhotonWeb.BlipLive do
   Esc for all), and goes by itself once there's been time to read it. Blip
   counts what's unread until the panel opens.
 
+  It knows which page is under it: the `.BlipDock` hook reports each path
+  the browser shows (`page`), and on a page inside a project (the project,
+  a context file, a new thread, a thread) `Photon.Assistant.page_at/1`
+  gives the page (`@page`). The message box shows it as a chip, "About
+  Garden / Fix the pump"; its × leaves it out (`@page_dismissed`, until
+  the next page). A message sent with the chip goes with the page, and
+  the model sees a note of it in front of the message.
+
   The conversation is shared with a project's thread page.
   `PhotonWeb.ConversationComponents` renders it: the entries, each tool
   call inside the answer that made it, a running call's output tail, the
@@ -71,7 +79,9 @@ defmodule PhotonWeb.BlipLive do
         outcome_ref: nil,
         panel: "closed",
         bubbles: [],
-        unread: 0
+        unread: 0,
+        page: nil,
+        page_dismissed: false
       )
       |> ConversationView.mount_conversation(Assistant.entries(conversation),
         busy: Assistant.busy?(conversation),
@@ -90,7 +100,7 @@ defmodule PhotonWeb.BlipLive do
         {:noreply, socket}
 
       text ->
-        {:ok, _} = Assistant.send(text, when_busy: socket.assigns.mode)
+        {:ok, _} = Assistant.send(text, when_busy: socket.assigns.mode, page: context(socket))
         {:noreply, ConversationView.reset_form(socket)}
     end
   end
@@ -128,6 +138,18 @@ defmodule PhotonWeb.BlipLive do
   # Esc, with the panel closed.
   def handle_event("dismiss_bubbles", _params, socket),
     do: {:noreply, leave(socket, fn _bubble -> true end)}
+
+  # The page under Blip changed (the hook reports each navigation).
+  def handle_event("page", %{"path" => path}, socket) when is_binary(path),
+    do: {:noreply, assign(socket, page: Assistant.page_at(path), page_dismissed: false)}
+
+  # The × on the page chip: the next messages go without it, until the next page.
+  def handle_event("dismiss_page", _params, socket),
+    do: {:noreply, assign(socket, page_dismissed: true)}
+
+  # The page the next message goes with, unless the user waved it off.
+  defp context(%{assigns: %{page_dismissed: true}}), do: nil
+  defp context(socket), do: socket.assigns.page
 
   ## Updates
 
@@ -300,7 +322,11 @@ defmodule PhotonWeb.BlipLive do
           busy={@busy}
           mode={@mode}
           queued={@queued}
-        />
+        >
+          <:context :if={@page && !@page_dismissed}>
+            <.page_chip page={@page} />
+          </:context>
+        </.composer>
         <.sign_in_to_talk :if={!@shell.model_ready} chatgpt={@shell.chatgpt} />
       </section>
 
@@ -381,6 +407,11 @@ defmodule PhotonWeb.BlipLive do
             el.addEventListener("pointerleave", () => this.release())
           }
           this.schedule()
+
+          // The page under Blip, so the message box can offer it as context.
+          this.reportPage()
+          this.onNavigate = () => this.reportPage()
+          window.addEventListener("phx:page-loading-stop", this.onNavigate)
         },
 
         updated() { this.schedule() },
@@ -388,6 +419,7 @@ defmodule PhotonWeb.BlipLive do
         destroyed() {
           document.removeEventListener("keydown", this.onKey)
           document.removeEventListener("pointerdown", this.onOutside, true)
+          window.removeEventListener("phx:page-loading-stop", this.onNavigate)
           for (const timer of this.timers.values()) clearTimeout(timer.handle)
         },
 
@@ -433,6 +465,13 @@ defmodule PhotonWeb.BlipLive do
 
         // Pages make room for a pinned panel from this (see app.css).
         mark(panel) { document.documentElement.dataset.blipPanel = panel },
+
+        // Each path once: a navigation that stays on the page says nothing.
+        reportPage() {
+          if (location.pathname === this.path) return
+          this.path = location.pathname
+          this.pushEvent("page", {path: this.path})
+        },
 
         // A timer for each bubble on screen, from when it first shows.
         schedule() {
@@ -503,6 +542,33 @@ defmodule PhotonWeb.BlipLive do
   defp status_line(:done, _shell), do: "Done"
   defp status_line(:error, _shell), do: "Something failed"
   defp status_line(_mood, %{model: model}), do: "On #{model}"
+
+  attr :page, :map, required: true
+
+  # The page the next message goes with, inside the message box, with a ×
+  # to leave it out.
+  defp page_chip(assigns) do
+    ~H"""
+    <span
+      id="page-chip"
+      class="flex max-w-full items-center gap-1.5 rounded-lg bg-accent-soft py-1 pr-1 pl-2 text-[12px] text-ink-soft"
+      title="Blip sees this page with your message"
+    >
+      <.icon name="hero-eye-micro" class="size-3.5 shrink-0 text-accent-strong" />
+      <span class="min-w-0 truncate">About {@page["label"]}</span>
+      <button
+        type="button"
+        id="page-chip-dismiss"
+        phx-click="dismiss_page"
+        class="shrink-0 rounded p-0.5 text-ink-faint transition hover:bg-surface/70 hover:text-ink"
+        title="Don't include this page"
+        aria-label="Don't include this page"
+      >
+        <.icon name="hero-x-mark-micro" class="size-3.5" />
+      </button>
+    </span>
+    """
+  end
 
   attr :bubble, :map, required: true
 
