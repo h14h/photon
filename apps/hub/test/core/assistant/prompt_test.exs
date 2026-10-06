@@ -50,6 +50,14 @@ defmodule Photon.Assistant.PromptTest do
     refute prompt =~ "[Report from"
   end
 
+  test "checks back on long work with a schedule rather than holding the conversation" do
+    prompt = Prompt.system_prompt(settings(), "", @now)
+    assert prompt =~ "A shell call holds the conversation until its command exits"
+    assert prompt =~ ~S[nohup sh -c "CMD; echo \$? >CMD.exit" >CMD.log 2>&1 &]
+    assert prompt =~ "use schedule with in_minutes to check the log and exit code later"
+    assert prompt =~ "Promise to report back only when you've scheduled that check."
+  end
+
   test "asks for the reasoning effort only when one is set" do
     assert Prompt.reasoning(settings()) == nil
     assert Prompt.reasoning(settings(%{"reasoning" => "high"})) == "high"

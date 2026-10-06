@@ -628,7 +628,14 @@ results.
   the machine it ran on." BlipLive's empty state says the same. The block
   is copied from the Blip brand kit's `VOICE.md`; say in the PR
   description that the kit needs the same edit.
-- PR B: drop the node-agent lines entirely.
+- PR B: drop the node-agent lines entirely. With `run_on_node` gone,
+  nothing else runs work in the background, and a `shell` call holds the
+  conversation until its command exits (steers join after the tool
+  round). So PR B adds a line for finite long work: start it detached
+  with its exit code in a file (`bash -c 'set -m; nohup sh -c "CMD; echo
+  \$? >CMD.exit" >CMD.log 2>&1 &'`), use `schedule` (`in_minutes`) to
+  check back and report, and promise a report only when that check is
+  scheduled.
 
 `Photon.Assistant.MockScript` (the scripted model behind
 `PHOTON_MOCK_MODEL=1` and the tests) learns:
