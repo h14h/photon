@@ -87,6 +87,18 @@ defmodule PhotonWeb.SidebarTest do
     refute has_element?(view, "[id^=side-node-]")
   end
 
+  test "asks for a ChatGPT sign-in only while no model can answer", %{conn: conn, view: view} do
+    # The scripted model answers everything, so there's nothing to sign in for.
+    refute has_element?(view, "#sign-in-banner")
+
+    Photon.ChatGPTStub.reset!()
+    Application.put_env(:photon, :mock_model, false)
+    on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+
+    {:ok, view, _html} = live(conn, ~p"/")
+    assert has_element?(view, "#sign-in-banner[href='/settings']", "Sign in with ChatGPT")
+  end
+
   test "a project made elsewhere appears, with a + to start a thread", %{view: view} do
     task = Task.async(fn -> project!("Garden") end)
     _project = Task.await(task)

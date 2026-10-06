@@ -14,6 +14,10 @@ defmodule PhotonWeb.SettingsLiveTest do
   @moduletag :durable
 
   setup %{conn: conn} do
+    # Against the real sign-in: with the scripted model on, the sidebar's
+    # sign-in banner never shows.
+    Application.put_env(:photon, :mock_model, false)
+    on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
     ChatGPTStub.reset!()
     # Signed in is saved to a file, so a test that signs in would leave the
     # next test, on any page, signed in without a stub to answer it.

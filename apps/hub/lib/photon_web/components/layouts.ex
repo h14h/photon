@@ -133,8 +133,9 @@ defmodule PhotonWeb.Layouts do
     </div>
 
     <div class="shrink-0 border-t border-line p-2.5">
+      <%!-- Only while no model can answer: the scripted model counts. --%>
       <.link
-        :if={@shell.chatgpt.state != :signed_in}
+        :if={!@shell.model_ready and @shell.chatgpt.state != :signed_in}
         navigate={~p"/settings"}
         id="sign-in-banner"
         class="mb-2 flex items-center gap-2 rounded-lg bg-warn-soft px-3 py-2 text-[12.5px] text-ink transition hover:brightness-95"
