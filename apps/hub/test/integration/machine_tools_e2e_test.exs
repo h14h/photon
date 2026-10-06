@@ -172,7 +172,7 @@ defmodule Photon.MachineToolsE2ETest do
     %Op{id: id} = the_op()
     await_running(ops_dir, id)
 
-    [{channel, _info}] = Registry.lookup(Photon.NodeRegistry, "local")
+    [{channel, _info}] = Registry.lookup(Photon.MachineRegistry, "local")
     kill(channel)
 
     assert %{status: "done"} = await_settled(c, s.id, @wait)

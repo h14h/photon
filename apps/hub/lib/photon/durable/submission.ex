@@ -7,7 +7,7 @@ defmodule Photon.Durable.Submission do
   `unanswered` (with a `reason`), or `withdrawn` before it was placed.
 
   `content` holds `"parts"` (message content) and an optional `"source"`
-  saying where it came from, such as a node report or a routine.
+  saying where it came from, such as a routine.
   """
 
   # Data: an Ecto schema, no behaviour of its own.

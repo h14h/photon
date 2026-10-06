@@ -8,8 +8,8 @@ defmodule PhotonNode.Executor do
   One process for all of the hub's operations. It owns the journal
   (`PhotonNode.Executor.Journal`): every write goes through it, so a cancel
   flag and a snapshot never overwrite each other. It starts operation
-  processes with `PhotonNode.Harness.Ops.add/2` and owns them
-  (`PhotonNode.Harness.Ops.Owner`): each reports its snapshots here, and
+  processes with `PhotonNode.Ops.add/2` and owns them
+  (`PhotonNode.Ops.Owner`): each reports its snapshots here, and
   each snapshot is fitted to the frame budget (`Request.fit/2`), journaled
   and then forwarded to the hub through `PhotonNode.Executor.Link`. A shell
   command's `process` checkpoint is answered only once it is journaled, and
@@ -62,20 +62,20 @@ defmodule PhotonNode.Executor do
   # (`Request`, `Rules`) as strict sub-boundaries, and `Link`, the contract
   # the hub link implements.
   use Boundary,
-    deps: [PhotonNode, PhotonNode.Config, PhotonNode.Harness, PhotonCore, Jason],
+    deps: [PhotonNode, PhotonNode.Config, PhotonNode.Ops, PhotonCore, Jason],
     exports: [Link]
 
   use GenServer
 
-  @behaviour PhotonNode.Harness.Ops.Owner
+  @behaviour PhotonNode.Ops.Owner
 
   require Logger
 
   alias PhotonCore.Operation
   alias PhotonNode.Config
   alias PhotonNode.Executor.{Journal, Link, Request, Rules}
-  alias PhotonNode.Harness.{Env, Ops}
-  alias PhotonNode.Harness.Ops.Owner
+  alias PhotonNode.Ops
+  alias PhotonNode.Ops.{Env, Owner}
 
   # The owner pair the executor's operations carry; there is one executor,
   # so its owner ID only says whose they are.

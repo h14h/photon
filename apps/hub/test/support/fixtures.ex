@@ -9,7 +9,6 @@ defmodule Photon.Fixtures do
   use Boundary, top_level?: true, check: [in: false, out: false]
 
   alias Photon.Durable.{Entry, Signal, Submission, TaskRecord}
-  alias Photon.NodeSessions.{Input, Session}
   alias PhotonCore.Message
 
   @at ~U[2026-10-03 12:00:00.000000Z]
@@ -120,64 +119,6 @@ defmodule Photon.Fixtures do
   @doc "A recorded signal."
   def signal(key \\ "go", payload \\ %{}),
     do: %Signal{key: key, payload: payload, inserted_at: @at}
-
-  ## Node work and node sessions
-
-  @doc "Node work as the assistant's watcher and tools describe it."
-  def work(overrides \\ %{}) do
-    Map.merge(
-      %{"node" => "box", "title" => "Check disks", "session_id" => "ns_1", "input_id" => "in_1"},
-      Map.new(overrides)
-    )
-  end
-
-  @doc "The payload of a node input's signal."
-  def node_answer(answer \\ "all good", failure \\ nil),
-    do: %{"session_id" => "ns_1", "answer" => answer, "failure" => failure}
-
-  @doc "The hub's record of a node session."
-  def session(overrides \\ []) do
-    struct!(
-      %Session{
-        id: "ns_1",
-        node_id: "box",
-        title: "Check disks",
-        origin: "user",
-        config: %{"model" => "mock-model", "reasoning" => nil},
-        status: "pending",
-        next_offset: 0,
-        inserted_at: @at,
-        updated_at: @at
-      },
-      overrides
-    )
-  end
-
-  @doc "An outbox entry for an input."
-  def input(overrides \\ []) do
-    struct!(
-      %Input{
-        id: "in_1",
-        session_id: "ns_1",
-        input: %{"id" => "in_1", "kind" => "external", "payload" => %{"content" => []}},
-        state: "queued",
-        inserted_at: @at,
-        updated_at: @at
-      },
-      overrides
-    )
-  end
-
-  @doc "A node log record of `kind`."
-  def record(kind, data \\ %{}),
-    do: %{"kind" => kind, "data" => data, "at" => "2026-10-03T12:00:00Z"}
-
-  @doc "The log record of an external input."
-  def input_record(id \\ "in_1", content \\ "x"),
-    do: record("input", %{"id" => id, "kind" => "external", "payload" => %{"content" => content}})
-
-  @doc "A run-state record (`running`, `idle`, `stopped`), with extra fields."
-  def state_record(state, fields \\ %{}), do: record("state", Map.put(fields, "state", state))
 
   ## Settings
 

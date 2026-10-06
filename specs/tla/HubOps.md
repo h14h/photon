@@ -17,8 +17,8 @@ failure. Four more bug configs put back defects the
 plan already ruled out (an early ack, a spawn before the journal, a start
 after a cancel, no `known` flag), to show the properties catch them.
 
-So, unlike `NodeSync` and `Durable`, the bug configs here are expected to
-fail. Every other config is expected to pass.
+So, unlike `Durable`'s configs, the bug configs here are expected to
+fail, as `Executor.tla`'s are. Every other config is expected to pass.
 
 ## What is modeled
 
@@ -35,7 +35,7 @@ Store line with this one, and none of the properties relate two machines.
 | Step process | `step[c]`: `ins` (the `Machines.start/1` commit), `send` (asking the channel to push), `park` (the `{:wait}` commit), `res` (`resume/2` reading whether the machine is online), `rc` (`resume/2`'s commit); `ron` (what it read); `skn` | the task's step under `Durable.TaskSupervisor` |
 | Orphaned step | `orph`, `okn` | a step left running by a Scheduler-only crash |
 | Store line | `pend[c]`: a commit that ends the call and may send `op.cancel` from inside (Stop, an error, the offline limit) has started and isn't visible yet, holding the result it records; `Busy` | `Durable.Store` |
-| Channel | `chan` (none, up, stale), `cq` (its mailbox of requests from other processes), `hpend` (ack-early bug only) | `PhotonWeb.NodeChannel`, `Photon.Nodes` registry |
+| Channel | `chan` (none, up, stale), `cq` (its mailbox of requests from other processes), `hpend` (ack-early bug only) | `PhotonWeb.NodeChannel`, `Photon.MachineRegistry` |
 | Wire | `h2n`, `n2h` | the websocket; FIFO per connection, lost when it drops |
 | Node connection | `conn` (down, joining, up), `fq` (snapshots the executor forwarded, in its mailbox) | `PhotonNode.Connection` |
 | Journal (durable) | `jr[c]`: `st` (none, ready, proc, completed, failed, canceled), `cx` | `<data_dir>/ops/<id>/op.json` |
@@ -74,7 +74,7 @@ running it twice is harmless.
 | `NodeRecv` (`RecvStart`, `RecvCancel`, `RecvAck`) | `Executor.start/1`, `cancel/1`, `ack/1` (node rules 1, 2, 3, 6, 7) |
 | `OpCheckpoint`, `OpSpawn`, `OpKill`, `CmdExit`, `OpFinish` | `Ops.Shell`: the `process` checkpoint the executor journals unless the journal says canceled (node rule 4), the spawn, a kill on cancel, the command's exit, the terminal snapshot |
 | `OpJournal` | spawn-before-journal bug only |
-| `NodeResume` | the executor's start-up scan, a restart after a clean exit, or node rule 2: resume an unfinished journaled op with no process, and tell it to cancel if the journal says so. `Ops.Shell`'s recovery: reattach, finish from the `exit` file, or fail when the outcome is unknown or the node stopped the command (the `stopped` marker, node rule 10) |
+| `NodeResume` | the executor's start-up scan, a restart after a clean exit, or node rule 2: resume an unfinished journaled op with no process, and tell it to cancel if the journal says so. `Ops.Shell`'s recovery: reattach, finish from the `exit` file, or fail when the outcome is unknown or the node stopped the command (the `stopped` marker, node rule 10). The `unstarted` marker's start (node rule 4) needs an executor crash, which this spec leaves out |
 
 ### Modeling choices worth knowing
 
@@ -121,12 +121,17 @@ exit). Its main effect on an op is `NodeResume`: a resumed op is told to
 cancel when its journal says so. The code has one more, which the
 hub-plus-node test found. If the executor dies after it journals a
 shell's `process` checkpoint but before it answers, the shell gets
-`:ignored` and stops without spawning, and the resumed op fails with
-"shell execution outcome is unknown because process start was not
-recorded". The command never ran, so at most once holds, but the call
-gets a `failed` result that `ResultFromOwnOp` allows only after a node
-restart. Op-process crashes are left out too (a
-`failed` snapshot, `Executor.Rules.down/3`, the Coordinator spec's F9).
+`:ignored` and stops without spawning. In PR A's code the resumed op
+then failed with "shell execution outcome is unknown because process
+start was not recorded": the command never ran, so at most once held,
+but the call got a `failed` result that `ResultFromOwnOp` allows only
+after a node restart. Since G1 the shell writes an `unstarted` marker
+before it stops, and the resumed shell starts the command (node rule 4),
+so the call gets the command's own result. Op-process crashes are left
+out too (a `failed` snapshot, `Executor.Rules.down/3`). `Executor.tla` models both
+kinds of crash, with the executor's handlers, journal and operation
+processes opened up, and checks that neither breaks at most once or the
+call's result; that case is one of its reachability checks.
 A step that raises is not a crash: `ToolTask` rescues it and records an
 error result. That, and every error result `Call` returns, is
 `StepError`. A step process that exits for another reason ends in
@@ -250,6 +255,14 @@ ran two at a time.
 | `HubOps-bug-spawn-before-journal.cfg` | node rule 4 broken; 1 node restart | `AtMostOnceSpawn` | fails, 12-state trace | 643 | 1s |
 | `HubOps-bug-start-after-cancel.cfg` | hub rule 7 broken; 1 disconnect, 1 Stop | `NoStartAfterCancel` | fails, 9-state trace | 248 | 1s |
 | `HubOps-bug-no-known.cfg` | node rule 3 broken; 1 data loss | `KnownNotRerun` | fails, 17-state trace | 2,168 | 1s |
+
+Rerun in PR B (task B7, 2026-10-06), unchanged spec, 11 workers (3 for
+the bug configs) on the same machine with the CPUs mostly idle: every
+config ended as above, and each clean one with the same distinct-state
+count. The clean ones took 1m35s (`HubOps.cfg`), 2m07s (`-live`), 1m49s (`-live-node`),
+3m51s (`-cancel`), 1m38s (`-wipe`), 9m08s (`-errors`) and 8m30s (`-two`);
+each bug config failed on its property within 6 seconds, with a trace of
+the length given above.
 
 "All safety" includes `OfflineNotRun`. Every config but `HubOps-errors.cfg`
 sets `MaxErrors` and `MaxRepush` to 0 (and the H8 bug config sets
@@ -443,8 +456,8 @@ that a property catches each one:
 `view_image`, `op.output` and live output; argument checks, unknown and
 outdated machines; the machine check on snapshots (a node can only report
 op IDs it was sent); executor-only crashes and op-process crashes (see
-above and the Coordinator spec, which keeps the op-process detail: the pid
-file, background children, F3, F8, F9, F11, K1); power loss (the journal
+above and `Executor.tla`, which keeps the op-process detail: the pid
+file, background children, the `stopped` marker, F3, F8, F9, F11, K1); power loss (the journal
 writes are fsynced before they are acted on); journal write failures
 (node rule 8: they answer `failed` or forward without journaling, and run
 nothing; a `canceled` entry for an `op.cancel` with no journal that can't
@@ -505,7 +518,7 @@ still covers it:
   rules 2 and 7).
 - `Machines.start/1` asks for a push only when its commit inserted the
   row or found it there, not after `{:error, :stopped}`, and
-  `Photon.Nodes.push_op/2` sends to any registered channel, `stale` ones
+  `Photon.Machines.push_op/2` sends to any registered channel, `stale` ones
   included. `ExecSend` asks whenever the channel is `up`. A push request
   is only a read, so asking less often removes behaviors, and one sent to
   a channel whose socket is gone is lost, as in `ExecSend` with a `stale`

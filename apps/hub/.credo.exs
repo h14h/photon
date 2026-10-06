@@ -62,21 +62,14 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Assistant.Prompt",
                    "Photon.ChatGPT.OAuth",
                    "Photon.Assistant.Memory",
-                   "Photon.Assistant.Report",
                    "Photon.Assistant.Transcript",
                    "Photon.Assistant.Notice",
-                   "Photon.Assistant.Page",
                    "Photon.Assistant.MockScript",
                    "Photon.Machines.Op",
                    "Photon.Machines.Rules",
                    "Photon.Machines.Roster",
                    "Photon.MachineTools.Translate",
                    "Photon.MachineTools.Wait",
-                   "Photon.NodeSessions.Mirror",
-                   "Photon.NodeSessions.Session",
-                   "Photon.NodeSessions.Event",
-                   "Photon.NodeSessions.Input",
-                   "Photon.NodeTranscript",
                    "Photon.Provision.Jobs",
                    "Photon.Provision.Script",
                    "Photon.Provision.Lines",
@@ -150,8 +143,6 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.ChatGPT",
                    "Photon.Durable",
                    "Photon.Machines",
-                   "Photon.NodeSessions",
-                   "Photon.Nodes",
                    "Photon.Provision",
                    "Photon.Settings",
                    "Photon.Tailnet"
@@ -159,7 +150,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                  names: [
                    {"Photon.Supervisor", ["Photon.Application"]},
                    {"Photon.PubSub", ["Photon.*"]},
-                   {"Photon.NodeRegistry", ["Photon.Application", "Photon.Nodes"]},
+                   {"Photon.MachineRegistry", ["Photon.Application", "Photon.Machines"]},
                    {"Photon.ProvisionTasks", ["Photon.Application", "Photon.Provision"]},
                    {"Photon.Durable.TaskSupervisor",
                     ["Photon.Durable.Supervisor", "Photon.Durable.Scheduler"]}
@@ -172,12 +163,10 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                  allowed: [
                    {"Photon.Durable.Scheduler",
                     "notify/2: the Store must never wait on the scheduler; a burst collapses into one reconcile, which reads the database (see its moduledoc)"},
-                   {"Photon.Nodes",
-                    "command/3 and push_op/2: callers must not wait on a node's connection; ops are rows, pushed again on every join and every minute while their call waits on an online machine; inputs stay queued in the NodeSessions outbox and are resent on the next join. register/2 tells a replaced connection to stop, and waits for its exit (see its moduledoc)"},
+                   {"Photon.Machines",
+                    "command/3, push_op/2 and register/2: callers must not wait on a node's connection; ops are rows, pushed again on every join and every minute while their call waits on an online machine. register/2 tells a replaced connection to stop, and waits for its exit (see its moduledoc)"},
                    {"Photon.Provision",
-                    "progress from its own job tasks, a line at a time; a job that dies without reporting its end is failed by its monitor"},
-                   {"PhotonWeb.ModelRelayController",
-                    "the request's own task streams each model event to the connection process, which writes it out at once; one request's output bounds them, and the task dies with the connection"}
+                    "progress from its own job tasks, a line at a time; a job that dies without reporting its end is failed by its monitor"}
                  ]
                ]},
               # 80, 91, 16: processes start under supervisors.

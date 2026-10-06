@@ -8,8 +8,8 @@ defmodule Photon.Application do
       normally): the SQLite database
     * `Photon.PubSub`: every change notification below goes through it
     * `Photon.Tailnet`: owns the tailnet lookup cache (an ETS table)
-    * `Photon.NodeRegistry`: node ID to the node's channel process, so
-      "online" means "its channel is alive" and nothing keeps a pid
+    * `Photon.MachineRegistry`: machine ID to its node's channel process,
+      so "online" means "its channel is alive" and nothing keeps a pid
     * `Photon.ProvisionTasks` and `Photon.Provision`: SSH jobs, and the
       table of jobs that monitors them
     * `Photon.ChatGPT`: the ChatGPT account (Sign in with ChatGPT), which
@@ -27,7 +27,7 @@ defmodule Photon.Application do
   endpoint and find what they need by name, and durable work is in the
   database, so a restarted child doesn't need its neighbours restarted.
   The exceptions are the library processes `Photon.PubSub` and
-  `Photon.NodeRegistry`, whose subscribers and registrations a restart
+  `Photon.MachineRegistry`, whose subscribers and registrations a restart
   would drop; they are not expected to crash, and the strategy is kept as
   it was rather than restart the web layer with them. Shutdown runs in
   reverse: the local node and the endpoint stop before the durable harness,
@@ -53,7 +53,7 @@ defmodule Photon.Application do
          repos: [Photon.Repo], skip: Application.get_env(:photon, :skip_migrations, false)},
         {Phoenix.PubSub, name: Photon.PubSub},
         Photon.Tailnet,
-        {Registry, keys: :unique, name: Photon.NodeRegistry},
+        {Registry, keys: :unique, name: Photon.MachineRegistry},
         {Task.Supervisor, name: Photon.ProvisionTasks},
         Photon.Provision,
         Photon.ChatGPT
@@ -70,9 +70,9 @@ defmodule Photon.Application do
       else: []
   end
 
-  # An agent node inside this BEAM, connecting over the same websocket as
-  # remote nodes: handy in development. Its sessions resume when the hub
-  # restarts, since they live in the data directory.
+  # A node inside this BEAM, connecting over the same websocket as remote
+  # nodes: handy in development. Its operation journal lives in the data
+  # directory, so its operations resume when the hub restarts.
   defp local_node do
     if Application.get_env(:photon, :local_node) do
       http = Application.get_env(:photon, PhotonWeb.Endpoint)[:http]

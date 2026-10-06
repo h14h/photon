@@ -108,8 +108,10 @@ Node to hub:
 Join: the join parameters stay as today (`hostname`, `platform`,
 `workspace`, `version`, `capabilities`). A node that speaks this protocol
 adds `"ops:1"` to `capabilities`. In PR A the join reply still carries the
-session `sync` map; in PR B it is `%{}`. After a join each side sends what
-it holds (section 2.4).
+session `sync` map; in PR B it is `%{"sync" => %{}}`, which the node
+ignores. The empty map stays so a node built before PR B, which requires
+`"sync"`, can stay joined and be reported as outdated (rule 75). After a
+join each side sends what it holds (section 2.4).
 
 Kinds a node doesn't support come back as a `failed` snapshot saying so.
 
@@ -236,11 +238,20 @@ On the node:
    operation. It may or may not have run." That snapshot isn't journaled.
 4. A shell command spawns only after its `process` checkpoint is journaled,
    and only if the journal doesn't say canceled. This keeps the
-   at-most-once guarantee (TLA finding F3) without a hub round trip.
+   at-most-once guarantee (TLA finding F3) without a hub round trip. If
+   the executor dies during the checkpoint (it may have journaled it),
+   `Ops.Shell` gets `:ignored`, spawns nothing, and writes an `unstarted`
+   file in the op's directory before it stops. A resume that finds the
+   `process` checkpoint with no process group, no `pid` file and that
+   marker starts the command, through the checkpoint again, since the
+   files prove it never ran; without the marker it fails the op as
+   "outcome unknown". Every start removes the marker before its
+   checkpoint, and the journal write syncs that directory, so the marker
+   can't outlive a start that may have spawned.
 5. Every snapshot is journaled before it is forwarded to the hub. The
    journal always holds the latest snapshot.
-6. A terminal journal stays until `op.ack`. Then `op.json`, `pid` and `exit`
-   are deleted. `out` and `err` stay for 7 days, because a truncated result
+6. A terminal journal stays until `op.ack`. Then `op.json`, `pid`, `exit`,
+   `stopped`, `canceled` and `unstarted` are deleted. `out` and `err` stay for 7 days, because a truncated result
    names their paths; a daily sweep removes op directories that have no
    `op.json` and are older than that.
 7. `op.cancel` for a journaled, unfinished op records the cancel in the
@@ -299,6 +310,20 @@ On the node:
     the exit status when the `exit` file has one. Without the marker the
     wrapper, which is outside the killed group, records exit 143, and the
     resumed op would report a `completed` command with partial output.
+    This holds for a command `Ops.Shell` reattached to after an abrupt
+    crash (it has no port and polls the group) as for one it started.
+    `terminate/2` kills whenever the port is open or the snapshot is still
+    `awaiting` in phase `process` with a process group on record (in the
+    snapshot or the `pid` file), so a shell resumed after an abrupt crash
+    kills its command even if it crashes in `recover/1` before it
+    reattaches (K2 in `specs/tla/Executor.md`). It leaves the marker out
+    when the `exit` file is already there: the command has exited, and
+    the kill only reaches children it left. A cancel's kill is marked the
+    same way: the shell writes a `canceled` file before it signals the
+    group, and `recover/1` checks it first and finishes the op as
+    `canceled`. Without it, an executor or node that dies before the
+    `canceled` snapshot is journaled would leave the resumed op to report
+    the killed command `completed` with exit 143 (E1).
 
 ### 2.4 What happens when
 
@@ -318,10 +343,12 @@ Node restart.
 The executor scans the journal on start. Unfinished ops are resumed, and
 told to cancel if their journal says so (node rule 2): `Ops.Shell`
 reattaches to a command that is still running, finishes one whose `exit`
-file exists, and fails one whose outcome is unknown. A `view_image` job
+file exists, starts one whose `unstarted` marker proves it never ran
+(node rule 4), and fails one whose outcome is unknown. A `view_image` job
 simply runs again, since it only reads. Terminal ops wait for the next
 join and its ack. A node that is stopped on purpose kills its running
-commands' process groups on the way down, as today, so for the hub's own
+commands' process groups on the way down, as today, including commands
+reattached after an earlier crash, so for the hub's own
 machine a hub restart ends its running commands. The result says so:
 "photon-node stopped while the command was running, so the command was
 killed" (node rule 10). Only an abrupt crash (power loss, `kill -9` of the
@@ -332,7 +359,9 @@ The executor and the `Connection` restart; op processes keep running.
 An op's calls into the executor never kill it: `report` and `checkpoint`
 wait as long as the executor lives and return `:down` or `:ignored` if it
 dies (section 4.2). The restarted executor re-monitors running ops, asks
-each to resend its snapshot, and resumes the rest from the journal.
+each to resend its snapshot, and resumes the rest from the journal. A
+shell whose `process` checkpoint got `:ignored` stopped without spawning,
+and its resume starts the command (node rule 4).
 
 Disconnect.
 Nothing is lost. The node's ops keep running; snapshots are journaled and
@@ -613,22 +642,29 @@ results.
   the machine it ran on." BlipLive's empty state says the same. The block
   is copied from the Blip brand kit's `VOICE.md`; say in the PR
   description that the kit needs the same edit.
-- PR B: drop the node-agent lines entirely.
+- PR B: drop the node-agent lines entirely. With `run_on_node` gone,
+  nothing else runs work in the background, and a `shell` call holds the
+  conversation until its command exits (steers join after the tool
+  round). So PR B adds a line for finite long work: start it detached
+  with its exit code in a file (`bash -c 'set -m; nohup sh -c "CMD; echo
+  \$? >CMD.exit" >CMD.log 2>&1 &'`), use `schedule` (`in_minutes`) to
+  check back and report, and promise a report only when that check is
+  scheduled.
 
 `Photon.Assistant.MockScript` (the scripted model behind
 `PHOTON_MOCK_MODEL=1` and the tests) learns:
 
 - `machines` and `list machines` call `list_machines` (PR A changes them
   from `list_nodes`); `nodes` and `list nodes` keep calling `list_nodes`
-  until PR B
+  until PR B, which drops them (they answer with the help text)
 - `on <machine>: $ <command>` calls `shell`
 - `on <machine>: look at <path>` calls `view_image`
 - after a machine tool result, it relays the result text, and for an image
   says "Here it is." with the dimensions line
 
 PR A keeps `on <machine>: <task>` (anything not starting with `$` or
-`look at`) for `run_on_node`; PR B deletes it. Update the `@help` text to
-match.
+`look at`) for `run_on_node`; PR B deletes it, along with `check <session
+id>` and the node-report lines. Update the `@help` text to match.
 
 ## 4. Module plan
 
@@ -646,7 +682,8 @@ boundary, lifecycle, workers. "Registered names" lists names a module adds.
 Deleted in PR B: `PhotonCore.LLM.Relay`, `PhotonCore.LLM.Relay.Wire`,
 `PhotonCore.LLM.MockAgent`, and the relay provider in `PhotonCore.LLM`.
 `PhotonCore.LLM.Mock` stays (the hub's `MockScript` implements it). Update
-`PhotonCore`'s moduledoc and `exports`.
+`PhotonCore`'s moduledoc and `exports`. As built, the relay goes in B3 and
+`MockAgent` in B5: the node's session tests answer with it until then.
 
 ### 4.2 apps/node
 
@@ -657,10 +694,10 @@ own operations until PR B.
 | Module | Layer | Boundary | PR | Notes |
 |---|---|---|---|---|
 | `PhotonNode.Harness.Ops.Owner` (PR B: `PhotonNode.Ops.Owner`) | contract | in the Ops boundary | A | Behaviour: `checkpoint(owner_id, op) :: :ok \| :cancel \| :ignored \| {:error, String.t()}` (a call; persist before acting), `report(owner_id, op) :: :ok \| :down` (persist, then forward), `output(owner_id, op_id, stream, text) :: :ok` (live). The callback docs say what every implementation must keep: an op process never dies because of its owner. `checkpoint` and `report` return `:ignored` and `:down` on any exit from the owner, not only `:noproc`, since an uncaught exit in `Ops.Shell` runs its `terminate/2`, which kills the command. An op process is started with `{op, {owner_module, owner_id}}`. The module is named in data, so Boundary sees no call from Ops to its owners, which avoids a dependency cycle. `Owner.checkpoint/2`, `report/2` and `output/4` take the pair and call the module, so op processes call those (`Owner.t()` is the pair). `stream` is the string `"out"` or `"err"`, as `Wire.output/3` takes it. Stays in PR B with one real implementation (the executor) and a test owner. |
-| `PhotonNode.Harness.Ops`, `Ops.Shell`, `Ops.Job`, `Ops.ViewImage` | boundary / workers | Harness (PR B: own `PhotonNode.Ops` boundary, exporting `Owner`) | A, B | PR A: replace the `session_id` argument with the owner pair; replace direct calls to `Coordinator.checkpoint/2`, `Coordinator.report_op/2` and `Link.live/2` with the owner's callbacks. `Shell.start_when_confirmed/2` fails the op on `{:error, reason}` without spawning. `Shell.terminate/2` writes the `stopped` marker before it kills a running group (whenever the command's port is still open, including during a cancel's kill; a kill under way after the command exited is only for its leftover children and writes none), and kills the group found through the `pid` file when the `pgid` checkpoint hasn't happened yet. `recover/1` checks the marker before the `exit` file (node rule 10), and a fresh start removes a stale one with the other leftover files. `Ops.running?/1` says whether a process runs an op, for `Executor.Rules`' `running?` argument (A5). The Harness boundary's `exports` become `[Link, Ops, Ops.Owner, Env]`, since the Executor, a separate boundary, calls `Ops.add/2`, `Ops.running?/1` and `Ops.cancel/1`, implements `Ops.Owner` and reads `Env.shell/0` for `Request`'s facts. PR B: rename to `PhotonNode.Ops.*`, delete `SkillUse`, move `Env` and `Image` with them. |
+| `PhotonNode.Harness.Ops`, `Ops.Shell`, `Ops.Job`, `Ops.ViewImage` | boundary / workers | Harness (PR B: own `PhotonNode.Ops` boundary, exporting `Owner`) | A, B | PR A: replace the `session_id` argument with the owner pair; replace direct calls to `Coordinator.checkpoint/2`, `Coordinator.report_op/2` and `Link.live/2` with the owner's callbacks. `Shell.start_when_confirmed/2` fails the op on `{:error, reason}` without spawning, and on `:ignored` writes the `unstarted` marker and stops without spawning (node rule 4; as built in G1). `Shell.terminate/2` writes the `stopped` marker before it kills a running group (whenever the command's port is still open, or, as built after the PR B review, the snapshot is still `awaiting` in phase `process` with a process group on record, so a shell resumed after a crash kills its command whether or not it has reattached; G1 killed only once it had reattached; no marker once the `exit` file exists, since a kill then is only for leftover children), and kills the group found through the `pid` file when the `pgid` checkpoint hasn't happened yet. A cancel writes the `canceled` marker before its kill (as built after the PR B review). `recover/1` checks the `canceled` marker, then the `stopped` one, before the `exit` file (node rule 10), and a fresh start removes a stale one with the other leftover files. `Ops.running?/1` says whether a process runs an op, for `Executor.Rules`' `running?` argument (A5). The Harness boundary's `exports` become `[Link, Ops, Ops.Owner, Env]`, since the Executor, a separate boundary, calls `Ops.add/2`, `Ops.running?/1` and `Ops.cancel/1`, implements `Ops.Owner` and reads `Env.shell/0` for `Request`'s facts. PR B: rename to `PhotonNode.Ops.*`, delete `SkillUse`, move `Env` and `Image` with them. |
 | `PhotonNode.Harness.Coordinator` | boundary | Harness | A (then deleted in B) | Implements `Ops.Owner` with its session ID as `owner_id`: `checkpoint` is today's `checkpoint/2`, now returning `:ignored` rather than `:down` on an exit, as the behaviour says; `report` is `report_op/2`, renamed `report/2`; `output` is `Link.live/2` with the `op_output` map. |
 | `PhotonNode.Executor` | boundary (API plus GenServer) | own boundary: `deps: [PhotonNode, PhotonNode.Config, PhotonNode.Harness (PR B: PhotonNode.Ops), PhotonCore, Jason], exports: [Link]` | A | The node's API for hub ops: `start/1` (a parsed `op.start`), `cancel/1`, `ack/1`, `snapshots/0` (every journaled snapshot, for a join), plus the `Ops.Owner` callbacks. One process. It owns the journal (all writes go through it, so a cancel flag and a snapshot can't overwrite each other), monitors every op process it starts (rule 87), answers `process` checkpoints, and forwards snapshots and output through `Executor.Link`. On `:DOWN` it applies `Executor.Rules.down/3`. The owner callbacks `report/2` and `checkpoint/2` call the executor with `:infinity` as the timeout and catch every exit (`catch :exit, _`), returning `:down` and `:ignored`, as `Coordinator.checkpoint/2` does today. A call that waits on a busy executor (a journal scan, an fsync of a 5 MB image snapshot) just waits; one whose executor dies returns at once, since `GenServer.call` monitors it. The executor never calls an op process synchronously (`Ops.add/2` starts a child whose `init/1` returns at once, or sends `:resend`), so the wait can't deadlock. The op process keeps its state, and the restarted executor's `Ops.add/2` asks it to resend. The moduledoc says so: an op process never dies because of its owner. `init/1` returns at once; `handle_continue` scans the journal, applies `Executor.Rules.on_scan/2` to each entry, calls `Ops.add/2` for every unfinished op (a running one is asked to resend, a missing one resumes from its snapshot), follows it with `Ops.cancel/1` when the entry's `cancel` flag is set (node rule 2), and monitors it. Snapshots are encoded and fitted to the 6 MB budget with `Request.fit/2` before they are journaled (node rule 9). A failed journal write is handled as node rule 8 says. A daily `send_after(:sweep)` removes acknowledged op directories older than 7 days; the first sweep runs after the start-up scan. Registered name: `PhotonNode.Executor`. As built (A5): `start/1`, `cancel/1`, `ack/1` and `snapshots/0` are calls with `:infinity` as the timeout, so a dead executor fails them at once and a busy one is waited for; the ops it owns carry the owner pair `{PhotonNode.Executor, :hub}`; `output/4` goes from the op process straight to `Executor.Link`, never through the executor; a `ready` snapshot is forwarded after it is journaled, so the hub learns the op arrived; an op process that `Ops.add/2` can't start, or that crashes, is failed with `Request.failed/2`; an exit of a process that has since been replaced (the op is monitored again under a newer pid) is ignored. Entries that exist but can't be read: `op.start` answers with the unjournaled `Request.unreadable/2` unless a process runs the op (its next snapshot replaces the entry), `op.ack` then forgets the entry, `op.cancel` only tells the process, `checkpoint` returns `{:error, reason}`, and a report is forwarded without journaling. A report for an op whose entry is terminal or missing changes nothing. A terminal snapshot that can't be journaled (and an `unrecorded` answer) is held in memory until its `op.ack` and read in place of the journal's entry by every decision and by `snapshots/0`; a `ready` entry it leaves behind is deleted with `Journal.discard/2` when `Rules.on_unjournaled/1` says so (node rule 8). |
-| `PhotonNode.Executor.Journal` | boundary helper (file I/O, no process) | inside Executor | A | Each takes the ops dir first. `read(ops_dir, id) :: {:ok, entry \| nil} \| {:error, String.t()}` (nil: no entry; an unreadable file or one that isn't an entry for `id` is an error); `write(ops_dir, id, entry) :: :ok \| {:error, String.t()}` (to `op.json.tmp`, mode 0600, synced, renamed over `op.json`, then the directory synced, and the ops dir too when the op's directory was new; the op's directory is mode 0700). Erlang can't open a directory to fsync it, so on Linux the directory sync runs `sync -- <dirs>` (coreutils and busybox fsync each path); elsewhere it is skipped. An error means the old entry is still in place: once the rename has happened, a failed directory sync is only logged. `list(ops_dir) :: [entry]` in ID order, logging and skipping unreadable entries; `forget(ops_dir, id)` (deletes `op.json`, `op.json.tmp`, `pid`, `exit` and `stopped`); `discard(ops_dir, id)` (deletes `op.json` alone and syncs the directory, for node rule 8); `sweep(ops_dir, now, max_age) :: [id]` (POSIX seconds; removes directories with no `op.json` whose mtime is older than `now - max_age`; `forget/2` changes the mtime, so the age counts from the ack); `op_dir/2`. File shape: `%{"op" => snapshot, "cancel" => boolean}`. Called only from the executor process. Until A5 adds the Executor boundary it sits in the `PhotonNode` boundary. |
+| `PhotonNode.Executor.Journal` | boundary helper (file I/O, no process) | inside Executor | A | Each takes the ops dir first. `read(ops_dir, id) :: {:ok, entry \| nil} \| {:error, String.t()}` (nil: no entry; an unreadable file or one that isn't an entry for `id` is an error); `write(ops_dir, id, entry) :: :ok \| {:error, String.t()}` (to `op.json.tmp`, mode 0600, synced, renamed over `op.json`, then the directory synced, and the ops dir too when the op's directory was new; the op's directory is mode 0700). Erlang can't open a directory to fsync it, so on Linux the directory sync runs `sync -- <dirs>` (coreutils and busybox fsync each path); elsewhere it is skipped. An error means the old entry is still in place: once the rename has happened, a failed directory sync is only logged. `list(ops_dir) :: [entry]` in ID order, logging and skipping unreadable entries; `forget(ops_dir, id)` (deletes `op.json`, `op.json.tmp`, `pid`, `exit`, `stopped` and, as built in G1, `unstarted`); `discard(ops_dir, id)` (deletes `op.json` alone and syncs the directory, for node rule 8); `sweep(ops_dir, now, max_age) :: [id]` (POSIX seconds; removes directories with no `op.json` whose mtime is older than `now - max_age`; `forget/2` changes the mtime, so the age counts from the ack); `op_dir/2`. File shape: `%{"op" => snapshot, "cancel" => boolean}`. Called only from the executor process. Until A5 adds the Executor boundary it sits in the `PhotonNode` boundary. |
 | `PhotonNode.Executor.Request` | core | strict, `deps: [PhotonCore, Jason]` | A | `operation(start_message, facts) :: {:ok, Operation.t()} \| {:error, String.t()}`. `facts` are `%{shell, ops_dir, workspace}`. Fills the shell op's `input` (`command`, `shell`, `directory`: the given directory or the workspace) and `base_directory` (`ops_dir`), or the view_image op's absolute `path` and `max_size`. A relative `directory` is taken from the workspace. `max_size` must be at most 5,000,000, so an image snapshot stays under the frame limit (`fit/2` can't cut an image). Also `rejected(start, reason)` (the `failed` snapshot for an `op.start` that `operation/2` refused: an unsupported kind or bad args), `lost(id, kind)` (the `failed` snapshot for rule 3), `never_started(id)` (the `canceled` snapshot for rule 7; `op.cancel` carries no kind, so its type is `"unknown"` and the hub reads the kind from its row), `unrecorded(op, reason)` (the `failed` snapshot for a `ready` entry that couldn't be written, node rule 8), `snapshot_budget/0` (6,000,000 bytes), `failed(op, message)` (the `failed` snapshot the executor records for an op process that crashed or couldn't start, with the message where the hub reads it), `unreadable(start, reason)` (the unjournaled `failed` answer to an `op.start` whose entry exists but can't be read: "It may or may not have run."), and `fit(snapshot, budget_bytes) :: snapshot`, which cuts `result.out`, `result.err` and `terminal_error` by encoded bytes, keeping head, tail and a marker with the byte count left out of the full output (`out_size`/`err_size`) and the file's path, until the JSON encoding fits (node rule 9); an existing marker is replaced, not kept twice, and `out_truncated`/`err_truncated` are set. Each answer carries its message in `terminal_error`, and a `view_image` one also in `result.error`, where the image job puts its reason. |
 | `PhotonNode.Executor.Rules` | core | strict, `deps: [PhotonCore]` | A | Every resume decision, each aware of the journal entry's `cancel` flag (node rule 2). `on_start(journal_entry_or_nil, known?, running?) :: :run \| {:resend, cancel?} \| {:resume, cancel?} \| :lost` (a terminal entry gives `{:resend, false}`: the journaled snapshot is sent again and nothing is canceled); `on_scan(journal_entry, running?) :: :skip \| {:resend, cancel?} \| {:resume, cancel?}` (terminal entries are skipped and wait for their ack); `down(journal_entry_or_nil, reason, restarted?) :: :ignore \| {:restart, cancel?} \| {:fail, message}` (no entry or terminal: ignore; `:normal`, `:shutdown` or `:noproc` before a terminal snapshot: restart once; anything else, or a second clean exit: fail with "the operation process exited: ..."; this is `Session.op_down/3`'s rule, F9). `cancel?` true means the executor follows `Ops.add/2` with `Ops.cancel/1`. `on_unjournaled(journal_entry_or_nil) :: :remove \| :keep`: what happens to the entry when a terminal snapshot for it couldn't be journaled (node rule 8): a `ready` entry is removed, any other kept. |
 | `PhotonNode.Executor.Link` | contract | exported by Executor | A | Behaviour: `snapshot(op) :: :ok`, `output(op_id, stream, text) :: :ok`. The implementation is the node config's `:link` (default `PhotonNode.Connection`), so tests can stand in. Replaces `PhotonNode.Harness.Link` in PR B. |
@@ -683,7 +720,7 @@ calls.
 
 | Module | Layer | Boundary | PR | Notes |
 |---|---|---|---|---|
-| `Photon.Machines` | boundary (API, no process) | `deps: [Photon.Durable, Photon.NodeKeys, Photon.Nodes (PR B: none), Photon.Repo, PhotonCore, Ecto]`, exports none of its internals; root `Photon` exports `Machines` | A, B | The context for machines and their operations. `start/1`, `repush/1`, `status/1`, `op_state/1`, `claim_tx/2`, `abandon_tx/2`, `cancel_tx/2`, `roster/0`, `signal_key/1`, and for the channel `joined/1`, `push_for/2`, `snapshot/3`, `output/3`. `start/1` takes `%{id, machine, kind, args, task_id, conversation_id, call_id}` and returns `:ok`, or `{:error, :stopped}` with nothing inserted or pushed when the task has ended or is marked for abort. `op_state/1` returns `:none` when there is no row. `claim_tx/2` returns the snapshot or nil; `abandon_tx/2` returns `{:claimed, snapshot}` or `{:abandoned, facts}`; `repush/1` returns `:ok` or `{:error, :offline \| :not_found}`. `push_for(machine, op_id)` takes the channel's machine and returns nothing for another machine's row. `snapshot(machine, payload, routes)` returns `{pushes, routes}` and `output(machine, payload, routes)` returns `routes`: the channel's cache of where each op's live output goes, which `output/3` fills for open rows of that machine and `snapshot/3` drops an op from on its terminal snapshot. The signal is `signal_key(op_id)` = `"op:" <> op_id`, with payload `%{"status" => "finished" \| "closed"}`. Known machines are the node IDs from `NodeKeys.list/0` without `revoked_at`. Validates node payloads once with `Operation.Wire` (rule 64). Every write goes through `Photon.Durable.Store` (`Durable.commit/1`): it reads the row (and, for `start/1`, the task), calls the matching `Machines.Rules` function and applies what it returns, in one commit. So do the channel's reads (`joined/1`, `push_for/2`), which wait for a commit in progress and record `pushed` (section 2.3, hub rule 2). The pushes to send come back as plain data and the channel sends them (rule 11); the sends from inside a commit (`cancel_tx`, `abandon_tx`) read the registry there. `start/1` and `repush/1` ask the channel to push with `Photon.Nodes.push_op/2` in PR A. `status/1` and `roster/0` pass `local_node?` (`config :photon, :local_node`) to the core, so `local` is known whenever the hub runs its own node (hub rule 12). PR B folds `Photon.Nodes` in (registry, `list/0`, `get/1`, `online?/1`, `register/2`, `unregister/1`, `command/3`, `subscribe/0`, `broadcast/0`), and renames `Photon.NodeRegistry` to `Photon.MachineRegistry`, with `push_op/2` in place of `Photon.Nodes.push_op/2`. |
+| `Photon.Machines` | boundary (API, no process) | `deps: [Photon.Durable, Photon.NodeKeys, Photon.Nodes (PR B: Photon.Events instead), Photon.Repo, PhotonCore, Ecto]`, exports none of its internals; root `Photon` exports `Machines` | A, B | The context for machines and their operations. `start/1`, `repush/1`, `status/1`, `op_state/1`, `claim_tx/2`, `abandon_tx/2`, `cancel_tx/2`, `roster/0`, `signal_key/1`, and for the channel `joined/1`, `push_for/2`, `snapshot/3`, `output/3`. `start/1` takes `%{id, machine, kind, args, task_id, conversation_id, call_id}` and returns `:ok`, or `{:error, :stopped}` with nothing inserted or pushed when the task has ended or is marked for abort. `op_state/1` returns `:none` when there is no row. `claim_tx/2` returns the snapshot or nil; `abandon_tx/2` returns `{:claimed, snapshot}` or `{:abandoned, facts}`; `repush/1` returns `:ok` or `{:error, :offline \| :not_found}`. `push_for(machine, op_id)` takes the channel's machine and returns nothing for another machine's row. `snapshot(machine, payload, routes)` returns `{pushes, routes}` and `output(machine, payload, routes)` returns `routes`: the channel's cache of where each op's live output goes, which `output/3` fills for open rows of that machine and `snapshot/3` drops an op from on its terminal snapshot. The signal is `signal_key(op_id)` = `"op:" <> op_id`, with payload `%{"status" => "finished" \| "closed"}`. Known machines are the node IDs from `NodeKeys.list/0` without `revoked_at`. Validates node payloads once with `Operation.Wire` (rule 64). Every write goes through `Photon.Durable.Store` (`Durable.commit/1`): it reads the row (and, for `start/1`, the task), calls the matching `Machines.Rules` function and applies what it returns, in one commit. So do the channel's reads (`joined/1`, `push_for/2`), which wait for a commit in progress and record `pushed` (section 2.3, hub rule 2). The pushes to send come back as plain data and the channel sends them (rule 11); the sends from inside a commit (`cancel_tx`, `abandon_tx`) read the registry there. `start/1` and `repush/1` ask the channel to push with `Photon.Nodes.push_op/2` in PR A. `status/1` and `roster/0` pass `local_node?` (`config :photon, :local_node`) to the core, so `local` is known whenever the hub runs its own node (hub rule 12). PR B folds `Photon.Nodes` in (registry, `list/0`, `get/1`, `online?/1`, `register/2`, `unregister/1`, `command/3`, `subscribe/0`, `broadcast/0`), and renames `Photon.NodeRegistry` to `Photon.MachineRegistry`, with `push_op/2` in place of `Photon.Nodes.push_op/2`. As built, `Nodes.sort/1` moves to `Roster.sort/1` (pure, for `list/0`), `Nodes.topic/0` goes (`subscribe/0` is enough), and the `:nodes_changed` message and `"nodes"` topic keep their names. |
 | `Photon.Machines.Op` | data (Ecto schema) | its own strict boundary, `use Boundary, type: :strict, deps: [Ecto]`, as `Photon.NodeSessions.Session` does, so `Machines.Rules` can name it | A | Table `machine_ops`: `id` (string, primary key), `machine`, `kind`, `args` (map), `conversation_id`, `call_id`, `task_id`, `status` (`open`, `finished`, `closed`), `confirmed` (boolean), `pushed` (boolean: an `op.start` was built for it at least once), `cancel` (boolean), `result` (map, null unless finished), timestamps. Index on `{machine, status}`. |
 | `Photon.Machines.Rules` | core | strict, `deps: [Photon.Machines.Op, PhotonCore]` | A | Section 2.3's hub rules as functions; `Machines` reads, calls one, and applies the result, and `test/core/machines/rules_test.exs` covers each. A `write` is `:none`, a map of the row changes to make, or `{:finish, changes}` for a terminal snapshot (the changes set `status` to `finished` with the snapshot in `result`, or `closed` with no result if the row was canceled; the commit that applies them also fires the signal); a push is `{event, payload}`. `insert?(task_status, abort_requested?) :: boolean` (rule 9; `task_status` is nil when the task is gone); `push_for(row) :: {write, [push]}` (rule 2: `op.start` and `pushed` for an open row without `cancel`, nothing otherwise); `on_join([row]) :: {[{op_id, changes}], [push]}` (rules 2 and 7; writes name their rows, and rows that aren't open get nothing); `on_snapshot(row_or_nil, machine, snapshot) :: {write, [push]} \| :foreign` (rules 3 to 6; `:foreign` for another machine's row, which `Machines` logs and ignores); `on_claim(row) :: {write, snapshot}` (rule 8; `{:none, nil}` for a row that isn't finished); `on_cancel(row, online?) :: {write, [push]}` (rule 7: `cancel` and `op.cancel` for an open row, close and clear a finished one); `on_abandon(row, online?) :: {:claimed, snapshot, write} \| {:abandoned, facts, write, [push]}` (rule 7, with `facts` = `%{pushed: boolean, confirmed: boolean, online: boolean}` for the message; a closed row or no row is abandoned with no write or push). |
 | `Photon.Machines.Roster` | core | strict, `deps: []` | A | `build(online_infos, known_ids, local_node?) :: [%{id, online, info}]`, the local machine first, then the connected ones by ID, then the known offline ones by ID; `known_ids` are plain strings from `NodeKeys` (keys not revoked), and `local_node?` adds `local` as known even while it's offline. Also `status(machine, online_info_or_nil, known_ids, local_node?) :: :online \| :offline \| :outdated \| :unknown`. Replaces `Photon.Nodes.roster/2` in PR B. |
@@ -693,11 +730,11 @@ calls.
 | `Photon.MachineTools.Call` | boundary | inside MachineTools | A | Section 3.2: `execute/3`, `resume/2`, `on_interrupt/2`, reading the limits from config. |
 | `Photon.MachineTools.Translate` | core | strict, `deps: [PhotonCore]` | A | `shell_args/1`, `view_image_args/1` (ported checks: limit range, NUL bytes, blank command or path, and a command over 100,000 bytes; return op `args` with `directory: nil`, and for `view_image` `max_size` from `max_size/0`), `result/3` (section 3.4; the content parts, so `Call` returns `{:ok, result, details}`), `details/3` (string keys: `machine`, `op_id`, `kind`, `status`, then `command`, `exit_code`, `out_truncated`, `err_truncated` and `full_output` for shell, or `path` for view_image; `full_output` is set only when the snapshot has both output paths, section 3.6), and the error texts `unknown_machine(machine, known_ids)` and `outdated_machine(machine)`. |
 | `Photon.MachineTools.Wait` | core | strict, `deps: []` | A | `op_id/1` (`t_<suffix>` to `op_<suffix>`), `first(online?, now, limits) :: {until, offline_since}` (`offline_since` is `now` when offline, nil when online; `Call` puts it in its state), `next(state, online?, now, limits) :: {:park, until, state} \| :give_up` (gives up once `now - offline_since` reaches the limit, so a limit of 0 gives up at the first offline sighting), and `offline_message(machine, facts, limit_ms)` with the three texts of section 2.4 (`facts` from `abandon_tx`), naming the limit ("10 minutes", or "250 milliseconds" in tests). Times are Unix milliseconds; `limits` is `%{check_ms:, offline_limit_ms:}`. Time and limits are arguments (rule 29). |
-| `PhotonWeb.NodeChannel` | boundary (Phoenix channel, the per-node server) | unchanged | A, B | PR A: `handle_in("op.snapshot")` and `handle_in("op.output")` call `Machines.snapshot/3` and `Machines.output/3` and push what they return; `handle_info(:joined)` also pushes `Machines.joined/1`; a new `{:push_op, op_id}` clause pushes what `Machines.push_for/2` returns, and the `{:command, event, payload}` clause already pushes `op.cancel`. A new clause before the generic one drops `{:command, "op.start", _}` with a log line, so the channel never pushes an `op.start` built by another process. It doesn't catch failures from `Machines`: a failed call crashes the channel, and the node's rejoin resends everything (node rule 8). Live output routes (`op_id` to conversation and call) are cached in the `routes` assign, which `Machines.snapshot/3` and `output/3` take and return; an op is dropped from it on its terminal snapshot. Each callback stays within 15 lines (rule 30). PR B: removes `event`, `live` and `input_rejected`, the `pushed_inputs` and `sessions` assigns, and the `sync` reply. |
+| `PhotonWeb.NodeChannel` | boundary (Phoenix channel, the per-node server) | unchanged | A, B | PR A: `handle_in("op.snapshot")` and `handle_in("op.output")` call `Machines.snapshot/3` and `Machines.output/3` and push what they return; `handle_info(:joined)` also pushes `Machines.joined/1`; a new `{:push_op, op_id}` clause pushes what `Machines.push_for/2` returns, and the `{:command, event, payload}` clause already pushes `op.cancel`. A new clause before the generic one drops `{:command, "op.start", _}` with a log line, so the channel never pushes an `op.start` built by another process. It doesn't catch failures from `Machines`: a failed call crashes the channel, and the node's rejoin resends everything (node rule 8). Live output routes (`op_id` to conversation and call) are cached in the `routes` assign, which `Machines.snapshot/3` and `output/3` take and return; an op is dropped from it on its terminal snapshot. Each callback stays within 15 lines (rule 30). PR B: removes `event`, `live` and `input_rejected`, the `pushed_inputs` and `sessions` assigns, and the `sync` replay (the reply keeps an empty `"sync"` for older nodes, section 2.2). |
 | `PhotonWeb.Endpoint` | lifecycle config | unchanged | A | `max_frame_size: 8_000_000` on the `/node` socket's websocket options. PR B removes `plug PhotonWeb.NodeAuthPlug`. |
 | `Photon.Assistant` | boundary | adds `Photon.MachineTools` to deps; PR B drops `Photon.NodeSessions` and `Photon.Nodes` | A, B | `@tools` gains `MachineTools.tools()` (PR A) and loses the node tools (PR B). Moduledoc updated. |
-| `Photon.Assistant.Transcript` | core | unchanged | A | `tool_output(outputs, event)` folds each `tool_output` event into a map of the last 8,000 characters per `call_id` (both streams, in the order they came). It is a function of its own, not a `live/2` clause, because `BlipLive` clears the in-flight answer when the assistant entry that makes a call commits, which is before the call prints anything; `BlipLive` keeps the map in its own `outputs` assign and drops a call's tail when its result comes. `action_status/3` shows a machine op whose details say `canceled` as stopped (`failed` was already an error). As built after review: `add_result/2` keeps each result without its image data and with its entry's ID (`"entry_id"`), and `image(entry, index)` decodes one image back from the entry, only for the four `view_image` types, so the page's state and re-renders carry no base64. |
-| `PhotonWeb.BlipLive` | server (LiveView) | unchanged | A, B | PR A: labels and icons for `shell` ("Ran `<command>` on <machine>"), `view_image` ("Looked at <path> on <machine>") and `list_machines`, taken from the call's arguments (an error result has no details); a non-zero `exit_code` shows as a badge; a running call shows its live output tail under its line; an image result renders under its line as an `img` loaded from `GET /blip/images/:entry_id/:index` (`PhotonWeb.BlipImageController`, behind `PhotonWeb.Auth` like the pages, through `Photon.Assistant.image/2` and `Durable.entry/2`), not as a data URI: the panel is on every page and re-renders an answer on every output chunk, so inline images would be sent again and again. A call's `<details>` ignores its `open` attribute when patched (`JS.ignore_attributes`), so a result the user opened stays open while another call in the same answer streams output. PR B: removes session links, node-report rendering and the four node tools' labels. |
+| `Photon.Assistant.Transcript` | core | unchanged | A | `tool_output(outputs, event)` folds each `tool_output` event into a map of the last 8,000 characters per `call_id` (both streams, in the order they came). It is a function of its own, not a `live/2` clause, because `BlipLive` clears the in-flight answer when the assistant entry that makes a call commits, which is before the call prints anything; `BlipLive` keeps the map in its own `outputs` assign and drops a call's tail when its result comes. `action_status/3` shows a machine op whose details say `canceled` as stopped (`failed` was already an error). As built after review: `add_result/2` keeps each result without its image data and with its entry's ID (`"entry_id"`), and `image(entry, index)` decodes one image back from the entry, only for the four `view_image` types, so the page's state and re-renders carry no base64. As built after the PR B review: `machine_action(name, args, details, status)` gives a `shell` or `view_image` call's line, its verb in the present while the call runs and in the past once it ends, its command or path, and its machine (from the arguments, else the result's details). |
+| `PhotonWeb.BlipLive` | server (LiveView) | unchanged | A, B | PR A: labels and icons for `shell` ("Ran `<command>` on <machine>"), `view_image` ("Looked at <path> on <machine>") and `list_machines`, taken from the call's arguments (an error result has no details); as built after the PR B review, a call still running reads "Running `<command>` on <machine>" or "Looking at <path> on <machine>", and every machine is named, `local` included, from the result's details when the arguments don't (`Transcript.machine_action/4`); a non-zero `exit_code` shows as a badge; a running call shows its live output tail under its line; an image result renders under its line as an `img` loaded from `GET /blip/images/:entry_id/:index` (`PhotonWeb.BlipImageController`, behind `PhotonWeb.Auth` like the pages, through `Photon.Assistant.image/2` and `Durable.entry/2`), not as a data URI: the panel is on every page and re-renders an answer on every output chunk, so inline images would be sent again and again. A call's `<details>` ignores its `open` attribute when patched (`JS.ignore_attributes`), so a result the user opened stays open while another call in the same answer streams output. PR B: removes session links, node-report rendering and the four node tools' labels. |
 | `Photon.Durable.Context` | core | unchanged | A | `messages/1` shortens tool results from before the newest `user` entry (section 3.6). Moduledoc updated. |
 | `Photon.Durable.ToolTask` | boundary | unchanged | A | A raise rescued in `call_tool/2` is recorded in a commit that also runs `interrupted(task, tx)`, so the tool's `on_interrupt/2` sees every failure (hub rule 10). For `run_on_node` until PR B that means `NodeWork.ensure_watcher/2` also runs after a raise, which is what it is for. Moduledoc and `Photon.Durable.Tool`'s `on_interrupt` doc updated. |
 
@@ -739,12 +776,18 @@ PR B:
 - node: drop `Session`, `Context`, `Inbox`, `SkillPrompt`, `Tools.*` from
   `FunctionalCore`; drop `SessionRegistry`, `TaskSupervisor`,
   `SessionSupervisor` from `ProcessNameOwnership`, rename the op names to
-  `PhotonNode.Ops*`; set `api_modules` to `PhotonNode.Ops` and
-  `PhotonNode.Executor`; drop the Coordinator `PreferCall` entry; re-justify
-  `PhotonNode.Ops` (":resend and :cancel to a local op process, which the
-  executor monitors"); move the `NoSleep` entry to `PhotonNode.Ops.Shell`;
-  drop the `PhotonCore.ID.new` allowances.
-- hub: drop `Assistant.Report`, `NodeSessions.*`, `NodeTranscript` from
+  `PhotonNode.Ops*`; set `api_modules` to `PhotonNode.Executor` (as
+  built in B6, not `PhotonNode.Ops`: its `add/2` returns the operation's
+  pid so the owner can monitor it, rule 87, and `via/1` names its own
+  workers, both of which the check flags; a comment there says so, and
+  `names` still keeps its registry and supervisor its own); drop the
+  Coordinator `PreferCall` entry; re-justify `PhotonNode.Ops` (":resend
+  and :cancel to a local op process, which the executor monitors"); move
+  the `NoSleep` entry to `PhotonNode.Ops.Shell`; drop the
+  `PhotonCore.ID.new` allowance for `PhotonCore.Operation` in core (the
+  node's `nondeterministic_extra: ["PhotonCore.ID.new"]` stays: it keeps
+  its core from minting IDs).
+- hub: drop `Assistant.Report`, `Assistant.Page`, `NodeSessions.*`, `NodeTranscript` from
   `FunctionalCore`; drop `Photon.NodeSessions` and `Photon.Nodes` from
   `api_modules`; rename the registry entry; replace the `Photon.Nodes`
   `PreferCall` entry with `Photon.Machines` ("command/3, push_op/2 and
@@ -752,7 +795,7 @@ PR B:
   pushed again on every join and every minute while their call waits, and a
   replaced connection is waited for"); delete the
   `PhotonWeb.ModelRelayController` entry.
-- `lib/photon.ex`: drop `NodeSessions`, `NodeSessions.Session`,
+- `lib/photon.ex`: drop `Assistant.Page`, `NodeSessions`, `NodeSessions.Session`,
   `NodeTranscript`, `Nodes` from exports; rewrite the moduledoc.
 
 ## 5. What PR A adds and PR B deletes
@@ -783,10 +826,11 @@ Hub deletions:
   the `node_watch` kind in `config/config.exs` and `config/test.exs`.
 - The report half of `Assistant.Transcript` (`settle/3` for `node_report`,
   `report?`, `went_wrong?`), `Assistant.Notice`'s node-session statuses and
-  failures (it keeps Blip's own failures), `Assistant.Page`'s session
-  context (`session_id/1`, `of_session/1` and the session branches of
-  `note/2`, `label/1`, `strip/1`), and `background_input?/1`'s
-  `"node_report"` source (`"routine"` stays).
+  failures (it keeps Blip's own failures), `Assistant.Page` and the page
+  context it put in front of a message (node session pages were the only
+  kind, so nothing is left of it; step 2 brings it back for projects and
+  threads), and `background_input?/1`'s `"node_report"` source
+  (`"routine"` stays).
 - `Photon.NodeSessions` and `node_sessions/{mirror,session,input,event}.ex`;
   `Photon.NodeTranscript`; `Photon.Settings.node_config/1`;
   `PhotonWeb.SessionLive` and its route; `Photon.Nodes` (folded into
@@ -806,14 +850,27 @@ Hub UI, left coherent:
   `/sessions` links; the "nowhere to send work" copy becomes "No machines
   yet. Add one from the Nodes page."
 - Nodes (`nodes_live.ex`): no Sessions field or count, no
-  `:node_sessions_changed`; "Its sessions stay here" copy removed.
+  `:node_sessions_changed`; "Its sessions stay here" copy removed. The
+  sidebar links every roster machine here, so the page lists the known
+  machines that aren't connected (from the Shell's roster) under "Not
+  connected", and a tailnet machine with a known node gets Update and
+  Uninstall rather than Install.
 - Blip (`blip_live.ex`): no `/sessions` links in bubbles, notices, sources
-  or details; no `node_report` source rendering; `page_at/1` no longer
-  looks up sessions; no `:node_sessions_changed` handler.
+  or details; no `node_report` source rendering; no page context (the
+  hook's page reports, the "About ..." chip and label); no
+  `:node_sessions_changed` handler, notice bar or failed-session bubble
+  (B1 does these, since they use what B1 removes); no node work in
+  Blip's `working` mood or its live output (B2, with the Shell). Node work
+  was the mood's only source of `:working`, so `Transcript.mood/1` loses
+  its `working` input and the `:working` mood; the avatar component keeps
+  the brand kit's pose.
 - `PhotonWeb.Shell`: no `NodeSessions.subscribe/0`, no `sessions` or
-  `working` assigns; `nodes` comes from `Machines.roster/0`.
+  `working` assigns; `nodes` comes from `Machines.roster/0`, rebuilt on
+  `:nodes_changed` and `{:node_keys_changed, _}`.
 
-Node deletions: `harness.ex`, `harness/{session,coordinator,store,context,inbox,model_request,link,skills,skill_prompt,tools}.ex`,
+Node deletions: `harness.ex` (as built, B5 keeps it as a code-free module
+naming the operation layer's boundary, and B6 deletes it with the rename),
+`harness/{session,coordinator,store,context,inbox,model_request,link,skills,skill_prompt,tools}.ex`,
 `harness/tools/`, `harness/ops/skill_use.ex`, `priv/prompts/`; the session
 handlers in `connection.ex`; `SessionRegistry`, `TaskSupervisor`,
 `SessionSupervisor` and the `:resume` task in `photon_node.ex`;
@@ -850,6 +907,29 @@ Specs (`specs/tla/`):
   F* tables mark NodeSync and session findings as retired with the code they
   covered; keep the rows for findings still covered (F3, F8, F9, F11, K1 and
   the durable core).
+- As built (B7): `Executor.tla` models the executor's handlers as ordered
+  effects, so it crashes after any prefix of them (executor crashes, which
+  `HubOps.tla` leaves out), with operation-process crashes, node crashes
+  and stops, dropped connections and a stand-in hub. `OpSpawn` and
+  `OpCancelAck` became the answers in `OpCkDone`. Its bug configs put each
+  bug back with a `Bugs` switch and fail, as `HubOps`'s do, rather than
+  pass as `Coordinator`'s regression configs did; the clean configs check
+  the same properties with the fixes in. It adds `-bug-stopped-marker`
+  (node rule 10), and two gaps it found in the code (E1, K2 in
+  `Executor.md`), first as `-known-*` configs against the code as it was.
+  After G1 the spec also models the `unstarted` marker and the kill of a
+  reattached command (node rules 4 and 10). After the PR B review both
+  gaps are fixed, the spec models the fixes (the `canceled` marker, and
+  the kill of any command recorded for a snapshot still awaiting its
+  process), and the old behaviour is `-bug-cancel-marker` and
+  `-bug-orphan-reattached`. `-witness`
+  went: its witnesses were session paths, and the new spec's
+  reachability checks ran once with temporary invariants. `Durable` also got `NoOpenRowAfterDone`,
+  `RowsClose` and `BackgroundNotWithdrawn`, the constants
+  `MachineOffline` and `MaxRechecks`, a raise in a machine call's code as
+  a step fault, and `Durable-offline.cfg`; `-stop-stranded` and
+  `-withdraw` keep their faults with a routine's prompt in place of a
+  node report.
 
 Docs: `docs/architecture.md` (module map), `AGENTS.md` (the layout lines for
 `apps/core` and `apps/node`), and a note at the top of
@@ -1079,11 +1159,17 @@ apps/hub
   `test/web/controllers/model_relay_controller_test.exs`,
   `test/core/assistant/report_test.exs`; node `test/core/{session,context,inbox,model_request,tools}_test.exs`,
   `test/property/{session,coordinator_replay,context,inbox,store}_property_test.exs`,
-  `test/boundary/{harness,skills}_test.exs`; core tests for the relay and
-  `MockAgent`.
+  `test/boundary/{harness,skills}_test.exs`; core tests for the relay
+  (`test/core/relay_wire_test.exs`, the relay describe in
+  `test/boundary/llm_test.exs`, and the direct-versus-relayed property in
+  `test/property/message_property_test.exs`; B3) and for `MockAgent`
+  (`test/core/mock_agent_test.exs`, and the `MockAgent` conversations the
+  Responses-input property in `message_property_test.exs` is built from;
+  B5).
 - Rewrite: hub `test/boundary/assistant_tools_test.exs` (drop the node-tool
   describes, keep schedules), `test/core/assistant/work_test.exs` (keep the
-  routine parts), `test/core/assistant/{notice,page,transcript,mock_script}_test.exs`,
+  routine parts; renamed `routine_test.exs`), `test/core/assistant/{notice,transcript,mock_script}_test.exs`
+  (`page_test.exs` goes with `Assistant.Page`),
   `test/core/durable/tool_call_test.exs` (its two node-tool references),
   `test/boundary/assistant_test.exs`, `test/web/live/{blip_live,pages,overview_live,nodes_live}_test.exs`,
   `test/web/channels/node_channel_test.exs` (drop sync, ingest,
@@ -1092,13 +1178,50 @@ apps/hub
   into `executor_test.exs` if they duplicate it; `test/support/` loses
   `session_driver.ex`, `test_script.ex` and the session parts of
   `harness_case.ex` and `fixtures.ex` (keep `shell_op/1`, `running/2`,
-  `completed/2`).
+  `completed/2`). As built in B5: `recovery_test.exs` is deleted. Its
+  crashed-operation test (F9) and its `:noproc` test are covered by
+  `executor_test.exs` and `executor/rules_test.exs`; the one op test
+  nothing else covers (`Ops.add/2` starting again an operation whose old
+  process has just exited but is still registered) moves to
+  `shell_test.exs`, which drives `Ops.add/2` with `TestOwner`.
+  `shell_test.exs` builds its operations with `Executor.Request.operation/2`
+  instead of the deleted Bash translator; `jobs_test.exs` loses its
+  `skill_use` tests; `connection_test.exs` loses the session replay,
+  delivery and forwarding tests and gains one that session messages are
+  ignored as unknown events, and checks the join's capabilities are
+  exactly `["ops:1"]`; `config_test.exs` loses the heartbeat and relay URL
+  tests.
 - Hub test support: remove `node_sessions`, `node_events`, `node_inputs`
   from `data_case.ex`'s `@tables`, the `Mirror` alias in `case.ex`, the
   `Session` and `Input` fixtures in `fixtures.ex`.
 - Add: `test/core/machines/roster_test.exs` covers known offline machines
-  from keys; a LiveView test that no page links to `/sessions`.
+  from keys (PR A already does); a LiveView test that no page links to
+  `/sessions` (as built, in `test/web/live/pages_test.exs`, which also
+  checks the route is gone).
+- As built in B4: `test/core/nodes_test.exs` goes with `Photon.Nodes`;
+  its `sort/1` test moves to `test/core/machines/roster_test.exs`.
+- As built in B2: `test/core/nodes_test.exs` loses its `roster/2` test,
+  `test/core/settings_test.exs` its `node_config/1` test, and the node's
+  `test/boundary/connection_test.exs` joins with an empty reply.
 - The PR A e2e test must pass unchanged.
+- As built in G1: `shell_test.exs` adds a reattached command killed and
+  reported as stopped when its shell is shut down, a stored but
+  unconfirmed start that runs once when resumed, and a stored start with
+  no marker that fails as unknown without running; `executor_test.exs`
+  adds a command whose journaled start the executor never confirmed (the
+  executor is killed while it holds the checkpoint) running once. Its
+  restart-once test now shuts down a reattached shell, which kills the
+  command, so the restart reports it as stopped; a second clean exit
+  failing the op is left to `executor/rules_test.exs`. `journal_test.exs`
+  checks `forget/2` deletes `unstarted`.
+- As built after the PR B review (E1, K2): `shell_test.exs` adds a
+  command killed by a cancel and a reattached one, each resumed as
+  `canceled` though the `exit` file says 143; a resumed shell that crashes
+  before it reattaches killing its command (the test owner's
+  `crashing_owner/0` makes its first report raise), and one whose command
+  had already exited leaving no `stopped` marker; and a fresh start
+  clearing a `canceled` marker. `journal_test.exs` checks `forget/2`
+  deletes `canceled`.
 
 ### 6.3 Checks for both PRs
 
@@ -1143,7 +1266,7 @@ Also:
 | 75 | Both sides ignore unknown events and fields; `Wire` parsers drop extras. A node without `"ops:1"` is reported as outdated rather than waited on. |
 | 79, 81, 84 | The node's children, in order: `OpRegistry`, `OpSupervisor`, `Executor`, `Connection` (PR B), `:rest_for_one`. An executor crash restarts only it and the connection; ops keep running and are re-monitored. An `OpSupervisor` crash takes the executor and connection with it; the executor resumes ops from the journal. Write this in `PhotonNode`'s moduledoc. |
 | 80, 82 | The executor starts through `start_link` under `PhotonNode` and is `:permanent`. Op workers stay `:temporary` under `OpSupervisor`; the executor, not the supervisor, decides about restarts. |
-| 86 | What each crash loses: a `NodeChannel` loses its registration and route cache, rebuilt on rejoin. The executor loses its monitors and restart counts, rebuilt in `handle_continue` from the registry and the journal, including each entry's `cancel` flag (a resumed or still-running op whose journal says canceled is told to cancel). Op processes don't lose anything when it dies: their calls into it return `:down` or `:ignored`. The connection loses nothing durable; it resends the journal on join. An op worker's crash becomes a `failed` snapshot. A node VM restart resumes from the journal; a shell command's outcome comes from its `stopped`, `exit` and `pid` files. |
+| 86 | What each crash loses: a `NodeChannel` loses its registration and route cache, rebuilt on rejoin. The executor loses its monitors and restart counts, rebuilt in `handle_continue` from the registry and the journal, including each entry's `cancel` flag (a resumed or still-running op whose journal says canceled is told to cancel). Op processes don't lose anything when it dies: their calls into it return `:down` or `:ignored`. The connection loses nothing durable; it resends the journal on join. An op worker's crash becomes a `failed` snapshot. A node VM restart resumes from the journal; a shell command's outcome comes from its `stopped`, `exit`, `pid` and `unstarted` files. |
 | 87 | The executor monitors op processes and never links to them. |
 | 92 | No new one-off jobs. The node's `:resume` task goes; the executor's `handle_continue` does the scan. |
 | 96 | The executor's sweep uses `Process.send_after/3`. Tool rechecks use the durable `"until"`. Nothing sleeps; the only allowed sleep stays in `Ops.Shell.terminate/2`. |
@@ -1330,10 +1453,14 @@ A15. Final checks. After all of the above.
 
 B1. Remove Blip's node-session tools.
 - Delete the files listed in section 5.2 under "Blip's node tools".
-- `apps/hub/lib/photon/assistant.ex`: `@tools`, deps (keep
-  `Photon.Nodes` until B4), `background_input?/1`, moduledoc.
-- `assistant/{prompt,mock_script,transcript,notice,page}.ex`: node-session
-  parts out; prompt and voice per section 3.7.
+- `apps/hub/lib/photon/assistant.ex`: `@tools`, deps (as built: both
+  `Photon.NodeSessions` and `Photon.Nodes` go, since nothing left in the
+  Assistant boundary calls them), `background_input?/1`, the `page:`
+  option of `send/2`, moduledoc.
+- `assistant/{prompt,mock_script,transcript,notice}.ex`: node-session
+  parts out; prompt and voice per section 3.7. Delete `assistant/page.ex`
+  (section 5.2).
+- `lib/photon_web/live/blip_live.ex`: the parts section 5.2 gives B1.
 - `config/config.exs`, `config/test.exs`: drop the `node_watch` kind.
 - Tests per section 6.2; keep the F6 test in `machine_tools_test.exs`.
 
@@ -1344,29 +1471,54 @@ B2. Remove node sessions from the hub. After B1.
   migration.
 - Update `lib/photon_web/shell.ex`, `live/overview_live.ex`,
   `live/nodes_live.ex`, `components/layouts.ex`, `live/blip_live.ex` per
-  section 5.2 (using `Photon.Nodes.list/0` and `Photon.NodeKeys` until B4).
+  section 5.2. As built: the Shell reads `Photon.Machines.roster/0`, which
+  PR A added, so `Nodes.roster/2` (whose sessions argument is gone) is
+  deleted here rather than in B4; the Shell also subscribes to
+  `Photon.NodeKeys` and rebuilds on `{:node_keys_changed, _}`, since known
+  offline machines now come from keys, and no longer rebuilds on
+  `{:durable_tasks, _}`, which nothing in it uses (it still subscribes, for
+  the pages).
 - `lib/photon_web/channels/node_channel.ex`: drop `event`, `live`,
-  `input_rejected`, `pushed_inputs`, `sessions`, the `sync` reply and
-  `resend_queued`.
-- `lib/photon.ex` exports and moduledoc; `.credo.exs` lists;
+  `input_rejected`, `pushed_inputs`, `sessions`, the `sync` replay and
+  `resend_queued`. The join reply is `%{"sync" => %{}}`: the new node
+  ignores it, and a node built before PR B, whose `handle_join/3` requires
+  `"sync"`, stays joined and shows as outdated instead of crashing on every
+  join (rule 75). The node's `Connection.handle_join/3` takes any reply;
+  B5 deleted the replay with the rest of the session handlers.
+- `lib/photon.ex` exports and moduledoc; `.credo.exs` lists (and the
+  `Photon.Nodes` `PreferCall` reason loses its NodeSessions outbox clause);
   `lib/photon/durable/store.ex` moduledoc mention.
+- As built, copy that named node sessions or node agents: `Settings`'
+  moduledoc and `SettingsLive`'s subtitle (Blip alone uses the model), the
+  Nodes page subtitle and its Removed and Uninstall copy, `Provision`'s
+  uninstall message, the `Repo`, `Events` and `pin_to_bottom.js` comments,
+  and the hub tables in `docs/otp-design-guide.md`.
 - Tests and test support per section 6.2.
 
 B3. Remove the model relay. Independent of B1 and B2.
 - Delete `lib/photon_web/controllers/model_relay_controller.ex`,
   `lib/photon_web/node_auth_plug.ex`; edit `endpoint.ex` and `router.ex`.
-- apps/core: delete `llm/relay.ex`, `llm/relay/wire.ex`, `llm/mock_agent.ex`
-  and the relay provider in `llm.ex`; their tests; `PhotonCore` moduledoc.
+- apps/core: delete `llm/relay.ex`, `llm/relay/wire.ex` and the relay
+  provider in `llm.ex`; their tests; `PhotonCore` moduledoc; the
+  `LLM.Relay.Wire` `FunctionalCore` entry in `apps/core/.credo.exs`. As
+  built, `llm/mock_agent.ex` stays until B5: the node's session tests
+  (`config :photon_node, llm:` in `apps/node/config/test.exs`,
+  `test/support/test_script.ex`) answer with it, so deleting it here would
+  break the node's suite.
 - `apps/hub/config/test.exs`: drop `config :photon_node, llm:`.
 - `.credo.exs`: drop the `ModelRelayController` entry.
+- As built, copy that named the relay: the `NodeKeys` moduledoc, the
+  `ChatGPT.stream/3` doc, and the `apps/core` lines in `README.md` and
+  `AGENTS.md`.
 
 B4. Fold `Photon.Nodes` into `Photon.Machines`. After B2.
 - Move the registry functions into `lib/photon/machines.ex`; delete
   `lib/photon/nodes.ex`; rename `Photon.NodeRegistry` to
   `Photon.MachineRegistry` in `lib/photon/application.ex`.
-- `Machines.roster/0` (online plus known keys) replaces `Nodes.roster/2`
-  in `shell.ex`, `overview_live.ex`, `layouts.ex`, `nodes_live.ex` and
-  `list_machines`.
+- `Machines.roster/0` (online plus known keys) already feeds the Shell
+  (B2, as built), and through it the sidebar, the overview and Blip, and
+  `list_machines`; `nodes_live.ex` switches from `Nodes.list/0` to the
+  folded-in `Machines.list/0`.
 - Update callers: `node_channel.ex`, `node_keys` callers if any,
   LiveViews, `lib/photon/provision.ex` (it calls `Nodes.subscribe/0` and
   `Nodes.get/1`: switch to `Machines.subscribe/0` and `Machines.get/1`,
@@ -1375,15 +1527,50 @@ B4. Fold `Photon.Nodes` into `Photon.Machines`. After B2.
   `overview_live_test.exs`, and any other test that names `Photon.Nodes`).
 - `Photon.Nodes.push_op/2` becomes `Photon.Machines.push_op/2`.
 - `lib/photon.ex`, `.credo.exs` (section 4.4).
+- As built: `Nodes.sort/1`, the order `list/0` returns, moves to the
+  pure `Photon.Machines.Roster.sort/1`, and its test from
+  `test/core/nodes_test.exs` (deleted) to `test/core/machines/roster_test.exs`;
+  `Nodes.topic/0` is dropped, since only a test used it and
+  `Machines.subscribe/0` does the same; `:nodes_changed` keeps its name.
+  `Photon.Machines` depends on `Photon.Events` in place of `Photon.Nodes`.
+  Also updated: the current-state lines in `docs/otp-design-guide.md`
+  (rule 83, the hub layer table, 'already follows' items 4 and 8) and
+  `specs/tla/HubOps.md`'s two `Photon.Nodes` mentions.
 
 B5. Remove the node's agent loop. After B3 (the node's `llm` config goes
 with it).
 - Delete the files in section 5.2 under "Node deletions".
+- apps/core (moved from B3): delete `llm/mock_agent.ex`, its test, its
+  `exports` and alias entries, its `FunctionalCore` entry and its mentions
+  in the `PhotonCore` moduledoc; rebuild or drop the `session/0` generator
+  in `test/property/message_property_test.exs`, which makes conversations
+  with it.
 - `connection.ex`: only `op.*`; capabilities `["ops:1"]`; moduledoc.
 - `photon_node.ex`: children and moduledoc (section 7, rules 79, 81, 84);
   Boundary deps without `PhotonCore.LLM`.
 - `config.ex`, `cli.ex`, `apps/node/config/{config,test}.exs`.
 - Tests and support per section 6.2.
+- As built: `harness.ex` stays, as a module with no code that names the
+  operation layer's Boundary (`deps: [PhotonCore]`, `exports: [Ops,
+  Ops.Owner, Env]`) and describes it, because `Harness.Ops*`, `Env` and
+  `Image` still live under that name until B6 gives them their own
+  `PhotonNode.Ops` boundary; B6 deletes it. `Ops.Shell` sets the `:op`
+  logger metadata that `config/config.exs` now lists. In
+  `apps/node/.credo.exs` the `FunctionalCore` allow list is empty, the
+  `Connection` `PreferCall` reason drops log records, and the
+  `Harness.Ops` reason names the executor; `api_modules` and the op names
+  wait for B6's rename. In core, the `session/0` generator becomes
+  `conversation/0`, built from plain `Message` values, and the
+  `Message`, `LLM.Mock` and `LLM` (`:cache_key`) docs stop naming node
+  sessions. Copy outside the list that described the node's agent: the
+  hub's `local_node` comment in `application.ex`, `Paths.local_node_dir/0`'s
+  comment, the endpoint and `NodeSocket` docs, the `local_node` comment in
+  `config/config.exs`, the install script's `PHOTON_PURGE` line, the node
+  rows of `README.md`, and the node tables, the 'already follows' bullets,
+  the Boundary list and the examples in rules 5, 6, 12, 14 and 29 of
+  `docs/otp-design-guide.md` (with two `Nodes` mentions B4 left in the hub
+  lines). `node_channel_test.exs`'s ignored-event step pushes an unknown
+  event instead of a session record.
 
 B6. Rename the operation layer. After B5.
 - `PhotonNode.Harness.Ops*`, `Env`, `Image` to `PhotonNode.Ops*`
@@ -1394,11 +1581,57 @@ B6. Rename the operation layer. After B5.
 - `PhotonNode.Executor` deps; remove `Operation.new/4` from core and its
   credo allowance.
 - `.credo.exs` in node and core (section 4.4).
+- As built: `PhotonNode.Ops` (`ops.ex`) is the boundary root and takes
+  the moduledoc `harness.ex` had, and `harness.ex` is deleted; `Image`
+  becomes `PhotonNode.Ops.Image`, still a strict sub-boundary. The test
+  case `PhotonNode.HarnessCase` becomes `PhotonNode.NodeCase`
+  (`test/support/node_case.ex`; it runs a whole node), and the test
+  modules `PhotonNode.Harness.{ShellTest,JobsTest,EnvTest,ImageTest}`
+  become `PhotonNode.Ops.*`. `jobs_test.exs` builds its operations with
+  `Operation.new/5`, and core's `operation_test.exs` loses the `new/4`
+  test. `docs/otp-design-guide.md`'s rule 46 and node lines name the new
+  modules.
+
+G1. Close PR A's known gaps on the node. After B6.
+- A shell reattached after an abrupt crash (no port, polling) is killed on
+  a stop like one with a port: `stopped` marker, then the group kill (node
+  rule 10).
+- A `process` checkpoint answered `:ignored` leaves an `unstarted` marker;
+  a resume that finds it, with no process group or `pid` file, starts the
+  command instead of reporting "outcome unknown" (node rule 4).
+- Tests per section 6.2.
+
+G2. Close E1 and K2 on the node, and two Blip labels. After the PR B
+review.
+- E1: a cancel writes a `canceled` marker before its kill; `recover/1`
+  checks it before the `stopped` marker and the `exit` file and finishes
+  the op as `canceled` (node rule 10).
+- K2: `terminate/2` kills the recorded process group whenever the port is
+  open or the snapshot is still `awaiting` in phase `process`, after the
+  `stopped` marker (none once the `exit` file exists); the `reattached`
+  flag goes.
+- `Executor.tla` models both fixes, and the old behaviour as
+  `-bug-cancel-marker` and `-bug-orphan-reattached`; every `Executor`
+  config was rerun.
+- Blip's line for a machine call says "Running" or "Looking at" until the
+  call ends, and always names the machine, `local` included
+  (`Transcript.machine_action/4`).
+- Tests per section 6.2.
 
 B7. Specs. After B1 and B5 (they describe the deleted code).
 - Section 5.2 "Specs": delete NodeSync, `Coordinator` to `Executor`,
   re-model `Durable`, rewrite `docs/verification.md`. Run TLC on every
   remaining config.
+- As built: section 5.2's last bullet says what the specs became. Also
+  updated: `HubOps.md`'s pointers to the deleted specs, and in
+  `docs/verification.md` the core rows for `ChatCompletions`, which an
+  earlier change had already removed, are marked retired.
+- At the merge after G1: `Executor.tla` gained the `unstarted` marker
+  (written on `:ignored` and by a node stop during the checkpoint call,
+  read by recovery, removed by `prepare/1`) and the kill of a reattached
+  command in `terminate/2`; every `Executor` config was rerun.
+  `Executor.md`, `HubOps.md` and `docs/verification.md` describe K2 as
+  partly fixed and the marker path as reached.
 
 B8. Docs and final checks. After all of the above.
 - `docs/architecture.md`, `AGENTS.md` layout lines,
@@ -1407,6 +1640,19 @@ B8. Docs and final checks. After all of the above.
   says to delete the hub database and reinstall nodes, and that the Blip
   brand kit's `VOICE.md` needs the voice edit PR A made (say it in PR A's
   description too).
+- As built: `docs/architecture.md`'s module map, test support table and
+  supervision trees describe the code after step 1; its hotspots and
+  refactor log stay as the history of the 2026-10-03 snapshot, with a
+  step 1 status line on each hotspot whose code went and a step 1 entry
+  at the end of the log. Also updated, because they described what PR B
+  removed: `apps/node/README.md` (it still said the node runs
+  `unreal-agent-runner`), `PhotonNode`'s moduledoc (the `unstarted`
+  file among those a resumed command's outcome comes from), and short
+  status notes in `docs/projects-and-blip.md` ("Hub and nodes", and the
+  approvals question) and above the drift list in
+  `docs/otp-design-guide.md`. Dialyzer and coverage are left to the
+  final stage; `mix precommit`, the credo checks' tests and the e2e test
+  ran here.
 
 ## 9. Decisions for the user
 
@@ -1425,3 +1671,12 @@ choices made here that the user may want to know about, all reversible:
   on the machine. Results in the current turn stay whole.
 - A shell command is at most 100,000 bytes, below Linux's 128 KB limit on
   one argument.
+- A command whose start the node recorded but never confirmed, because its
+  executor died in between, runs when the op resumes (moments later),
+  rather than failing as "outcome unknown", since its files prove it never
+  ran (node rule 4).
+- The two low-severity gaps `Executor.tla` found (`Executor.md`) are
+  fixed in G2: a command killed by a cancel is reported `canceled` even
+  if the executor or node dies before the `canceled` snapshot is
+  journaled (E1), and a shell resumed after a node crash kills its
+  command if it crashes before it reattaches (K2).

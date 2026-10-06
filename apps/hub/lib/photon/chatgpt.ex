@@ -161,7 +161,7 @@ defmodule Photon.ChatGPT do
   Runs a model request with `config` (from `llm_config/1`), as
   `PhotonCore.LLM.stream/3` does, in the caller. If the API refuses the
   token (a 401), says so with `token_rejected/1`, so the next request gets
-  a fresh one. Blip's turns and the node relay both go through here.
+  a fresh one. Blip's turns go through here.
   """
   @spec stream(LLM.request(), LLM.config(), LLM.on_event()) ::
           {:ok, LLM.response()} | {:error, PhotonCore.LLM.Error.t()}

@@ -84,7 +84,7 @@ running in each. It rests on two layers:
    unread, idle, or quiet (unresolved and untouched for a while). These are
    cheap to compute and drive the UI directly.
 2. **Blip's judgement on top.** State changes reach Blip as signals in its
-   conversation, the way node reports do today (`Assistant.NodeWatch`).
+   conversation, the way node reports did before step 1 removed them.
    Blip decides what is worth telling you, and in what words.
 
 Waking Blip's model on every state change would spend your ChatGPT plan
@@ -99,6 +99,11 @@ The home page shows the state layer directly ("needs you", "running",
 "recently finished") whether or not Blip says anything.
 
 ## Hub and nodes
+
+> Status: step 1 built this section's machine tools and removed what it
+> says goes away (`docs/plans/step-1-machine-tools.md`). The node's
+> operation layer is now `PhotonNode.Ops`, run by `PhotonNode.Executor`;
+> the paragraph below describes the code before step 1.
 
 Today each node runs a whole agent loop (`PhotonNode.Harness`: session
 state machine, context, tools, its own log) and calls the model through the
@@ -161,8 +166,9 @@ today's overview.
 the machine named on each tool call.
 
 **Blip panel.** Stays as it is, floating over every page. It knows which
-project or thread is on screen (`Assistant.Page`, extended past node
-sessions), so "what's left here?" means the thing you're looking at.
+project or thread is on screen (as `Assistant.Page` did for node sessions
+until step 1 removed them), so "what's left here?" means the thing you're
+looking at.
 
 ## Build order
 
@@ -198,6 +204,6 @@ Later, with the door left open:
   other's changes. T3 Code gives each thread its own git worktree; Photon
   projects aren't always repos. Shared for now, until it causes trouble.
 - **Approvals.** Threads and Blip run shell commands on your machines
-  without asking, as node sessions do today.
+  without asking, as Blip does today.
 - **Model per thread.** Every conversation uses the model in Settings for
   now; choosing one per thread or project can come later.

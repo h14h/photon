@@ -12,7 +12,7 @@ config :photon,
   ecto_repos: [Photon.Repo],
   # Settings, the database, secrets, and the local node's data.
   data_dir: Path.expand("../.photon", __DIR__),
-  # Start an agent node named "local" inside the hub. Remote nodes run the
+  # Start a node named "local" inside the hub. Remote nodes run the
   # `apps/node` project on their own machines.
   local_node: true
 
@@ -28,7 +28,7 @@ config :photon, Photon.Repo,
 # What runs the assistant's conversation, and its own task kinds.
 config :photon, Photon.Durable,
   profiles: %{"assistant" => Photon.Assistant},
-  kinds: %{"node_watch" => Photon.Assistant.NodeWatch, "routine" => Photon.Assistant.Routine}
+  kinds: %{"routine" => Photon.Assistant.Routine}
 
 # How a machine tool call waits for its operation: it checks once a minute
 # (asking an online machine to push the op again), and gives up once the
@@ -78,10 +78,10 @@ config :tailwind,
 
 # Configure Elixir's Logger
 # Durable steps tag their lines with the task ID, and the embedded node's
-# coordinators with the session ID.
+# shell operations with the op ID.
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :durable_task, :session]
+  metadata: [:request_id, :durable_task, :op]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

@@ -1,20 +1,21 @@
-# Durable: the hub's durable harness and the assistant's node work
+# Durable: the hub's durable harness and its machine calls
 
 `Durable.tla` models `Photon.Durable` (Store, Tx, Runtime, Scheduler,
-Generation, ToolTask) and the assistant's node-work tools (`run_on_node` and
-`message_node_session` through `Photon.Assistant.NodeWork`, `NodeWatch`,
-`Routine`), with hub crashes, Scheduler crashes, step crashes, user Stops,
-and the node's answer arriving at any time. It follows the code after the
-verification fixes.
+Generation, ToolTask) with the tool calls a conversation makes: a machine
+call (`shell` or `view_image`, both `Photon.MachineTools.Call`), a plain
+tool that isn't safe to rerun, and the assistant's `Routine`. Faults are
+hub crashes, Scheduler crashes, step crashes, a machine call's own code
+raising, and user Stops. The machine's result can arrive at any time. It
+follows the code after build step 1.
 
-The first version modeled the code before the fixes, with four what-if
-switches. It found ten bugs (F1 to F10 below), all now fixed in the code.
-The switches are gone and the spec models the fixed code; each bug's config
-is kept as a regression check (same constants, the same property, and in
-several cases a stronger one). Modeling the first fix for F10 found a flaw
-in it (F10b), which is fixed too. Every config is expected to finish with no
-error. `docs/verification.md` lists the ExUnit regression test for each
-finding.
+The first version modeled the harness with the assistant's node work
+(`run_on_node`, `NodeWork`, `NodeWatch`) and found ten bugs (F1 to F10
+below), all fixed in the code. Modeling the first fix for F10 found a flaw
+in it (F10b), which is fixed too. Build step 1 replaced node work with
+machine calls, and PR B deleted node sessions, so the spec now models the
+machine call in its place (see "What changed in build step 1"). Every
+config is expected to finish with no error. `docs/verification.md` lists
+the ExUnit regression test for each finding.
 
 Paths below are relative to `apps/hub/lib/photon/`.
 
@@ -26,50 +27,58 @@ interleaves those freely).
 
 | Spec variable | Code |
 |---|---|
-| `task` | `tasks` table (`durable/task_record.ex`): status, phase, runs, abort_requested, owner, background, waiting (`on`/`signal`/`until`), checkpoint (`submissions`, `rounds`); `tok` stands for the `updated_at` a step's start wrote |
+| `task` | `tasks` table (`durable/task_record.ex`): status, phase, runs, abort_requested, owner, background, waiting (`on`/`signal`/`until`), checkpoint (`submissions`, `rounds`, and a machine call's `"offline_since"`, `off`); `tok` stands for the `updated_at` a step's start wrote |
 | `sub` | `submissions` table (`durable/submission.ex`): status, mode, insertion order |
-| `signal` | `signals` table, one per node input (`node_input:<in>`) |
-| `toolResults`, `answerInTool`, `orphanCalls` | the `tool_result` and `assistant` entries that matter for the properties |
-| `session`, `inputDone` | `node_sessions` and `node_inputs` rows |
+| `row`, `rcx` | a machine call's row in `machine_ops` (`machines/op.ex`): `open`, `finished` or `closed`, and its `cancel` flag |
+| `signal` | `signals` table, one per op (`"op:" <> op_id`, `Machines.signal_key/1`) |
+| `toolResults`, `orphanCalls` | the `tool_result` and `assistant` entries that matter for the properties |
+| `claims`, `opResult` | ghosts: how often a finished row's result was taken into a tool result, and whether the call's result is its op's |
 | `steps`, `inc` | step processes under `Durable.TaskSupervisor`, and which Scheduler incarnation started them |
-| `untilPassed` | wall clock relative to each waiting task's `until` |
+| `untilPassed`, `rechecks` | wall clock relative to each waiting task's `until`, and how often a machine call has parked again |
 
-Ids are fixed so the state space stays small. Tool task `t1` has input
-`in_t1`, watcher `wt1` (request id `watch:in_t1`) and report submission
-`rep_t1` (request id `report:in_t1`). Generations `g1, g2, ...` are
-allocated as `submit_tx` and `continue_inbox` create them.
+Ids are fixed so the state space stays small. Tool task `t1`'s op is keyed
+by `t1` too, since the op ID is derived from the task ID
+(`Wait.op_id/1`). A routine `r1` posts the submission `rs_r1`. Generations
+`g1, g2, ...` are allocated as `submit_tx` and `continue_inbox` create
+them.
+
+The machine is reduced to what the harness sees of it: the row, its
+cancel flag and its signal. Pushes, the channel, the websocket and the
+node are left to `HubOps.tla`, which models the protocol end to end, and
+`Executor.tla`, which models the node.
 
 ### Actions and the code they follow
 
 Every `Store.commit` is one atomic action. Work a step does outside a
-commit (`NodeSessions.start`, which makes Store commits of its own, and
+commit (reads, `Machines.start/1`, which is a Store commit of its own, and
 model calls) is its own action, so other commits can land in between.
 
-Since the hub refactor, the decisions the actions model sit in pure
-modules: the scheduler's in `durable/policy.ex` (`Policy`), a generation's
-in `durable/turn.ex` (`Turn`), a tool call's in `durable/tool_call.ex`
-(`ToolCall`), the inbox's in `durable/inbox.ex` (`Inbox`), and the node
-mirror's in `node_sessions/mirror.ex` (`Mirror`). The table names both the
-boundary function and the rule it applies.
+The decisions the actions model sit in pure modules: the scheduler's in
+`durable/policy.ex` (`Policy`), a generation's in `durable/turn.ex`
+(`Turn`), a tool call's in `durable/tool_call.ex` (`ToolCall`), the inbox's
+in `durable/inbox.ex` (`Inbox`), a machine call's waiting in
+`machine_tools/wait.ex` (`Wait`) and its row's in `machines/rules.ex`
+(`Rules`). The table names both the boundary function and the rule it
+applies.
 
 | Action | Code |
 |---|---|
 | `UserSubmit` | `Durable.submit/submit_tx` with `Inbox.submit_action/3`: request-id dedupe, busy means queued, idle means placed plus a new generation |
-| `UserAbort` | `Assistant.stop` -> `Durable.abort/2`: withdraw the user's queued input (node reports and routine prompts stay), `Tx.request_abort` the active run |
+| `UserAbort` | `Assistant.stop` -> `Durable.abort/2`: withdraw the user's queued input (routine prompts stay, `Assistant.background_input?/1`), `Tx.request_abort` the active run |
 | `SchedStart` | `Scheduler.start_pending`/`start` (`Policy.start_action/4`, `startable?/1`, `start/1`): pending to running, `runs + 1`, a new `updated_at` (`tok`), spawn the step |
 | `SchedWake` | `Scheduler.wake_waiting`, `wake?/2` and `fail_fast/2`, with `Policy.wakeable?/1`, `wake?/3` (and its `on_ready?/3`) and `fail_fast_aborts/2` |
 | `SchedKill`, `SchedAbort` | `Scheduler.stop_aborted`: `terminate_child` for `Policy.steps_to_kill/2`, then abort bottom-up (`Policy.ready_to_abort/1`, `abort_tx/2` with `Policy.abort?/1`) with `on_abort`, then `Durable.continue_inbox/2` for a run |
-| `SchedExit` | step result or `:DOWN`: a task still `running` and not marked for abort (`Policy.failable?/1`) fails through `fail/2` with `on_fail` (a watcher retries: `Policy.after_failure/1`), then `continue_inbox` for a run |
+| `SchedExit` | step result or `:DOWN`: a task still `running` and not marked for abort (`Policy.failable?/1`) fails through `fail/2` with `on_fail`, then `continue_inbox` for a run |
 | `GenRequest` | `Generation.step("request")` with `answered/4` and `follow/5` on `Turn.outcome/2`: answer and continue with the inbox, tool calls, too many rounds (a `tool_result` per stored call, `Turn.not_run/1`, then the inbox), model error (then the inbox) |
 | `GenAfterTools` | `Generation.step("after_tools")` (`Turn.after_tools/2`) |
-| `NodeRun` | `RunOnNode.execute` up to `NodeSessions.start` (Store commits of its own) |
-| `NodeCreateWatcher` | `NodeWork.await`'s `Durable.create_task`, its own commit |
-| `NodeWait` | the `{:wait, signal + until}` transition |
-| `NodeResume` | `NodeWork.resume/2` -> `{:commit, fun}`: one commit reads the signal and the report submission, stops the watcher and keeps the answer only if no report was posted (`NodeWork.resume_result/3`) |
-| `PlainRun`, `ToolFinish` | a tool with the default `replay :unsafe` (a rerun after a crash reports "interrupted": `ToolCall.plan/3`); `ToolTask.finish` |
-| `WatchStart`, `WatchReport` | `NodeWatch`: wait on the signal (`wait_for_signal/1`); then, while the call that started the work is live (`call_live?/1`), wait for it; else submit the report (`Report.node_report/2`) |
+| `MStart` | `Call.execute/3` up to `Machines.start/1`: its own Store commit, which inserts the row (`on_conflict: :nothing`) only while the task is unfinished and not marked for abort (`Rules.insert?/2`, hub rule 9), else `{:error, :stopped}` and an error result |
+| `MPark` | the `{:wait, %{"signal" => "op:<id>", "until" => ...}, state}` transition (`Call.park/4`, `Wait.first/3`, `ToolCall.park/2`), with `offline_since` if the machine is offline |
+| `MResume` | `Call.resume/2`: `Machines.op_state/1`, and for an open row whether the machine is online, then `Wait.next/4`: claim, park again, or give up |
+| `MRepark` | the `{:wait, ...}` transition of a parked call checked again (after `Machines.repush/1` when online, hub rule 11) |
+| `MClaim` | `{:commit, fun}` from `resume/2`: `Machines.claim_tx/2` or `abandon_tx/2` inside the commit that records the result. A finished row is closed and its result returned (hub rule 8); otherwise the result is an error and the row is canceled as `cancel_tx/2` does (hub rules 7 and 10) |
+| `PlainRun`, `ToolFinish` | a tool with the default `replay :unsafe` (a rerun after a crash reports "interrupted": `ToolCall.plan/3`); `ToolTask.finish`. A machine call's error result (`Call.fail/2`) and a rescued raise (`ToolTask.raised/3`) run `cancel_tx/2` in that commit |
 | `RoutineStart`, `RoutineFire` | `Routine` one-off (`first_wait/1`, `after_fire/2`) |
-| `NodeSettle` | `NodeSessions.ingest/4` (and `reject_input/3`): settle the input and record the signal in one Store commit (`Mirror.effect/1`) |
+| `OpFinish` | the machine's terminal snapshot: `Machines.snapshot/3` with `Rules.on_snapshot/3` in one Store commit, so an open row becomes `finished` (or `closed` if it was canceled) and the signal fires together (hub rule 4) |
 | `Tick` | a waiting task's deadline passes |
 
 `Runtime.commit` is "apply everything, or nothing if the task finished, was
@@ -77,24 +86,29 @@ marked for abort, or is not the start this step belongs to"
 (`Tx.transition/4` with the started task; `Ignored(st)`). `Tx.finish`
 aborts live foreground children. The tool hooks run in the commit that ends
 the call: `ToolTask.on_abort`/`on_fail` call the tool's `on_interrupt/2`,
-which for node tools creates the watcher if the session was started
-(`OnAbortTk`).
+which for a machine call is `cancel_tx/2` (`OnAbortRow`): an open row gets
+`cancel`, a finished one is closed and its result dropped.
 
 ### Faults
 
 * `HubCrash`: the BEAM dies between any two actions. Steps vanish; the DB
-  stays. On boot `Scheduler.init` puts running tasks back to pending.
+  stays. On boot `Scheduler.init` puts running tasks back to pending, so a
+  machine call reruns `execute/2` (it is `replay: :safe`) or `resume/2`.
 * `SchedCrash`: only the Scheduler process dies and its supervisor
-  (`Photon.Durable.Supervisor`, `:one_for_one`) restarts it. The step processes live under a separate `Task.Supervisor`
-  started with `async_nolink`, so old steps keep running while `init`
-  resets their tasks to pending; their commits are fenced out.
-* `StepCrash`: a step process raises outside the tool's `rescue`, or exits,
-  at any point before its last commit.
+  (`Photon.Durable.Supervisor`, `:one_for_one`) restarts it. The step
+  processes live under a separate `Task.Supervisor` started with
+  `async_nolink`, so old steps keep running while `init` resets their tasks
+  to pending; their commits are fenced out. `Machines.start/1`'s commit
+  isn't the step's, so the fence doesn't cover it; hub rule 9 does.
+* `StepCrash`: a step process exits abnormally at any point before its last
+  commit, or a machine call's own code raises (in `execute/2`, `resume/2`,
+  or between `Machines.start/1` and the park). `ToolTask` rescues a raise
+  and records an error result whose commit runs `on_interrupt/2`.
 * `UserAbort`: Stop at any time.
-* The node may answer any time after the session starts, or never.
+* The machine may finish an op any time after its row exists, and a check
+  may find it offline (`MachineOffline`).
 
-Message loss, duplication or reordering between hub and node is not
-modeled here (see `NodeSync.tla`).
+Message loss and the node's side are `HubOps.tla`'s and `Executor.tla`'s.
 
 ### Abstractions and why they are sound
 
@@ -105,10 +119,7 @@ modeled here (see `NodeSync.tla`).
   split allows every real order plus some extra ones, which can't hide a
   safety violation.
 * A model request has no side effects before its commit, so the model's
-  answer is chosen at commit time. `NodeWatch`'s reads (the payload, the
-  call's status) are folded into its commit: if the call finishes between
-  the read and the commit, the watcher waits on a finished task, wakes at
-  once and reports, which the model covers.
+  answer is chosen at commit time.
 * A step whose commit moved its task out of `running` is dropped right
   away; one that returns while its task is still `running` stays until
   `SchedExit` handles it.
@@ -116,21 +127,40 @@ modeled here (see `NodeSync.tla`).
   `updated_at` with the one the step started with. While a step runs, only
   an abort request changes its task (and then the transition is ignored
   anyway), so `tok` (bumped at each start) captures exactly that.
-* `NodeWatch.on_fail` retries up to three runs, then reports what it knows.
-  Step crashes are bounded by `MaxStepCrashes`, so the model writes it as a
-  retry and never reaches the give-up path.
-* `message_node_session` is the same as `run_on_node` from the durable side.
-  Recurring routines, `cancel_schedule`, `when_busy: "reject"`,
-  `withdraw/1`, documents, entry ordering, PubSub and live events are left
-  out. No task kind waits with `fail_fast`; `GenPolicy` lets the generation
-  use it as a what-if.
+* Time is abstract. A parked machine call may wake at any moment its
+  `until` has passed, and a call that saw the machine offline at an earlier
+  check may give up at any later offline check. That is how the 10-minute
+  offline limit looks from here. `MaxRechecks` bounds how often a call's
+  `until` may pass (each start bumps `tok`, so unbounded rechecks would make
+  the state space infinite); after that it wakes only on its signal.
+* The machine's online state isn't a variable: each check reads it
+  afresh, online or offline, which allows every pattern of flapping.
+* `resume/2` reads the row before its commit, and a call that stays parked
+  doesn't read it again; only the claim and the give-up read it inside
+  their commits. `HubOps.md` ("The code against the spec") explains why a
+  park on a row that finished meanwhile is harmless: the signal wakes the
+  call at once.
+* A machine call's error results are one action (`ToolFinish` from
+  `fin_err`): "stopped before it reached", "already delivered", "no
+  record", and a rescued raise all record an error and run `cancel_tx/2`,
+  and differ only in their text. Unknown and outdated machines (an error
+  before the row exists) are left out; they are the same with no row.
+* Recurring routines, `cancel_schedule`, `when_busy: "reject"`,
+  `withdraw/1`, documents, entry ordering, PubSub, live events and
+  `on_fail/3` returning `:retry` are left out. Nothing returns `:retry`
+  since `NodeWatch` was deleted, though `Policy.after_failure/1` still
+  supports it. No task kind waits with `fail_fast`; `GenPolicy` lets the
+  generation use it as a what-if.
 
 ### Fairness
 
 The Scheduler reconciles after every commit that touches tasks or signals,
 after every step result or `:DOWN`, and on its timer, so its actions are
-weakly fair. Steps keep running, and time passes. The user, the node and
-faults get no fairness. The crash budgets are finite.
+weakly fair. Steps keep running, and time passes. An op eventually ends on
+its machine (`OpFinish`): the command finishes, or is canceled, once the
+machine is back. A running command has no timeout, so without that
+assumption a call may wait for good, as designed. The user and faults get
+no fairness. The crash budgets are finite.
 
 `FairnessFine` states that per action and per task. `Spec` uses one
 weak-fairness condition on all system actions (`SysNext`). That is weaker,
@@ -150,8 +180,10 @@ Safety (invariants):
 | `AbortEndsAborted` | a task marked for abort ends `aborted` (through `on_abort`), not `failed` |
 | `UnsafeAtMostOnce` | an unsafe tool never executes twice |
 | `PlacedTracked` | every placed submission is in the checkpoint of a live generation, which will settle it |
-| `NoDoubleDelivery` | a node input's answer is not both in the tool result and in a report the user sees |
-| `ReportsNotWithdrawn` | a node report is never withdrawn |
+| `OneResultPerCall` | a machine call's result is recorded once, and when it is its op's result, the row was claimed in that commit and is closed |
+| `ClaimedOnce` | a finished op's result reaches at most one tool result |
+| `NoOpenRowAfterDone` | once a call has ended, however it ended, its row is not open without `cancel`, so nothing may still start its op |
+| `BackgroundNotWithdrawn` | a Stop never withdraws a routine's prompt |
 
 Liveness:
 
@@ -163,12 +195,7 @@ Liveness:
 | `NoRunningForever` | no task stays `running` forever (after crashes) |
 | `AbortCompletes` | a task marked for abort finishes |
 | `FinishedLeavesNoLiveWork` | a finished task's foreground children all finish |
-| `DeliveredOnceAnswered` | once the node has answered an input, the user gets the answer (tool result or report in the transcript) |
-
-`DeliveredUnlessWithdrawn`, `DeliveredOrReported`, `ReportedOrUnwatched`
-and `DeliveredUnlessWithdrawnOrUnwatched` are weaker forms of the last one
-that the first version used to get past one loss to the next. With the
-fixes the strong form holds wherever it is checked.
+| `RowsClose` | every op row eventually closes, so no result (up to 5 MB for an image) is kept for good |
 
 ## How to run
 
@@ -184,89 +211,121 @@ conversation that has answered everything is supposed to stop.
 
 ## Results
 
-TLC 2.19, 3 workers on a shared 12-core machine at load around 38. Every
-config: no error.
+TLC 2.19, Java 21, 6 workers on the shared 12-core machine, 2026-10-05.
+Every config: no error. "Safety set" is `TypeOK`, `AtMostOneActiveRun`,
+`ToolResultIffFinished`, `AbortedHasNoLiveFgChildren`, `UnsafeAtMostOnce`,
+`PlacedTracked`, `NoOrphanCalls`, `AbortEndsAborted`, `OneResultPerCall`,
+`ClaimedOnce` and `NoOpenRowAfterDone`.
 
 | Config | Shape | Checks | Distinct states | Time |
 |---|---|---|---|---|
-| `Durable.cfg` | 2 user inputs, 1 tool call (node or unsafe plain), 2 rounds, model errors, 1 hub crash, 1 step crash, 1 Stop | safety: AtMostOneActiveRun ToolResultIffFinished AbortedHasNoLiveFgChildren UnsafeAtMostOnce PlacedTracked NoOrphanCalls AbortEndsAborted NoDoubleDelivery ReportsNotWithdrawn | 6,087,848 | 5m05s |
-| `Durable-parallel.cfg` | 1 user input, 2 tool calls in one response, 1 hub crash, 1 Stop | same safety set | 15,170,316 | 18m42s |
-| `Durable-routine.cfg` | 1 user input, 1 node call, a routine firing at any time, node may be offline, model errors, 1 hub crash, 1 step crash, 1 Stop | same safety set | 6,664,046 | 6m14s |
-| `Durable-live.cfg` | 1 user input, 1 tool call, model errors, 1 hub crash, 1 step crash, 1 Stop | PlacedSettles ToolTasksFinish NoRunningForever AbortCompletes FinishedLeavesNoLiveWork QueuedNotStranded DeliveredOnceAnswered | 138,298 | 5m03s |
-| `Durable-schedcrash-ok.cfg` | 1 user input, 1 tool call, 1 Scheduler crash, 1 hub crash, 1 Stop, model errors | safety set incl. PlacedTracked, NoDoubleDelivery | 627,784 | 40s |
-| `Durable-delivery-ok.cfg` | 2 user inputs, 1 node call, 1 hub crash | DeliveredOnceAnswered | 115,922 | 24s |
-| `Durable-fixresume.cfg` | 1 node call, 1 hub crash, 1 Stop | NoDoubleDelivery ToolResultIffFinished AtMostOneActiveRun; ReportedOrUnwatched DeliveredOnceAnswered | 30,896 | 12s |
-| `Durable-fixes.cfg` | 1 node call, model errors, 1 hub crash, 1 Stop | safety incl. PlacedTracked NoDoubleDelivery ReportsNotWithdrawn AbortEndsAborted; QueuedNotStranded PlacedSettles DeliveredUnlessWithdrawn DeliveredOnceAnswered | 33,952 | 29s |
-| `Durable-double.cfg` | F1 regression: no faults | NoDoubleDelivery ToolResultIffFinished | 655 | 1s |
-| `Durable-stop-watcher.cfg` | F2 regression: 1 Stop | ReportedOrUnwatched DeliveredOnceAnswered | 3,380 | 3s |
-| `Durable-stop.cfg` | F3 regression: 1 Stop | DeliveredOnceAnswered | 3,380 | 3s |
-| `Durable-crash.cfg` | F2/F3 regression: 1 step crash | DeliveredOnceAnswered | 2,677 | 3s |
-| `Durable-stranded.cfg` | F4 regression: 2 user inputs, model errors | QueuedNotStranded | 161 | 1s |
-| `Durable-stop-stranded.cfg` | F4 regression (Stop variant): 1 Stop | DeliveredUnlessWithdrawn QueuedNotStranded DeliveredOnceAnswered | 3,380 | 4s |
-| `Durable-delivery.cfg` | F5 regression: 1 hub crash | DeliveredOnceAnswered | 6,158 | 3s |
-| `Durable-withdraw.cfg` | F6 regression: 1 Stop | ReportsNotWithdrawn NoDoubleDelivery | 3,380 | 2s |
-| `Durable-abortfail.cfg` | F7 regression: 1 Stop | AbortEndsAborted | 122 | 1s |
-| `Durable-maxrounds.cfg` | F8 regression: MaxRounds = 2 | NoOrphanCalls | 27 | 1s |
-| `Durable-crash-watcher.cfg` | F9 regression: 1 step crash | DeliveredOnceAnswered | 2,677 | 3s |
-| `Durable-schedcrash.cfg` | F10 regression: 2 user inputs, 1 Scheduler crash | PlacedTracked AtMostOneActiveRun ToolResultIffFinished; PlacedSettles | 378 | 1s |
+| `Durable.cfg` | 2 user inputs, 1 tool call (machine or unsafe plain), 2 rounds, model errors, machine may be offline, 1 hub crash, 1 step crash, 1 Stop | safety set | 791,160 | 17s |
+| `Durable-parallel.cfg` | 1 user input, 2 tool calls in one response, model errors, machine may be offline, 1 hub crash, 1 step crash, 1 Stop | safety set | 1,898,838 | 46s |
+| `Durable-routine.cfg` | 1 user input, 1 machine call, a routine firing at any time, model errors, machine may be offline, 1 hub crash, 1 step crash, 1 Stop | safety set, `BackgroundNotWithdrawn` | 862,006 | 23s |
+| `Durable-live.cfg` | 1 user input, 1 tool call, model errors, machine may be offline, 1 hub crash, 1 step crash, 1 Stop | `PlacedSettles` `ToolTasksFinish` `NoRunningForever` `AbortCompletes` `FinishedLeavesNoLiveWork` `QueuedNotStranded` `RowsClose` | 20,218 | 14s |
+| `Durable-schedcrash-ok.cfg` | 1 user input, 1 tool call, model errors, 1 Scheduler crash, 1 hub crash, 1 Stop | safety set | 27,702 | 4s |
+| `Durable-offline.cfg` | 1 machine call, machine may be offline, 2 rechecks, 1 hub crash, 1 Stop | `OneResultPerCall` `ClaimedOnce` `ToolResultIffFinished` `NoOpenRowAfterDone` `AbortEndsAborted`; `ToolTasksFinish` `RowsClose` `AbortCompletes` | 8,496 | 5s |
+| `Durable-double.cfg` | F1 rewritten: 1 machine call, machine may be offline, 2 rechecks, no faults | `OneResultPerCall` `ClaimedOnce` `ToolResultIffFinished` `NoOpenRowAfterDone`; `ToolTasksFinish` `RowsClose` | 339 | 2s |
+| `Durable-stop.cfg` | F3 rewritten: 1 machine call, 1 Stop | `OneResultPerCall` `ToolResultIffFinished` `NoOpenRowAfterDone` `AbortEndsAborted`; `RowsClose` `AbortCompletes` | 470 | 3s |
+| `Durable-crash.cfg` | F3 rewritten: 1 machine call, 1 step crash or raise | `OneResultPerCall` `ToolResultIffFinished` `NoOpenRowAfterDone`; `RowsClose` `ToolTasksFinish` | 361 | 3s |
+| `Durable-stranded.cfg` | F4: 2 user inputs, model errors | `QueuedNotStranded` | 161 | 2s |
+| `Durable-stop-stranded.cfg` | F4, Stop variant: 1 machine call, a routine, 1 Stop | `QueuedNotStranded` `PlacedSettles` | 7,357 | 5s |
+| `Durable-withdraw.cfg` | F6: 1 machine call, a routine, 1 Stop | `BackgroundNotWithdrawn` `PlacedTracked` | 7,357 | 3s |
+| `Durable-abortfail.cfg` | F7: 1 plain call, 1 Stop | `AbortEndsAborted` | 122 | 2s |
+| `Durable-maxrounds.cfg` | F8: MaxRounds = 2 | `NoOrphanCalls` | 27 | 2s |
+| `Durable-schedcrash.cfg` | F10: 2 user inputs, 1 Scheduler crash | `PlacedTracked` `AtMostOneActiveRun` `ToolResultIffFinished`; `PlacedSettles` | 378 | 2s |
 
-`Durable-parallel.cfg` is the one run over ten minutes. The state counts
-are larger than in the first version: the start token (`tok`) tells apart
-states that differ only in how many times a task has started, and the
-configs check more properties.
+The state spaces are smaller than with node work (`Durable.cfg` had 6.1M
+states, `Durable-parallel.cfg` 15.2M in 18 minutes): a machine call has no
+watcher task, no report submission and no session, so
+`Durable-parallel.cfg` now also has step crashes, model errors and an
+offline machine, which it had to leave out before.
 
-After the hub refactor (2026-10-03), which moved the scheduler's rules and
-the task kinds' decisions into pure modules and changed only comments here
-(the code is now cited by function rather than by line), all 20 configs
-were re-run with 4 workers: no error, and the same distinct-state counts
-as in the table (`Durable-parallel.cfg` took 15m06s).
+## Checks that the properties bite
+
+Every config passes, so each machine-call property was checked once
+against a copy of the spec with one of the code's rules broken. Each
+failed on the property meant to catch it:
+
+| Rule broken | Config | Fails |
+|---|---|---|
+| `on_interrupt/2` doesn't cancel the op (hub rule 7) | `Durable-stop.cfg` | `NoOpenRowAfterDone`, 9 states: Stop while the call is parked |
+| `Machines.start/1` inserts whatever the task's state (hub rule 9, HubOps H5) | `Durable-schedcrash-ok.cfg` | `NoOpenRowAfterDone`, 9 states: a Scheduler crash orphans the step, Stop aborts the task, then the orphan inserts the row |
+| an error result or a rescued raise leaves the row alone (hub rule 10, HubOps H8) | `Durable-crash.cfg` | `NoOpenRowAfterDone`, 8 states |
+| `cancel_tx/2` leaves a finished row as it is (HubOps H4) | `Durable-stop.cfg` | `RowsClose`, 11 states then stuttering: the op finishes between Stop and the abort commit |
+| `claim_tx/2` doesn't close the row it claims (hub rule 8) | `Durable-double.cfg` | `OneResultPerCall`, 12 states |
+
+## What changed in build step 1
+
+The node-work actions are gone with the code they modeled: `NodeRun`,
+`NodeCreateWatcher`, `NodeWait` and `NodeResume` (`run_on_node` and
+`NodeWork`), `WatchStart` and `WatchReport` (`NodeWatch`), and
+`NodeSettle` (`NodeSessions.ingest/4`). So are the watcher tasks, the
+report submissions, the node-session variables (`session`, `inputDone`,
+`answerInTool`), the watcher's retry in `FailCommit`, and the properties
+about delivering a node's answer once (`NoDoubleDelivery`,
+`ReportsNotWithdrawn`, `DeliveredOnceAnswered` and its weaker forms). The
+machine call (`MStart`, `MPark`, `MResume`, `MRepark`, `MClaim`, the row,
+its cancel flag and its signal, `OpFinish`) and its properties
+(`OneResultPerCall`, `ClaimedOnce`, `NoOpenRowAfterDone`, `RowsClose`)
+take their place, and `BackgroundNotWithdrawn` replaces
+`ReportsNotWithdrawn` for the input a Stop must keep, now a routine's
+prompt. The constants `NodeOffline` and `ToolTypes`' `"node"` became
+`MachineOffline` and `"machine"`, and `MaxRechecks` is new.
+
+Configs: the watcher configs went (`Durable-crash-watcher`,
+`-stop-watcher`, `-delivery`, `-delivery-ok`, `-fixresume`, `-fixes`),
+since the faults they checked no longer exist: there is no watcher, and the
+result and its signal were always one commit for ops (hub rule 4). The
+configs whose fault still exists were rewritten for machine calls
+(`-double`, `-stop`, `-crash`) or for routines (`-stop-stranded`,
+`-withdraw`), and `-offline` is new. `-stranded`, `-abortfail`,
+`-maxrounds` and `-schedcrash` have no tool that changed, and they reach
+exactly the state counts recorded before.
 
 ## The findings, and how they were fixed
 
-Traces are from the first version of the spec (the code before the fixes);
-state numbers refer to its TLC traces.
+Traces are from the first version of the spec (the code before the fixes),
+when the tools were node work; state numbers refer to its TLC traces. F1,
+F2, F3, F5, F6 and F9 were about node work, which build step 1 deleted.
+The rules their fixes introduced are still in the harness, and the
+machine call relies on them: `{:commit, fun}` tool results (F1), the tool's
+`on_interrupt/2` (F3), and Stop keeping background input (F6).
 
 ### F1. The same node answer could reach the user twice
 
-`Durable-double.cfg`, `NoDoubleDelivery`, 24 states, no faults. The tool's
-resume and the watcher's report both woke on the same signal. The watcher
-committed its report first; the tool read the signal, called
-`Durable.abort_task(watcher)` (a no-op on a finished task) and committed a
-result with the answer. The model then relayed it twice.
+Retired with node work. `Durable-double.cfg`, `NoDoubleDelivery`, 24
+states, no faults. The tool's resume and the watcher's report both woke on
+the same signal, and both delivered the answer.
 
-Fixed: `NodeWork.resume/2` returns `{:commit, fun}` (a new tool result
-form). `ToolTask` runs `fun` inside the commit that records the result: it
-reads the signal and looks for the report submission (`report:<input>`);
-with no report it stops the watcher and keeps the answer, otherwise it says
-the report is in the conversation. The watcher also waits while the call
-that started the work is live (`NodeWatch.step("report")`), so a quick
-answer comes back as the call's result.
+Fixed: `NodeWork.resume/2` returned `{:commit, fun}` (a new tool result
+form), which `ToolTask` runs inside the commit that records the result.
+Machine calls claim their op's result the same way (`claim_tx/2`), and
+`Durable-double.cfg` now checks `OneResultPerCall` and `ClaimedOnce` for
+them.
 
 ### F2. A Stop (or a crash) during resume lost the answer
 
-`Durable-stop-watcher.cfg`, 21 states. The watcher abort was its own commit
-before the result; a Stop in between aborted the call (result "Stopped by
-the user"), and the watcher was already gone.
-
-Fixed by F1's fix: an ignored commit (the call was aborted) rolls back the
-watcher abort with it.
+Retired with node work. `Durable-stop-watcher.cfg`, 21 states. Fixed by
+F1's fix: an ignored commit (the call was aborted) rolled back the watcher
+abort with it.
 
 ### F3. A Stop (or a crash) between starting the session and creating the watcher lost the answer
 
-`Durable-stop.cfg`, 12 states; step-crash variant `Durable-crash.cfg`, 15
-states. `NodeSessions.start` had pushed the input, and the step was killed
-before `Durable.create_task(watcher)`.
+Retired with node work. `Durable-stop.cfg`, 12 states; step-crash variant
+`Durable-crash.cfg`, 15 states.
 
-Fixed: `Tool` gets an optional `on_interrupt/2` callback that
-`ToolTask.on_abort`/`on_fail` call in the commit that ends the call. The
-node tools implement it with `NodeWork.ensure_watcher/2`: if the call's
-input exists (the work was handed to a node), create the watcher
-(idempotent by request id).
+Fixed: `Tool` got an optional `on_interrupt/2` callback that
+`ToolTask.on_abort`/`on_fail` call in the commit that ends the call. A
+machine call implements it with `cancel_tx/2`, and since step 1 a rescued
+raise runs it too (hub rule 10). `Durable-stop.cfg` and `Durable-crash.cfg`
+now check that every way a machine call ends cancels or closes its row.
 
 ### F4. Input queued behind a run that ended without answering was stranded
 
 `Durable-stranded.cfg`, 6 states; Stop variant `Durable-stop-stranded.cfg`,
-19 states. Only a run that answered took the next input from the inbox.
+19 states (with a node report; a routine's prompt now). Only a run that
+answered took the next input from the inbox.
 
 Fixed: a run whose model request fails, or that hits the round limit,
 settles its input `unanswered` and continues with the inbox like an
@@ -277,20 +336,22 @@ input sent while a stopped run was still being aborted.
 
 ### F5. A hub crash between ingest and signal lost the signal for good
 
-`Durable-delivery.cfg`, 23 states. Same bug as NS-5 in `NodeSync.md`.
+Retired with node sessions. `Durable-delivery.cfg`, 23 states. Fixed then:
+`NodeSessions.ingest/4` and `reject_input/3` ran as one Store commit with
+`Tx.signal/3` inside. An op's terminal snapshot has always been recorded
+with its signal in one commit (`Machines.snapshot/3`, hub rule 4), which
+`OpFinish` models.
 
-Fixed: `NodeSessions.ingest/4` and `reject_input/3` run as one Store commit
-with `Tx.signal/3` inside.
-
-### F6. Stop withdrew node reports
+### F6. Stop withdrew background input
 
 `Durable-withdraw.cfg`, 14 states. `Durable.abort` withdrew every queued
-submission, node reports and routine prompts included, so whether an answer
+submission, node reports and routine prompts included, so whether they
 survived a Stop depended on timing.
 
 Fixed: `Durable.abort/2` takes a `:withdraw` filter, and `Assistant.stop`
-withdraws only the user's own input. Reports and scheduled prompts stay
-queued and start the next run once the stopped run is aborted (F4's fix).
+withdraws only the user's own input. Routine prompts stay queued and start
+the next run once the stopped run is aborted (F4's fix).
+`Durable-withdraw.cfg` now checks `BackgroundNotWithdrawn` with a routine.
 
 ### F7. A Stop could end a task as "failed" instead of "aborted"
 
@@ -312,12 +373,10 @@ the assistant stopped after 60 tool rounds.") in the same commit.
 
 ### F9. A crashed watcher lost the report
 
-`Durable-crash-watcher.cfg`, 23 states. `NodeWatch` had no `on_fail`, and
-nothing restarts a failed task.
-
-Fixed: a kind's `on_fail/3` may return `:retry` (run the phase again);
-`NodeWatch` retries up to three runs, then posts the answer if it has come
-or a "lost track of it" report.
+Retired with node work. `Durable-crash-watcher.cfg`, 23 states. Fixed
+then: a kind's `on_fail/3` may return `:retry` (run the phase again), and
+`NodeWatch` retried up to three runs. The retry is still in the Scheduler,
+unused.
 
 ### F10. A Scheduler-only crash ran steps twice
 
@@ -341,10 +400,6 @@ of its phase".
 
 ### Seen while reading, not modeled
 
-* `message_node_session` to a session that is still busy: when the session
-  goes idle, every accepted input is settled with the same final answer.
-  Each input then delivers that text once, so per-input exactly-once holds
-  while the user still reads one answer twice.
 * A step whose module isn't loaded yet: the Scheduler looked up `on_abort`
   and `on_fail` with `function_exported?/3`, which is false for an unloaded
   module (found by the property tests; fixed with `Code.ensure_loaded?/1`).

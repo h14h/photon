@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 #
-# The Photon hub: the assistant, the web UI, the node sessions' history, and
-# the node binaries it hands out to machines it sets up. Deploy it to Fly.io
-# with `fly launch --copy-config` (see the README), or run it anywhere:
+# The Photon hub: the assistant, the web UI, and the node binaries it hands
+# out to machines it sets up. Deploy it to Fly.io with `fly launch
+# --copy-config` (see the README), or run it anywhere:
 #
 #   docker build -t photon .
 #   docker run -p 8080:8080 -v photon-data:/data photon
@@ -38,7 +38,6 @@ RUN mix deps.get
 COPY apps/core/lib ../core/lib
 COPY apps/node/config config
 COPY apps/node/lib lib
-COPY apps/node/priv priv
 RUN mix photon.package --targets "$PHOTON_NODE_TARGETS"
 
 # --- 2. The hub release -------------------------------------------------------
@@ -59,7 +58,6 @@ RUN mix deps.get --only prod
 # carries the node's code too.
 COPY apps/core/lib ../core/lib
 COPY apps/node/lib ../node/lib
-COPY apps/node/priv ../node/priv
 COPY apps/hub/config/config.exs apps/hub/config/prod.exs config/
 RUN mix deps.compile
 

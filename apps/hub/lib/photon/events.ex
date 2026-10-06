@@ -4,8 +4,8 @@ defmodule Photon.Events do
   that something changed.
 
   An announcement is only a hint to re-read. Every fact it describes is
-  already committed (the durable store, the node session mirror, the
-  settings file), and every page reads that state when it mounts. So a
+  already committed (the durable store, the node keys, the settings
+  file), and every page reads that state when it mounts. So a
   failed broadcast costs at most a page that refreshes late, and a failed
   subscription a page that doesn't update live. Neither is worth crashing
   the caller over: both are logged, and both functions return `:ok`.

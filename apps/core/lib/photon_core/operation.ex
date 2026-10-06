@@ -13,11 +13,9 @@ defmodule PhotonCore.Operation do
   snapshots, and the hub reads results from them. The messages that carry
   them are in `PhotonCore.Operation.Wire`.
 
-  Data and pure functions over it. `new/5` takes the ID as an argument, so
-  code that has to be repeatable (the hub derives an op ID from its tool
-  call's ID) passes one in. `new/4` mints the ID from the clock and random
-  bytes (`PhotonCore.ID.new/1`) for the node's session tools; tests match on
-  the `op_` prefix. It goes once sessions do.
+  Data and pure functions over it. `new/5` takes the ID as an argument:
+  the hub derives an op ID from its tool call's ID, so a restart finds the
+  same operation, and the node uses the ID the hub sent.
   """
 
   @terminal ~w(completed failed canceled)
@@ -38,11 +36,6 @@ defmodule PhotonCore.Operation do
       "state" => state
     }
   end
-
-  @doc "A `ready` operation of `type` with a fresh ID."
-  @spec new(String.t(), pos_integer(), map(), pos_integer() | nil) :: t()
-  def new(type, version, state, max_output_length \\ nil),
-    do: new(PhotonCore.ID.new("op_"), type, version, state, max_output_length)
 
   @doc "The next snapshot: `status`, with `changes` merged into the state."
   @spec advance(t(), String.t(), map()) :: t()

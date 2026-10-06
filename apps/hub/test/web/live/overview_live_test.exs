@@ -1,15 +1,13 @@
 defmodule PhotonWeb.OverviewLiveTest do
   @moduledoc """
-  The home page: machines, work running now and lately, and schedules,
-  kept current as they change.
+  The home page: machines and schedules, kept current as they change.
   """
 
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
-  import Photon.Fixtures, only: [state_record: 1, state_record: 2]
 
-  alias Photon.{Assistant, Durable, NodeSessions}
+  alias Photon.{Assistant, Durable, Machines, NodeKeys}
 
   @moduletag :durable
 
@@ -21,27 +19,22 @@ defmodule PhotonWeb.OverviewLiveTest do
   test "without machines, says how to add one", %{view: view} do
     assert has_element?(view, "#no-machines")
     assert has_element?(view, "#overview-summary", "Add a machine")
-    assert has_element?(view, "#running", "Nothing running")
-    assert has_element?(view, "#recent", "Nothing has finished yet")
+    refute has_element?(view, "#work-hint")
     assert has_element?(view, "#nav-overview")
     assert page_title(view) =~ "Overview"
   end
 
-  test "shows each machine and its work, running and finished", %{view: view} do
-    {:ok, backup, _input} = NodeSessions.start("box", "backup", title: "Nightly backup")
+  test "shows connected machines and known offline ones, and points at Blip", %{view: view} do
+    {:ok, _key} = NodeKeys.issue("nas")
+    :ok = Machines.register("box", %{"hostname" => "box.lan", "platform" => "linux"})
+    Machines.broadcast()
+    _ = render(view)
 
-    {:ok, check, _input} =
-      NodeSessions.start("box", "check disks", origin: "assistant", title: "Check disks")
-
-    :ok = NodeSessions.ingest(backup.id, "box", 0, state_record("running"))
-    :ok = NodeSessions.ingest(check.id, "box", 0, state_record("running"))
-    :ok = NodeSessions.ingest(check.id, "box", 1, state_record("idle", %{"failure" => "no disk"}))
-
-    assert has_element?(view, "#machine-box", "offline")
-    assert has_element?(view, "#overview-summary", "0 of 1 machine online. 1 thing running.")
-    assert has_element?(view, "#running #work-#{backup.id}", "by you")
-    assert has_element?(view, "#recent #work-#{check.id}", "by Blip")
-    assert has_element?(view, "#recent #work-#{check.id} [title=Failed]")
+    assert has_element?(view, "#machine-box", "online")
+    assert has_element?(view, "#machine-box", "box.lan · linux")
+    assert has_element?(view, "#machine-nas", "offline")
+    assert has_element?(view, "#overview-summary", "1 of 2 machines online.")
+    assert has_element?(view, "#work-hint", "Blip")
   end
 
   test "lists schedules, which can be cancelled", %{view: view} do

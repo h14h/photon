@@ -1,8 +1,7 @@
 defmodule PhotonCore.StubProvider do
   @moduledoc """
-  `Req.Test` stubs that play a streaming model API (the Responses API, or
-  the hub's relay), for boundary
-  tests. The stub runs in the process that makes the request, so each test
+  `Req.Test` stubs that play a streaming model API (the Responses API), for
+  boundary tests. The stub runs in the process that makes the request, so each test
   gets its own; every request it sees is also sent to the test process as
   `{:provider_request, %{body: decoded_json, headers: headers}}`.
   """

@@ -1,14 +1,13 @@
 defmodule PhotonWeb.NodesLiveTest do
   @moduledoc """
-  The nodes page: connected nodes and their sessions, and machines on the
-  tailnet (read with a stand-in `tailscale`, in the background).
+  The nodes page: connected nodes, and machines on the tailnet (read with a stand-in `tailscale`, in the background).
   """
 
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
 
-  alias Photon.{Nodes, NodeSessions}
+  alias Photon.Machines
 
   @moduletag :durable
   @moduletag :tmp_dir
@@ -45,7 +44,7 @@ defmodule PhotonWeb.NodesLiveTest do
 
   defp connected_node(_context) do
     {:ok, _} =
-      Registry.register(Photon.NodeRegistry, "box", %{
+      Registry.register(Photon.MachineRegistry, "box", %{
         "version" => "0.1.0",
         "platform" => "linux",
         "workspace" => "/w"
@@ -62,13 +61,9 @@ defmodule PhotonWeb.NodesLiveTest do
   describe "connected nodes" do
     setup [:fake_tailscale, :connected_node, :page]
 
-    test "show with their session count, and an update badge for old builds", %{view: view} do
+    test "show with their platform, and an update badge for old builds", %{view: view} do
       assert has_element?(view, "#node-box", "update available")
-      assert has_element?(view, "#node-box", "Sessions")
-
-      {:ok, _, _} = NodeSessions.start("box", "check disks")
-      _ = render(view)
-      assert view |> element("#node-box") |> render() =~ ~r/Sessions<\/dt><dd[^>]*>\s*1\s*</
+      assert has_element?(view, "#node-box", "linux")
     end
 
     test "offer to update every outdated node at once", %{view: view} do
@@ -80,10 +75,44 @@ defmodule PhotonWeb.NodesLiveTest do
     end
 
     test "update when a node leaves", %{view: view} do
-      Registry.unregister(Photon.NodeRegistry, "box")
-      Nodes.broadcast()
+      Registry.unregister(Photon.MachineRegistry, "box")
+      Machines.broadcast()
       _ = render(view)
       refute has_element?(view, "#node-box")
+    end
+  end
+
+  describe "known machines that aren't connected" do
+    setup [:fake_tailscale]
+
+    setup do
+      {:ok, _key} = Photon.NodeKeys.issue("box")
+      :ok
+    end
+
+    setup [:page]
+
+    test "are listed, so the sidebar's offline link lands on them", %{view: view} do
+      assert has_element?(view, "#side-node-box[href='/nodes']", "offline")
+      assert has_element?(view, "#offline-box", "box")
+      refute has_element?(view, "#node-box")
+      assert has_element?(view, "#no-connected-nodes")
+      refute has_element?(view, "#no-connected-nodes", "Add one below.")
+    end
+
+    test "are offered an update, not a fresh install, on the tailnet", %{view: view} do
+      render_async(view)
+      assert has_element?(view, "#machine-box", "node not connected")
+      assert has_element?(view, "#install-box", "Update")
+      assert has_element?(view, "#uninstall-box")
+    end
+
+    test "leave the list when they connect", %{view: view} do
+      connected_node(%{})
+      Machines.broadcast()
+      _ = render(view)
+      refute has_element?(view, "#offline-nodes")
+      assert has_element?(view, "#node-box")
     end
   end
 

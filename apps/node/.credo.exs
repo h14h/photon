@@ -33,27 +33,18 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                  files: lib_only,
                  allowed: []
                ]},
-              # 28, 29: the harness's functional core does no I/O and touches no
-              # processes. New turns, settings inputs and heartbeats get IDs from the
-              # clock and the RNG on purpose (tests match on prefixes), and so do
-              # operations, through `PhotonCore.Operation.new/4` (core's allow list).
+              # 28, 29: the node's functional core does no I/O, touches no processes
+              # and mints no IDs: operation IDs come from the hub.
               {PhotonCredo.Check.FunctionalCore,
                [
                  files: lib_only,
                  core_modules: [
-                   "PhotonNode.Harness.Session",
-                   "PhotonNode.Harness.Context",
-                   "PhotonNode.Harness.Inbox",
-                   "PhotonNode.Harness.Image",
-                   "PhotonNode.Harness.SkillPrompt",
-                   "PhotonNode.Harness.Tools.*",
+                   "PhotonNode.Ops.Image",
                    "PhotonNode.Executor.Request",
                    "PhotonNode.Executor.Rules"
                  ],
                  nondeterministic_extra: ["PhotonCore.ID.new"],
-                 allowed: [
-                   {"PhotonNode.Harness.Session", ["PhotonCore.ID.new"]}
-                 ]
+                 allowed: []
                ]},
               # 30: server callbacks hand their message to the core and stay short.
               {PhotonCredo.Check.ThinCallbacks,
@@ -75,7 +66,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
               {PhotonCredo.Check.NoSleep,
                [
                  allowed: [
-                   {"PhotonNode.Harness.Ops.Shell",
+                   {"PhotonNode.Ops.Shell",
                     "terminate/2 waits in place for a killed process group: a stopping process can't take messages; the running process polls with send_after"},
                    {"PhotonNode.CLI",
                     "the packaged executable's at_exit hook never returns, which keeps the VM up for the node"}
@@ -88,17 +79,15 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                  # PhotonNode.Executor is registered under its own module name, so,
                  # like PhotonNode.Connection, it isn't in `names`: every call to its
                  # API names the module. Only its own module uses the name.
-                 api_modules: ["PhotonNode.Harness", "PhotonNode.Executor"],
+                 # PhotonNode.Ops isn't an API module here: `add/2` hands the owner
+                 # the operation's pid on purpose, so the owner can monitor it (rule
+                 # 87), and `via/1` names the operation processes for their own
+                 # `start_link`. Its names stay its own through `names` below.
+                 api_modules: ["PhotonNode.Executor"],
                  names: [
                    {"PhotonNode.AppSupervisor", ["PhotonNode.Application"]},
-                   {"PhotonNode.SessionRegistry",
-                    ["PhotonNode", "PhotonNode.Harness.Coordinator"]},
-                   {"PhotonNode.OpRegistry", ["PhotonNode", "PhotonNode.Harness.Ops"]},
-                   {"PhotonNode.Harness.TaskSupervisor",
-                    ["PhotonNode", "PhotonNode.Harness.ModelRequest"]},
-                   {"PhotonNode.Harness.OpSupervisor", ["PhotonNode", "PhotonNode.Harness.Ops"]},
-                   {"PhotonNode.Harness.SessionSupervisor",
-                    ["PhotonNode", "PhotonNode.Harness.Coordinator"]}
+                   {"PhotonNode.OpRegistry", ["PhotonNode", "PhotonNode.Ops"]},
+                   {"PhotonNode.OpSupervisor", ["PhotonNode", "PhotonNode.Ops"]}
                  ]
                ]},
               # 72: call, not cast; the deliberate sends say why.
@@ -107,11 +96,9 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                  files: lib_only,
                  allowed: [
                    {"PhotonNode.Connection",
-                    "log records, operation snapshots and live output for the hub link: a lost record is recovered (the hub resyncs gaps, every join replays), lost snapshots are resent from the journal after every join, and live output is never stored; producers are bounded (see its moduledoc)"},
-                   {"PhotonNode.Harness.Coordinator",
-                    "report/2 (its Ops.Owner callback): a lost snapshot is recovered, since Ops.add/2 makes a live operation resend it to a restarted coordinator"},
-                   {"PhotonNode.Harness.Ops",
-                    ":resend and :cancel to a local operation process, which its owner monitors: a process that exits instead of answering is seen there"}
+                    "operation snapshots and live output for the hub link: lost snapshots are resent from the journal after every join, and live output is never stored; producers are bounded (see its moduledoc)"},
+                   {"PhotonNode.Ops",
+                    ":resend and :cancel to a local operation process, which the executor monitors: a process that exits instead of answering is seen there"}
                  ]
                ]},
               # 80, 91, 16: processes start under supervisors.

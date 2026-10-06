@@ -16,13 +16,6 @@ defmodule PhotonCore.OperationTest do
     assert Operation.terminal?(op)
   end
 
-  test "new operations are ready, with a fresh ID" do
-    op = Operation.new("shell", 1, %{})
-    assert %{"status" => "ready", "version" => 1, "max_output_length" => nil} = op
-    assert "op_" <> _ = op["id"]
-    refute op["id"] == Operation.new("shell", 1, %{})["id"]
-  end
-
   test "new/5 takes the ID, so the same arguments give the same operation" do
     op = Operation.new("op_abc", "shell", 1, %{"input" => %{}}, 400)
 

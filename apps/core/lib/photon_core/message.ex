@@ -1,7 +1,8 @@
 defmodule PhotonCore.Message do
   @moduledoc """
-  The conversation format both harnesses store. Messages are string-keyed maps,
-  so they persist as JSON unchanged and read back identically:
+  The conversation format the hub's harness stores. Messages are
+  string-keyed maps, so they persist as JSON unchanged and read back
+  identically:
 
     * user: `%{"role" => "user", "content" => [part]}`
     * assistant: `%{"role" => "assistant", "content" => [part],
