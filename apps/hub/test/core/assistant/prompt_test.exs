@@ -39,6 +39,14 @@ defmodule Photon.Assistant.PromptTest do
     assert Prompt.system_prompt(settings(), "", @now) =~ "You can search the web yourself"
   end
 
+  test "runs short work on machines itself, and hands long work to a node's agent" do
+    prompt = Prompt.system_prompt(settings(), "", @now)
+    assert prompt =~ "You have shell and view_image on every machine."
+    assert prompt =~ "nohup ... &"
+    assert prompt =~ "Hand long autonomous work to a node's agent with run_on_node."
+    assert prompt =~ "Use list_machines"
+  end
+
   test "says what a note of the page the user had open means" do
     assert Prompt.system_prompt(settings(), "", @now) =~ ~s(may start with "[Looking at ...]")
   end

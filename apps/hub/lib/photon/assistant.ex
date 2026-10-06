@@ -3,9 +3,11 @@ defmodule Photon.Assistant do
   The assistant that lives on the hub: one long-running conversation the
   user talks to in the web UI, run by `Photon.Durable`.
 
-  It doesn't run commands itself. It hands work to nodes, each of which runs
-  its own agent (`PhotonNode.Harness`), and keeps a memory, a list of
-  schedules, and an eye on everything it started. Node work is
+  It runs commands and looks at images on the user's machines itself, with
+  the machine tools (`Photon.MachineTools`: `shell`, `view_image`,
+  `list_machines`), and keeps a memory, a list of schedules, and an eye on
+  everything it started. Longer work it can still hand to a node's own
+  agent (`PhotonNode.Harness`) with `run_on_node`. Node work is
   asynchronous: a `run_on_node` call waits briefly for the answer, and if the
   work takes longer, a background watcher (`Photon.Assistant.NodeWatch`)
   posts the node's report into the conversation when it finishes, which
@@ -19,7 +21,8 @@ defmodule Photon.Assistant do
       (how node work's outcome reads), `Photon.Assistant.Transcript` (what
       the page shows), `Photon.Assistant.MockScript` (the mock model)
     * boundary: the tools in `Photon.Assistant.Tools`, and
-      `Photon.Assistant.NodeWork`, what the node tools share
+      `Photon.Assistant.NodeWork`, what the node tools share; the machine
+      tools are their own context, `Photon.MachineTools`
     * workers: the task kinds `Photon.Assistant.NodeWatch` and
       `Photon.Assistant.Routine`, run by the durable scheduler
   """
@@ -28,6 +31,7 @@ defmodule Photon.Assistant do
     deps: [
       Photon.ChatGPT,
       Photon.Durable,
+      Photon.MachineTools,
       Photon.NodeSessions,
       Photon.Nodes,
       Photon.Settings,
@@ -39,7 +43,7 @@ defmodule Photon.Assistant do
   @behaviour Photon.Durable.Profile
 
   alias Photon.Assistant.{Memory, Page, Prompt, Tools}
-  alias Photon.{Durable, Settings}
+  alias Photon.{Durable, MachineTools, Settings}
   alias Photon.Durable.{Entry, Submission, TaskRecord}
 
   @tools [
@@ -196,7 +200,7 @@ defmodule Photon.Assistant do
   end
 
   @impl true
-  def tools(_conversation), do: @tools
+  def tools(_conversation), do: MachineTools.tools() ++ @tools
 
   @impl true
   def system_prompt(_conversation) do

@@ -415,7 +415,9 @@ are `replay: :safe`.
    its own node, hub rule 12). Unknown and outdated are error results.
 5. `Photon.Machines.start/1` commits the op row (idempotent; only while the
    task is unfinished and not marked for abort, hub rule 9) and, if the
-   machine is online, asks its channel to push the op (hub rule 2).
+   machine is online, asks its channel to push the op (hub rule 2). If it
+   returns `{:error, :stopped}` (the task is ending), the call ends with an
+   error result ("The call was stopped before it reached mm1.").
 6. Park: `{:wait, %{"signal" => "op:" <> op_id, "until" => until}, state}`.
    `until` and `offline_since` come from `Wait.first/3` (pure), given
    whether the machine is online now. The state is
@@ -431,7 +433,8 @@ Its `resume(state, api)`:
 2. Finished: return `{:commit, fun}`. Inside the commit,
    `Machines.claim_tx/2` marks the row closed and clears its snapshot, and
    the result is `{:ok, Translate.result/3, Translate.details/3}` of the
-   snapshot.
+   snapshot. If `claim_tx/2` finds nothing to claim there, the result is
+   the error of step 4.
 3. Open: `Wait.next/4` decides from the state, whether the machine is online
    now, the time, and the limits: `{:park, until, state}` or `:give_up`.
    - Park while online: first ask the channel to push the op again
@@ -449,7 +452,8 @@ Its `resume(state, api)`:
      real result instead of the offline error.
 4. Closed: only possible if the result was already recorded, which also
    finishes the task. Return an error result ("This result was already
-   delivered.") as a guard.
+   delivered.") as a guard. No row: an error result ("The hub has no record
+   of this operation on mm1.").
 
 Its `on_interrupt(api, tx)` (user Stop, a failed task, or a raise that
 `ToolTask` rescued) calls `Machines.cancel_tx(tx, op_id)`: sets `cancel`
@@ -584,7 +588,9 @@ results.
 `Photon.Assistant.MockScript` (the scripted model behind
 `PHOTON_MOCK_MODEL=1` and the tests) learns:
 
-- `machines` calls `list_machines` (PR A changes it from `list_nodes`)
+- `machines` and `list machines` call `list_machines` (PR A changes them
+  from `list_nodes`); `nodes` and `list nodes` keep calling `list_nodes`
+  until PR B
 - `on <machine>: $ <command>` calls `shell`
 - `on <machine>: look at <path>` calls `view_image`
 - after a machine tool result, it relays the result text, and for an image

@@ -44,6 +44,10 @@ config :phoenix_live_view,
 config :phoenix,
   sort_verified_routes_query_params: true
 
+# Machine tool calls check and give up in milliseconds; a test that needs a
+# call to stay parked longer sets its own limits.
+config :photon, Photon.MachineTools, check_ms: 200, offline_limit_ms: 500
+
 # Harness tests use their own conversation profile alongside the assistant's.
 config :photon, Photon.Durable,
   profiles: %{"assistant" => Photon.Assistant, "test" => Photon.TestProfile},
