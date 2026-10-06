@@ -13,15 +13,17 @@ layers from *Designing Elixir Systems with OTP* (Gray and Tate):
 Tests are the book's sixth layer; test support modules get a short table at
 the end of the module map.
 
-The module map and the supervision trees describe the code after step 1 of
-`docs/projects-and-blip.md` (2026-10-06): nodes are executors for the
-hub's operations, Blip runs commands on them with its machine tools, and
-node sessions, the model relay and the node's agent loop are gone
-(`docs/plans/step-1-machine-tools.md`). The hotspots and the refactor log
-below were written against the `elixir-harness` worktree as of
-2026-10-03, and their line numbers refer to that snapshot. Many of the
-modules they name were removed in step 1; the step 1 entry at the end of
-the refactor log says which.
+The module map and the supervision trees describe the code after step 2 of
+`docs/projects-and-blip.md` (2026-10-06). Step 1 made nodes executors for
+the hub's operations, gave Blip machine tools to run commands on them,
+and removed node sessions, the model relay and the node's agent loop
+(`docs/plans/step-1-machine-tools.md`). Step 2 added projects, their
+context files, and threads that work in a project's folder on any machine
+(`docs/plans/step-2-projects-and-threads.md`). The hotspots and the
+refactor log below were written against the `elixir-harness` worktree as
+of 2026-10-03, and their line numbers refer to that snapshot. Many of the
+modules they name were removed in step 1; the step 1 and step 2 entries
+at the end of the refactor log say what each step changed.
 
 Purity column:
 
@@ -61,6 +63,19 @@ no process: the registry says which machines are connected, the rows hold
 the state, the durable harness waits, and each node's channel is the
 transport. No LiveView does I/O in `render/1`.
 
+Projects and threads add no process either. A project and its context
+files are rows (`Photon.Projects`), written in Store commits whose rules
+are the pure `Projects.Rules`. A thread (`Photon.Threads`) is a durable
+conversation under the `"thread"` profile with a row tying it to its
+project; it shares Blip's machine tools, which run in the project's
+folder on each machine (`<workspace>/<slug>`, through the profile's
+optional `workdir/1`), and has four tools of its own for the context
+files, which write inside the commit that records their result. Writes
+are announced from inside their commit (`Durable.Tx.announce/3`) and
+broadcast only after it. Blip's panel and a thread's page draw a
+conversation with the same pieces (`Photon.Transcript`,
+`PhotonWeb.ConversationComponents`, `PhotonWeb.ConversationView`).
+
 ## Module map
 
 ### apps/core (`:photon_core`)
@@ -88,10 +103,10 @@ transport. No LiveView does I/O in `render/1`.
 | Module | Layer | Purity | Depends on |
 | --- | --- | --- | --- |
 | `PhotonNode.Application` | lifecycle | is a process (app supervisor); runs `CLI.boot/0` first when packaged | `CLI`, `PhotonNode` |
-| `PhotonNode` | lifecycle (node supervisor, with its lifecycle plan and the protocol summary in the moduledoc) and global config accessor | is a process; `init/1` writes `:persistent_term` and creates the ops dir and the workspace | `Config`, `Ops`, `Executor`, `Connection`, Registry, DynamicSupervisor |
+| `PhotonNode` | lifecycle (node supervisor, with its lifecycle plan and the protocol summary in the moduledoc: the `ops:2` capability) and global config accessor | is a process; `init/1` writes `:persistent_term` and creates the ops dir and the workspace | `Config`, `Ops`, `Executor`, `Connection`, Registry, DynamicSupervisor |
 | `PhotonNode.CLI` | boundary (executable entry point) | does I/O (stdout/stderr, `System.halt`, logger config) | Logger |
 | `PhotonNode.Config` | data (struct with `t/0`) and boundary (`new/1`) | `new/1`, `hostname/0` do I/O (opts, app env, OS env, hostname); `ops_dir/1` pure | none |
-| `PhotonNode.Connection` | boundary and worker (the hub link) | is a process (Slipstream); hands `op.start`, `op.cancel` and `op.ack` to the executor and pushes its journaled snapshots after each join; `snapshot/1` and `output/3` (`Executor.Link`) are its client functions, plain sends dropped while it isn't joined | Slipstream, `Executor`, `Config`, `PhotonCore.Operation.Wire` |
+| `PhotonNode.Connection` | boundary and worker (the hub link; joins with the capability `ops:2`) | is a process (Slipstream); hands `op.start`, `op.cancel` and `op.ack` to the executor and pushes its journaled snapshots after each join; `snapshot/1` and `output/3` (`Executor.Link`) are its client functions, plain sends dropped while it isn't joined | Slipstream, `Executor`, `Config`, `PhotonCore.Operation.Wire` |
 | `PhotonNode.Executor` | boundary (the node's API for the hub's operations: `start/1`, `cancel/1`, `ack/1`, `snapshots/0`; one server for all of them, which owns the journal, implements `Ops.Owner`, monitors the op processes it starts and applies `Executor.Rules`; step 1, section 2.3's node rules) | is a process; journal files through `Journal`, starts op processes, forwards snapshots through `Link`, a daily `send_after` sweep | `Journal`, `Request`, `Rules`, `Link`, `Ops`, `Ops.Owner`, `Ops.Env`, `Config`, `PhotonCore.Operation` |
 | `PhotonNode.Executor.Journal` | boundary helper (each op's `op.json`: fsynced write by rename, read, list, forget on `op.ack`, the 7-day sweep of output; no process, called only from the executor) | does I/O (files, fsync, `sync` on the directory on Linux) | Jason |
 | `PhotonNode.Executor.Request` | functional core (judges an `op.start` into an operation; builds the snapshots for ops the node won't run: rejected, lost, never started, unrecorded, unreadable, failed; `fit/2` cuts a snapshot to the 6 MB frame budget) | pure | `PhotonCore.Operation`, `PhotonCore.Output`, Jason |
@@ -99,7 +114,7 @@ transport. No LiveView does I/O in `render/1`.
 | `PhotonNode.Executor.Link` | contract (behaviour for the hub link: `snapshot/1`, `output/3`; dispatches to the config's `:link`, `Connection` by default) | reads `PhotonNode.config/0` | `Config` |
 | `PhotonNode.Ops` | boundary (API over operation processes, each started for an `Ops.Owner`: `add/2`, `cancel/1`, `running?/1`; owns their `:resend` and `:cancel` messages and the via tuples into `PhotonNode.OpRegistry`) | does I/O (Registry, DynamicSupervisor, sends) | `Ops.Shell`, `Ops.Job`, `Ops.ViewImage`, `Ops.Owner` |
 | `PhotonNode.Ops.Owner` | contract (behaviour for whatever owns operations: `checkpoint/2`, `report/2`, `output/4`; the executor, or a test owner) | pure dispatch on the `{module, owner_id}` pair | `PhotonCore.Operation` |
-| `PhotonNode.Ops.Shell` | worker (one per command) | is a process; Port, files (`pid`, `exit`, and the `canceled`, `stopped` and `unstarted` markers), `/bin/sh` kill (polled with `send_after`, not slept on), live output | `Ops.Env`, `Ops`, `Ops.Owner`, `PhotonCore.Operation`, `PhotonCore.Output` |
+| `PhotonNode.Ops.Shell` | worker (one per command; creates the command's working directory before the `process` checkpoint, or fails the op without running it) | is a process; Port, files (`pid`, `exit`, and the `canceled`, `stopped` and `unstarted` markers), `/bin/sh` kill (polled with `send_after`, not slept on), live output | `Ops.Env`, `Ops`, `Ops.Owner`, `PhotonCore.Operation`, `PhotonCore.Output` |
 | `PhotonNode.Ops.Job` | worker (one-shot operations, behaviour for jobs) | is a process; runs `job.run/1` once and reports | `Ops`, `Ops.Owner`, `PhotonCore.Operation` |
 | `PhotonNode.Ops.ViewImage` | boundary (job: reads the image file) | does I/O (file) | `Ops.Image`, `PhotonCore.Operation`, `Ops.Job` |
 | `PhotonNode.Ops.Image` | functional core (image formats and sizes from a file's header) | pure | none |
@@ -117,23 +132,23 @@ transport. No LiveView does I/O in `render/1`.
 | `Photon.Paths` | boundary (locations) | reads app env | none |
 | `Photon.Events` | boundary (the hub's PubSub announcements: hints to re-read committed state; a failed broadcast or subscription is logged, not raised) | does I/O (PubSub) | Phoenix.PubSub |
 | **Durable harness** | | | |
-| `Photon.Durable` | boundary (harness API: reads, submit, abort, reset, subscriptions; moduledoc lists the layers behind it) | does I/O; reads go through `Queries`, no `%Tx{}` outside a commit | `Store`, `Tx`, `Queries`, `Inbox`, `Repo`, `Events`, durable schemas |
+| `Photon.Durable` | boundary (harness API: reads, submit, abort, reset, subscriptions, which conversations are busy (`busy/1`, `busy_in_profile/1`), a conversation's last entry of a kind; moduledoc lists the layers behind it) | does I/O; reads go through `Queries`, no `%Tx{}` outside a commit | `Store`, `Tx`, `Queries`, `Inbox`, `Repo`, `Events`, durable schemas |
 | `Photon.Durable.Supervisor` | lifecycle (task supervisor, Store, Scheduler; `:one_for_one`, plan in its moduledoc; `children/0` is what tests start) | is a process | the three children |
-| `Photon.Durable.Store` | boundary (the commit line; a lock with no state, which its moduledoc says) | is a process; runs `Tx.run/1`, broadcasts what `Changes` says, notifies `Scheduler` | `Tx`, `Changes`, `Scheduler`, `Events` |
-| `Photon.Durable.Tx` | boundary (write operations inside a commit; owns the commit's change list) | does I/O (Repo); keeps the change list in the Store's process dictionary for one commit; a write through a `Tx` that isn't the open commit raises | `Repo`, `Queries`, durable schemas, `PhotonCore.ID`, Jason |
+| `Photon.Durable.Store` | boundary (the commit line; a lock with no state, which its moduledoc says) | is a process; runs `Tx.run/1`, broadcasts what `Changes` says (the commit's `Tx.announce/3` messages too, after it commits), notifies `Scheduler` | `Tx`, `Changes`, `Scheduler`, `Events` |
+| `Photon.Durable.Tx` | boundary (write operations inside a commit; owns the commit's change list, including the announcements `announce/3` adds for the Store to broadcast after the commit) | does I/O (Repo); keeps the change list in the Store's process dictionary for one commit; a write through a `Tx` that isn't the open commit raises | `Repo`, `Queries`, durable schemas, `PhotonCore.ID`, Jason |
 | `Photon.Durable.Queries` | functional core (the reads, as Ecto queries) | pure (builds queries; callers run them) | Ecto.Query, durable schemas |
-| `Photon.Durable.Changes` | functional core (what a commit announces) | pure | durable schemas |
+| `Photon.Durable.Changes` | functional core (what a commit announces: its `durable:*` messages and its `Tx.announce/3` messages in commit order) | pure | durable schemas |
 | `Photon.Durable.Runtime` | boundary (step-commit helper around a data struct) | does I/O through `Store` | `Store`, `Tx` |
 | `Photon.Durable.Scheduler` | boundary (the server that runs tasks: reads facts, applies `Policy`'s decisions in per-task commits, tracks steps) | is a process; DB reads, commits, starts step tasks, timer | `Durable`, `Policy`, `Queries`, `Runtime`, `Store`, `Tx`, `Repo`, `Durable.TaskSupervisor` |
 | `Photon.Durable.Policy` | functional core (the scheduler's rules: stop, wake, start, fail, timer) | pure | `TaskRecord` |
 | `Photon.Durable.Inbox` | functional core (submission rules: dedupe, queue, start a run, next input) | pure | `Submission`, `Message` |
 | `Photon.Durable.TaskKind` | behaviour (contract for task kinds) | pure | `Runtime`, `TaskRecord`, `Tx` (types only) |
-| `Photon.Durable.Profile` | behaviour (contract) | pure | `Conversation` (types only) |
+| `Photon.Durable.Profile` | behaviour (contract; optional `workdir/1`: the directory under each machine's workspace that the conversation's tools work in) | pure | `Conversation` (types only) |
 | `Photon.Durable.Tool` | behaviour with helpers (`spec/1`; `replay/1` loads the module) | pure apart from code loading | `ToolAPI`, `Durable.implements?/3` |
-| `Photon.Durable.ToolAPI` | boundary (capability handed to tools; data struct with `new/1`) | does I/O (PubSub, commits) | `Durable` |
+| `Photon.Durable.ToolAPI` | boundary (capability handed to tools; data struct with `new/1`, and `new/2` with the profile's `workdir`) | does I/O (PubSub, commits) | `Durable` |
 | `Photon.Durable.Generation` | worker logic (task kind): reads the conversation, calls the model, commits | does I/O (DB, model HTTP, PubSub) | `Durable`, `Turn`, `Runtime`, `Tx`, `PhotonCore.LLM` |
 | `Photon.Durable.Turn` | functional core (a generation's request, outcome, entries, settlements, transitions, usage, live events) | pure | `Context`, `Tool`, `Message`, `PhotonCore.LLM` (types) |
-| `Photon.Durable.ToolTask` | worker logic (task kind): finds the tool, runs it, commits; a raise in `execute/2` or `resume/2` is rescued and recorded with the tool's `on_interrupt/2` in the same commit | does I/O | `Durable`, `ToolCall`, `Tool`, `ToolAPI`, `Runtime`, `Tx` |
+| `Photon.Durable.ToolTask` | worker logic (task kind): finds the tool, runs it with the profile's `workdir/1` in its API, commits; a raise in `execute/2` or `resume/2` is rescued and recorded with the tool's `on_interrupt/2` in the same commit | does I/O | `Durable`, `ToolCall`, `Tool`, `ToolAPI`, `Runtime`, `Tx` |
 | `Photon.Durable.ToolCall` | functional core (whether a call runs, its result entry, its transitions) | pure | `Schema`, `Message` |
 | `Photon.Durable.Context` | functional core (model input from the transcript; tool results from earlier runs shortened: images dropped, long text cut around a pointer to the full output) | pure | `Entry`, `Message`, `Output` |
 | `Photon.Durable.Schema` | functional core | pure | none |
@@ -144,27 +159,42 @@ transport. No LiveView does I/O in `render/1`.
 | `Photon.Durable.Submission` | data | pure | Ecto |
 | `Photon.Durable.TaskRecord` | data (plus `terminal?/1`) | pure | Ecto |
 | **Assistant** | | | |
-| `Photon.Assistant` | boundary (the assistant's API, which the web pages use, and its profile; its tools are its own four plus `MachineTools.tools/0`) | does I/O (docs, settings file, clock); `conversation_id/0` may commit | `Durable`, `Settings`, `ChatGPT`, `Prompt`, `Memory`, `MachineTools` (`tools/0`), `Assistant.Tools.*` |
-| `Photon.Assistant.Prompt` | functional core (system prompt and reasoning setting from settings, memory and time; Blip's voice) | pure | `Memory` |
+| `Photon.Assistant` | boundary (the assistant's API, which the web pages use, and its profile; its tools are its own four plus `MachineTools.tools/0`; `page_at/1` makes the page the user has open, and `send/2` sends a message with the page's facts read fresh) | does I/O (docs, settings file, clock, projects and threads); `conversation_id/0` may commit | `Durable`, `Settings`, `ChatGPT`, `Prompt`, `Memory`, `Page`, `MachineTools` (`tools/0`), `Projects`, `Threads`, `Transcript`, `Assistant.Tools.*` |
+| `Photon.Assistant.Prompt` | functional core (system prompt from settings, memory and time; Blip's voice; the shell lines from `MachineTools.Guide`; the line about page notes) | pure | `Memory`, `MachineTools.Guide` |
+| `Photon.Assistant.Page` | functional core (the page the user has open under Blip: what a path is about (`at/1`), the page and its chip's label for a project, a file or a thread, and the bounded note the model sees in front of a message) | pure | none |
 | `Photon.Assistant.Memory` | functional core (editing the memory text) | pure | none |
-| `Photon.Assistant.Transcript` | functional core (what Blip's conversation shows: entry index without image data, the in-flight answer fold, running calls' output tails, a call's status, Blip's mood, an image decoded from its entry) | pure | `Entry`, `Message` |
 | `Photon.Assistant.Notice` | functional core (what Blip says unasked while its panel is closed: its own answers and failures) | pure | `Entry`, `Message`, `Transcript` |
-| `Photon.Assistant.MockScript` | functional core (mock model script: `machines`, `on <machine>: $ ...`, `on <machine>: look at ...`, memory and schedules) | pure* | `LLM.Mock`, `Message` |
+| `Photon.Assistant.MockScript` | functional core (mock model script: the machine phrasings from `MachineTools.MockPhrases`, memory, schedules and `here`; matches the last text part of the message) | pure* | `LLM.Mock`, `Message`, `MachineTools.MockPhrases` |
 | `Photon.Assistant.Routine` | worker logic (task kind) | does I/O (commit, clock); `first_wait/1`, `after_fire/2`, `next_after/3`, `prompt/1`, `request_id/1` pure | `Durable`, `Runtime` |
 | `Photon.Assistant.Tools.UpdateMemory` | boundary (tool) | does I/O (commit); the editing is `Memory.edit/3` | `Durable`, `Memory` |
 | `Photon.Assistant.Tools.Schedule` | boundary (tool) | does I/O (creates a task, clock) | `Durable`, `ToolAPI` |
 | `Photon.Assistant.Tools.ListSchedules` | boundary (tool) | does I/O (DB, clock) | `Assistant` |
 | `Photon.Assistant.Tools.CancelSchedule` | boundary (tool) | does I/O | `Durable` |
+| **Projects and threads** | | | |
+| `Photon.Projects` | boundary (the projects context: projects, their slugs and their context files; every write is a Store commit that checks with `Rules` and announces with `Tx.announce/3`; `write_file_tx/5` and `edit_file_tx/6` are for thread tools inside their own commit; no process) | does I/O (DB through commits, PubSub through `Events`, clock, IDs) | `Durable`, `Tx`, `Repo`, `Events`, `Rules`, `Project`, `ContextFile` |
+| `Photon.Projects.Project` | data (Ecto schema, table `projects`: name, purpose, the slug fixed at creation) | pure | Ecto |
+| `Photon.Projects.ContextFile` | data (Ecto schema, table `project_files`: name, lookup key, content, version, who wrote it last) | pure | Ecto |
+| `Photon.Projects.Rules` | functional core (purpose and name, the name made from the purpose, slugs and their uniqueness, file names and lookup keys, the content limit, the user's version check, a thread's exactly-once edit) | pure | `Project`, `ContextFile` |
+| `Photon.Threads` | boundary (the threads context's API, which the pages use, and the `"thread"` profile: the model in Settings, the prompt, the machine tools and four context-file tools, and `workdir/1`, the project's slug; starting a thread makes the row, the conversation and the first message in one commit; no process) | does I/O (DB, commits, settings file, clock) | `Durable`, `Tx`, `Repo`, `Projects`, `Settings`, `ChatGPT`, `MachineTools`, `Transcript`, `Thread`, `Rules`, `Prompt`, `Threads.Tools.*` |
+| `Photon.Threads.Thread` | data (Ecto schema, table `threads`: the conversation's ID, its project, title and `active_at`) | pure | Ecto |
+| `Photon.Threads.Rules` | functional core (a title from the first message; how the tools list a project's files and head a read, naming who changed each file from the reading thread's side) | pure | none |
+| `Photon.Threads.Prompt` | functional core (a thread's system prompt from its project and the hour; nothing about the user) | pure | `MachineTools.Guide` |
+| `Photon.Threads.MockScript` | functional core (a thread's scripted model: the machine phrasings, and `files`, `read`, `write` and `edit` for context files) | pure* | `LLM.Mock`, `Message`, `MachineTools.MockPhrases` |
+| `Photon.Threads.Tools.ListContextFiles`, `.ReadContextFile` | boundary (durable tools, `replay: :safe`: they change nothing) | does I/O (DB) | `Projects`, `Threads`, `Rules` |
+| `Photon.Threads.Tools.WriteContextFile`, `.EditContextFile` | boundary (durable tools, `replay: :safe`: the write is `Projects.write_file_tx/5` or `edit_file_tx/6` inside the commit that records the result) | does I/O (a commit) | `Projects`, `Threads`, `Rules` |
+| `Photon.Transcript` | functional core (what a conversation page shows, for Blip's panel and a thread's page: entry index without image data, what the user typed without the page note, the in-flight answer fold, running calls' output tails, a call's status and a machine call's line, Blip's mood, an image decoded from its entry) | pure | `Entry`, `Message` |
 | **Machines and machine tools** | | | |
-| `Photon.Machines` | boundary (the context for machines and their operations: the registry of connected nodes (`register/2`, `list/0`, `get/1`, `online?/1`, `subscribe/0`), status and roster, starting an op, the tool call's claim, cancel and give-up inside its commit, and the channel's join, push, snapshot and output; `command/3` and `push_op/2` are plain sends to a channel, and its moduledoc says why; no process) | does I/O: every write and the channel's reads are `Durable.Store` commits; Registry, sends to channels (`op.cancel` from inside cancel commits), PubSub through `Events`, output broadcast with `Durable.live/2` | `Durable`, `Tx`, `Repo`, `Events`, `NodeKeys`, `Machines.Op`, `Machines.Rules`, `Machines.Roster`, `PhotonCore.Operation.Wire`, `Photon.MachineRegistry` |
+| `Photon.Machines` | boundary (the context for machines and their operations: the registry of connected nodes (`register/2`, `list/0`, `get/1`, `online?/1`, `subscribe/0`), status and roster, starting an op, the tool call's claim, cancel and give-up inside its commit, and the channel's join, push, snapshot and output, which push nothing to an outdated machine; `command/3` and `push_op/2` are plain sends to a channel, and its moduledoc says why; no process) | does I/O: every write and the channel's reads are `Durable.Store` commits; Registry, sends to channels (`op.cancel` from inside cancel commits), PubSub through `Events`, output broadcast with `Durable.live/2` | `Durable`, `Tx`, `Repo`, `Events`, `NodeKeys`, `Machines.Op`, `Machines.Rules`, `Machines.Roster`, `PhotonCore.Operation.Wire`, `Photon.MachineRegistry` |
 | `Photon.Machines.Op` | data (Ecto schema, table `machine_ops`: one row per tool call's op, with `confirmed`, `pushed`, `cancel` and the result until it is claimed) | pure | Ecto |
 | `Photon.Machines.Rules` | functional core (hub rules 2 to 9 of step 1: what a push, a join, a snapshot, a claim, a cancel or a give-up does to a row, and what to send) | pure | `Machines.Op`, `PhotonCore.Operation`, `Operation.Wire` |
-| `Photon.Machines.Roster` | functional core (the machines the hub knows, `local` first, each one's status: online, outdated, offline or unknown; `sort/1`, the order `list/0` returns) | pure | none |
-| `Photon.MachineTools` | boundary (namespace: `tools/0` for a profile, `signal_key/1`; the moduledoc lists the layers) | pure | `Machines`, its tool modules |
-| `Photon.MachineTools.Shell`, `Photon.MachineTools.ViewImage` | boundary (durable tools, `replay: :safe`; delegate to `Call`) | does I/O through `Call` | `Call`, `Translate` |
-| `Photon.MachineTools.ListMachines` | boundary (durable tool) | does I/O (Registry, DB) | `Machines` |
-| `Photon.MachineTools.Call` | boundary (one `shell` or `view_image` call: `execute/3` commits the op and parks on its signal, `resume/2` claims, waits on or gives up, `on_interrupt/2` cancels) | does I/O (commits through `Machines`, app env, clock) | `Machines`, `Translate`, `Wait`, `Durable.ToolAPI`, `Tx` |
-| `Photon.MachineTools.Translate` | functional core (tool arguments to an op's `args`; a snapshot to the tool result and its details, bounded again on the hub; the unknown and outdated machine texts) | pure | `PhotonCore.Operation`, `PhotonCore.Output`, `Message` |
+| `Photon.Machines.Roster` | functional core (the machines the hub knows, `local` first, each one's status: online, outdated (connected without `ops:2`), offline or unknown; `sort/1`, the order `list/0` returns) | pure | none |
+| `Photon.MachineTools` | boundary (namespace: `tools/0` for a profile, `signal_key/1`; exports `Guide` and `MockPhrases`, which Blip and threads share; the moduledoc lists the layers) | pure | `Machines`, its tool modules |
+| `Photon.MachineTools.Shell`, `Photon.MachineTools.ViewImage` | boundary (durable tools, `replay: :safe`; delegate to `Call`; they work in the conversation's working directory) | does I/O through `Call` | `Call`, `Translate` |
+| `Photon.MachineTools.ListMachines` | boundary (durable tool; names the working directory on each online machine when the conversation has one) | does I/O (Registry, DB) | `Machines` |
+| `Photon.MachineTools.Call` | boundary (one `shell` or `view_image` call: `execute/3` commits the op, with the API's `workdir` as its `directory`, and parks on its signal, `resume/2` claims, waits on or gives up (at once, with the outdated message, when the machine is connected without `ops:2`), `on_interrupt/2` cancels) | does I/O (commits through `Machines`, app env, clock) | `Machines`, `Translate`, `Wait`, `Durable.ToolAPI`, `Tx` |
+| `Photon.MachineTools.Translate` | functional core (tool arguments and the working directory to an op's `args`; a snapshot to the tool result and its details, bounded again on the hub; the unknown and outdated machine texts) | pure | `PhotonCore.Operation`, `PhotonCore.Output`, `Message` |
+| `Photon.MachineTools.Guide` | functional core (the prompt lines about how a `shell` call behaves, shared by Blip's and a thread's prompt) | pure | none |
+| `Photon.MachineTools.MockPhrases` | functional core (the machine phrasings Blip's and a thread's scripted models share, and how they relay a result) | pure | `LLM.Mock`, `Message` |
 | `Photon.MachineTools.Wait` | functional core (the op ID from the task ID, when to check again, when to give up on an offline machine, and the offline message) | pure (time and limits passed in) | none |
 | **Nodes: install, keys and reach** | | | |
 | `Photon.NodeDist` | boundary (packaged binaries, install script) | `dir/0`, `binary/1`, `available/0`, `version/0` do I/O; `outdated?/2`, `target/2`, `install_script/1` pure | `Hub`, `InstallScript` |
@@ -176,7 +206,7 @@ transport. No LiveView does I/O in `render/1`.
 | `Photon.Provision.Lines` | functional core (Collectable line splitter) | pure apart from the `log` callback it calls | none |
 | `Photon.Tailnet` | boundary (`tailscale` CLI, ETS cache) and the cache table's owner (a GenServer that creates it in `init/1`) | does I/O; `parse/1`, `parse_whois/1`, `names/1`, `fresh?/2` pure | ETS |
 | **Settings and auth** | | | |
-| `Photon.Settings` | boundary (`load/0`, `save/1`) and pure functions of a settings map (`normalize/2`, `model/1`, `model_label/1`, `scheduled_work?/1`) | `load/0`, `save/1` do I/O | `Paths`, `PrivateFile`, `Events` |
+| `Photon.Settings` | boundary (`load/0`, `save/1`) and pure functions of a settings map (`normalize/2`, `model/1`, `model_label/1`, `reasoning/1`, `scheduled_work?/1`), read by Blip's and the thread profile alike | `load/0`, `save/1` do I/O | `Paths`, `PrivateFile`, `Events` |
 | `Photon.ChatGPT` | boundary (API and server: the ChatGPT account; sign-in, tokens only while plan use is allowed, serialized refresh, models; `stream/3` runs a request in the caller and reports a refused token) | is a process; HTTP to OpenAI, the account file, PubSub; its state is redacted from crash reports (`format_status/1`) | `ChatGPT.OAuth`, `Paths`, `PrivateFile`, `Events`, `PhotonCore.LLM`, Req |
 | `Photon.ChatGPT.OAuth` | functional core (Sign in with ChatGPT's rules: the link, the pasted address, the token forms and claims, when to refresh) | pure (secrets and time passed in) | Jason |
 | `Photon.Auth` | boundary (who may open the GUI: `:tailscale`, `:password`, both, or `:off`) | the password does I/O (file, `:persistent_term`); `check_device/3` is pure | `Paths`, `Tailnet` |
@@ -191,24 +221,31 @@ transport. No LiveView does I/O in `render/1`.
 | --- | --- | --- | --- |
 | `PhotonWeb` | boundary glue (`use` macros) | pure | Phoenix |
 | `PhotonWeb.Endpoint` | boundary (HTTP and websocket entry) and lifecycle (supervises Bandit and sockets) | is a process | `Router`, `NodeSocket`, Phoenix |
-| `PhotonWeb.Router` | boundary (routing) | pure | controllers, LiveViews, `Auth`, `Shell` |
+| `PhotonWeb.Router` | boundary (routing; every page in one `live_session`, the image routes of Blip and of each thread) | pure | controllers, LiveViews, `Auth`, `Shell` |
 | `PhotonWeb.Telemetry` | lifecycle | is a process (Supervisor) | telemetry_poller |
 | `PhotonWeb.Auth` | boundary (plug and `on_mount`; in the tailscale modes checks every request and LiveView connection, and rechecks open pages when node keys change and every minute through a `handle_info` hook) | does I/O (session, PubSub, a timer; `tailscale whois` through `ClientIP`, node devices from `NodeKeys`) | `Photon.Auth`, `ClientIP`, `NodeKeys` |
 | `PhotonWeb.ClientIP` | boundary (where a request came from, behind the hub's own TLS proxy) | `client/2` is pure; `identify/2` asks `Tailnet.whois/1` | `Tailnet` |
 | `PhotonWeb.Origin` | boundary (`check_origin`) | does I/O (app env, `Tailnet.own_names/0`) | `Tailnet` |
-| `PhotonWeb.Shell` | boundary (LiveView hook for the app shell: the machines, the model, the ChatGPT sign-in) | does I/O on mount and on the messages it rebuilds on (`:nodes_changed`, `{:node_keys_changed, _}`, settings and ChatGPT changes); the derivations are `Machines.roster/0`, `Settings.model_label/1` and `ChatGPT.ready?/1` | `Assistant`, `ChatGPT`, `Machines`, `NodeKeys`, `Settings` |
+| `PhotonWeb.Shell` | boundary (LiveView hook for the app shell: the sidebar's projects and threads, the machines, the model, the ChatGPT sign-in) | does I/O on mount and on the messages it rebuilds on (`:nodes_changed`, `{:node_keys_changed, _}`, settings and ChatGPT changes; `{:projects_changed, _}`, and `{:durable_tasks, _}` only for a listed thread, rebuild the sidebar); the derivations are `Threads.sidebar/1`, `Machines.roster/0`, `Settings.model_label/1` and `ChatGPT.ready?/1` | `Assistant`, `ChatGPT`, `Machines`, `NodeKeys`, `Projects`, `Settings`, `Threads` |
 | `PhotonWeb.HealthPlug` | boundary | does I/O (response only) | Plug |
 | `PhotonWeb.NodeSocket` | boundary (node socket auth: the node's key against where it connected from; the socket's ID names the node and key generation) | does I/O through `NodeKeys` | `NodeKeys`, `ClientIP`, `NodeChannel` |
 | `PhotonWeb.NodeChannel` | boundary and worker (one per connected node; the server layer for a node, rule 11; joins only while its key is current, closes its connection when the key is replaced, and acts only on its own node's ops; hands `op.snapshot` and `op.output` to `Machines` and pushes what it returns, and is the only place an `op.start` is built, on `:joined` and `{:push_op, id}`; ignores events it doesn't know) | is a process; DB through `Machines`, the registry through `Machines.register/2`, PubSub | `Machines`, `NodeKeys`, `PhotonCore.Operation.Wire` |
 | `PhotonWeb.NodeInstallController` | boundary | does I/O (files) | `NodeDist` |
-| `PhotonWeb.BlipImageController` | boundary (serves the images in Blip's conversation, one per request, behind `PhotonWeb.Auth`) | reads the database through `Assistant.image/2` | `Assistant` |
+| `PhotonWeb.ConversationImageController` | boundary (serves the images in a conversation, one per request, behind `PhotonWeb.Auth`: `blip/2` for Blip's, `thread/2` for a thread's, each finding entries only in its own conversation) | reads the database through `Assistant.image/2` and `Threads.image/3` | `Assistant`, `Threads` |
 | `PhotonWeb.ErrorHTML` | boundary (rendering) | pure | Phoenix |
 | `PhotonWeb.ErrorJSON` | boundary (rendering) | pure | Phoenix |
 | `PhotonWeb.CoreComponents` | boundary (UI components) | pure | Phoenix.Component |
 | `PhotonWeb.Blip` | boundary (UI component: Blip drawn from the brand kit's SVG, posed by `data-state`) | pure | Phoenix.Component |
-| `PhotonWeb.Layouts` | boundary (UI layout: the sidebar's machines from the shell's roster, linking to the Nodes page) | pure | `CoreComponents` |
-| `PhotonWeb.BlipLive` | boundary (UI process; sticky, rendered once by `Layouts.app/1` over every page) | is a process; talks only to `Photon.Assistant`; folds with `Assistant.Transcript` and `Assistant.Notice` | `Assistant`, `Assistant.Transcript`, `Assistant.Notice`, `Markdown`, `Message`, `Blip` |
-| `PhotonWeb.OverviewLive` | boundary (UI process; the home page) | is a process; machines from the shell, schedules read on mount and on `{:durable_tasks, _}` | `Assistant` |
+| `PhotonWeb.Layouts` | boundary (UI layout: the sidebar with Home, the projects and their threads, Machines with the online count linking to the Nodes page, and Settings; `active` marks the page on screen) | pure | `CoreComponents` |
+| `PhotonWeb.ConversationComponents` | boundary (UI components for a durable conversation, shared by Blip's panel and a thread's page: entries, tool call lines with the machine named, web searches, the in-flight answer, the composer, the sign-in panel; IDs take a prefix, images an image path function) | pure | `Transcript`, `Markdown`, `Message`, `CoreComponents` |
+| `PhotonWeb.ConversationView` | boundary (socket helpers for the two conversation pages: mount a conversation's assigns and stream, fold in commits and live events; not a process, and calls only `Transcript` and `Markdown`) | pure apart from the socket it's handed | `Transcript`, `Markdown` |
+| `PhotonWeb.ProjectText` | functional core (the project pages' words for times, file sizes and who changed a file, from a time and the thread titles passed in) | pure | `ContextFile` |
+| `PhotonWeb.BlipLive` | boundary (UI process; sticky, rendered once by `Layouts.app/1` over every page) | is a process; talks only to `Photon.Assistant`; draws with the shared conversation modules and `Assistant.Notice`; a hook reports the page under it, which a chip in the message box offers as context | `Assistant`, `Transcript`, `Assistant.Notice`, `ConversationComponents`, `ConversationView`, `Markdown`, `Message`, `Blip` |
+| `PhotonWeb.ProjectNewLive` | boundary (UI process; starts a project from a purpose and an optional name) | is a process; talks only to `Photon.Projects` | `Projects` |
+| `PhotonWeb.ProjectLive` | boundary (UI process; a project's page: name, folder and purpose (editable), its threads and context files as streams) | is a process; reads on mount and on `{:projects_changed, _}`, `{:project_files_changed, ...}` and its own threads' `{:durable_tasks, _}` | `Projects`, `Threads`, `Markdown`, `ProjectText` |
+| `PhotonWeb.ContextFileLive` | boundary (UI process; writes a new context file or edits one, with a preview, saves against the version it loaded, and a banner when a thread or another tab saves first) | is a process; reads on mount, on `{:project_files_changed, ...}` and on `{:projects_changed, _}` for the project's name | `Projects`, `Threads`, `Markdown`, `ProjectText` |
+| `PhotonWeb.ThreadLive` | boundary (UI process; `:new` starts a thread with its first message, `:show` is its conversation with a composer and Stop, drawn with the shared conversation modules under the ID prefix `thread-`) | is a process; subscribes to the thread's conversation | `Projects`, `Threads`, `Transcript`, `ConversationComponents`, `ConversationView` |
+| `PhotonWeb.OverviewLive` | boundary (UI process; the home page, Home in the sidebar until step 4 replaces it) | is a process; machines from the shell, schedules read on mount and on `{:durable_tasks, _}` | `Assistant` |
 | `PhotonWeb.NodesLive` | boundary (UI process) | is a process; node data read on mount and on change messages, `tailscale` in a `start_async` task; `render/1` only derives from assigns | `Machines`, `NodeDist`, `NodeKeys`, `Provision`, `Tailnet`, `Hub` |
 | `PhotonWeb.SettingsLive` | boundary (UI process) | is a process; settings file, the ChatGPT account (sign-in steps; models in a `start_async` task), Blip's memory | `Settings`, `ChatGPT`, `Assistant` |
 
@@ -235,12 +272,15 @@ transport. No LiveView does I/O in `render/1`.
 | `Photon.DataCase` | tests | Deletes every table, writes the real settings file, starts `Photon.Durable.Supervisor.children/0` for `@tag :durable` |
 | `PhotonWeb.ConnCase` | tests | Phoenix conn case on top of `DataCase` |
 | `Photon.TestProfile`, `Photon.TestProfile.Wait` | tests (fake profile and tool) | pure* |
+| `Photon.TestProfile.Workdir`, `Photon.TestProfile.Where` | tests (a profile with a working directory, and a tool that reports the one it was handed) | for the `workdir/1` tests (step 2, section 3.4) |
 | `Photon.TestProfile.Raise`, `Photon.TestProfile.ShellThenRaise` | tests (tools that raise: in `execute/2`, and in `resume/2` after a shell op exists) | for the raise-runs-`on_interrupt` tests (step 1, hub rule 10) |
 | `Photon.HarnessProfiles` (`Block`, `Loop`), `Photon.Property.SlowProfile` | tests (profiles for regression tests and properties) | `Block` holds a model request until the test releases it; `SlowProfile` simulates model latency |
 
 The hub-plus-node test (`apps/hub/test/integration/machine_tools_e2e_test.exs`)
 runs a real node against the real channel over a Bandit listener on a free
-port, with the scripted model.
+port, with the scripted models: Blip's machine tools, and a thread's
+commands in its project's folder, which the node makes and the project's
+threads share.
 
 ## Supervision trees
 
@@ -305,8 +345,9 @@ Photon.Supervisor  one_for_one                      (Photon.Application)
 │   └── Photon.Durable.Scheduler                    GenServer: reconciles with Durable.Policy, starts steps
 ├── PhotonWeb.Endpoint                              Bandit
 │   ├── /node/websocket -> NodeSocket -> NodeChannel        one process per connected node
-│   ├── /live -> OverviewLive | NodesLive | SettingsLive, each with BlipLive (sticky) over it
-│   └── HTTP -> Router -> NodeInstallController | BlipImageController | HealthPlug
+│   ├── /live -> OverviewLive | ProjectNewLive | ProjectLive | ContextFileLive | ThreadLive
+│   │            | NodesLive | SettingsLive, each with BlipLive (sticky) over it
+│   └── HTTP -> Router -> NodeInstallController | ConversationImageController | HealthPlug
 └── PhotonNode  rest_for_one                        only with :local_node; the node tree above, dialing this Endpoint
 ```
 
@@ -322,6 +363,12 @@ Photon.Supervisor  one_for_one                      (Photon.Application)
   a `machine_ops` row, and the node's channel carries the messages. A
   channel crash loses its registration and its cache of where each op's
   live output goes; the node rejoins and both are rebuilt.
+- Step 2 added no process and no registered name. `Photon.Projects` and
+  `Photon.Threads` are APIs over the database and the Store's commit
+  line; a thread is a conversation the durable harness runs like Blip's,
+  so its steps are tasks under `Durable.TaskSupervisor`. A crash loses
+  nothing new: projects, files and threads are rows, and the
+  announcements are hints that every page re-reads on mount.
 - The durable trio is under its own `one_for_one` supervisor, so a
   `Scheduler` restart doesn't touch the steps already running under
   `Durable.TaskSupervisor`; their commits are fenced instead (H2). Its
@@ -551,6 +598,13 @@ sessions whose offset already matches, and keeping counts somewhere cheaper
 than a re-read, would fix it.
 
 ### H8. LiveViews and the shell hook do I/O per message and per render (medium)
+
+> Status (step 2): the shell hook also builds the sidebar's projects and
+> threads (`Threads.sidebar/1`, three small queries) on mount, on
+> `{:projects_changed, _}`, and on `{:durable_tasks, _}` only when a
+> changed task belongs to a listed thread. The thread page keeps tool
+> results without image data, as Blip's panel does, and the project page
+> streams its threads and files.
 
 > Status (step 1): `SessionLive` and the session counts are gone. The
 > shell hook builds the machines from `Machines.roster/0` (the registry
@@ -1443,3 +1497,64 @@ outdated rather than sent work.
 Results at the end of step 1: core 187 passed (12 properties, 175 tests),
 node 98 passed (1 property, 97 tests), hub 483 passed (12 properties, 471
 tests), with `mix precommit` clean in all three.
+
+### Step 2: projects and threads (hub and node)
+
+2026-10-06. Step 2 of `docs/projects-and-blip.md`, planned in
+`docs/plans/step-2-projects-and-threads.md`, added projects (a purpose and
+freeform context files, for any body of work) and threads (durable agent
+conversations in a project that work in its folder on any machine). The
+module map and supervision trees above are the result.
+
+What was added:
+
+- Hub, domain: `Photon.Projects` with its schemas (`Project`,
+  `ContextFile`) and pure `Projects.Rules`; `Photon.Threads`, the
+  `"thread"` profile, with its schema (`Thread`), its pure `Rules`,
+  `Prompt` and `MockScript`, and four context-file tools
+  (`Threads.Tools.*`); `Photon.Assistant.Page`, the page under Blip's
+  panel and the note its model sees; `MachineTools.Guide` and
+  `MachineTools.MockPhrases`, the prompt lines and mock phrasings Blip and
+  threads share.
+- Hub, harness: `Tx.announce/3` (a message broadcast only after its
+  commit, collected by `Changes` and sent by the `Store`), the optional
+  `Profile.workdir/1` that `ToolTask` hands tools in `ToolAPI.workdir`,
+  and `Durable.busy/1`, `busy_in_profile/1` and `last_entry/2`.
+- Hub, web: the project pages (`ProjectNewLive`, `ProjectLive`,
+  `ContextFileLive`, `ThreadLive`) and their words (`ProjectText`); the
+  sidebar with projects and their threads (`Shell`, `Layouts`); the
+  conversation pieces Blip's panel and a thread page share
+  (`ConversationComponents`, `ConversationView`); the thread image route.
+- Node: `Ops.Shell` creates a missing working directory before the
+  `process` checkpoint, and the node joins with `ops:2`.
+
+What moved or changed:
+
+- `Photon.Assistant.Transcript` became `Photon.Transcript` (with
+  `typed/2`), since both conversation pages fold with it.
+  `PhotonWeb.BlipImageController` became `ConversationImageController`
+  (`blip/2`, `thread/2`). `reasoning/1` moved from `Assistant.Prompt` to
+  `Photon.Settings`.
+- The machine tools put the conversation's working directory in each
+  op's `directory`, and say "your working directory". `Machines.joined/1`
+  and `push_for/2` push nothing to a machine connected without `ops:2`,
+  and a call parked on one ends with the outdated message.
+
+Layers. No new process and no registered name: projects, files and
+threads are rows written in Store commits, a thread runs on the durable
+harness as Blip does, and every decision is in a strict-Boundary pure
+module (rules 2, 3, 28, 31). A thread's file write happens inside the
+commit that records its tool result, and its announcement goes out only
+after that commit. `apps/hub/.credo.exs` lists the new core modules in
+`FunctionalCore` (with `PhotonWeb.ProjectText`) and adds
+`Photon.Projects` and `Photon.Threads` to `ProcessNameOwnership`'s API
+modules.
+
+Compatibility. None, on purpose. The new tables come in new migrations
+and the hub database is deleted. Nodes join with `ops:2`, and the hub
+sends no operations to a node without it, so every node is reinstalled
+once.
+
+Results at the end of step 2: core 187 passed (12 properties, 175 tests;
+unchanged), node 105 passed (1 property, 104 tests), hub 689 passed (12
+properties, 677 tests), with `mix precommit` clean in the node and the hub.

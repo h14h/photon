@@ -1367,7 +1367,12 @@ S14. End to end, docs and the final checks. After all of the above.
   and a step 2 entry at the end of the refactor log.
 - `docs/projects-and-blip.md`: a status line under "Build order" and in
   "Hub and nodes" (`ops:2`, the folder made on first use).
-- `apps/hub/lib/photon.ex` moduledoc final pass.
+- `apps/hub/lib/photon.ex` moduledoc final pass (and the line in
+  `Photon.Application`'s that called the durable harness the
+  assistant's).
+- Where step 1's docs still name `ops:1` as the current capability:
+  `docs/verification.md` (and a line in `specs/tla/Durable.md` that a
+  parked call ending on an outdated machine is its error action).
 - Section 7.6 in `apps/node` and `apps/hub`. The PR description says to
   delete the hub database and reinstall every node (`ops:2`).
 

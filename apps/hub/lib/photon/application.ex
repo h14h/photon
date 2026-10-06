@@ -14,9 +14,9 @@ defmodule Photon.Application do
       table of jobs that monitors them
     * `Photon.ChatGPT`: the ChatGPT account (Sign in with ChatGPT), which
       holds the tokens and refreshes them one at a time
-    * `Photon.Durable.Supervisor`: the assistant's durable harness (left
-      out with `config :photon, start_durable: false`, as in tests); see its
-      moduledoc for its own plan
+    * `Photon.Durable.Supervisor`: the durable harness Blip and threads
+      run on (left out with `config :photon, start_durable: false`, as in
+      tests); see its moduledoc for its own plan
     * `PhotonWeb.Endpoint`: HTTP, LiveViews and the node websocket. It
       starts after everything pages and channels call, and stops first.
     * `PhotonNode` (with `config :photon, local_node: true`): a node inside
@@ -63,7 +63,7 @@ defmodule Photon.Application do
     Supervisor.start_link(children, opts)
   end
 
-  # The assistant's harness. Tests start it themselves, inside the sandbox.
+  # The durable harness. Tests start it themselves, inside the sandbox.
   defp durable do
     if Application.get_env(:photon, :start_durable, true),
       do: [Photon.Durable.Supervisor],
