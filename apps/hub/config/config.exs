@@ -30,6 +30,11 @@ config :photon, Photon.Durable,
   profiles: %{"assistant" => Photon.Assistant},
   kinds: %{"node_watch" => Photon.Assistant.NodeWatch, "routine" => Photon.Assistant.Routine}
 
+# How a machine tool call waits for its operation: it checks once a minute
+# (asking an online machine to push the op again), and gives up once the
+# machine has been offline for 10 minutes.
+config :photon, Photon.MachineTools, check_ms: 60_000, offline_limit_ms: 600_000
+
 # The GUI starts the embedded node itself, once the endpoint is up.
 config :photon_node, autostart: false
 

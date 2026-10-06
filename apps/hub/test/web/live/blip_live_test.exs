@@ -9,9 +9,10 @@ defmodule PhotonWeb.BlipLiveTest do
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
-  import Photon.Fixtures, only: [state_record: 1, state_record: 2]
+  import Photon.Fixtures, only: [call: 3, state_record: 1, state_record: 2]
 
   alias Photon.{Assistant, Durable, NodeSessions}
+  alias PhotonCore.Message
 
   @moduletag :durable
 
@@ -191,6 +192,144 @@ defmodule PhotonWeb.BlipLiveTest do
       )
 
       assert has_element?(blip, "#live-output", "Trying again in 2.0s")
+    end
+  end
+
+  describe "a call on a machine" do
+    setup [:page, :opened]
+
+    # Blip's answer making `calls`, as the model's tool calls.
+    defp asked(c, calls) do
+      calls = for {id, name, args} <- calls, do: call(name, args, id)
+
+      Durable.commit(
+        &Durable.Tx.append(&1, c, "assistant", %{"message" => Message.assistant("", calls)})
+      )
+    end
+
+    defp answered(c, call_id, name, content, details) do
+      Durable.commit(
+        &Durable.Tx.append(&1, c, "tool_result", %{
+          "message" => Message.tool_result(call_id, content),
+          "name" => name,
+          "status" => "ok",
+          "details" => details
+        })
+      )
+    end
+
+    # Output from the call, as `Photon.Machines` passes on a node's `op.output`.
+    defp printed(c, call_id, stream, text) do
+      Durable.live(c, %{
+        "type" => "tool_output",
+        "call_id" => call_id,
+        "stream" => stream,
+        "text" => text
+      })
+    end
+
+    test "shows what it ran and where, and streams its output until the result comes", %{
+      blip: blip,
+      conversation: c
+    } do
+      asked(c, [{"c1", "shell", %{"machine" => "mm1", "command" => "make test"}}])
+
+      assert has_element?(blip, "#action-c1[data-tool=shell][data-status=pending]")
+      assert has_element?(blip, "#action-c1 summary code", "make test")
+      assert has_element?(blip, "#action-c1 summary", "Ran make test on mm1")
+      refute has_element?(blip, "#action-c1-tail")
+
+      printed(c, "c1", "out", "compiling\n")
+      printed(c, "c1", "err", "1 warning\n")
+
+      assert has_element?(blip, "#action-c1-tail pre", ~r/compiling\s+1 warning/)
+      # Each output chunk re-renders the answer; an opened result stays open.
+      assert has_element?(blip, "#action-c1-details[phx-mounted*=ignore_attrs]")
+
+      answered(c, "c1", "shell", "compiling\nStderr:\n1 warning\nExit code: 2", %{
+        "machine" => "mm1",
+        "kind" => "shell",
+        "status" => "completed",
+        "command" => "make test",
+        "exit_code" => 2
+      })
+
+      refute has_element?(blip, "#action-c1-tail")
+      assert has_element?(blip, "#action-c1[data-status=done]")
+      assert has_element?(blip, "#action-c1 summary", "exit 2")
+      assert has_element?(blip, "#action-c1 details pre", "Exit code: 2")
+
+      # Output that comes after the result has nowhere to go.
+      printed(c, "c1", "out", "late")
+
+      refute has_element?(blip, "#action-c1-tail")
+    end
+
+    test "shows the image a view_image call returns, loaded on its own", %{
+      blip: blip,
+      conversation: c
+    } do
+      asked(c, [{"c2", "view_image", %{"machine" => "mm1", "path" => "shot.png"}}])
+      assert has_element?(blip, "#action-c2", "Looked at shot.png on mm1")
+
+      result =
+        answered(
+          c,
+          "c2",
+          "view_image",
+          [
+            Message.image("image/png", "iVBORw0KGgo="),
+            Message.text("1x1 image/png, /home/me/shot.png on mm1")
+          ],
+          %{
+            "machine" => "mm1",
+            "kind" => "view_image",
+            "status" => "completed",
+            "path" => "shot.png"
+          }
+        )
+
+      src = "/blip/images/#{result.id}/0"
+      assert has_element?(blip, ~s(#action-c2 img#action-c2-image-0[src="#{src}"]))
+      # The page carries no image data, so a re-render of the answer sends none.
+      refute render(blip) =~ "iVBORw0KGgo="
+
+      conn = get(build_conn(), src)
+      assert response(conn, 200) == Base.decode64!("iVBORw0KGgo=")
+      assert get_resp_header(conn, "content-type") == ["image/png"]
+
+      assert has_element?(
+               blip,
+               "#action-c2-image-0[alt='1x1 image/png, /home/me/shot.png on mm1']"
+             )
+    end
+
+    test "a failed or canceled operation shows as such, named from the call", %{
+      blip: blip,
+      conversation: c
+    } do
+      asked(c, [
+        {"c3", "shell", %{"machine" => "mm1", "command" => "false"}},
+        {"c4", "shell", %{"machine" => "mm2", "command" => "sleep 99"}},
+        {"c5", "list_machines", %{}}
+      ])
+
+      # An error result carries no details: the line comes from the arguments.
+      Durable.commit(
+        &Durable.Tx.append(&1, c, "tool_result", %{
+          "message" => Message.tool_result("c3", "mm1 runs an older photon-node"),
+          "name" => "shell",
+          "status" => "error",
+          "details" => %{}
+        })
+      )
+
+      answered(c, "c4", "shell", "Error: canceled", %{"kind" => "shell", "status" => "canceled"})
+      answered(c, "c5", "list_machines", "mm1, online", %{})
+
+      assert has_element?(blip, "#action-c3[data-status=error]", "Ran false on mm1")
+      assert has_element?(blip, "#action-c4[data-status=stopped]", "Ran sleep 99 on mm2")
+      assert has_element?(blip, "#action-c5[data-status=done]", "Checked your machines")
     end
   end
 

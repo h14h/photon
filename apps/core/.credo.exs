@@ -42,6 +42,8 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                ]},
               # 28, 29: the functional core does no I/O and touches no processes.
               # `PhotonCore.ID.new/1` is the one place that reads the clock and the RNG.
+              # `PhotonCore.Operation.new/4` mints an operation ID with it for the
+              # node's session tools; it goes when sessions do.
               {PhotonCredo.Check.FunctionalCore,
                [
                  files: lib_only,
@@ -55,11 +57,15 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "PhotonCore.LLM.Responses.Request",
                    "PhotonCore.LLM.Responses.Response",
                    "PhotonCore.LLM.Relay.Wire",
-                   "PhotonCore.LLM.MockAgent"
+                   "PhotonCore.LLM.MockAgent",
+                   "PhotonCore.Output",
+                   "PhotonCore.Operation",
+                   "PhotonCore.Operation.Wire"
                  ],
                  nondeterministic_extra: ["PhotonCore.ID.new"],
                  allowed: [
-                   {"PhotonCore.ID", ["System.system_time", ":crypto.strong_rand_bytes"]}
+                   {"PhotonCore.ID", ["System.system_time", ":crypto.strong_rand_bytes"]},
+                   {"PhotonCore.Operation", ["PhotonCore.ID.new"]}
                  ]
                ]},
               # 30: callbacks stay thin (core has none; kept for new code).

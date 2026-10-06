@@ -18,8 +18,10 @@ defmodule Photon.Durable.Tool do
       call's result is (not if the call was aborted meanwhile)
 
   Arguments are validated against `parameters/0` before `execute/2` runs.
-  `on_interrupt/2`, if defined, runs in the commit that aborts or fails the
-  call, so a tool can hand off work it already started.
+  `on_interrupt/2`, if defined, runs in the commit that ends the call
+  without a result from the tool: an abort, a failed task, or a raise in
+  `execute/2` or `resume/2` (recorded as an error result). So a tool can
+  hand off or cancel work it already started, however the call ended.
   """
 
   # A contract (with its helpers), which the functional core may name.

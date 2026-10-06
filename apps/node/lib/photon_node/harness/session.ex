@@ -73,7 +73,6 @@ defmodule PhotonNode.Harness.Session do
     deps: [
       PhotonNode.Harness.Context,
       PhotonNode.Harness.Inbox,
-      PhotonNode.Harness.Operation,
       PhotonNode.Harness.SkillPrompt,
       PhotonNode.Harness.Tools,
       PhotonCore,
@@ -81,8 +80,8 @@ defmodule PhotonNode.Harness.Session do
       Jason
     ]
 
-  alias PhotonCore.{ID, LLM, Message}
-  alias PhotonNode.Harness.{Context, Inbox, Operation, SkillPrompt, Tools}
+  alias PhotonCore.{ID, LLM, Message, Operation}
+  alias PhotonNode.Harness.{Context, Inbox, SkillPrompt, Tools}
 
   @grace_ms 1_000
   @idle_stop_ms 600_000

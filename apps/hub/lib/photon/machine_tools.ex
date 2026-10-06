@@ -1,0 +1,42 @@
+defmodule Photon.MachineTools do
+  @moduledoc """
+  The tools that run work on the user's machines: `shell` runs a command,
+  `view_image` shows the model an image file, and `list_machines` says
+  which machines there are (section 3 of
+  `docs/plans/step-1-machine-tools.md`). They live outside
+  `Photon.Assistant` because more than one profile will use them; a
+  profile lists `tools/0` among its own.
+
+  Each `shell` or `view_image` call is one operation on one machine
+  (`Photon.Machines`). The call derives the op ID from its durable task,
+  commits the op, and parks on the op's signal (`signal_key/1`) until the
+  machine reports the result, checking once a minute in between. The
+  parked task holds the call's state, so there is no process per call
+  here: the durable harness waits, and the machine's channel carries the
+  messages. `Photon.MachineTools.Call` has the steps.
+
+  By layer:
+
+    * functional core (pure): `Photon.MachineTools.Translate` (arguments
+      to an operation, a snapshot to a tool result) and
+      `Photon.MachineTools.Wait` (the op ID, when to check, when to give
+      up, and the offline message)
+    * boundary: the `Photon.Durable.Tool` modules
+      `Photon.MachineTools.Shell`, `Photon.MachineTools.ViewImage` and
+      `Photon.MachineTools.ListMachines`, and `Photon.MachineTools.Call`,
+      which the first two share
+  """
+
+  use Boundary, deps: [Photon.Durable, Photon.Machines, PhotonCore], exports: []
+
+  alias Photon.Machines
+  alias Photon.MachineTools.{ListMachines, Shell, ViewImage}
+
+  @doc "The tool modules, for a profile's `tools/1`."
+  @spec tools() :: [module()]
+  def tools, do: [Shell, ViewImage, ListMachines]
+
+  @doc "The signal a call on op `op_id` waits for; it fires when the op has its result."
+  @spec signal_key(String.t()) :: String.t()
+  defdelegate signal_key(op_id), to: Machines
+end

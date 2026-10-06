@@ -20,8 +20,8 @@ defmodule PhotonNode.Case do
 
   using do
     quote do
-      alias PhotonCore.Message
-      alias PhotonNode.Harness.{Context, Inbox, ModelRequest, Operation, Output, Session, Tools}
+      alias PhotonCore.{Message, Operation, Output}
+      alias PhotonNode.Harness.{Context, Inbox, ModelRequest, Session, Tools}
       alias PhotonNode.SessionDriver, as: Driver
 
       import PhotonNode.Fixtures

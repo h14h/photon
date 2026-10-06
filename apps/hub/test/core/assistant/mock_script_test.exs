@@ -14,7 +14,9 @@ defmodule Photon.Assistant.MockScriptTest do
     args
   end
 
-  test "lists nodes" do
+  test "lists machines, and nodes" do
+    assert calls(ask("machines")) == [{"list_machines", %{}}]
+    assert calls(ask("list machines")) == [{"list_machines", %{}}]
     assert calls(ask("nodes")) == [{"list_nodes", %{}}]
   end
 
@@ -23,9 +25,25 @@ defmodule Photon.Assistant.MockScriptTest do
     assert calls(ask(Page.note("nodes", page))) == [{"list_nodes", %{}}]
   end
 
-  test "hands a task to a node" do
+  test "runs a command on a machine" do
     assert calls(ask("on mp1: $ uptime")) ==
-             [{"run_on_node", %{"node" => "mp1", "task" => "$ uptime", "wait_seconds" => 5}}]
+             [{"shell", %{"machine" => "mp1", "command" => "uptime"}}]
+
+    assert calls(ask("on local: $ sleep 1; echo done")) ==
+             [{"shell", %{"machine" => "local", "command" => "sleep 1; echo done"}}]
+  end
+
+  test "looks at an image on a machine" do
+    assert calls(ask("on mm1: look at /tmp/shot.png")) ==
+             [{"view_image", %{"machine" => "mm1", "path" => "/tmp/shot.png"}}]
+  end
+
+  test "hands anything else to a node's agent" do
+    assert calls(ask("on mp1: check the backups")) ==
+             [
+               {"run_on_node",
+                %{"node" => "mp1", "task" => "check the backups", "wait_seconds" => 5}}
+             ]
   end
 
   test "checks a session, remembers, and schedules" do
@@ -68,8 +86,20 @@ defmodule Photon.Assistant.MockScriptTest do
     assert Message.text_of(ask(failed)) == "box didn't finish. The report above says why."
   end
 
-  defp relay(text),
-    do: Message.text_of(MockScript.respond(%{messages: [Message.tool_result("c1", text)]}))
+  test "relays a machine tool's result, and says an image is here" do
+    assert relay("hello") == "hello"
+    assert relay("Error: mm1 has been offline") == "That didn't work: mm1 has been offline"
+
+    image = [
+      Message.image("image/png", "iVBORw0KGgo="),
+      Message.text("1x1 image/png, /tmp/dot.png on local")
+    ]
+
+    assert relay(image) == "Here it is.\n\n1x1 image/png, /tmp/dot.png on local"
+  end
+
+  defp relay(content),
+    do: Message.text_of(MockScript.respond(%{messages: [Message.tool_result("c1", content)]}))
 
   test "answers anything else with its help" do
     assert Message.text_of(ask("hello")) =~ "I'm Blip, on the scripted model"

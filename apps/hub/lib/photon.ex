@@ -11,6 +11,8 @@ defmodule Photon do
     * `Photon.NodeSessions`: the hub's copy of each node session and the
       outbox of inputs for it
     * `Photon.Nodes`: which nodes are connected, and commands to them
+    * `Photon.Machines`: the machines the hub knows, and the operations
+      (shell commands, image reads) it runs on them
     * `Photon.Settings`: the model and the assistant's instructions
     * `Photon.Provision`, `Photon.NodeDist`, `Photon.Hub`,
       `Photon.Tailnet`: putting nodes on machines, and how they reach the hub
@@ -21,7 +23,8 @@ defmodule Photon do
   moduledoc names its pure core and its processes. The pure modules are
   `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall,
   Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Report,
-  Transcript, MockScript}`, `Photon.NodeSessions.Mirror`,
+  Transcript, MockScript}`, `Photon.Machines.{Rules, Roster}`,
+  `Photon.MachineTools.{Translate, Wait}`, `Photon.NodeSessions.Mirror`,
   `Photon.NodeTranscript`, `Photon.Provision.{Jobs, Script}`, and
   `Photon.Markdown`. `Photon.Application` holds the lifecycle plan.
   `PhotonWeb` is the boundary for browsers and nodes: its LiveViews,
@@ -46,6 +49,7 @@ defmodule Photon do
       Events,
       Hub,
       InstallScript,
+      Machines,
       Markdown,
       NodeDist,
       NodeKeys,

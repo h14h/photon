@@ -3,7 +3,7 @@ defmodule PhotonNode.Harness.Ops.SkillUse do
 
   @behaviour PhotonNode.Harness.Ops.Job
 
-  alias PhotonNode.Harness.{Operation, Output}
+  alias PhotonCore.{Operation, Output}
 
   @impl true
   @spec run(Operation.t()) :: Operation.t()

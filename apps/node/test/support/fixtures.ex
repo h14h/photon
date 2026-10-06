@@ -7,8 +7,8 @@ defmodule PhotonNode.Fixtures do
   # Test support sits outside the layering (compiled only for tests).
   use Boundary, top_level?: true, check: [in: false, out: false]
 
-  alias PhotonCore.{LLM, Message}
-  alias PhotonNode.Harness.{Operation, Session, Store}
+  alias PhotonCore.{LLM, Message, Operation}
+  alias PhotonNode.Harness.{Session, Store}
 
   ## Sessions
 

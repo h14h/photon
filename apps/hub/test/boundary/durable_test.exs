@@ -115,6 +115,28 @@ defmodule Photon.DurableTest do
     end
   end
 
+  describe "a tool that raises" do
+    setup :conversation
+
+    # The raise is logged with its stack trace.
+    @tag :capture_log
+    test "ends its call with an error, and its on_interrupt runs in the same commit", %{
+      conversation: c
+    } do
+      {:ok, s} = Durable.submit(c, "raise")
+
+      ended =
+        await_change(c, &Enum.any?(&1.entries, fn e -> e.kind == "tool_result" end))
+
+      assert [%{kind: "notice"}, %{kind: "tool_result", data: result}] = ended.entries
+      assert result["status"] == "error"
+      assert PhotonCore.Message.text_of(result["message"]) == "Error: boom"
+
+      assert %{status: "done"} = await_settled(c, s.id)
+      assert texts(c, "notice") == ["handed off"]
+    end
+  end
+
   describe "a step interrupted mid-run" do
     setup :conversation
 

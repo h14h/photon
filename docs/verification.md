@@ -5,8 +5,10 @@ was fixed. There are three parts:
 
 - **TLA+ specs** in `specs/tla`, checked with TLC: `NodeSync` (hub and node
   session replication and the input outbox), `Durable` (the hub's durable
-  harness and the assistant's node work) and `Coordinator` (one node
-  session's coordinator, its shell operations and the commands they run).
+  harness and the assistant's node work), `Coordinator` (one node
+  session's coordinator, its shell operations and the commands they run)
+  and `HubOps` (build step 1's operation protocol: Blip's machine tools on
+  the hub, their op rows, and the node's executor and journal).
 - **Property tests** (StreamData) in each app's `test/property`.
 - **Regression tests**: one or more deterministic ExUnit tests per bug,
   each written to fail on the code before the fix.
@@ -29,6 +31,15 @@ below the level of the specs). See the node table.
 
 Nothing changed in the hub-node wire protocol, the node session log format
 or the hub database schema; see "Compatibility".
+
+Build step 1 (`docs/plans/step-1-machine-tools.md`) added the operation
+protocol, and `HubOps.tla` was written for it before the code. TLC found
+eight problems in the plan's first version of the protocol (H1 to H8),
+and the plan was fixed before any code was written; four more bug
+configs show the properties catch rules the plan already had. Once the
+code was built, it was compared with the spec action by action, and no
+modeled rule had changed. See "`HubOps.tla`" below and the step 1 table
+under "Findings, triage and fixes".
 
 ## What each part covers
 
@@ -90,6 +101,38 @@ physical) is left; every input is answered, every call gets a result, every
 
 Details: `specs/tla/Coordinator.md`.
 
+### `HubOps.tla`
+
+Build step 1's operation protocol, end to end, for one machine and one or
+two `shell` calls: the call as a durable tool task
+(`Photon.MachineTools.Call` under `Durable.ToolTask`), its op row and
+signal (`Photon.Machines`, `Machines.Rules`), the Store's one line of
+commits, the machine's `NodeChannel` and its mailbox, the websocket in
+both directions, the node's `Connection`, and the node's executor with its
+journal, operation processes and the OS commands. Faults: websocket drops,
+hub restarts, Scheduler-only crashes (orphaned steps), node restarts that
+keep or kill running commands, the node losing its data directory, user
+Stops at any point, tool steps that end in an error, and repeated
+`op.start` pushes.
+
+Properties: a command runs at most once per call (and, after data loss,
+an op the hub had confirmed never runs again); each call gets exactly one
+result, and it is what its own op did; the offline message says "didn't
+run" only when the command never ran; no `op.start` for a canceled row,
+and the node never starts an op it was told to cancel; the node forgets an
+op only after the hub recorded its result; a finished call leaves no row
+that may still start; every call is answered, a cancel takes effect,
+results are dropped on the node, and every row closes.
+
+Unlike the other specs, its `-bug-*` configs are expected to fail. Each
+puts back one defect with a switch in `Bugs` and shows the property that
+catches it. Step 1 adds the `op.*` messages next to the session protocol
+on the same channel; a node that doesn't list `"ops:1"` in its
+capabilities is reported as outdated and gets no operations.
+
+Details, the action-to-code map, per-config results and how the built
+code compares with the spec: `specs/tla/HubOps.md`.
+
 ### Property tests
 
 | App | File | What it checks |
@@ -100,13 +143,15 @@ Details: `specs/tla/Coordinator.md`.
 | core | `message_property_test.exs` | `Message.arguments` never raises and decodes objects exactly; text/parts agree; `MockAgent` answers the same directly and through the hub's proxy |
 | node | `context_property_test.exs` | `Context.build` pairs every tool call with one result, also when providers reuse call IDs; every input and finished result appears once, in order |
 | node | `inbox_property_test.exs` | first valid input wins, repeats are dropped, the seen set is seeded from the log; validation never raises; only settings carry parameters; accepted content can always be encoded |
-| node | `output_property_test.exs` | `Output.bound` gives valid UTF-8 and the documented head/tail/marker shape |
+| core | `output_property_test.exs` | `Output.bound` gives valid UTF-8 and the documented head/tail/marker shape (moved from the node in step 1, with `PhotonCore.Output`) |
+| node | `journal_property_test.exs` | step 1: an operation's journal entry survives a crash at any point of a write (torn temporary files, a crash between sync and rename): `read/2` returns the last entry fully written, or none, and the next write lands |
 | node | `store_property_test.exs` | a log torn at any byte reopens to its complete records; `read` never raises on a torn tail |
 | node | `session_property_test.exs` | random sessions on the pure session core (no processes or files), with coordinator restarts between handlers: replaying the log reproduces the session; effects keep the server's view (request, timers) in step; a request starts after its turn is persisted and only one runs; operations start after their status is persisted; a final status shows only snapshots persisted before it; a hard stop holds and no input is folded into it; the context stays well formed. Once settled, every input is logged once and answered, and every call has one final status |
 | node | `coordinator_replay_property_test.exs` | random sessions on the real harness and mock model, with coordinator kills at random log positions, resends and stops: the log is well formed, each input logged once and answered, each command run at most once, and a restart from the final log writes nothing and reproduces the live state; a hard stop holds across a crash while stopping |
 | hub | `node_sessions_property_test.exs` | `ingest` under duplicated, reordered and dropped deliveries keeps the hub's copy a prefix that converges after a resync; outbox states and signals match a model; arbitrary records never raise |
 | hub | `durable_context_property_test.exs` | `Context.messages` pairs calls and results, sees nothing before the newest reset |
 | hub | `durable_schema_property_test.exs` | `Schema.validate` never raises on the real tool schemas or on JSON Schema beyond its subset, and agrees with an independent reading of the subset |
+| hub | `machine_ops_property_test.exs` | step 1: op rows under duplicated, stale and foreign snapshots, unknown ops, reconnects, cancels and claims, against `Photon.Machines` and the database: a row only moves forward, so an op finishes at most once; its signal fires exactly when it leaves `open`; `op.ack` only for finished or closed rows (or none); no `op.start` for a canceled row; a result is claimed at most once |
 | hub | `durable_model_property_test.exs` | model-based test of the harness (submit, steer, follow-up, retried request IDs, the `go` signal, abort, full and scheduler-only restarts): one active run; retried requests submit once; once quiet, every submission settled and every call has one result; the transcript stays well formed across scheduler restarts; an abort before the task module is loaded still settles |
 
 All of them run by default now. Properties tagged `:known_bug` (none at the
@@ -157,10 +202,12 @@ java -XX:+UseParallelGC -cp ~/.local/share/tla/tla2tools.jar tlc2.TLC \
   -workers auto -deadlock -metadir /tmp/tlc/<Cfg> -config <Cfg>.cfg <Spec>.tla
 ```
 
-where `<Spec>` is `NodeSync`, `Durable` or `Coordinator` and `<Cfg>` is
-one of its `.cfg` files. Add `-lncheck final` for configs with
+where `<Spec>` is `NodeSync`, `Durable`, `Coordinator` or `HubOps` and
+`<Cfg>` is one of its `.cfg` files. Add `-lncheck final` for configs with
 `PROPERTIES`, and `-continue` for `Coordinator-witness.cfg`. `-deadlock`
-is needed because every modeled behavior ends.
+is needed because every modeled behavior ends (the `HubOps` configs also
+turn deadlock checking off themselves). The `HubOps-bug-*` configs are
+meant to fail; `specs/tla/HubOps.md` lists the property each one breaks.
 
 To run every config of every spec:
 
@@ -233,6 +280,23 @@ should. One bug was found and fixed with tests (core-negative-retry-after
 in the core table); the spec notes' code map was brought up to date where
 it still named code the refactors had moved.
 
+### HubOps (step 1, 2026-10-05)
+
+`HubOps.tla` has 19 configs. The 7 clean ones pass, the largest being
+`HubOps-two.cfg` (two calls, 49.3M distinct states, 27m40s),
+`HubOps-errors.cfg` (1.8M, 23m58s, with every liveness property) and
+`HubOps.cfg` (10.2M, 5m08s). Each of the 12 bug configs fails on its
+property within a few seconds, with a trace of 5 to 24 states. Times are
+on the shared 12-core machine with 4 workers (2 for the bug configs).
+Per-config counts and traces: `specs/tla/HubOps.md`.
+
+They were run against the plan, before the code. When the code was done,
+it was compared with the spec action by action; no rule the spec models
+had changed, so the configs weren't run again. The differences in shape
+(for example `resume/2` reading the row before its commit, or a request
+reaching a channel before its `:joined`) are written up in `HubOps.md`
+with why the spec still covers them.
+
 ## Findings, triage and fixes
 
 "Test" names the regression tests (file: test name). Specs name the config
@@ -280,6 +344,27 @@ that reproduced the bug and now passes.
 | hub-function-exported-unloaded | `on_abort`/`on_fail`/`replay` were looked up with `function_exported?/3`, false for an unloaded module, so an early abort skipped `on_abort` and left input `placed` | `Code.ensure_loaded?/1` first | `durable_regression_test.exs`: "a run aborted before its task module is loaded still settles its input"; the property of the same name | - |
 | hub-schema-raises-beyond-subset (hardening) | boolean subschemas and enums of objects crashed validation; type lists accepted anything | boolean subschemas, type lists and non-text enums handled | `durable/schema_test.exs`: "boolean subschemas allow anything or nothing", "an enum of objects reports a mismatch instead of raising", "a list of types accepts any of them and rejects the rest" | property |
 | hub-ingest-raises-on-malformed-record (hardening) | a record with a nil or non-text input id, or a non-text answer, crashed the ingest (and the channel, on every replay) | such fields are ignored; a non-object record is stored wrapped | `node_sessions_test.exs`: "records the hub can't use are stored without crashing the ingest" | property |
+
+### Step 1: the operation protocol
+
+`HubOps.tla` found H1 to H8 in the plan's first version of the protocol;
+each was fixed in the plan before the code was written, so the code never
+had them. The tests pin each fix in the code. H2 is a property of how the
+code is built (the channel's reads are `Durable.commit/1` calls, so they
+wait for a commit in progress), and no test can force the interleaving.
+Test files are under `apps/hub/test` unless they name the node.
+
+| ID | Problem | Fix (plan section 2.3) | Test | Spec |
+| --- | --- | --- | --- | --- |
+| H1 | an `op.start` built by `Machines.start/1` before the result was recorded, and pushed after the `op.ack`, ran a finished command again | hub rule 2: only the channel builds `op.start`, from the row as it is when it pushes (`Machines.push_for/2`); a `{:command, "op.start", _}` is dropped | `boundary/machines_test.exs`: "nothing once the row has finished: the stale-start trace"; `web/channels/node_channel_test.exs`: "an op.start built anywhere but the channel is dropped" | `HubOps-bug-stale-start` |
+| H2 | a join that read the rows around the abort commit missed its `cancel`, and the command ran on | hub rule 2: the channel's reads go through `Durable.commit/1` and wait for a commit in progress | by construction (see above) | `HubOps-bug-unserialized-read` |
+| H3 | a rolled-back Stop let a canceled op start, because the node answered "canceled before it started" without keeping it | node rule 7: that answer is journaled and kept until `op.ack` | node `boundary/executor_test.exs`: "a cancel before the start is journaled, so a later start runs nothing"; `integration/machine_tools_e2e_test.exs`: "an op stopped while the node was away is canceled before it starts when the node joins" | `HubOps-bug-cancel-unjournaled` |
+| H4 | a finished row whose call was stopped kept its snapshot (up to 5 MB) for good | hub rule 7: `cancel_tx/2` closes a finished row and drops it; `abandon_tx/2` claims it | `boundary/machine_tools_test.exs`: "Stop after the result came in, before the call claimed it, closes the row without it"; `boundary/machines_test.exs`: "a result that came in first is closed and dropped", "an op that finished meanwhile is claimed instead" | `HubOps-bug-keep-finished` |
+| H5 | a step orphaned by a Scheduler-only crash inserted its row after Stop, leaving an op nothing would cancel | hub rule 9: the insert happens only while the task is unfinished and not marked for abort | `boundary/machines_test.exs`: "inserts nothing for a task marked for abort, or finished"; `boundary/machine_tools_test.exs`: "a stopped task's op isn't recorded" | `HubOps-bug-unfenced-insert` |
+| H6 | an offline give-up that raced a reconnect only set `cancel`, so the command the join had just started ran on | hub rule 7: `abandon_tx/2` sends `op.cancel` from inside its commit, like `cancel_tx/2` | `boundary/machine_tools_test.exs`: "the machine comes back between the offline check and the give-up: op.start went out, so the message hedges and the node gets op.cancel" | `HubOps-bug-abandon-silent` |
+| H7 | the offline message said "the command didn't run" when the node had run it but no snapshot had arrived | hub rules 2 and 7: rows record `pushed`, and "didn't run" needs neither `pushed` nor `confirmed` | `core/machine_tools/wait_test.exs`: "says the command didn't run only when it was never pushed and never confirmed"; `boundary/machine_tools_test.exs`: the two offline tests | `HubOps-bug-offline-confirmed` |
+| H8 | a call that ended in an error (a raise, or an error result after the row existed) left its row open for the next join to start | hub rule 10: every error result after the op ID cancels the op in its commit; a rescued raise runs `on_interrupt/2`; a rerun that finds the row parks | `boundary/machine_tools_test.exs`: "a raise after the op exists ends with an error, and cancels the op", "parks without checking the machine, even if it is now unknown"; `boundary/durable_test.exs`: "ends its call with an error, and its on_interrupt runs in the same commit" | `HubOps-bug-error-skips-cancel` |
+| rules the plan had | an early `op.ack`, a spawn before the journal, an `op.start` after a cancel, no `known` flag | hub rules 4 and 7, node rules 3 and 4 | `boundary/machines_test.exs`: "a result is stored with its signal, then acked", "a join resends op.cancel for a canceled row, and never op.start"; node `boundary/executor_test.exs`: "an operation the hub has seen but the node has no record of fails without running", "a cancel journaled before the command's start means it never spawns"; node `boundary/shell_test.exs`: "a command doesn't start until its owner has stored the checkpoint" | `HubOps-bug-ack-early`, `-bug-spawn-before-journal`, `-bug-start-after-cancel`, `-bug-no-known` |
 
 ### Core: model client and message format
 

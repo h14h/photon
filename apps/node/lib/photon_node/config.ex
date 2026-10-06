@@ -14,8 +14,9 @@ defmodule PhotonNode.Config do
   | `:link` | none | `PhotonNode.Connection` |
 
   `:link` is the module the harness announces records and live data
-  through (`PhotonNode.Harness.Link`); only a host embedding the node
-  would change it.
+  through (`PhotonNode.Harness.Link`), and the executor its snapshots and
+  output (`PhotonNode.Executor.Link`); only a host embedding the node or a
+  test would change it.
 
   Model requests go through the hub (`llm_base_url/1`), which holds the
   provider credentials, so a node never needs an API key.
@@ -81,6 +82,13 @@ defmodule PhotonNode.Config do
   @doc "Session logs: `<id>.jsonl`, plus `operations/<id>/` for command output."
   @spec sessions_dir(t()) :: String.t()
   def sessions_dir(config), do: Path.join(config.data_dir, "sessions")
+
+  @doc """
+  The hub's operations: `<op_id>/`, holding the executor's journal entry
+  (`op.json`) and a shell command's files.
+  """
+  @spec ops_dir(t()) :: String.t()
+  def ops_dir(config), do: Path.join(config.data_dir, "ops")
 
   @doc "The hub's model relay, reached through the same host as the websocket."
   @spec llm_base_url(t()) :: String.t()

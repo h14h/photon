@@ -3,9 +3,11 @@ defmodule Photon.Assistant do
   The assistant that lives on the hub: one long-running conversation the
   user talks to in the web UI, run by `Photon.Durable`.
 
-  It doesn't run commands itself. It hands work to nodes, each of which runs
-  its own agent (`PhotonNode.Harness`), and keeps a memory, a list of
-  schedules, and an eye on everything it started. Node work is
+  It runs commands and looks at images on the user's machines itself, with
+  the machine tools (`Photon.MachineTools`: `shell`, `view_image`,
+  `list_machines`), and keeps a memory, a list of schedules, and an eye on
+  everything it started. Longer work it can still hand to a node's own
+  agent (`PhotonNode.Harness`) with `run_on_node`. Node work is
   asynchronous: a `run_on_node` call waits briefly for the answer, and if the
   work takes longer, a background watcher (`Photon.Assistant.NodeWatch`)
   posts the node's report into the conversation when it finishes, which
@@ -19,7 +21,8 @@ defmodule Photon.Assistant do
       (how node work's outcome reads), `Photon.Assistant.Transcript` (what
       the page shows), `Photon.Assistant.MockScript` (the mock model)
     * boundary: the tools in `Photon.Assistant.Tools`, and
-      `Photon.Assistant.NodeWork`, what the node tools share
+      `Photon.Assistant.NodeWork`, what the node tools share; the machine
+      tools are their own context, `Photon.MachineTools`
     * workers: the task kinds `Photon.Assistant.NodeWatch` and
       `Photon.Assistant.Routine`, run by the durable scheduler
   """
@@ -28,6 +31,7 @@ defmodule Photon.Assistant do
     deps: [
       Photon.ChatGPT,
       Photon.Durable,
+      Photon.MachineTools,
       Photon.NodeSessions,
       Photon.Nodes,
       Photon.Settings,
@@ -38,8 +42,8 @@ defmodule Photon.Assistant do
 
   @behaviour Photon.Durable.Profile
 
-  alias Photon.Assistant.{Memory, Page, Prompt, Tools}
-  alias Photon.{Durable, Settings}
+  alias Photon.Assistant.{Memory, Page, Prompt, Tools, Transcript}
+  alias Photon.{Durable, MachineTools, Settings}
   alias Photon.Durable.{Entry, Submission, TaskRecord}
 
   @tools [
@@ -153,6 +157,19 @@ defmodule Photon.Assistant do
   @spec entries(String.t()) :: [Entry.t()]
   def entries(conversation_id), do: Durable.entries(conversation_id)
 
+  @doc """
+  The image at `index` among a tool result's images in the assistant's
+  conversation, for the page to load on its own (`Transcript.image/2`):
+  `{:ok, mime, bytes}`, or `:error` if there is no such entry or image.
+  """
+  @spec image(String.t(), non_neg_integer()) :: {:ok, String.t(), binary()} | :error
+  def image(entry_id, index) do
+    case Durable.entry(conversation_id(), entry_id) do
+      nil -> :error
+      entry -> Transcript.image(entry, index)
+    end
+  end
+
   @doc "Whether the assistant is working on something."
   @spec busy?(String.t()) :: boolean()
   def busy?(conversation_id), do: Durable.busy?(conversation_id)
@@ -196,7 +213,7 @@ defmodule Photon.Assistant do
   end
 
   @impl true
-  def tools(_conversation), do: @tools
+  def tools(_conversation), do: MachineTools.tools() ++ @tools
 
   @impl true
   def system_prompt(_conversation) do

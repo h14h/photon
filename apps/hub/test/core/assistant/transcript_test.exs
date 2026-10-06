@@ -21,7 +21,7 @@ defmodule Photon.Assistant.TranscriptTest do
       result = tool_result_entry("c1", "went", id: "e_2", seq: 2)
 
       assert Transcript.index([asked, result]) == %{
-               results: %{"c1" => result.data},
+               results: %{"c1" => Map.put(result.data, "entry_id", "e_2")},
                calls: %{"c1" => asked},
                settled: %{}
              }
@@ -36,7 +36,35 @@ defmodule Photon.Assistant.TranscriptTest do
       second = tool_result_entry("c1", "two", id: "e_2", seq: 2)
 
       assert %{results: %{"c1" => data}} = Transcript.index([first, second])
-      assert data == second.data
+      assert data == Map.put(second.data, "entry_id", "e_2")
+    end
+
+    test "results keep no image data; image/2 gives it back from the entry" do
+      png = Base.encode64("png bytes")
+
+      shot =
+        tool_result_entry("c1", [Message.image("image/png", png), Message.text("1x1")], id: "e_7")
+
+      assert %{"c1" => data} = Transcript.add_result(%{}, shot)
+      assert data["entry_id"] == "e_7"
+
+      assert [%{"type" => "image", "mime" => "image/png"} = part] =
+               Message.images(data["message"])
+
+      refute Map.has_key?(part, "data")
+      assert Message.text_of(data["message"]) == "1x1"
+
+      assert Transcript.image(shot, 0) == {:ok, "image/png", "png bytes"}
+      assert Transcript.image(shot, 1) == :error
+      assert Transcript.image(user_entry("hi"), 0) == :error
+    end
+
+    test "image/2 serves only images of the types view_image returns, and valid data" do
+      html = tool_result_entry("c1", [Message.image("text/html", Base.encode64("<script>"))])
+      bad = tool_result_entry("c1", [Message.image("image/png", "not base64!")])
+
+      assert Transcript.image(html, 0) == :error
+      assert Transcript.image(bad, 0) == :error
     end
   end
 
@@ -167,6 +195,56 @@ defmodule Photon.Assistant.TranscriptTest do
       assert Transcript.action_status(%{"status" => "ok"}, %{}) == :done
       assert Transcript.action_status(%{"status" => "aborted"}, %{}) == :stopped
       assert Transcript.action_status(%{"status" => "interrupted"}, %{}) == :error
+    end
+
+    test "a machine operation that failed is an error, and one that was canceled is stopped" do
+      ok = %{"status" => "ok"}
+      assert Transcript.action_status(ok, %{"kind" => "shell", "status" => "completed"}) == :done
+      assert Transcript.action_status(ok, %{"kind" => "shell", "status" => "failed"}) == :error
+
+      assert Transcript.action_status(ok, %{"kind" => "shell", "status" => "canceled"}) ==
+               :stopped
+    end
+  end
+
+  describe "a running call's output" do
+    defp output(call_id, text, stream \\ "out"),
+      do: %{"type" => "tool_output", "call_id" => call_id, "stream" => stream, "text" => text}
+
+    test "is kept per call, both streams in the order they came" do
+      outputs =
+        [output("c1", "one\n"), output("c2", "other\n"), output("c1", "oops\n", "err")]
+        |> Enum.reduce(%{}, &Transcript.tool_output(&2, &1))
+
+      assert outputs == %{"c1" => "one\noops\n", "c2" => "other\n"}
+    end
+
+    test "keeps only the last 8,000 characters of a call" do
+      outputs = Transcript.tool_output(%{}, output("c1", String.duplicate("a", 7_990)))
+      outputs = Transcript.tool_output(outputs, output("c1", "0123456789abcdefghij"))
+
+      assert String.length(outputs["c1"]) == 8_000
+      assert String.ends_with?(outputs["c1"], "0123456789abcdefghij")
+
+      # Counted in characters, not bytes: one chunk far over the limit.
+      outputs = Transcript.tool_output(%{}, output("c1", String.duplicate("é", 70_000) <> "end"))
+      assert String.length(outputs["c1"]) == 8_000
+      assert String.ends_with?(outputs["c1"], "éend")
+
+      # Short multibyte text over 8,000 bytes is kept whole.
+      outputs = Transcript.tool_output(%{}, output("c1", String.duplicate("é", 5_000)))
+      assert String.length(outputs["c1"]) == 5_000
+    end
+
+    test "takes a tool's own output, which names no stream, and ignores other events" do
+      plain = %{"type" => "tool_output", "call_id" => "c1", "text" => "progress"}
+      assert Transcript.tool_output(%{}, plain) == %{"c1" => "progress"}
+
+      for event <- [
+            %{"type" => "text", "delta" => "hi"},
+            %{"type" => "tool_output", "text" => "x"}
+          ],
+          do: assert(Transcript.tool_output(%{"c1" => "a"}, event) == %{"c1" => "a"})
     end
   end
 

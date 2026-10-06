@@ -350,7 +350,7 @@ defmodule PhotonNode.Harness.RecoveryTest do
       # A process for the operation that stopped without starting the
       # command (no coordinator confirmed its checkpoint). With the registry
       # held back, its entry outlives it.
-      {:ok, pid} = Ops.add(Enum.at(ops_in_log("p3"), 0), "p3")
+      {:ok, pid} = Ops.add(Enum.at(ops_in_log("p3"), 0), {Coordinator, "p3"})
       ref = Process.monitor(pid)
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
       assert [{^pid, _}] = Registry.lookup(PhotonNode.OpRegistry, "op_p3")
