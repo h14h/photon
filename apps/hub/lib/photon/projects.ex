@@ -278,7 +278,7 @@ defmodule Photon.Projects do
   # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   def edit_file_tx(tx, project_id, name, old_text, new_text, thread_id) do
     with {:ok, name} <- Rules.file_name(name),
-         %ContextFile{} = file <- get_file(project_id, name) || missing_file(project_id, name),
+         {:ok, file} <- existing_file(project_id, name),
          {:ok, content} <- Rules.edit(file.name, file.content, old_text, new_text),
          :ok <- Rules.content(file.name, content) do
       {:ok, put_file(tx, file, content, thread_id)}
@@ -289,6 +289,13 @@ defmodule Photon.Projects do
     case project_exists(project_id) do
       :ok -> :ok
       :not_found -> {:error, "This thread's project no longer exists."}
+    end
+  end
+
+  defp existing_file(project_id, name) do
+    case get_file(project_id, name) do
+      %ContextFile{} = file -> {:ok, file}
+      nil -> missing_file(project_id, name)
     end
   end
 
