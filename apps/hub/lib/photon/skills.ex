@@ -23,19 +23,35 @@ defmodule Photon.Skills do
   once it is stored: when a skill is created, installed, saved or deleted,
   or turned on or off anywhere.
 
+  Installing starts from a candidate: `read/1` makes one from a pasted
+  SKILL.md, and `fetch/1` downloads them from a link (through
+  `Photon.Skills.Fetch`, with `Photon.Skills.Source` deciding what a link
+  is and what the answers mean). Neither writes anything; `install/2`
+  does, from the preview form and the candidate.
+
   There is no process here: the rows hold the state and the Store's
-  commit line orders the writes.
+  commit line orders the writes. `fetch/1` runs in its caller's process
+  (the install page's `start_async` task).
   """
 
   use Boundary,
-    deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Repo, PhotonCore, Ecto],
+    deps: [
+      Photon.Durable,
+      Photon.Events,
+      Photon.Projects,
+      Photon.Repo,
+      PhotonCore,
+      Ecto,
+      Jason,
+      Req
+    ],
     exports: [Skill]
 
   import Ecto.Query
 
   alias Photon.{Durable, Events, Projects, Repo}
   alias Photon.Durable.Tx
-  alias Photon.Skills.{Enablement, Rules, Skill}
+  alias Photon.Skills.{Enablement, Fetch, Rules, Skill, Source}
 
   @topic "skills"
   @blip "blip"
@@ -124,6 +140,40 @@ defmodule Photon.Skills do
   defp scopes_order(query), do: order_by(query, [e], asc: e.inserted_at, asc: e.scope)
 
   defp blip_first(scopes), do: Enum.sort_by(scopes, &(&1 != :blip))
+
+  ## Candidates to install
+
+  @doc """
+  Reads a pasted SKILL.md into a candidate for the install preview
+  (section 2.4), with `origin: "pasted"` and notes on what install leaves
+  out. Errors are the parser's messages: no front matter, front matter
+  that never ends, or no instructions.
+  """
+  @spec read(String.t()) :: {:ok, Source.candidate()} | {:error, String.t()}
+  def read(text) do
+    case Source.candidate("pasted", Source.pasted(), {:ok, text}) do
+      %{error: nil} = candidate -> {:ok, candidate}
+      %{error: message} -> {:error, message}
+    end
+  end
+
+  @doc """
+  Fetches the skills a link points to: a SKILL.md, a skill's folder on
+  GitHub, or a GitHub folder or repository holding several (up to 30,
+  with a notice when there were more). Each candidate has
+  `origin: "fetched"`; one whose download failed carries its `error`.
+  A link that finds a single skill it can't read is an error instead.
+  Makes HTTP requests, so it runs in a task, never in a LiveView
+  callback.
+  """
+  @spec fetch(String.t()) :: Fetch.fetched()
+  def fetch(url) do
+    case Source.classify(url) do
+      {:ok, {:github, link}} -> Fetch.github(link)
+      {:ok, {:web, url}} -> Fetch.web(url)
+      {:error, message} -> {:error, message}
+    end
+  end
 
   ## Writing skills
 

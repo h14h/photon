@@ -80,6 +80,57 @@ defmodule Photon.SkillsTest do
     end
   end
 
+  describe "read/1" do
+    test "a pasted SKILL.md is a candidate install keeps, with its notes" do
+      text = """
+      ---
+      name: PDF Forms
+      description: Fill in PDF forms.
+      license: Apache-2.0
+      ---
+
+      # PDF forms
+
+      Run `scripts/fill.py` with the form.
+      """
+
+      assert {:ok, candidate} = Skills.read(text)
+
+      assert candidate == %{
+               origin: "pasted",
+               path: "",
+               source_url: nil,
+               name: "pdf-forms",
+               description: "Fill in PDF forms.",
+               instructions: "# PDF forms\n\nRun `scripts/fill.py` with the form.",
+               notes: [
+                 "Ignored front matter: license.",
+                 "The instructions mention scripts/fill.py, which wasn't installed.",
+                 ~s(Renamed from "PDF Forms" to pdf-forms: names use lowercase letters, ) <>
+                   "digits and hyphens."
+               ],
+               files_left_out: ["scripts/fill.py"],
+               error: nil
+             }
+
+      params = Map.take(candidate, [:name, :description, :instructions])
+      assert {:ok, %Skill{} = skill} = Skills.install(params, candidate)
+
+      assert %Skill{origin: "pasted", files_left_out: ["scripts/fill.py"]} = skill
+      assert skill.install_notes == Enum.join(candidate.notes, "\n")
+    end
+
+    test "text that isn't a SKILL.md is refused with the parser's message" do
+      assert Skills.read("# Just notes") ==
+               {:error,
+                "A SKILL.md starts with front matter: a line `---`, then `name:` and " <>
+                  "`description:`, then `---`."}
+
+      assert Skills.read("---\nname: x\ndescription: y\n---\n\n") ==
+               {:error, "This SKILL.md has no instructions after its front matter."}
+    end
+  end
+
   describe "install/2" do
     test "keeps origin, source, notes and files left out from the candidate, not the form" do
       :ok = Skills.subscribe()

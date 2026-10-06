@@ -40,7 +40,7 @@ defmodule Photon do
   Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Page,
   MockScript}`, `Photon.Transcript` (what a conversation page shows),
   `Photon.Projects.Rules`, `Photon.Threads.{Rules, Prompt, MockScript}`,
-  `Photon.Skills.{Rules, SkillMd}`,
+  `Photon.Skills.{Rules, SkillMd, Source}`,
   `Photon.Machines.{Rules, Roster}`,
   `Photon.MachineTools.{Translate, Wait, Guide, MockPhrases}`,
   `Photon.Provision.{Jobs, Script}`, and `Photon.Markdown`.

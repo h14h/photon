@@ -223,8 +223,13 @@ installs (section 6.5).
 **Paste.** `Photon.Skills.read(text)` runs `SkillMd.parse/1` and returns
 one candidate (below), with `origin: "pasted"`.
 
-**A link.** `Photon.Skills.fetch(url)` returns `{:ok, [candidate]}` or
-`{:error, message}`. It is the only place Photon fetches skills; it runs
+**A link.** `Photon.Skills.fetch(url)` returns `{:ok, [candidate],
+notice}` or `{:error, message}`. `notice` is nil, or the message that a
+folder had more than 30 skills (below), which the install page shows
+above the list. A link that finds a single skill it can't read (its
+download failed, or it has no front matter or instructions) is
+`{:error, message}` with that skill's error, so the page shows it under
+the field instead of a list of one. It is the only place Photon fetches skills; it runs
 in the install page's `start_async` task, never in a LiveView callback.
 `Photon.Skills.Source` (pure) decides what a link is and turns GitHub's
 answers into candidates; `Photon.Skills.Fetch` (boundary) makes the
@@ -271,8 +276,9 @@ download per SKILL.md:
    for each candidate, through `Task.async_stream/3` with
    `max_concurrency: 6`, `timeout: 20_000` and `on_timeout: :kill_task`
    (bounded, rule 93; the stream runs inside the page's `start_async`
-   task). A candidate whose download fails keeps its error and is shown
-   unselectable.
+   task). In a folder of several, a candidate whose download fails (or
+   runs out of time) keeps its error and is shown unselectable, named
+   after its folder (`suggest_name/1` of the folder's last segment).
 
 If the tree call fails but the link was to a file, the file is still
 downloaded on its own, with the note "Couldn't list the folder on GitHub,
@@ -287,23 +293,32 @@ Every download:
   `req_options` (`config :photon, Photon.Skills, req_options: [...]`,
   a `Req.Test` plug in tests, as `Photon.ChatGPT` does)
 - stops reading past 256 KB (`into:` a collector that halts) and refuses:
-  "That file is over 256 KB, too big for a skill."
+  "That file is over 256 KB, too big for a skill." The two API calls
+  read up to 8 MB instead, since a large repository's tree listing is
+  longer than any SKILL.md (GitHub truncates a tree at about 7 MB); past
+  that is the "too big to list in one go" message.
 - refuses a `text/html` response, or a body starting with `<!DOCTYPE` or
   `<html`: "That link is a web page, not a SKILL.md. Link to the file on
   GitHub, or to its raw address."
-- refuses a body that isn't UTF-8: "That file isn't text."
+- refuses a body that isn't UTF-8, or has a NUL byte: "That file isn't
+  text."
 - turns HTTP errors into what to do: 404 "GitHub says there's nothing at
   <path>. If the branch name has a slash in it, link to the SKILL.md's
   raw address instead." (non-GitHub: "Nothing at that address (404).");
   403 or 429 from the API "GitHub's limit for requests without a sign-in
   was reached. Try again within the hour, or paste the SKILL.md."; a
   timeout "The download didn't finish in 15 seconds."; anything else
-  "The download failed: <status or reason>."
+  "The download failed: <status or reason>." (a status reads "HTTP
+  500"). <path> is the place as GitHub shows it without the scheme:
+  `github.com/o/r/tree/<ref>/<path>` for a folder,
+  `github.com/o/r/blob/<ref>/<file>` for a file, `github.com/o/r` for
+  the repository call.
 
 A candidate is a plain map:
 
 ```elixir
 %{
+  origin: "fetched",                 # or "pasted"
   path: "skills/pdf-forms",          # the folder, "" for a paste or plain link
   source_url: "https://github.com/o/r/blob/main/skills/pdf-forms/SKILL.md",
   name: "pdf-forms",                 # as found, or suggest_name/1's when it breaks the rule
@@ -312,6 +327,7 @@ A candidate is a plain map:
   notes: ["Left out: scripts/fill.py, reference.md. Photon skills are instructions only.",
           "Ignored front matter: license, allowed-tools.",
           "The instructions mention scripts/fill.py, which wasn't installed."],
+  files_left_out: ["scripts/fill.py", "reference.md"],
   error: nil                         # or the message for a candidate that can't be installed
 }
 ```
@@ -319,7 +335,11 @@ A candidate is a plain map:
 The notes are built by `Source.notes/3` (pure) from `left_out`, the
 parser's `ignored` keys, `Rules.mentions/2`, and a renamed name ("Renamed
 from "PDF Forms" to pdf-forms: names use lowercase letters, digits and
-hyphens."). The owner's decision is "refuse or strip anything else, and
+hyphens."; for a name over 64 characters the reason is "names are at
+most 64 characters.", and for `new` or `install` "the app uses that
+name."), in that order, then notes about the folder itself (the
+"Couldn't list the folder" note). `name`, `description` and
+`instructions` are nil when the SKILL.md has none. The owner's decision is "refuse or strip anything else, and
 say so": Photon strips (other files are never downloaded; other front
 matter is dropped) and says so in these notes, which the preview shows
 and the skill keeps in `install_notes`. It refuses only what it can't
@@ -984,7 +1004,9 @@ between `Machines` and `Settings`. `Layouts.app`'s `active` takes
   ("From github.com/..."), field errors from the rules, and `Install`
   (`#install-save`). Success navigates to `/skills/<name>` with "Installed
   pdf-forms. It's off everywhere; turn it on below."
-- Several candidates (a folder of skills): a list `#install-candidates`,
+- Several candidates (a folder of skills): `fetch/1`'s notice, when there
+  is one ("This folder has 41 skills; showing the first 30. ..."), in
+  `#install-notice` above a list `#install-candidates`,
   each `#install-candidate-<n>` with a checkbox, its name, description,
   notes, and a reason it can't be picked when it can't (its download
   failed, its name is taken: "There's already a skill called pdf-forms."),
@@ -1161,13 +1183,13 @@ No changes.
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Skills` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Repo, PhotonCore, PhotonCore.LLM, Ecto, Req], exports: [Skill, Prompt, MockPhrases]` | `subscribe/0`, `list/0` (each skill with its scopes), `get/1`, `get_by_name/1`, `create/1`, `install/2`, `update/3` (id, params, version), `delete/1`, `enable/2`, `disable/2`, `enabled/1`, `scopes/1`, `read/1`, `fetch/1`, and `load_tx/3` for the two `load_skill` tools inside their commit. Results: `{:ok, skill}`, `{:error, %{field => message}}`, `{:error, :stale \| :not_found}`, `{:error, message}` for enable, read and fetch. Validates once with `Skills.Rules` (rule 64). Moduledoc: what a skill is, the scopes, the room for machines, that there is no process. `PhotonCore.LLM` is for `MockPhrases`. |
+| `Photon.Skills` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Repo, PhotonCore, PhotonCore.LLM, Ecto, Jason, Req], exports: [Skill, Prompt, MockPhrases]` | `subscribe/0`, `list/0` (each skill with its scopes), `get/1`, `get_by_name/1`, `create/1`, `install/2`, `update/3` (id, params, version), `delete/1`, `enable/2`, `disable/2`, `enabled/1`, `scopes/1`, `read/1`, `fetch/1`, and `load_tx/3` for the two `load_skill` tools inside their commit. Results: `{:ok, skill}`, `{:error, %{field => message}}`, `{:error, :stale \| :not_found}`, `{:error, message}` for enable, read and fetch; `fetch/1`'s success is `{:ok, candidates, notice}`. Validates once with `Skills.Rules` (rule 64). Moduledoc: what a skill is, the scopes, the room for machines, that there is no process. `PhotonCore.LLM` is for `MockPhrases`. |
 | `Photon.Skills.Skill` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 2.1. |
 | `Photon.Skills.Enablement` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 2.1. `@primary_key false`. |
 | `Photon.Skills.Rules` | core | `use Boundary, type: :strict, deps: []` | Section 2.2. |
 | `Photon.Skills.SkillMd` | core | `use Boundary, type: :strict, deps: []` | Section 2.3. |
-| `Photon.Skills.Source` | core | `use Boundary, type: :strict, deps: [Photon.Skills.Rules, Photon.Skills.SkillMd]` | `classify/1`, the GitHub API and raw URLs, `skills_in_tree/3`, `candidate/3` (a parsed SKILL.md plus its folder facts to a candidate), `notes/3`, `error_message/2` (an HTTP status or reason to the messages in section 2.4). |
-| `Photon.Skills.Fetch` | boundary (HTTP through `Req`, inside `Photon.Skills`) | none of its own | `get(url, kind)` with the limits of section 2.4; `github/1`. Reads `req_options` from app env. Called only by `Photon.Skills.fetch/1`. |
+| `Photon.Skills.Source` | core | `use Boundary, type: :strict, deps: [Photon.Skills.Rules, Photon.Skills.SkillMd]` | `classify/1`, the GitHub API and raw URLs (`repo_url/1`, `tree_url/1`, `raw_url/2`, `blob_url/2`, and `place/1` for messages), `skills_in_tree/3`, the folder facts (`folder/2`, `unlisted/1`, `web/1`, `pasted/0`), `candidate/3` (origin, folder facts, and the SKILL.md's text or the download's error, to a candidate), `notes/3`, `result/2` (a single unreadable candidate to its error), `text/2` (a downloaded body to a SKILL.md's text, or refused as a web page or not text), `error_message/2` (an HTTP status or reason to the messages in section 2.4). |
+| `Photon.Skills.Fetch` | boundary (HTTP through `Req`, inside `Photon.Skills`) | none of its own | `get(url, kind)` with the limits of section 2.4 (`kind` is `:api`, decoded from JSON, or `:file`); `github/1` and `web/1`, the two kinds of link. Reads `req_options` from app env. Called only by `Photon.Skills.fetch/1`. |
 | `Photon.Skills.Prompt` | core | `use Boundary, type: :strict, deps: [Photon.Skills.Skill]` | `section/1`, `loaded/1` (with the left-out files line, section 2.6), `not_loaded/2`, `tool_name/0`, `tool_description/0`, `tool_parameters/0`, `full_output_hint/1`. |
 | `Photon.Skills.MockPhrases` | core | `use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]` | Section 4. |
 | `Photon.Assistant.Tools.LoadSkill`, `Photon.Threads.Tools.LoadSkill` | boundary (durable tools) | inside their contexts | Section 2.6. |
