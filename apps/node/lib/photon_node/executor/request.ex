@@ -23,9 +23,11 @@ defmodule PhotonNode.Executor.Request do
       stays under the frame limit).
 
   An unknown kind or a bad argument is `{:error, reason}`, and `rejected/2`
-  makes that the operation's `failed` snapshot. `lost/2`, `never_started/1`
-  and `unrecorded/2` are the snapshots for the other operations the node
-  answers without running (section 2.3, node rules 3, 7 and 8). Each
+  makes that the operation's `failed` snapshot. `lost/2`, `never_started/1`,
+  `unrecorded/2` and `unreadable/2` are the snapshots for the other
+  operations the node answers without running (section 2.3, node rules 3,
+  7 and 8, and a journal entry that can't be read). `failed/2` is the
+  snapshot of an operation whose process crashed or couldn't start. Each
   carries its message in `terminal_error`; a `view_image` one also has it
   in `result.error`, where a failed image job puts its reason.
 
@@ -140,10 +142,28 @@ defmodule PhotonNode.Executor.Request do
   be written, so it never ran (node rule 8).
   """
   @spec unrecorded(Operation.t(), String.t()) :: Operation.t()
-  def unrecorded(op, reason) do
-    message = "The machine couldn't record the operation: #{reason}. It didn't run."
-    Operation.advance(op, "failed", failure(op["type"], message))
+  def unrecorded(op, reason),
+    do: failed(op, "The machine couldn't record the operation: #{reason}. It didn't run.")
+
+  @doc """
+  The `failed` snapshot for an `op.start` whose journal entry exists but
+  can't be read (`reason`), with no process running the operation.
+  """
+  @spec unreadable(start(), String.t()) :: Operation.t()
+  def unreadable(%{"id" => id, "kind" => kind}, reason) do
+    message =
+      "The machine's record of this operation can't be read (#{reason}). " <>
+        "It may or may not have run."
+
+    answer(id, kind, "failed", message)
   end
+
+  @doc """
+  `op` failed with `message`: the snapshot the executor records when an
+  operation process crashes or can't be started.
+  """
+  @spec failed(Operation.t(), String.t()) :: Operation.t()
+  def failed(op, message), do: Operation.advance(op, "failed", failure(op["type"], message))
 
   ## Arguments
 

@@ -2,9 +2,9 @@ defmodule PhotonNode.Harness.Ops.Owner do
   @moduledoc """
   The contract between an operation process and whatever owns it: the
   process that persists its snapshots, forwards them, and decides what a
-  crash means. Today a session's coordinator
-  (`PhotonNode.Harness.Coordinator`) owns the operations its session runs,
-  and the executor will own the hub's.
+  crash means. A session's coordinator (`PhotonNode.Harness.Coordinator`)
+  owns the operations its session runs, and the executor
+  (`PhotonNode.Executor`) owns the hub's.
 
   An operation process is started with `{op, owner}`, where `owner` is
   `{owner_module, owner_id}`. The module is named in data, so the

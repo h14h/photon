@@ -161,6 +161,31 @@ defmodule PhotonNode.Executor.RequestTest do
       image = Request.unrecorded(image, "read-only file system")
       assert image["state"]["result"]["error"] =~ "read-only file system"
     end
+
+    test "unreadable/2 is a failed snapshot that says it may have run" do
+      op = Request.unreadable(shell(%{}), "op.json isn't valid JSON")
+
+      assert %{"id" => "op_1", "type" => "shell", "status" => "failed"} = op
+
+      assert op["state"]["terminal_error"] ==
+               "The machine's record of this operation can't be read (op.json isn't valid JSON). " <>
+                 "It may or may not have run."
+
+      assert {:ok, ^op} = Wire.parse_snapshot(%{"op" => op})
+    end
+
+    test "failed/2 fails an operation where the hub reads its reason" do
+      {:ok, ready} = Request.operation(shell(%{}), @facts)
+      op = Request.failed(ready, "the operation process exited: killed")
+
+      assert op["status"] == "failed"
+      assert op["state"]["input"] == ready["state"]["input"]
+      assert op["state"]["terminal_error"] == "the operation process exited: killed"
+
+      {:ok, image} = Request.operation(image(%{}), @facts)
+      image = Request.failed(image, "the operation process exited: killed")
+      assert image["state"]["result"]["error"] == "the operation process exited: killed"
+    end
   end
 
   describe "fit/2" do

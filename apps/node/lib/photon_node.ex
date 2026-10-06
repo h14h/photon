@@ -47,13 +47,22 @@ defmodule PhotonNode do
     * `PhotonNode.Harness.OpSupervisor`: one `:temporary` process per
       running operation, started by `PhotonNode.Harness.Ops.add/2` for an
       owner (`PhotonNode.Harness.Ops.Owner`). A crash is not restarted
-      here; the owner, a session's coordinator, monitors its operations
-      and decides. A shell stopped here while its command runs kills the
-      command and leaves a `stopped` marker, so a resumed operation says so.
+      here; the owner (a session's coordinator, or the executor for the
+      hub's operations) monitors its operations and decides. A shell
+      stopped here while its command runs kills the command and leaves a
+      `stopped` marker, so a resumed operation says so.
     * `PhotonNode.Harness.SessionSupervisor`: one `:transient` coordinator
       per active session, started on demand by
       `PhotonNode.Harness.Coordinator.ensure_started/1`. It stops itself
       after ten idle minutes and replays its log when started again.
+    * `PhotonNode.Executor` (`:permanent`): the hub's operations, one
+      process for all of them, with their journal in `<data_dir>/ops`. On
+      start it scans the journal: operations still running are monitored
+      again and asked to resend their snapshots, unfinished ones nothing
+      runs are resumed from their snapshots, and either is told to cancel
+      if its journal says so. A crash restarts it and the connection after
+      it; the operation processes keep running, and their calls into it
+      return at once until it is back.
     * `PhotonNode.Connection` (`:permanent`, left out with `connect:
       false`): the hub link. A crash restarts only the connection, which
       replays to the hub after it rejoins.
@@ -61,10 +70,12 @@ defmodule PhotonNode do
       coordinators of sessions that were working when the node stopped.
 
   A crashed registry or supervisor takes everything after it down with it
-  and back up in order: coordinators restart after the operations they
-  track, and resume from their logs. Shutdown runs in reverse, so
-  coordinators stop before the operations, and a shell operation kills its
-  command's process group as it stops. Workers use the default 5 second
+  and back up in order: coordinators and the executor restart after the
+  operations they track, and resume from their logs and the journal.
+  Shutdown runs in reverse, so coordinators and the executor stop before
+  the operations, and a shell operation kills its command's process group
+  as it stops (and leaves its `stopped` marker, so the restarted node
+  reports the command as killed). Workers use the default 5 second
   shutdown, supervisors `:infinity`.
 
   The config sits in `:persistent_term` (`config/0`) and every name is
@@ -89,6 +100,7 @@ defmodule PhotonNode do
     config = Config.new(opts)
     :persistent_term.put({__MODULE__, :config}, config)
     File.mkdir_p!(Config.sessions_dir(config))
+    File.mkdir_p!(Config.ops_dir(config))
     File.mkdir_p!(config.workspace)
 
     children = [
@@ -97,6 +109,7 @@ defmodule PhotonNode do
       {Task.Supervisor, name: PhotonNode.Harness.TaskSupervisor},
       {DynamicSupervisor, name: PhotonNode.Harness.OpSupervisor, strategy: :one_for_one},
       {DynamicSupervisor, name: PhotonNode.Harness.SessionSupervisor, strategy: :one_for_one},
+      PhotonNode.Executor,
       connection(opts),
       Supervisor.child_spec({Task, &PhotonNode.Harness.resume_all/0},
         id: :resume,

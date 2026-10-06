@@ -9,7 +9,7 @@ defmodule PhotonNode.Harness.Ops do
 
   Every operation has an owner (`PhotonNode.Harness.Ops.Owner`), given to
   `add/2` as `{owner_module, owner_id}`: a session's coordinator for the
-  operations its session runs. Each process reports its snapshots to the
+  operations its session runs, and `PhotonNode.Executor` for the hub's. Each process reports its snapshots to the
   owner, which persists them before acting on them. A checkpoint the
   operation must not act on until it is stored (a shell command's start)
   goes through the owner's `checkpoint/2`, a call. An operation process
@@ -26,7 +26,8 @@ defmodule PhotonNode.Harness.Ops do
 
   Lifecycle: operation processes are `:temporary`. A crash isn't restarted
   by the supervisor; the owner monitors the process and decides (for a
-  session, `PhotonNode.Harness.Session.op_down/3`).
+  session, `PhotonNode.Harness.Session.op_down/3`; for the hub's,
+  `PhotonNode.Executor.Rules.down/3`).
   """
 
   alias PhotonCore.Operation
@@ -55,6 +56,13 @@ defmodule PhotonNode.Harness.Ops do
 
     :ok
   end
+
+  @doc """
+  Whether a process runs the operation now. The executor asks before it
+  decides to resume an operation from its journal.
+  """
+  @spec running?(String.t()) :: boolean()
+  def running?(op_id), do: match?({:ok, _pid}, running(op_id))
 
   @doc false
   @spec via(String.t()) :: GenServer.name()
