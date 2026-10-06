@@ -243,6 +243,8 @@ defmodule PhotonWeb.BlipLiveTest do
       printed(c, "c1", "err", "1 warning\n")
 
       assert has_element?(blip, "#action-c1-tail pre", ~r/compiling\s+1 warning/)
+      # Each output chunk re-renders the answer; an opened result stays open.
+      assert has_element?(blip, "#action-c1-details[phx-mounted*=ignore_attrs]")
 
       answered(c, "c1", "shell", "compiling\nStderr:\n1 warning\nExit code: 2", %{
         "machine" => "mm1",
@@ -263,30 +265,38 @@ defmodule PhotonWeb.BlipLiveTest do
       refute has_element?(blip, "#action-c1-tail")
     end
 
-    test "shows the image a view_image call returns", %{blip: blip, conversation: c} do
+    test "shows the image a view_image call returns, loaded on its own", %{
+      blip: blip,
+      conversation: c
+    } do
       asked(c, [{"c2", "view_image", %{"machine" => "mm1", "path" => "shot.png"}}])
       assert has_element?(blip, "#action-c2", "Looked at shot.png on mm1")
 
-      answered(
-        c,
-        "c2",
-        "view_image",
-        [
-          Message.image("image/png", "iVBORw0KGgo="),
-          Message.text("1x1 image/png, /home/me/shot.png on mm1")
-        ],
-        %{
-          "machine" => "mm1",
-          "kind" => "view_image",
-          "status" => "completed",
-          "path" => "shot.png"
-        }
-      )
+      result =
+        answered(
+          c,
+          "c2",
+          "view_image",
+          [
+            Message.image("image/png", "iVBORw0KGgo="),
+            Message.text("1x1 image/png, /home/me/shot.png on mm1")
+          ],
+          %{
+            "machine" => "mm1",
+            "kind" => "view_image",
+            "status" => "completed",
+            "path" => "shot.png"
+          }
+        )
 
-      assert has_element?(
-               blip,
-               ~s(#action-c2 img#action-c2-image-0[src="data:image/png;base64,iVBORw0KGgo="])
-             )
+      src = "/blip/images/#{result.id}/0"
+      assert has_element?(blip, ~s(#action-c2 img#action-c2-image-0[src="#{src}"]))
+      # The page carries no image data, so a re-render of the answer sends none.
+      refute render(blip) =~ "iVBORw0KGgo="
+
+      conn = get(build_conn(), src)
+      assert response(conn, 200) == Base.decode64!("iVBORw0KGgo=")
+      assert get_resp_header(conn, "content-type") == ["image/png"]
 
       assert has_element?(
                blip,

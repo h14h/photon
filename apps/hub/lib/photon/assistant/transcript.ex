@@ -7,7 +7,9 @@ defmodule Photon.Assistant.Transcript do
     * which entries are shown (`shown?/1`); tool results aren't shown on
       their own but inside the assistant entry whose call they answer, so
       the page keeps an index of results by call ID and of calls by ID
-      (`index/1`, `add_result/2`, `add_calls/2`)
+      (`index/1`, `add_result/2`, `add_calls/2`). The index leaves image
+      data out: the page loads each image by its result's entry ID
+      (`image/2`), so the page's state and its renders stay small
     * node work a call left running, settled by the report that comes in
       later (`settle/3`)
     * the in-flight answer (`live/2`): text, reasoning, web searches and
@@ -69,6 +71,8 @@ defmodule Photon.Assistant.Transcript do
 
   @shown ~w(user assistant error reset)
 
+  @image_types ~w(image/png image/jpeg image/gif image/webp)
+
   # How much of a running call's output the page keeps (section 3.4 of
   # docs/plans/step-1-machine-tools.md). The node sends at most 64 KB per
   # stream a second; the page shows the latest of it.
@@ -103,12 +107,51 @@ defmodule Photon.Assistant.Transcript do
     end)
   end
 
-  @doc "Adds a tool result entry to the results by call ID; other entries change nothing."
+  @doc """
+  Adds a tool result entry to the results by call ID; other entries change
+  nothing. The result keeps its entry's ID as `"entry_id"` and loses its
+  images' data (`image/2` gives an image back from the entry).
+  """
   @spec add_result(map(), Entry.t()) :: map()
   def add_result(results, %{kind: "tool_result"} = entry),
-    do: Map.put(results, call_id(entry), entry.data)
+    do: Map.put(results, call_id(entry), shown_result(entry))
 
   def add_result(results, _entry), do: results
+
+  defp shown_result(%{id: id, data: data}) do
+    data =
+      case data["message"] do
+        %{"content" => parts} when is_list(parts) ->
+          put_in(data, ["message", "content"], Enum.map(parts, &without_data/1))
+
+        _other ->
+          data
+      end
+
+    Map.put(data, "entry_id", id)
+  end
+
+  defp without_data(%{"type" => "image"} = part), do: Map.delete(part, "data")
+  defp without_data(part), do: part
+
+  @doc """
+  The image at `index` among a tool result entry's images, decoded:
+  `{:ok, mime, bytes}`. `:error` when there is no such image, its data
+  isn't base64, or it isn't a PNG, JPEG, GIF or WebP image, the types
+  `view_image` returns, so nothing else is served as one.
+  """
+  @spec image(Entry.t(), non_neg_integer()) :: {:ok, String.t(), binary()} | :error
+  def image(%{kind: "tool_result", data: %{"message" => message}}, index) do
+    with %{"mime" => mime, "data" => data} when mime in @image_types and is_binary(data) <-
+           Enum.at(Message.images(message), index),
+         {:ok, bytes} <- Base.decode64(data) do
+      {:ok, mime, bytes}
+    else
+      _missing_or_bad -> :error
+    end
+  end
+
+  def image(_entry, _index), do: :error
 
   @doc "Adds an assistant entry's calls to the calls by ID; other entries change nothing."
   @spec add_calls(map(), Entry.t()) :: map()

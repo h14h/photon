@@ -21,7 +21,7 @@ defmodule Photon.Assistant.TranscriptTest do
       result = tool_result_entry("c1", "went", id: "e_2", seq: 2)
 
       assert Transcript.index([asked, result]) == %{
-               results: %{"c1" => result.data},
+               results: %{"c1" => Map.put(result.data, "entry_id", "e_2")},
                calls: %{"c1" => asked},
                settled: %{}
              }
@@ -36,7 +36,35 @@ defmodule Photon.Assistant.TranscriptTest do
       second = tool_result_entry("c1", "two", id: "e_2", seq: 2)
 
       assert %{results: %{"c1" => data}} = Transcript.index([first, second])
-      assert data == second.data
+      assert data == Map.put(second.data, "entry_id", "e_2")
+    end
+
+    test "results keep no image data; image/2 gives it back from the entry" do
+      png = Base.encode64("png bytes")
+
+      shot =
+        tool_result_entry("c1", [Message.image("image/png", png), Message.text("1x1")], id: "e_7")
+
+      assert %{"c1" => data} = Transcript.add_result(%{}, shot)
+      assert data["entry_id"] == "e_7"
+
+      assert [%{"type" => "image", "mime" => "image/png"} = part] =
+               Message.images(data["message"])
+
+      refute Map.has_key?(part, "data")
+      assert Message.text_of(data["message"]) == "1x1"
+
+      assert Transcript.image(shot, 0) == {:ok, "image/png", "png bytes"}
+      assert Transcript.image(shot, 1) == :error
+      assert Transcript.image(user_entry("hi"), 0) == :error
+    end
+
+    test "image/2 serves only images of the types view_image returns, and valid data" do
+      html = tool_result_entry("c1", [Message.image("text/html", Base.encode64("<script>"))])
+      bad = tool_result_entry("c1", [Message.image("image/png", "not base64!")])
+
+      assert Transcript.image(html, 0) == :error
+      assert Transcript.image(bad, 0) == :error
     end
   end
 

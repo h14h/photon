@@ -31,7 +31,10 @@ defmodule PhotonWeb.BlipLive do
   `shell` call runs, the end of its output shows under it, as the node
   streams it (`@outputs`, by call ID, dropped when the result comes); the
   hub stores none of it, so a page opened mid-command shows output from
-  then on. An image a `view_image` call returns shows under its line.
+  then on. An image a `view_image` call returns shows under its line,
+  loaded from `PhotonWeb.BlipImageController`: the results this page keeps
+  (`@results`) carry no image data, so neither its state nor a re-render
+  of the answer holds megabytes of base64.
 
   What the conversation shows, how live events fold into the in-flight
   answer and the running calls' output, and Blip's mood are
@@ -941,7 +944,12 @@ defmodule PhotonWeb.BlipLive do
       data-tool={@call["name"]}
       class="overflow-hidden rounded-xl border border-line bg-surface shadow-xs transition-shadow has-[details[open]]:shadow-sm"
     >
-      <details class="group">
+      <%!-- Re-rendered as output streams in or results land; the browser's open state stays. --%>
+      <details
+        id={"action-#{@call["id"]}-details"}
+        class="group"
+        phx-mounted={JS.ignore_attributes(["open"])}
+      >
         <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2 text-[13px] select-none">
           <span class={[
             "grid size-6 shrink-0 place-items-center rounded-md",
@@ -992,7 +1000,8 @@ defmodule PhotonWeb.BlipLive do
       <img
         :for={{image, index} <- Enum.with_index(@images)}
         id={"action-#{@call["id"]}-image-#{index}"}
-        src={"data:#{image["mime"]};base64,#{image["data"]}"}
+        src={~p"/blip/images/#{@result["entry_id"]}/#{index}"}
+        loading="lazy"
         alt={@output || "An image from #{@args["machine"]}"}
         class="max-h-80 w-full border-t border-line bg-sunken object-contain"
       />

@@ -42,7 +42,7 @@ defmodule Photon.Assistant do
 
   @behaviour Photon.Durable.Profile
 
-  alias Photon.Assistant.{Memory, Page, Prompt, Tools}
+  alias Photon.Assistant.{Memory, Page, Prompt, Tools, Transcript}
   alias Photon.{Durable, MachineTools, Settings}
   alias Photon.Durable.{Entry, Submission, TaskRecord}
 
@@ -156,6 +156,19 @@ defmodule Photon.Assistant do
   @doc "The conversation's entries, in order."
   @spec entries(String.t()) :: [Entry.t()]
   def entries(conversation_id), do: Durable.entries(conversation_id)
+
+  @doc """
+  The image at `index` among a tool result's images in the assistant's
+  conversation, for the page to load on its own (`Transcript.image/2`):
+  `{:ok, mime, bytes}`, or `:error` if there is no such entry or image.
+  """
+  @spec image(String.t(), non_neg_integer()) :: {:ok, String.t(), binary()} | :error
+  def image(entry_id, index) do
+    case Durable.entry(conversation_id(), entry_id) do
+      nil -> :error
+      entry -> Transcript.image(entry, index)
+    end
+  end
 
   @doc "Whether the assistant is working on something."
   @spec busy?(String.t()) :: boolean()

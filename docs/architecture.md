@@ -233,6 +233,7 @@ hotspots still refer to the original snapshot.
 | `PhotonWeb.NodeChannel` | boundary and worker (one per connected node; the server layer for a node, rule 11; joins only while its key is current, closes its connection when the key is replaced, and acts only on its own node's sessions and ops; hands `op.snapshot` and `op.output` to `Machines` and pushes what it returns, and is the only place an `op.start` is built, on `:joined` and `{:push_op, id}`) | is a process; DB through `NodeSessions` and `Machines`, Registry, PubSub | `NodeSessions`, `Machines`, `NodeKeys`, `Nodes`, `PhotonCore.Operation.Wire`, `Photon.NodeRegistry` |
 | `PhotonWeb.ModelRelayController` | boundary (the model relay for nodes: runs a node's request on the hub's ChatGPT sign-in and streams it back) | does I/O (settings file, streaming HTTP); the request runs in a linked task | `Settings`, `ChatGPT` (`stream/3`), `NodeAuthPlug` (in front), `Relay`, `MockAgent` |
 | `PhotonWeb.NodeInstallController` | boundary | does I/O (files) | `NodeDist` |
+| `PhotonWeb.BlipImageController` | boundary (serves the images in Blip's conversation, one per request, behind `PhotonWeb.Auth`) | reads the database through `Assistant.image/2` | `Assistant` |
 | `PhotonWeb.ErrorHTML` | boundary (rendering) | pure | Phoenix |
 | `PhotonWeb.ErrorJSON` | boundary (rendering) | pure | Phoenix |
 | `PhotonWeb.CoreComponents` | boundary (UI components) | pure | Phoenix.Component |
@@ -343,7 +344,7 @@ Photon.Supervisor  one_for_one                      (Photon.Application)
 ├── PhotonWeb.Endpoint                              Bandit
 │   ├── /node/websocket -> NodeSocket -> NodeChannel        one process per connected node
 │   ├── /live -> OverviewLive | SessionLive | NodesLive | SettingsLive, each with BlipLive (sticky) over it
-│   └── HTTP -> Router -> ModelRelayController | NodeInstallController | HealthPlug
+│   └── HTTP -> Router -> ModelRelayController | NodeInstallController | BlipImageController | HealthPlug
 └── PhotonNode  rest_for_one                        only with :local_node; the node tree above, dialing this Endpoint
 ```
 
