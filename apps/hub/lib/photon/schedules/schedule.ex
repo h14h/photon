@@ -1,0 +1,64 @@
+defmodule Photon.Schedules.Schedule do
+  @moduledoc """
+  A schedule: a prompt that fires at set times (section 3.1 of
+  `docs/plans/step-3-skills-and-schedules.md`).
+
+  Where it fires follows from two columns (`Photon.Schedules.Rules.target/1`):
+  with no `project_id` it is Blip's, and posts into Blip's conversation
+  (`conversation_id`); in a project it wakes the thread `conversation_id`
+  names, or, with no `conversation_id`, starts a new thread each time.
+
+  `first_at` is the first time, and with `every_minutes` the grid of
+  times after it (nil for a one-off). `version` is 1 when the schedule is
+  created and goes up by one on every edit. `task_id` is the routine task
+  that carries the current version; the schedule's next time and state
+  are read from that task, never stored here (rule 15). `created_by` is
+  `"owner"` (the project page) or `"blip"` (Blip's `schedule` tool).
+
+  `last_run_at`, `last_outcome` and `last_thread_id` sum up the last
+  firing, run-now included: when, what it did (`"started"`, `"sent"`,
+  `"queued"`, a `"skipped_..."` reason, or `"failed"` when the task
+  failed) and the thread it started or woke.
+  """
+
+  # Data: an Ecto schema, no behaviour of its own.
+  use Boundary, type: :strict, deps: [Ecto]
+
+  use Ecto.Schema
+
+  @typedoc "What the last firing did; section 3.5 of the plan lists them."
+  @type outcome :: String.t()
+
+  @type t :: %__MODULE__{
+          id: String.t() | nil,
+          project_id: String.t() | nil,
+          conversation_id: String.t() | nil,
+          prompt: String.t() | nil,
+          first_at: DateTime.t() | nil,
+          every_minutes: pos_integer() | nil,
+          version: pos_integer() | nil,
+          task_id: String.t() | nil,
+          created_by: String.t() | nil,
+          last_run_at: DateTime.t() | nil,
+          last_outcome: outcome() | nil,
+          last_thread_id: String.t() | nil,
+          inserted_at: DateTime.t() | nil,
+          updated_at: DateTime.t() | nil
+        }
+
+  @primary_key {:id, :string, autogenerate: false}
+  schema "schedules" do
+    field(:project_id, :string)
+    field(:conversation_id, :string)
+    field(:prompt, :string)
+    field(:first_at, :utc_datetime_usec)
+    field(:every_minutes, :integer)
+    field(:version, :integer)
+    field(:task_id, :string)
+    field(:created_by, :string)
+    field(:last_run_at, :utc_datetime_usec)
+    field(:last_outcome, :string)
+    field(:last_thread_id, :string)
+    timestamps(type: :utc_datetime_usec)
+  end
+end

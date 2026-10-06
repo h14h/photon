@@ -17,6 +17,8 @@ defmodule Photon do
     * `Photon.Skills`: skills, the instructions an agent loads when a task
       calls for them, written or installed by the user and turned on for
       Blip or per project
+    * `Photon.Schedules`: schedules, prompts that fire at set times: a
+      project's start or wake its threads, and Blip's post to Blip
     * `Photon.Durable`: the durable agent harness Blip and threads run on
     * `Photon.Machines`: the machines the hub knows, which are connected,
       and the operations (shell commands, image reads) it runs on them;
@@ -29,10 +31,11 @@ defmodule Photon do
     * `Photon.Auth`, `Photon.NodeKeys`: who may open the GUI (your devices
       on the tailnet, or a password), and each node's own key
 
-  None of them adds a process for a project, a thread, a skill or an
-  operation: projects, context files and skills are rows, a thread is a
-  conversation in the durable harness, and an operation is a row its tool
-  call waits on.
+  None of them adds a process for a project, a thread, a skill, a
+  schedule or an operation: projects, context files and skills are rows,
+  a thread is a conversation in the durable harness, a schedule is a row
+  and a durable task waiting for its time, and an operation is a row its
+  tool call waits on.
 
   Layers, after *Designing Elixir Systems with OTP*: each context's
   moduledoc names its pure core and its processes. The pure modules are
@@ -41,6 +44,7 @@ defmodule Photon do
   MockScript}`, `Photon.Transcript` (what a conversation page shows),
   `Photon.Projects.Rules`, `Photon.Threads.{Rules, Prompt, MockScript}`,
   `Photon.Skills.{Rules, SkillMd, Source, Prompt, MockPhrases}`,
+  `Photon.Schedules.Rules`,
   `Photon.Machines.{Rules, Roster}`,
   `Photon.MachineTools.{Translate, Wait, Guide, MockPhrases}`,
   `Photon.Provision.{Jobs, Script}`, and `Photon.Markdown`.
@@ -73,6 +77,8 @@ defmodule Photon do
       Projects.ContextFile,
       Projects.Project,
       Provision,
+      Schedules,
+      Schedules.Schedule,
       Settings,
       Skills,
       Skills.Skill,

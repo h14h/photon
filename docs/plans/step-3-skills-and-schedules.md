@@ -684,18 +684,41 @@ owner's form:
 | `target` | `"new_thread"`, or the ID of one of `thread_ids` ("Pick one of this project's threads, or a new thread each time.") |
 
 It returns `{:ok, %{prompt, first_at, every_minutes, conversation_id}}`
-or `{:error, %{field => message}}`.
+or `{:error, %{field => message}}`, every field's error at once. `now`
+is Unix milliseconds (the routine's unit), `first_at` a `DateTime` with
+microseconds (the row's column; `Rules.datetime/1` makes one from
+milliseconds), and `conversation_id` nil for a new thread each time
+(K5a). The prompt's line ends become `\n`, as a skill's instructions'
+do. Three messages the table leaves out: a `repeat` that is neither is
+"Pick Once or Every."; an `every` that isn't a whole number, or a
+`unit` that isn't one of the four, is "Repeat every whole number of
+minutes, hours, days or weeks."; and an `at` that doesn't parse (or has
+no offset) gets "Pick a date and time." like a missing one.
 
 `Rules.from_tool(args, now)` reads Blip's `schedule` tool's arguments
 (`prompt`, `in_minutes` or `at`, `every_minutes`) with today's messages
 unchanged, so Blip's tool behaves as it does now. Its `at` rule is
 today's: refused only when more than a minute ago (`ms < now - 60_000`),
-the same grace as the form's, which `arm/4` honours.
+the same grace as the form's, which `arm/4` honours. It returns
+`{:ok, %{prompt, first_at, every_minutes}}` (a `DateTime` and minutes,
+as `schedule/2`) or `{:error, message}`. It also checks the prompt with
+the form's two prompt messages, which today's tool doesn't: the row's
+`prompt` is required and at most 4,000 characters (K5a).
 
 ### 3.5 Consent and overlap
 
-`Rules.fire(target, facts)` (pure), with `facts = %{allowed?: boolean,
-last_thread_running?: boolean, queued?: boolean, thread?: boolean}`:
+`Rules.fire(target, facts)` (pure), with `target` `:blip`, `:thread` or
+`:new_thread` (`Rules.target/1` reads it from the row's two columns, as
+section 3.2's table does) and `facts = %{allowed?: boolean,
+last_thread_running?: boolean, queued?: boolean, thread?: boolean,
+busy?: boolean}`. `busy?` (K5a) is whether the target conversation has
+a run (`Tx.active_run(tx, conversation_id) != nil`, as `submit_tx/4`
+decides), which is how the table tells `"sent"` from `"queued"`; a fact
+left out counts as false. It returns `{:start, outcome}`, `{:submit,
+outcome}` or `{:skip, outcome, :notice | :quiet}`, `:notice` when the
+routine appends `Rules.skipped_note/2` to the target's conversation.
+A thread target whose thread is gone is checked first, before consent,
+since it has no conversation to take the consent notice:
 
 | Situation | Decision | `last_outcome` |
 |---|---|---|
@@ -1209,7 +1232,7 @@ No changes.
 |---|---|---|---|
 | `Photon.Schedules` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Repo, Photon.Settings, Photon.Threads, PhotonCore, Ecto], exports: [Schedule]` | `subscribe/0`, `list/1`, `get/1` (with `next_at` and `state`), `create/2`, `update/3` (id, params, version), `delete/1`, `run_now/1`, `consent?/0`, `new_params/1` (the form's defaults for a time), and for Blip's tools `blip_schedule_tx/5`, `delete_tx/3`. Moduledoc: targets, the routine, the fence, consent and overlap, that there is no process. |
 | `Photon.Schedules.Schedule` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 3.1. |
-| `Photon.Schedules.Rules` | core | `use Boundary, type: :strict, deps: []` | `schedule/2`, `from_tool/2`, `arm/4`, `fired_through/3`, `next_after/3`, `fire/2`, `text/1` (`"[Scheduled] " <> prompt`), `skipped_note/2`, `request_id/3`, `when_text/2` (the tool's "first at ..., then every N minutes"). Times are Unix milliseconds or `DateTime`s passed in. |
+| `Photon.Schedules.Rules` | core | `use Boundary, type: :strict, deps: []` | `schedule/2`, `from_tool/2`, `arm/4`, `fired_through/3`, `next_after/3`, `target/1` (a row's target), `fire/2`, `text/1` (`"[Scheduled] " <> prompt`), `skipped_note/2`, `request_id/3`, `when_text/2` (the tool's "first at ..., then every N minutes"), `datetime/1` (milliseconds to the row's `DateTime`). `now` is always Unix milliseconds passed in; the row's times (`first_at` in `schedule/2`'s and `from_tool/2`'s answer, `when_text/2`'s argument) are `DateTime`s. |
 | `Photon.Schedules.Routine` | worker logic (task kind, inside `Photon.Schedules`) | none of its own | Moved from `Photon.Assistant.Routine` (section 3.3). |
 | `Photon.Threads` | boundary | unchanged deps | `start_tx/4`, `send_tx/4` public with `:source` and `:request_id`. `stop/1` unchanged (section 3.7). |
 | `Photon.Durable.Submission` | data | unchanged | `background?/1`. |
