@@ -1,13 +1,23 @@
 defmodule PhotonNode do
   @moduledoc """
   A Photon node: runs agent sessions on this machine with
-  `PhotonNode.Harness` and mirrors them to a Photon hub over a websocket.
+  `PhotonNode.Harness` and mirrors them to a Photon hub over a websocket,
+  and runs the hub's operations (shell commands, image reads) with
+  `PhotonNode.Executor`.
 
   The node dials the hub (so it works behind NAT) and joins the channel
-  `"node:<node_id>"`. The protocol, as seen from the node:
+  `"node:<node_id>"`, which carries two protocols. Both share the join
+  params, static info about the node (`hostname`, `platform`, `workspace`,
+  `version`, `capabilities`); `capabilities` lists `"harness:1"` for
+  sessions and `"ops:1"` for operations.
 
-    * join params: static info (`hostname`, `platform`, `workspace`,
-      `version`, `capabilities`)
+  Start it with `{PhotonNode, opts}` in a supervision tree, or let the
+  `:photon_node` application start it from config (see `PhotonNode.Config`).
+
+  ## Sessions
+
+  The session protocol, as seen from the node:
+
     * join reply: `%{"sync" => %{session_id => offset}}`, how many records of
       each session's log the hub already holds. The node replays everything
       past those offsets.
@@ -31,8 +41,27 @@ defmodule PhotonNode do
   Sessions keep working while the hub is unreachable (model requests retry)
   and catch up on reconnect.
 
-  Start it with `{PhotonNode, opts}` in a supervision tree, or let the
-  `:photon_node` application start it from config (see `PhotonNode.Config`).
+  ## Operations
+
+  The operation protocol (`PhotonCore.Operation.Wire` builds and parses its
+  messages; `docs/plans/step-1-machine-tools.md`, section 2, has its
+  rules), as seen from the node:
+
+    * hub → node: `op.start` (`id`, `kind`, `args`, `known`): run this
+      operation, or send its latest snapshot if the node has it; `op.cancel`
+      (`id`): stop it and never start it; `op.ack` (`id`): the hub has
+      recorded its result, so the node may forget it
+    * node → hub: `op.snapshot` (`op`): an operation's latest snapshot,
+      journaled first, a terminal one being its result; `op.output` (`id`,
+      `stream`, `text`): new command output, never stored
+    * after every join the node sends the snapshot of every operation in its
+      journal, and the hub sends `op.start` or `op.cancel` for the
+      operations it still waits on
+
+  The executor journals each operation before it runs and every snapshot
+  before it is sent, so a lost message is recovered by the next join, a
+  repeated `op.start` never runs a command twice, and an operation keeps
+  running while the hub is unreachable.
 
   ## Lifecycle
 
@@ -65,7 +94,8 @@ defmodule PhotonNode do
       return at once until it is back.
     * `PhotonNode.Connection` (`:permanent`, left out with `connect:
       false`): the hub link. A crash restarts only the connection, which
-      replays to the hub after it rejoins.
+      replays session records and sends the journal's snapshots after it
+      rejoins.
     * `:resume` (`:temporary`): a one-shot task that starts the
       coordinators of sessions that were working when the node stopped.
 
