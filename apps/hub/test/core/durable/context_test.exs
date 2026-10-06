@@ -50,7 +50,7 @@ defmodule Photon.Durable.ContextTest do
     assert Context.messages([tool_result_entry("c9", "stray")]) == []
   end
 
-  describe "tool results from earlier turns" do
+  describe "tool results from earlier runs" do
     @full_output "Full output: /data/ops/op_1/out and /data/ops/op_1/err on mm1, kept for 7 days."
 
     defp image, do: Message.image("image/png", String.duplicate("A", 50_000))
@@ -110,6 +110,46 @@ defmodule Photon.Durable.ContextTest do
 
       assert result(messages, "c3") == Enum.at(entries, 7).data["message"]
       assert result(messages, "c4") == Enum.at(entries, 8).data["message"]
+    end
+
+    # A steer placed after a tool round is a user entry partway through
+    # the run; the round's results are what the model just asked for.
+    test "leave a run whole when a steer comes partway through it" do
+      long = String.duplicate("z", 9_000)
+
+      entries = [
+        user_entry("on mm1: look at /tmp/shot.png", seq: 1),
+        assistant_entry("", [call("view_image", %{}, "c1"), call("shell", %{}, "c2")], seq: 2),
+        tool_result_entry("c1", [Message.text("1024x768"), image()], seq: 3),
+        tool_result_entry("c2", long, seq: 4),
+        user_entry("what does the error dialog say?", seq: 5)
+      ]
+
+      messages = Context.messages(entries)
+      assert result(messages, "c1") == Enum.at(entries, 2).data["message"]
+      assert result(messages, "c2") == Enum.at(entries, 3).data["message"]
+    end
+
+    test "shorten a run that ended in an error once the next one starts" do
+      long = String.duplicate("z", 9_000)
+
+      entries = [
+        user_entry("check", seq: 1),
+        assistant_entry("", [call("shell", %{}, "c1")], seq: 2),
+        tool_result_entry("c1", long, seq: 3),
+        entry("error", %{"message" => "Stopped.", "stopped" => true}, id: "e_4", seq: 4),
+        entry("error", %{"message" => "Skipped.", "notice" => true}, id: "e_5", seq: 5),
+        user_entry("again", seq: 6),
+        assistant_entry("", [call("shell", %{}, "c2")], seq: 7),
+        tool_result_entry("c2", long, seq: 8),
+        entry("error", %{"message" => "Skipped.", "notice" => true}, id: "e_9", seq: 9),
+        user_entry("and a steer", seq: 10)
+      ]
+
+      messages = Context.messages(entries)
+      assert Message.text_of(result(messages, "c1")) =~ "characters of this older result left out"
+      # A notice isn't the end of a run, so the steer after it isn't a new one.
+      assert result(messages, "c2") == Enum.at(entries, 7).data["message"]
     end
 
     test "still pair every call with its result" do

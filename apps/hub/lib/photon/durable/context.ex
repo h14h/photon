@@ -5,9 +5,9 @@ defmodule Photon.Durable.Context do
   never landed (the run was stopped, or the hub died) gets an "interrupted"
   one, so the provider always sees a well-formed conversation.
 
-  Tool results from earlier turns, before the newest `"user"` entry, are
-  shortened, so a long conversation of command output and screenshots stays
-  within the model's context and the request size limit:
+  Tool results from earlier runs are shortened, so a long conversation of
+  command output and screenshots stays within the model's context and the
+  request size limit:
 
     * an image part becomes a short text saying it is no longer shown; the
       result's other text, such as the image's dimensions, stays
@@ -16,10 +16,14 @@ defmodule Photon.Durable.Context do
       result's `details["full_output"]` when the tool set one (where the
       complete output is kept)
 
-  Results in the current turn stay whole, so the model sees what it just
-  asked for. The cut moves only when a new turn starts, so the requests
-  within a turn share a stable prefix for prompt caching. The rule applies
-  to every tool's results and takes nothing from the profile.
+  The cut is at the current run's first `"user"` entry: the first one after
+  the newest entry that ended a run, an answer with no tool calls or an
+  error that isn't a notice. A steer placed partway through a run (after a
+  tool round) comes later, so it doesn't move the cut: the run's results
+  stay whole, and the model sees what it just asked for. The cut moves only
+  when a new run starts, so the requests within a run share a stable
+  prefix for prompt caching. The rule applies to every tool's results and
+  takes nothing from the profile.
   """
 
   # Functional core: no processes, no I/O.
@@ -34,7 +38,7 @@ defmodule Photon.Durable.Context do
 
   @spec messages([Entry.t()]) :: [Message.t()]
   def messages(entries) do
-    {earlier, current} = entries |> since_reset() |> split_at_turn()
+    {earlier, current} = entries |> since_reset() |> split_at_run()
 
     earlier
     |> Enum.map(&shorten/1)
@@ -50,13 +54,29 @@ defmodule Photon.Durable.Context do
     end
   end
 
-  # Entries before the newest user entry belong to earlier turns.
-  defp split_at_turn(entries) do
-    case last_index(entries, "user") do
+  # Entries before the current run's first user entry belong to earlier
+  # runs. A user entry starts a run when it is the first one, or the first
+  # after an entry that ended a run; later ones are steers placed mid-run.
+  defp split_at_run(entries) do
+    {start, _open} =
+      entries
+      |> Enum.with_index()
+      |> Enum.reduce({nil, true}, fn
+        {%Entry{kind: "user"}, index}, {_start, true} -> {index, false}
+        {entry, _index}, {start, open} -> {start, open or run_end?(entry)}
+      end)
+
+    case start do
       nil -> {[], entries}
       index -> Enum.split(entries, index)
     end
   end
+
+  defp run_end?(%Entry{kind: "assistant", data: %{"message" => message}}),
+    do: Message.tool_calls(message) == []
+
+  defp run_end?(%Entry{kind: "error", data: data}), do: data["notice"] != true
+  defp run_end?(_entry), do: false
 
   defp last_index(entries, kind) do
     entries

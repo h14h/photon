@@ -566,8 +566,9 @@ this step each `shell` result (40,000 code points by default) and each
 request, and a few dozen commands or a handful of screenshots would push
 requests past the model's context or the request size limit.
 
-So `Durable.Context.messages/1` shortens tool results from before the
-newest `user` entry, that is, from earlier turns:
+So `Durable.Context.messages/1` shortens tool results from earlier runs,
+before the current run's first `user` entry (the first after the newest
+answer with no tool calls, or error that isn't a notice):
 
 - an image part is replaced by "(image no longer shown; call view_image
   again to see it)"; the dimensions line stays
@@ -577,9 +578,12 @@ newest `user` entry, that is, from earlier turns:
   set one, for example "Full output: /data/ops/op_x/out and
   /data/ops/op_x/err on mm1, kept for 7 days."
 
-Results in the current turn stay whole, so the model sees what it just
-asked for. The cut moves only when a new turn starts, so a turn's
-requests share a stable prefix for prompt caching. The rule is generic
+Results in the current run stay whole, so the model sees what it just
+asked for. A steer that arrives mid-run is placed after a tool round
+(`Generation.step("after_tools")`) as a later `user` entry, so it doesn't
+move the cut; cutting at the newest `user` entry would hide a screenshot
+the model asked for before it ever saw it. The cut moves only when a new
+run starts, so a run's requests share a stable prefix for prompt caching. The rule is generic
 (every tool's old results), stays in the strict core, and takes nothing
 from the profile. `Translate.details/3` sets `full_output` for shell
 results.
