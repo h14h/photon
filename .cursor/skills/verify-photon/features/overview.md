@@ -13,7 +13,7 @@ Overview is the hub home page. It lists machines and what is scheduled. Work on 
 
 ## How to get to it (user POV)
 
-- Open the hub, or click **Overview** in the sidebar. The heading is **Overview**. The subtitle counts machines, such as **1 of 1 machines online.**
+- Open the hub, or click **Overview** in the sidebar. The heading is **Overview**. The subtitle counts machines. One machine reads **1 of 1 machine online.**
 - Under **Machines**, the `local` card says **online** and names its host and platform. Under the cards: **Work happens through Blip: ask it to run something on any of these.**
 - Under **Schedules**, before anything is scheduled: **None yet. Ask Blip for something recurring, like "every morning, check my disks".**
 - Ask Blip `every 30 minutes: check disks`. A row titled **check disks** appears, with a clock interval. The X (tooltip **Cancel**) asks **Cancel this schedule?**
@@ -26,7 +26,7 @@ Preconditions:
 - `verify-photon doctor` prints `ok`.
 - Start from a fresh launch for the empty schedule check. Create the schedule this recipe cancels with Blip, after that empty check: `every 30 minutes: check disks`. Thirty minutes keeps the routine from firing during the pass.
 
-- **Empty page.** After launch, run `.cursor/skills/verify-photon/verify-photon browser start`, then `.cursor/skills/verify-photon/verify-photon browser click --selector '#blip-close'`, then `.cursor/skills/verify-photon/verify-photon browser wait-text --within '#schedules' --text 'None yet'`. `#machine-local` contains `online`. `#work-hint` contains `Work happens through Blip`. `#overview-summary` contains `1 of 1 machines online.` `.cursor/skills/verify-photon/verify-photon browser count --selector '#sidebar a[href^="/sessions/"]'` prints `0`. Screenshot `$PHOTON_VERIFY_ROOT/evidence/overview/empty.png` with the Photon sidebar visible.
+- **Empty page.** After launch, run `.cursor/skills/verify-photon/verify-photon browser start`, then `.cursor/skills/verify-photon/verify-photon browser click --selector '#blip-close'`, then `.cursor/skills/verify-photon/verify-photon browser wait-text --within '#schedules' --text 'None yet'`. `#machine-local` contains `online`. `#work-hint` contains `Work happens through Blip`. `#overview-summary` contains `1 of 1 machine online.` `.cursor/skills/verify-photon/verify-photon browser count --selector '#sidebar a[href^="/sessions/"]'` prints `0`. Screenshot `$PHOTON_VERIFY_ROOT/evidence/overview/empty.png` with the Photon sidebar visible.
 - **Sessions are gone.** `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${PHOTON_VERIFY_PORT:-4010}/sessions/ns_1` prints `404`.
 - **Sign-in banner.** `#sign-in-banner` is visible and its text is `Sign in with ChatGPT`. Do not click it; that opens Settings and starts nothing by itself, but the pass leaves sign-in for `settings.md`.
 - **Theme.** Run `.cursor/skills/verify-photon/verify-photon browser click --selector 'button[title="Dark theme"]'`, then `.cursor/skills/verify-photon/verify-photon browser count --selector 'html[data-theme="dark"]'`. It prints `1`. Click `button[title="System theme"]` to put it back. `html[data-theme-source="system"]` then counts `1`.
@@ -42,4 +42,5 @@ Preconditions:
 - The cancel control has no id of its own. With one schedule, `#schedules button[title="Cancel"]` is that button. Omit `--confirm` and the harness dismisses the dialog, leaving the schedule in place.
 - `in 2 minutes: …` would fire during a long pass. Use `every 30 minutes: …` so the row stays until you cancel it.
 - An empty hub with no machines shows `#no-machines` (**No machines yet**) and the subtitle **Add a machine and Blip can start working on it.** This harness always has `local`, so that empty state is not the one to assert.
+- **Make its command** on Nodes issues a key, and Overview then counts that machine too (`1 of 2 machines online.` once `vps-1` exists). Read **1 of 1 machine online.** before that step.
 - The theme buttons have no id. Match `button[title="Dark theme"]` and `button[title="System theme"]`.

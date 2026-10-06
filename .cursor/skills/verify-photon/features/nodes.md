@@ -8,7 +8,7 @@ Nodes are the machines that run the agent. A local hub starts a built-in node na
 - `nodes-offline-absent` leaves **Not connected** off the page when every known machine is online.
 - `nodes-tailnet` explains why one-click install is or is not available.
 - `nodes-manual` reveals the curl install command for a named machine.
-- `nodes-leave` returns to Overview without changing nodes.
+- `nodes-leave` returns to Overview. Leaving does not install or remove a node; the manual key is what adds `vps-1`.
 
 ## How to get to it (user POV)
 
@@ -32,7 +32,8 @@ Preconditions:
 - **Offline list.** Run `.cursor/skills/verify-photon/verify-photon browser count --selector '#offline-nodes'`. It prints `0`. A fresh hub has not issued a key for any other machine, and `local` is connected, so **Not connected** stays hidden.
 - **Capture the page before any key exists.** Run `.cursor/skills/verify-photon/verify-photon browser screenshot --path "$PHOTON_VERIFY_ROOT/evidence/nodes/page.png"`. The image shows **Nodes**, the `local` card, and the Photon sidebar. It must not contain `PHOTON_NODE_TOKEN=`.
 - **Tailnet branch.** Run `.cursor/skills/verify-photon/verify-photon browser text --selector '#add-node'`. On a hub without the `tailscale` binary, the text contains `tailscale isn't installed on the hub machine`. On a hub that is on a tailnet, it lists machine rows instead; leave **Install** alone. A dev server bound to `127.0.0.1` also shows `The hub only listens on this machine` and a `PHOTON_BIND=` hint. With nothing in `apps/node/dist`, the page contains `No node builds are on this hub yet`. None of those warnings mean `local` is down.
-- **Manual command, redacted.** Run `.cursor/skills/verify-photon/verify-photon browser fill --selector '#manual-node-id' --value 'vps-1'`, then `.cursor/skills/verify-photon/verify-photon browser click --selector '#make-install-command'`, then `.cursor/skills/verify-photon/verify-photon browser wait-selector --selector '#install-command'`. Read the text and assert it contains `/node/install.sh` and `PHOTON_NODE_TOKEN=`. In `summary.txt` record only that both substrings were present, plus `token_recorded=no`. Do not copy the token value and do not screenshot this state.
+- **Manual command, redacted.** Run `.cursor/skills/verify-photon/verify-photon browser fill --selector '#manual-node-id' --value 'vps-1'`, then `.cursor/skills/verify-photon/verify-photon browser click --selector '#make-install-command'`, then `.cursor/skills/verify-photon/verify-photon browser wait-selector --selector '#install-command'`. Read the text on this page, before navigating away, and assert it contains `/node/install.sh` and `PHOTON_NODE_TOKEN=`. In `summary.txt` record only that both substrings were present, plus `token_recorded=no`. Do not copy the token value and do not screenshot this state.
+- **Known offline.** That command issues a key, so the hub now knows `vps-1`. `.cursor/skills/verify-photon/verify-photon browser count --selector '#offline-vps-1'` prints `1`, and `#offline-nodes` contains `offline`. Still do not screenshot.
 - **Leave.** Run `.cursor/skills/verify-photon/verify-photon browser click --selector '#nav-overview'`. The overview heading is back and `#side-node-local` is still listed.
 - **Proof.** `page.png` plus `summary.txt` with `feature=nodes`, `entry=nav-nodes`, and `token_recorded=no`. Doctor still prints `node=local`.
 
@@ -44,7 +45,8 @@ Preconditions:
 - Naming the manual node `local` is rejected: `local is the built-in node's name.` Use a different name, such as `vps-1`.
 - The install command is filled by a browser hook (`phx-update="ignore"`). It is empty in the HTML until **Make its command** returns. The key is not in the LiveView assigns.
 - The command uses the origin of the page you opened (`http://127.0.0.1:4010` when the harness did) plus `/node/install.sh`, and `PHOTON_NODE_ID=` plus `PHOTON_NODE_TOKEN=`. Do not expect the README's port 4000 in that command during verification.
-- Making another command for the same name replaces the key. Verification mints one key in the disposable data dir and never reuses it.
+- Making another command for the same name replaces the key. Verification mints one key in the disposable data dir and never reuses it. The command is filled by the browser hook, so `#install-command` is empty again after you leave `/nodes`. Read it before **Overview**.
+- Issuing that key puts the name under **Not connected** (`#offline-vps-1`). The empty-offline check belongs before **Make its command**.
 - `mix photon.package` is what fills `apps/node/dist`. The embedded `local` node does not need those binaries. `No node builds are on this hub yet` is expected on a dev checkout that only ran `mix setup`.
 - **Removed** and **Let it open the hub** appear only after a node was removed. This map does not install or remove a remote node, so that section stays absent.
 - Opening the page shells out to `tailscale status` when that binary exists. Verification must not require a tailnet.
