@@ -179,14 +179,29 @@ Table `threads`, schema `Photon.Threads.Thread`:
 |---|---|---|
 | `id` | string, primary key | the thread's durable conversation ID (`c_<suffix>`) |
 | `project_id` | string, not null, references `projects` (`on_delete: :delete_all`) | index on `[project_id, active_at]` |
-| `title` | string, not null | from the first message |
+| `title` | string, not null | from the first message, then the model's short title or the owner's |
 | `active_at` | `utc_datetime_usec`, not null | when the thread last got a message; set by `start/2` and by every `send/3`, in the same commit as the submission |
 | `inserted_at`, `updated_at` | `utc_datetime_usec` | |
 
-- The title is `Photon.Threads.Rules.title/1` of the first message: its
-  first non-blank line, whitespace collapsed, cut to at most 60 characters
-  at a word boundary with `...` added when cut. The conversation's own
-  `title` gets the same text.
+- The first title is `Photon.Threads.Rules.title/1` of the first message:
+  its first non-blank line without Markdown's marks, whitespace collapsed,
+  cut to at most 50 characters at a word boundary with `...` added when
+  cut. The conversation's own `title` gets the same text, and keeps it.
+- The commit that starts a thread also creates a background
+  `"thread_title"` task (`Photon.Threads.Titling`) waiting on the first
+  run. When the run ends, its one step asks the model in Settings, through
+  `Photon.ChatGPT` like every conversation (`Photon.Threads.MockTitle` on
+  the scripted model), for a 2-6 word title, given the start of the first
+  message and the first answer (`Rules.title_request/2`): low reasoning,
+  no tools, one attempt, and no second request if the step runs again
+  after a restart. A failed request, or an answer that doesn't read as a
+  title (`Rules.model_title/1`), leaves the first title. Being background
+  work, it never makes the thread busy or holds up its run.
+- The owner renames a thread from its page (`Threads.rename/2`, at most
+  80 characters). The model's title only replaces the first title, so it
+  never overwrites a rename. Both announce `{:projects_changed,
+  project_id}`, so the sidebar, the thread and project pages, a file's
+  meta line and Blip's chip show the new title.
 - A thread's conversation has profile `"thread"`. The thread row, the
   conversation and the first message are created in one commit
   (`Threads.start/2`), so there is never a thread without a first
@@ -573,8 +588,9 @@ only finds entries in that thread's conversation.
   `Machines` heading, and the "+" next to that heading goes away (owner's
   decision). The Nodes page itself is unchanged. It sits at the bottom,
   above `Settings`.
-- At the bottom, as today: the ChatGPT sign-in banner (above `Machines`),
-  `Settings` (`#nav-settings`) with the model, the theme toggle.
+- At the bottom, as today: the ChatGPT sign-in banner (above `Machines`,
+  `#sign-in-banner`, only while no model can answer: the scripted model
+  counts), `Settings` (`#nav-settings`) with the model, the theme toggle.
 
 The projects list takes the space the machine list had and scrolls. The
 current page is highlighted and carries `aria-current="page"`:
@@ -689,6 +705,8 @@ concerns it), and the edit form.
   text over a thread's change). A save with an old version gets the same
   banner and keeps your text in the box. A file deleted meanwhile shows
   `#file-deleted`, and `Save` creates it again.
+- Saving keeps the tab the owner is on. A new file saved from `Preview`
+  opens its page with `?tab=preview`.
 - The `:new` form has the `Write` and `Preview` tabs too. A dirty editor
   (on `:new`, any name or text) says "Unsaved changes" (`#file-dirty`)
   next to `Save`, and `#file-form` carries `data-dirty`. Its colocated
@@ -720,14 +738,20 @@ thread page does the same.
 `PhotonWeb.ThreadLive`, action `:show`, at `/projects/:slug/threads/:id`:
 
 - Header: the project's name linking back (`#thread-project`), the title
-  (`#thread-title`), and the state (`#thread-status`, `data-state` of
-  `running` or `idle`).
+  (`#thread-title`) with a pencil (`#thread-rename`) that opens it in a
+  small form in place (`#thread-rename-form`, `#thread-title-input`;
+  Enter saves through `Threads.rename/2`, Esc or `#thread-rename-cancel`
+  puts it back), and the state (`#thread-status`, `data-state` of
+  `running` or `idle`). The header follows `{:projects_changed, id}`,
+  which a new title announces.
 - The conversation (`#thread-conversation`, the `PinToBottom` hook, with
   `jump_to_latest/1`): the entries (`#thread-entries`, a stream with DOM
   IDs `thread-entry-<entry id>`), each tool call as a line inside the
   answer that made it (`#thread-action-<call id>`), naming the machine
-  ("Ran `ls` on mm1", "Looked at shot.png on mm1"), the running command's
-  output tail under it, images under their line, and the in-flight answer
+  ("Ran `ls` on mm1", "Looked at shot.png on mm1"; "Stopped `ls` on mm1"
+  for a call the user stopped), the running command's output tail under
+  it (a stopped call keeps it, as long as the page is open: the hub
+  stores no output), images under their line, and the in-flight answer
   (`#thread-live-output`). Context-file calls read "Checked the context
   files", "Read notes.md", "Wrote notes.md", "Edited notes.md".
 - The composer (`#thread-composer`, `#thread-composer-input`,
@@ -745,7 +769,13 @@ thread page does the same.
 - The composer row, and the sign-in panel in its place, keep clear of
   Blip's face in the corner (`blip-clear-x`; `sign_in_to_talk/1` takes a
   `class` as `composer/1` does), and the page makes room for a pinned Blip
-  panel as every page does.
+  panel as every page does. On a wide screen (1024 px and up) it also
+  keeps clear of Blip's floating panel (`data-blip-room` on
+  `#thread-page`, see app.css), so the conversation, its call cards and
+  the composer stay usable beside it. Other pages leave the floating
+  panel over them, like a dialog.
+- A call's line truncates only the command or path; the verb and "on
+  mm1" never give way to a narrow card.
 
 It subscribes with `Threads.subscribe/1` and folds `{:durable, ...}` and
 `{:live, ...}` exactly as `BlipLive` does, through the shared helpers in
@@ -942,9 +972,11 @@ No Boundary or Credo list changes.
 | `Photon.Projects.Rules` | core | `use Boundary, type: :strict, deps: [Photon.Projects.Project, Photon.Projects.ContextFile]` | `project/2`, `name_from/1`, `slug/1`, `unique_slug/2`, `file_name/1`, `key/1` (the lookup key: `.md` added, downcased), `content/2`, `save_check/2`, `edit/4`, `count/1` ("1,234"). The file's name is an argument of `content/2` and `edit/4` for their messages. IDs and times are arguments. |
 | `Photon.Threads` | boundary (API and the `"thread"` profile) | `use Boundary, deps: [Photon.ChatGPT, Photon.Durable, Photon.MachineTools, Photon.Projects, Photon.Repo, Photon.Settings, Photon.Transcript, PhotonCore, PhotonCore.LLM, Ecto], exports: [Thread]` (`Photon.Transcript` for `image/3`, as `Assistant.image/2` uses it; never `Photon.Assistant`, which depends on `Photon.Threads`) | API: `start/2`, `get/1`, `list/1`, `sidebar/1`, `running/1`, `project_id!/1`, `send/3`, `stop/1`, `withdraw/1`, `entries/1`, `busy?/1`, `queued/1`, `subscribe/1`, `image/3`, `latest_answer/1`. Profile: `llm/1`, `system_prompt/1`, `tools/1`, `workdir/1` (section 3.1). `start/2` checks the text isn't blank and creates the conversation, the row and the first submission in one commit (`Tx.create_conversation/2`, `Repo.insert!`, `Durable.submit_tx/4`), and announces `{:projects_changed, project_id}` (`Projects.threads_changed_tx/2`); it returns `{:ok, thread}` or `{:error, :blank \| :not_found}`. `send/3` submits and sets `active_at` in one commit and announces the same; it returns `{:ok, submission}` or `{:error, :blank \| :not_found \| :busy}`. `running(thread_ids)` is the `MapSet` of those running (`Durable.busy/1`). |
 | `Photon.Threads.Thread` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 2.4. |
-| `Photon.Threads.Rules` | core | `use Boundary, type: :strict, deps: []` | `title/1`, `listing/3`, `file_header/3` (the first line of a read; the reading thread's ID and the other threads' titles name who changed the file, as in `listing/3`), `missing_file/2` (a read's error, listing the names there are), `characters/1` ("1,234 characters"; `Projects.Rules.count/1` isn't exported). |
+| `Photon.Threads.Rules` | core | `use Boundary, type: :strict, deps: [PhotonCore]` | `title/1`, `title_request/2` and `model_title/1` (the model's title, section 2.4), `requested_message/1` (for the scripted title), `rename/1`, `listing/3`, `file_header/3` (the first line of a read; the reading thread's ID and the other threads' titles name who changed the file, as in `listing/3`), `missing_file/2` (a read's error, listing the names there are), `characters/1` ("1,234 characters"; `Projects.Rules.count/1` isn't exported). |
 | `Photon.Threads.Prompt` | core | `use Boundary, type: :strict, deps: [Photon.MachineTools]` (reaches `Guide` through its parent's export; section 3.6) | `system_prompt(project, now)` (section 3.2); takes a map with `name`, `slug`, `purpose`. |
 | `Photon.Threads.MockScript` | core | `use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM, Photon.MachineTools]` | Section 3.5. |
+| `Photon.Threads.MockTitle` | core | `use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM, Photon.Threads.Rules]` | The scripted model's answer to a title request: "Run df on local", "Read notes.md" (section 2.4). |
+| `Photon.Threads.Titling` | boundary (the `"thread_title"` task kind) | inside `Photon.Threads` | Section 2.4. Registered under the durable harness's `:kinds`; `config :photon, Photon.Threads, auto_title: false` turns it off (tests). |
 | `Photon.Threads.Tools.ListContextFiles`, `.ReadContextFile`, `.WriteContextFile`, `.EditContextFile` | boundary (durable tools) | inside `Photon.Threads` | Section 3.3. |
 | `Photon.Transcript` | core | `use Boundary, type: :strict, deps: [PhotonCore]` | Moved from `Photon.Assistant.Transcript`; adds `typed/2` (section 5.8). |
 | `Photon.Assistant` | boundary | deps add `Photon.Projects`, `Photon.Threads`, `Photon.Transcript`; `exports: [Notice]` | `page_at/1`; `send/2` takes `page:`; uses `Settings.reasoning/1`; `image/2` uses `Photon.Transcript`. |
@@ -1006,8 +1038,9 @@ never raw HTML.
   `a/b.md`, `.hidden.md`, 65 characters, a space); content at 100,000
   and 100,001 characters; `save_check/2` for each case; `edit/4` found
   once, not found, found three times.
-- `threads/rules_test.exs`: titles (first non-blank line, collapsed,
-  60-character cut with `...`); `listing/3` names "you", "the user" and
+- `threads/rules_test.exs`: titles (first non-blank line, Markdown's
+  marks left out, collapsed, 50-character cut with `...`), the title
+  request and what of the model's answer is a title, renames; `listing/3` names "you", "the user" and
   another thread's title, and says when there are no files.
 - `threads/prompt_test.exs`: has the name, the purpose, the folder path
   with the slug and the shared shell lines; the same text for two times
@@ -1411,8 +1444,9 @@ choices this plan makes inside them, all reversible:
   field.
 - The slug is fixed at creation and survives renames, because folders on
   machines are named after it. `new` is reserved.
-- No deleting or archiving projects and threads yet, and no renaming
-  threads (titles come from the first message). Context files can be
+- No deleting or archiving projects and threads yet. Threads get a short
+  title from the model after their first run, and the owner can rename
+  one from its page. Context files can be
   deleted by the user, not by threads.
 - Context files are flat, end in `.md`, and hold up to 100,000
   characters. The user's saves are checked against the version they
