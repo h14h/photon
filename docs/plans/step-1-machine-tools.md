@@ -236,11 +236,20 @@ On the node:
    operation. It may or may not have run." That snapshot isn't journaled.
 4. A shell command spawns only after its `process` checkpoint is journaled,
    and only if the journal doesn't say canceled. This keeps the
-   at-most-once guarantee (TLA finding F3) without a hub round trip.
+   at-most-once guarantee (TLA finding F3) without a hub round trip. If
+   the executor dies during the checkpoint (it may have journaled it),
+   `Ops.Shell` gets `:ignored`, spawns nothing, and writes an `unstarted`
+   file in the op's directory before it stops. A resume that finds the
+   `process` checkpoint with no process group, no `pid` file and that
+   marker starts the command, through the checkpoint again, since the
+   files prove it never ran; without the marker it fails the op as
+   "outcome unknown". Every start removes the marker before its
+   checkpoint, and the journal write syncs that directory, so the marker
+   can't outlive a start that may have spawned.
 5. Every snapshot is journaled before it is forwarded to the hub. The
    journal always holds the latest snapshot.
-6. A terminal journal stays until `op.ack`. Then `op.json`, `pid` and `exit`
-   are deleted. `out` and `err` stay for 7 days, because a truncated result
+6. A terminal journal stays until `op.ack`. Then `op.json`, `pid`, `exit`,
+   `stopped` and `unstarted` are deleted. `out` and `err` stay for 7 days, because a truncated result
    names their paths; a daily sweep removes op directories that have no
    `op.json` and are older than that.
 7. `op.cancel` for a journaled, unfinished op records the cancel in the
@@ -299,6 +308,8 @@ On the node:
     the exit status when the `exit` file has one. Without the marker the
     wrapper, which is outside the killed group, records exit 143, and the
     resumed op would report a `completed` command with partial output.
+    This holds for a command `Ops.Shell` reattached to after an abrupt
+    crash (it has no port and polls the group) as for one it started.
 
 ### 2.4 What happens when
 
@@ -318,10 +329,12 @@ Node restart.
 The executor scans the journal on start. Unfinished ops are resumed, and
 told to cancel if their journal says so (node rule 2): `Ops.Shell`
 reattaches to a command that is still running, finishes one whose `exit`
-file exists, and fails one whose outcome is unknown. A `view_image` job
+file exists, starts one whose `unstarted` marker proves it never ran
+(node rule 4), and fails one whose outcome is unknown. A `view_image` job
 simply runs again, since it only reads. Terminal ops wait for the next
 join and its ack. A node that is stopped on purpose kills its running
-commands' process groups on the way down, as today, so for the hub's own
+commands' process groups on the way down, as today, including commands
+reattached after an earlier crash, so for the hub's own
 machine a hub restart ends its running commands. The result says so:
 "photon-node stopped while the command was running, so the command was
 killed" (node rule 10). Only an abrupt crash (power loss, `kill -9` of the
@@ -332,7 +345,9 @@ The executor and the `Connection` restart; op processes keep running.
 An op's calls into the executor never kill it: `report` and `checkpoint`
 wait as long as the executor lives and return `:down` or `:ignored` if it
 dies (section 4.2). The restarted executor re-monitors running ops, asks
-each to resend its snapshot, and resumes the rest from the journal.
+each to resend its snapshot, and resumes the rest from the journal. A
+shell whose `process` checkpoint got `:ignored` stopped without spawning,
+and its resume starts the command (node rule 4).
 
 Disconnect.
 Nothing is lost. The node's ops keep running; snapshots are journaled and
@@ -658,10 +673,10 @@ own operations until PR B.
 | Module | Layer | Boundary | PR | Notes |
 |---|---|---|---|---|
 | `PhotonNode.Harness.Ops.Owner` (PR B: `PhotonNode.Ops.Owner`) | contract | in the Ops boundary | A | Behaviour: `checkpoint(owner_id, op) :: :ok \| :cancel \| :ignored \| {:error, String.t()}` (a call; persist before acting), `report(owner_id, op) :: :ok \| :down` (persist, then forward), `output(owner_id, op_id, stream, text) :: :ok` (live). The callback docs say what every implementation must keep: an op process never dies because of its owner. `checkpoint` and `report` return `:ignored` and `:down` on any exit from the owner, not only `:noproc`, since an uncaught exit in `Ops.Shell` runs its `terminate/2`, which kills the command. An op process is started with `{op, {owner_module, owner_id}}`. The module is named in data, so Boundary sees no call from Ops to its owners, which avoids a dependency cycle. `Owner.checkpoint/2`, `report/2` and `output/4` take the pair and call the module, so op processes call those (`Owner.t()` is the pair). `stream` is the string `"out"` or `"err"`, as `Wire.output/3` takes it. Stays in PR B with one real implementation (the executor) and a test owner. |
-| `PhotonNode.Harness.Ops`, `Ops.Shell`, `Ops.Job`, `Ops.ViewImage` | boundary / workers | Harness (PR B: own `PhotonNode.Ops` boundary, exporting `Owner`) | A, B | PR A: replace the `session_id` argument with the owner pair; replace direct calls to `Coordinator.checkpoint/2`, `Coordinator.report_op/2` and `Link.live/2` with the owner's callbacks. `Shell.start_when_confirmed/2` fails the op on `{:error, reason}` without spawning. `Shell.terminate/2` writes the `stopped` marker before it kills a running group (whenever the command's port is still open, including during a cancel's kill; a kill under way after the command exited is only for its leftover children and writes none), and kills the group found through the `pid` file when the `pgid` checkpoint hasn't happened yet. `recover/1` checks the marker before the `exit` file (node rule 10), and a fresh start removes a stale one with the other leftover files. `Ops.running?/1` says whether a process runs an op, for `Executor.Rules`' `running?` argument (A5). The Harness boundary's `exports` become `[Link, Ops, Ops.Owner, Env]`, since the Executor, a separate boundary, calls `Ops.add/2`, `Ops.running?/1` and `Ops.cancel/1`, implements `Ops.Owner` and reads `Env.shell/0` for `Request`'s facts. PR B: rename to `PhotonNode.Ops.*`, delete `SkillUse`, move `Env` and `Image` with them. |
+| `PhotonNode.Harness.Ops`, `Ops.Shell`, `Ops.Job`, `Ops.ViewImage` | boundary / workers | Harness (PR B: own `PhotonNode.Ops` boundary, exporting `Owner`) | A, B | PR A: replace the `session_id` argument with the owner pair; replace direct calls to `Coordinator.checkpoint/2`, `Coordinator.report_op/2` and `Link.live/2` with the owner's callbacks. `Shell.start_when_confirmed/2` fails the op on `{:error, reason}` without spawning, and on `:ignored` writes the `unstarted` marker and stops without spawning (node rule 4; as built in G1). `Shell.terminate/2` writes the `stopped` marker before it kills a running group (whenever the command's port is still open, or, as built in G1, it reattached to the command after a crash and still polls it, including during a cancel's kill; a kill under way after the command exited is only for its leftover children and writes none), and kills the group found through the `pid` file when the `pgid` checkpoint hasn't happened yet. `recover/1` checks the marker before the `exit` file (node rule 10), and a fresh start removes a stale one with the other leftover files. `Ops.running?/1` says whether a process runs an op, for `Executor.Rules`' `running?` argument (A5). The Harness boundary's `exports` become `[Link, Ops, Ops.Owner, Env]`, since the Executor, a separate boundary, calls `Ops.add/2`, `Ops.running?/1` and `Ops.cancel/1`, implements `Ops.Owner` and reads `Env.shell/0` for `Request`'s facts. PR B: rename to `PhotonNode.Ops.*`, delete `SkillUse`, move `Env` and `Image` with them. |
 | `PhotonNode.Harness.Coordinator` | boundary | Harness | A (then deleted in B) | Implements `Ops.Owner` with its session ID as `owner_id`: `checkpoint` is today's `checkpoint/2`, now returning `:ignored` rather than `:down` on an exit, as the behaviour says; `report` is `report_op/2`, renamed `report/2`; `output` is `Link.live/2` with the `op_output` map. |
 | `PhotonNode.Executor` | boundary (API plus GenServer) | own boundary: `deps: [PhotonNode, PhotonNode.Config, PhotonNode.Harness (PR B: PhotonNode.Ops), PhotonCore, Jason], exports: [Link]` | A | The node's API for hub ops: `start/1` (a parsed `op.start`), `cancel/1`, `ack/1`, `snapshots/0` (every journaled snapshot, for a join), plus the `Ops.Owner` callbacks. One process. It owns the journal (all writes go through it, so a cancel flag and a snapshot can't overwrite each other), monitors every op process it starts (rule 87), answers `process` checkpoints, and forwards snapshots and output through `Executor.Link`. On `:DOWN` it applies `Executor.Rules.down/3`. The owner callbacks `report/2` and `checkpoint/2` call the executor with `:infinity` as the timeout and catch every exit (`catch :exit, _`), returning `:down` and `:ignored`, as `Coordinator.checkpoint/2` does today. A call that waits on a busy executor (a journal scan, an fsync of a 5 MB image snapshot) just waits; one whose executor dies returns at once, since `GenServer.call` monitors it. The executor never calls an op process synchronously (`Ops.add/2` starts a child whose `init/1` returns at once, or sends `:resend`), so the wait can't deadlock. The op process keeps its state, and the restarted executor's `Ops.add/2` asks it to resend. The moduledoc says so: an op process never dies because of its owner. `init/1` returns at once; `handle_continue` scans the journal, applies `Executor.Rules.on_scan/2` to each entry, calls `Ops.add/2` for every unfinished op (a running one is asked to resend, a missing one resumes from its snapshot), follows it with `Ops.cancel/1` when the entry's `cancel` flag is set (node rule 2), and monitors it. Snapshots are encoded and fitted to the 6 MB budget with `Request.fit/2` before they are journaled (node rule 9). A failed journal write is handled as node rule 8 says. A daily `send_after(:sweep)` removes acknowledged op directories older than 7 days; the first sweep runs after the start-up scan. Registered name: `PhotonNode.Executor`. As built (A5): `start/1`, `cancel/1`, `ack/1` and `snapshots/0` are calls with `:infinity` as the timeout, so a dead executor fails them at once and a busy one is waited for; the ops it owns carry the owner pair `{PhotonNode.Executor, :hub}`; `output/4` goes from the op process straight to `Executor.Link`, never through the executor; a `ready` snapshot is forwarded after it is journaled, so the hub learns the op arrived; an op process that `Ops.add/2` can't start, or that crashes, is failed with `Request.failed/2`; an exit of a process that has since been replaced (the op is monitored again under a newer pid) is ignored. Entries that exist but can't be read: `op.start` answers with the unjournaled `Request.unreadable/2` unless a process runs the op (its next snapshot replaces the entry), `op.ack` then forgets the entry, `op.cancel` only tells the process, `checkpoint` returns `{:error, reason}`, and a report is forwarded without journaling. A report for an op whose entry is terminal or missing changes nothing. A terminal snapshot that can't be journaled (and an `unrecorded` answer) is held in memory until its `op.ack` and read in place of the journal's entry by every decision and by `snapshots/0`; a `ready` entry it leaves behind is deleted with `Journal.discard/2` when `Rules.on_unjournaled/1` says so (node rule 8). |
-| `PhotonNode.Executor.Journal` | boundary helper (file I/O, no process) | inside Executor | A | Each takes the ops dir first. `read(ops_dir, id) :: {:ok, entry \| nil} \| {:error, String.t()}` (nil: no entry; an unreadable file or one that isn't an entry for `id` is an error); `write(ops_dir, id, entry) :: :ok \| {:error, String.t()}` (to `op.json.tmp`, mode 0600, synced, renamed over `op.json`, then the directory synced, and the ops dir too when the op's directory was new; the op's directory is mode 0700). Erlang can't open a directory to fsync it, so on Linux the directory sync runs `sync -- <dirs>` (coreutils and busybox fsync each path); elsewhere it is skipped. An error means the old entry is still in place: once the rename has happened, a failed directory sync is only logged. `list(ops_dir) :: [entry]` in ID order, logging and skipping unreadable entries; `forget(ops_dir, id)` (deletes `op.json`, `op.json.tmp`, `pid`, `exit` and `stopped`); `discard(ops_dir, id)` (deletes `op.json` alone and syncs the directory, for node rule 8); `sweep(ops_dir, now, max_age) :: [id]` (POSIX seconds; removes directories with no `op.json` whose mtime is older than `now - max_age`; `forget/2` changes the mtime, so the age counts from the ack); `op_dir/2`. File shape: `%{"op" => snapshot, "cancel" => boolean}`. Called only from the executor process. Until A5 adds the Executor boundary it sits in the `PhotonNode` boundary. |
+| `PhotonNode.Executor.Journal` | boundary helper (file I/O, no process) | inside Executor | A | Each takes the ops dir first. `read(ops_dir, id) :: {:ok, entry \| nil} \| {:error, String.t()}` (nil: no entry; an unreadable file or one that isn't an entry for `id` is an error); `write(ops_dir, id, entry) :: :ok \| {:error, String.t()}` (to `op.json.tmp`, mode 0600, synced, renamed over `op.json`, then the directory synced, and the ops dir too when the op's directory was new; the op's directory is mode 0700). Erlang can't open a directory to fsync it, so on Linux the directory sync runs `sync -- <dirs>` (coreutils and busybox fsync each path); elsewhere it is skipped. An error means the old entry is still in place: once the rename has happened, a failed directory sync is only logged. `list(ops_dir) :: [entry]` in ID order, logging and skipping unreadable entries; `forget(ops_dir, id)` (deletes `op.json`, `op.json.tmp`, `pid`, `exit`, `stopped` and, as built in G1, `unstarted`); `discard(ops_dir, id)` (deletes `op.json` alone and syncs the directory, for node rule 8); `sweep(ops_dir, now, max_age) :: [id]` (POSIX seconds; removes directories with no `op.json` whose mtime is older than `now - max_age`; `forget/2` changes the mtime, so the age counts from the ack); `op_dir/2`. File shape: `%{"op" => snapshot, "cancel" => boolean}`. Called only from the executor process. Until A5 adds the Executor boundary it sits in the `PhotonNode` boundary. |
 | `PhotonNode.Executor.Request` | core | strict, `deps: [PhotonCore, Jason]` | A | `operation(start_message, facts) :: {:ok, Operation.t()} \| {:error, String.t()}`. `facts` are `%{shell, ops_dir, workspace}`. Fills the shell op's `input` (`command`, `shell`, `directory`: the given directory or the workspace) and `base_directory` (`ops_dir`), or the view_image op's absolute `path` and `max_size`. A relative `directory` is taken from the workspace. `max_size` must be at most 5,000,000, so an image snapshot stays under the frame limit (`fit/2` can't cut an image). Also `rejected(start, reason)` (the `failed` snapshot for an `op.start` that `operation/2` refused: an unsupported kind or bad args), `lost(id, kind)` (the `failed` snapshot for rule 3), `never_started(id)` (the `canceled` snapshot for rule 7; `op.cancel` carries no kind, so its type is `"unknown"` and the hub reads the kind from its row), `unrecorded(op, reason)` (the `failed` snapshot for a `ready` entry that couldn't be written, node rule 8), `snapshot_budget/0` (6,000,000 bytes), `failed(op, message)` (the `failed` snapshot the executor records for an op process that crashed or couldn't start, with the message where the hub reads it), `unreadable(start, reason)` (the unjournaled `failed` answer to an `op.start` whose entry exists but can't be read: "It may or may not have run."), and `fit(snapshot, budget_bytes) :: snapshot`, which cuts `result.out`, `result.err` and `terminal_error` by encoded bytes, keeping head, tail and a marker with the byte count left out of the full output (`out_size`/`err_size`) and the file's path, until the JSON encoding fits (node rule 9); an existing marker is replaced, not kept twice, and `out_truncated`/`err_truncated` are set. Each answer carries its message in `terminal_error`, and a `view_image` one also in `result.error`, where the image job puts its reason. |
 | `PhotonNode.Executor.Rules` | core | strict, `deps: [PhotonCore]` | A | Every resume decision, each aware of the journal entry's `cancel` flag (node rule 2). `on_start(journal_entry_or_nil, known?, running?) :: :run \| {:resend, cancel?} \| {:resume, cancel?} \| :lost` (a terminal entry gives `{:resend, false}`: the journaled snapshot is sent again and nothing is canceled); `on_scan(journal_entry, running?) :: :skip \| {:resend, cancel?} \| {:resume, cancel?}` (terminal entries are skipped and wait for their ack); `down(journal_entry_or_nil, reason, restarted?) :: :ignore \| {:restart, cancel?} \| {:fail, message}` (no entry or terminal: ignore; `:normal`, `:shutdown` or `:noproc` before a terminal snapshot: restart once; anything else, or a second clean exit: fail with "the operation process exited: ..."; this is `Session.op_down/3`'s rule, F9). `cancel?` true means the executor follows `Ops.add/2` with `Ops.cancel/1`. `on_unjournaled(journal_entry_or_nil) :: :remove \| :keep`: what happens to the entry when a terminal snapshot for it couldn't be journaled (node rule 8): a `ready` entry is removed, any other kept. |
 | `PhotonNode.Executor.Link` | contract | exported by Executor | A | Behaviour: `snapshot(op) :: :ok`, `output(op_id, stream, text) :: :ok`. The implementation is the node config's `:link` (default `PhotonNode.Connection`), so tests can stand in. Replaces `PhotonNode.Harness.Link` in PR B. |
@@ -1141,6 +1156,16 @@ apps/hub
   `test/core/settings_test.exs` its `node_config/1` test, and the node's
   `test/boundary/connection_test.exs` joins with an empty reply.
 - The PR A e2e test must pass unchanged.
+- As built in G1: `shell_test.exs` adds a reattached command killed and
+  reported as stopped when its shell is shut down, a stored but
+  unconfirmed start that runs once when resumed, and a stored start with
+  no marker that fails as unknown without running; `executor_test.exs`
+  adds a command whose journaled start the executor never confirmed (the
+  executor is killed while it holds the checkpoint) running once. Its
+  restart-once test now shuts down a reattached shell, which kills the
+  command, so the restart reports it as stopped; a second clean exit
+  failing the op is left to `executor/rules_test.exs`. `journal_test.exs`
+  checks `forget/2` deletes `unstarted`.
 
 ### 6.3 Checks for both PRs
 
@@ -1185,7 +1210,7 @@ Also:
 | 75 | Both sides ignore unknown events and fields; `Wire` parsers drop extras. A node without `"ops:1"` is reported as outdated rather than waited on. |
 | 79, 81, 84 | The node's children, in order: `OpRegistry`, `OpSupervisor`, `Executor`, `Connection` (PR B), `:rest_for_one`. An executor crash restarts only it and the connection; ops keep running and are re-monitored. An `OpSupervisor` crash takes the executor and connection with it; the executor resumes ops from the journal. Write this in `PhotonNode`'s moduledoc. |
 | 80, 82 | The executor starts through `start_link` under `PhotonNode` and is `:permanent`. Op workers stay `:temporary` under `OpSupervisor`; the executor, not the supervisor, decides about restarts. |
-| 86 | What each crash loses: a `NodeChannel` loses its registration and route cache, rebuilt on rejoin. The executor loses its monitors and restart counts, rebuilt in `handle_continue` from the registry and the journal, including each entry's `cancel` flag (a resumed or still-running op whose journal says canceled is told to cancel). Op processes don't lose anything when it dies: their calls into it return `:down` or `:ignored`. The connection loses nothing durable; it resends the journal on join. An op worker's crash becomes a `failed` snapshot. A node VM restart resumes from the journal; a shell command's outcome comes from its `stopped`, `exit` and `pid` files. |
+| 86 | What each crash loses: a `NodeChannel` loses its registration and route cache, rebuilt on rejoin. The executor loses its monitors and restart counts, rebuilt in `handle_continue` from the registry and the journal, including each entry's `cancel` flag (a resumed or still-running op whose journal says canceled is told to cancel). Op processes don't lose anything when it dies: their calls into it return `:down` or `:ignored`. The connection loses nothing durable; it resends the journal on join. An op worker's crash becomes a `failed` snapshot. A node VM restart resumes from the journal; a shell command's outcome comes from its `stopped`, `exit`, `pid` and `unstarted` files. |
 | 87 | The executor monitors op processes and never links to them. |
 | 92 | No new one-off jobs. The node's `:resume` task goes; the executor's `handle_continue` does the scan. |
 | 96 | The executor's sweep uses `Process.send_after/3`. Tool rechecks use the durable `"until"`. Nothing sleeps; the only allowed sleep stays in `Ops.Shell.terminate/2`. |
@@ -1509,6 +1534,15 @@ B6. Rename the operation layer. After B5.
   test. `docs/otp-design-guide.md`'s rule 46 and node lines name the new
   modules.
 
+G1. Close PR A's known gaps on the node. After B6.
+- A shell reattached after an abrupt crash (no port, polling) is killed on
+  a stop like one with a port: `stopped` marker, then the group kill (node
+  rule 10).
+- A `process` checkpoint answered `:ignored` leaves an `unstarted` marker;
+  a resume that finds it, with no process group or `pid` file, starts the
+  command instead of reporting "outcome unknown" (node rule 4).
+- Tests per section 6.2.
+
 B7. Specs. After B1 and B5 (they describe the deleted code).
 - Section 5.2 "Specs": delete NodeSync, `Coordinator` to `Executor`,
   re-model `Durable`, rewrite `docs/verification.md`. Run TLC on every
@@ -1539,3 +1573,7 @@ choices made here that the user may want to know about, all reversible:
   on the machine. Results in the current turn stay whole.
 - A shell command is at most 100,000 bytes, below Linux's 128 KB limit on
   one argument.
+- A command whose start the node recorded but never confirmed, because its
+  executor died in between, runs when the op resumes (moments later),
+  rather than failing as "outcome unknown", since its files prove it never
+  ran (node rule 4).

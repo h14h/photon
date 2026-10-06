@@ -61,7 +61,9 @@ defmodule PhotonNode.JournalTest do
   test "forget/2 deletes the entry and the command's bookkeeping, and keeps its output",
        %{ops_dir: ops_dir} do
     :ok = Journal.write(ops_dir, "op_a", entry("op_a"))
-    for name <- ~w(out err pid exit stopped), do: File.write!(file(ops_dir, "op_a", name), name)
+
+    for name <- ~w(out err pid exit stopped unstarted),
+        do: File.write!(file(ops_dir, "op_a", name), name)
 
     assert Journal.forget(ops_dir, "op_a") == :ok
     assert Journal.read(ops_dir, "op_a") == {:ok, nil}

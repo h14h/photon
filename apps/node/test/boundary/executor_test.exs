@@ -364,10 +364,12 @@ defmodule PhotonNode.ExecutorTest do
             failed} = await_snapshot(id, "failed")
   end
 
-  test "an operation process that exits cleanly before its result is restarted once", %{
-    dir: dir,
-    ops_dir: ops_dir
-  } do
+  # A clean exit before the result restarts the operation once (a second
+  # one fails it, see `Rules.down/3`). Shutting down a shell that had
+  # reattached to its command after a crash kills the command first, as for
+  # one it started (node rule 10), so the restart reports it as stopped.
+  test "a reattached command shut down before its result is restarted once and reported stopped",
+       %{dir: dir, ops_dir: ops_dir} do
     id = new_id()
     pattern = "sleep 72.#{System.unique_integer([:positive])}"
     {op, pgid} = journal_running(dir, ops_dir, id, pattern)
@@ -380,15 +382,31 @@ defmodule PhotonNode.ExecutorTest do
     _ = :sys.get_state(first)
 
     :ok = GenServer.stop(first, :shutdown)
-    _ = :sys.get_state(Executor)
-    second = op_pid(id)
-    assert is_pid(second) and second != first
-    refute_received {:snapshot, %{"id" => ^id}, _journaled}
+    refute group_alive?(pgid)
 
-    :ok = GenServer.stop(second, :shutdown)
+    assert {%{"state" => %{"terminal_error" => @stopped}}, _journaled} =
+             await_snapshot(id, "failed")
+  end
 
-    assert {%{"state" => %{"terminal_error" => "the operation process exited: shutdown"}},
-            _journaled} = await_snapshot(id, "failed")
+  # The executor died after journaling the `process` checkpoint and before
+  # answering it, so the shell stopped without spawning, and the resumed
+  # operation reported "outcome unknown" for a command that never ran.
+  test "a command whose journaled start the executor never confirmed runs once", %{
+    dir: dir,
+    workspace: workspace
+  } do
+    start_node(dir)
+    id = new_id()
+
+    TestLink.hold(&match?(%{"state" => %{"phase" => "process", "pgid" => 0}}, &1))
+    :ok = Executor.start(shell_start(id, "echo ran >> lines"))
+    assert_receive {:held, ^id, _executor}, 10_000
+    kill_executor()
+
+    assert {%{"state" => %{"result" => %{"exit_code" => 0}}}, _journaled} =
+             await_snapshot(id, "completed")
+
+    assert lines(Path.join(workspace, "lines")) == ["ran"]
   end
 
   test "a killed executor leaves the command running, and the result arrives once", %{

@@ -264,6 +264,83 @@ defmodule PhotonNode.Ops.ShellTest do
                "Its exit status was 143."
   end
 
+  # Node rule 10 after an abrupt crash: a shell that had reattached to its
+  # command (no port; it polls the group) left the command running when it
+  # was shut down, so a node stopped on purpose didn't stop it.
+  test "a reattached command is killed and reported as stopped when its shell is shut down",
+       context do
+    pattern = "sleep 66.#{System.unique_integer([:positive])}"
+    on_exit(fn -> kill_all(pattern) end)
+
+    op = shell("true", context)
+    dir = Path.join(op["state"]["base_directory"], op["id"])
+    File.mkdir_p!(dir)
+    reattached = recovered(op, dir, start_group(dir, pattern))
+
+    {:ok, pid} = Ops.add(reattached, owner())
+    # Once it has handled its start, it has reattached to the running group.
+    _ = :sys.get_state(pid)
+
+    :ok = DynamicSupervisor.terminate_child(PhotonNode.OpSupervisor, pid)
+    assert gone?(pattern)
+    assert File.exists?(Path.join(dir, "stopped"))
+
+    {:ok, _pid} = Ops.add(reattached, owner())
+
+    assert %{"state" => %{"terminal_error" => error}} = await_status("failed")
+
+    assert error ==
+             "photon-node stopped while the command was running, so the command was killed."
+  end
+
+  # The executor died after storing the "process" checkpoint and before
+  # answering, so the shell stopped without spawning, and the resumed
+  # operation reported "outcome unknown" for a command that never ran.
+  test "a command whose stored start was never confirmed runs once when resumed",
+       %{workspace: workspace} = context do
+    lines = Path.join(workspace, "lines")
+    op = shell("echo ran >> #{lines}", context)
+    dir = Path.join(op["state"]["base_directory"], op["id"])
+    test = self()
+
+    # An owner that stores the checkpoint (hands it to the test) and dies
+    # before it answers.
+    owner_pid =
+      spawn(fn ->
+        receive do
+          {:"$gen_call", _from, {:checkpoint, stored}} -> send(test, {:stored, stored})
+        end
+      end)
+
+    {:ok, pid} = Ops.add(op, owner(owner_pid))
+    ref = Process.monitor(pid)
+    assert_receive {:stored, %{"state" => %{"phase" => "process"}} = stored}, 10_000
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 10_000
+    refute File.exists?(lines)
+    assert File.exists?(Path.join(dir, "unstarted"))
+
+    {:ok, _pid} = Ops.add(stored, owner())
+
+    assert %{"state" => %{"result" => %{"exit_code" => 0}}} = await_status("completed")
+    assert File.read!(lines) == "ran\n"
+    refute File.exists?(Path.join(dir, "unstarted"))
+  end
+
+  # At most once: without the marker, a stored start with no process group
+  # and no pid file may have spawned, so it is never run again.
+  test "a stored start with no process group, pid file or marker fails as unknown",
+       %{workspace: workspace} = context do
+    lines = Path.join(workspace, "lines")
+    op = shell("echo ran >> #{lines}", context)
+    dir = Path.join(op["state"]["base_directory"], op["id"])
+
+    {:ok, _pid} = Ops.add(recovered(op, dir, 0), owner())
+
+    assert %{"state" => %{"terminal_error" => error}} = await_status("failed")
+    assert error == "shell execution outcome is unknown because process start was not recorded"
+    refute File.exists?(lines)
+  end
+
   test "a fresh start clears a stopped marker left by an earlier one", context do
     op = shell("echo hi", context)
     dir = Path.join(op["state"]["base_directory"], op["id"])
