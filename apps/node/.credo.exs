@@ -46,7 +46,9 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "PhotonNode.Harness.Inbox",
                    "PhotonNode.Harness.Image",
                    "PhotonNode.Harness.SkillPrompt",
-                   "PhotonNode.Harness.Tools.*"
+                   "PhotonNode.Harness.Tools.*",
+                   "PhotonNode.Executor.Request",
+                   "PhotonNode.Executor.Rules"
                  ],
                  nondeterministic_extra: ["PhotonCore.ID.new"],
                  allowed: [
