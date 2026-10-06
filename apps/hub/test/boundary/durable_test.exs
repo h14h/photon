@@ -282,8 +282,8 @@ defmodule Photon.DurableTest do
       assert Durable.busy([c, idle, other]) == MapSet.new([other])
     end
 
-    test "last_entry/2 is the newest entry of a kind, or nil", %{conversation: c} do
-      assert Durable.last_entry(c, "assistant") == nil
+    test "last_entries/3 are the newest entries of a kind, newest first", %{conversation: c} do
+      assert Durable.last_entries(c, "assistant", 5) == []
 
       {:ok, s} = Durable.submit(c, "wait")
 
@@ -296,9 +296,14 @@ defmodule Photon.DurableTest do
       await_settled(c, s.id)
 
       # The first answer asked for the tool; the newest one is the reply.
-      assert %Durable.Entry{kind: "assistant", data: data} = Durable.last_entry(c, "assistant")
+      assert [%Durable.Entry{kind: "assistant", data: data}] =
+               Durable.last_entries(c, "assistant", 1)
+
       assert PhotonCore.Message.text_of(data["message"]) == "waited"
-      assert Durable.last_entry(c, "error") == nil
+      assert [newest, first] = Durable.last_entries(c, "assistant", 5)
+      assert newest.seq > first.seq
+      assert PhotonCore.Message.tool_calls(first.data["message"]) != []
+      assert Durable.last_entries(c, "error", 5) == []
     end
   end
 end

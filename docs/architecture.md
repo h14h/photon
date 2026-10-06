@@ -1519,7 +1519,7 @@ What was added:
 - Hub, harness: `Tx.announce/3` (a message broadcast only after its
   commit, collected by `Changes` and sent by the `Store`), the optional
   `Profile.workdir/1` that `ToolTask` hands tools in `ToolAPI.workdir`,
-  and `Durable.busy/1`, `busy_in_profile/1` and `last_entry/2`.
+  and `Durable.busy/1`, `busy_in_profile/1` and `last_entries/3`.
 - Hub, web: the project pages (`ProjectNewLive`, `ProjectLive`,
   `ContextFileLive`, `ThreadLive`) and their words (`ProjectText`); the
   sidebar with projects and their threads (`Shell`, `Layouts`); the

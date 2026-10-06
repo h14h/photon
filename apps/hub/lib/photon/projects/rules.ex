@@ -249,8 +249,9 @@ defmodule Photon.Projects.Rules do
     do: {:error, "old_text is empty; give the passage to replace."}
 
   def edit(name, content, old_text, new_text) do
-    case :binary.matches(content, old_text) do
-      [{at, length}] ->
+    case occurrences(content, old_text, 0, []) do
+      [at] ->
+        length = byte_size(old_text)
         rest = byte_size(content) - at - length
         {:ok, binary_part(content, 0, at) <> new_text <> binary_part(content, at + length, rest)}
 
@@ -260,6 +261,15 @@ defmodule Photon.Projects.Rules do
       matches ->
         {:error,
          "old_text appears #{length(matches)} times in #{name}; give more of the passage."}
+    end
+  end
+
+  # Where `old_text` starts in `content`, overlapping occurrences included
+  # (`:binary.matches/2` skips those, so "abab" in "ababab" would count once).
+  defp occurrences(content, old_text, from, found) do
+    case :binary.match(content, old_text, scope: {from, byte_size(content) - from}) do
+      {at, _length} -> occurrences(content, old_text, at + 1, [at | found])
+      :nomatch -> Enum.reverse(found)
     end
   end
 

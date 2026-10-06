@@ -283,6 +283,31 @@ defmodule Photon.ThreadsTest do
     end
   end
 
+  describe "latest_answer/1" do
+    test "skips newer messages that only call tools", %{project: project} do
+      id = idle_thread!(project, "Check the valves")
+      call = %{"id" => "c9", "name" => "shell", "arguments" => ~s({"machine":"box"})}
+
+      Durable.commit(
+        &Durable.Tx.append(&1, id, "assistant", %{
+          "message" => PhotonCore.Message.assistant("The zone 2 valve is stuck open.")
+        })
+      )
+
+      Durable.commit(
+        &Durable.Tx.append(&1, id, "assistant", %{
+          "message" => PhotonCore.Message.assistant("", [call])
+        })
+      )
+
+      assert Threads.latest_answer(id) == "The zone 2 valve is stuck open."
+    end
+
+    test "is nil when no message has text" do
+      assert Threads.latest_answer("c_missing") == nil
+    end
+  end
+
   describe "images" do
     test "image/3 finds nothing outside a thread's conversation", %{project: project} do
       thread = start!(project, "hello")

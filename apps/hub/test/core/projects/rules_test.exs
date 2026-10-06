@@ -192,6 +192,18 @@ defmodule Photon.Projects.RulesTest do
                {:error, "old_text appears 3 times in notes.md; give more of the passage."}
     end
 
+    test "counts occurrences that overlap" do
+      assert Rules.edit("notes.md", "ababab", "abab", "x") ==
+               {:error, "old_text appears 2 times in notes.md; give more of the passage."}
+
+      assert Rules.edit("notes.md", "- [ ] - [ ] - [ ] b", "- [ ] - [ ] ", "- [x] ") ==
+               {:error, "old_text appears 2 times in notes.md; give more of the passage."}
+    end
+
+    test "replaces a passage that ends the file" do
+      assert Rules.edit("notes.md", "one two", "two", "2") == {:ok, "one 2"}
+    end
+
     test "refuses an empty passage" do
       assert {:error, "old_text is empty" <> _} = Rules.edit("notes.md", "hello", "", "x")
     end

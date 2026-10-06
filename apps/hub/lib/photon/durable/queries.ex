@@ -38,13 +38,13 @@ defmodule Photon.Durable.Queries do
     from(e in Entry, where: e.conversation_id == ^conversation_id, select: max(e.seq))
   end
 
-  @doc "A conversation's newest entry of `kind` (nil when it has none)."
-  @spec last_entry(String.t(), String.t()) :: Ecto.Query.t()
-  def last_entry(conversation_id, kind) do
+  @doc "A conversation's newest `limit` entries of `kind`, newest first."
+  @spec last_entries(String.t(), String.t(), pos_integer()) :: Ecto.Query.t()
+  def last_entries(conversation_id, kind, limit) do
     from(e in Entry,
       where: e.conversation_id == ^conversation_id and e.kind == ^kind,
       order_by: [desc: e.seq],
-      limit: 1
+      limit: ^limit
     )
   end
 

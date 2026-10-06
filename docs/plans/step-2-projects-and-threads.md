@@ -167,8 +167,9 @@ Rules (`Photon.Projects.Rules`):
   when a new file's name is taken. Threads write without a version
   (section 3.3).
 - `edit(name, content, old_text, new_text)`: `{:ok, content}` when `old_text`
-  occurs exactly once; otherwise an error saying it wasn't found, or was
-  found N times and needs more context.
+  occurs exactly once, counting occurrences that overlap (`:binary.matches/2`
+  skips those, so "abab" in "ababab" would look unique); otherwise an error
+  saying it wasn't found, or was found N times and needs more context.
 
 ### 2.4 Threads
 
@@ -831,7 +832,9 @@ projects and threads.
   the file's saved content (Blip has no tool to read context files until
   step 4, and "what's missing from this?" is the likely question on the
   editor); for a thread, also whether it is running and the text of its
-  latest answer (`Threads.latest_answer/1`, from `Durable.last_entry/2`).
+  latest answer (`Threads.latest_answer/1`: the newest of its last 20
+  assistant messages that has text, from `Durable.last_entries/3`, since a
+  message that only calls tools has none).
   Text the user typed in the editor and hasn't saved isn't in the note;
   the note says "as last saved".
 - `Page.note(page, facts)` (pure) bounds everything: the purpose to
@@ -892,8 +895,8 @@ No Boundary or Credo list changes.
 | `Photon.Durable.Tx` | boundary | unchanged | `announce(tx, topic, message) :: :ok`, recorded as an `{:announce, topic, message}` change. |
 | `Photon.Durable.Changes` | core | unchanged | `summarize/1` adds `announcements: [{topic, message}]` in commit order; `scope/1` gives nil for them. |
 | `Photon.Durable.Store` | boundary | unchanged | `announce/1` broadcasts each announcement after the commit. Moduledoc lists it. |
-| `Photon.Durable.Queries` | core | unchanged | `busy(conversation_ids)` (the live, unowned, foreground runs among them, selecting `conversation_id`), `busy_in_profile(profile)` (the same, over the conversations with that profile) and `last_entry(conversation_id, kind)`. |
-| `Photon.Durable` | boundary | unchanged | `busy(conversation_ids)` and `busy_in_profile(profile)`, each `:: MapSet.t(String.t())`, and `last_entry(conversation_id, kind) :: Entry.t() \| nil`. |
+| `Photon.Durable.Queries` | core | unchanged | `busy(conversation_ids)` (the live, unowned, foreground runs among them, selecting `conversation_id`), `busy_in_profile(profile)` (the same, over the conversations with that profile) and `last_entries(conversation_id, kind, limit)` (newest first). |
+| `Photon.Durable` | boundary | unchanged | `busy(conversation_ids)` and `busy_in_profile(profile)`, each `:: MapSet.t(String.t())`, and `last_entries(conversation_id, kind, limit) :: [Entry.t()]`, newest first. |
 | `Photon.Durable.Profile` | contract | unchanged | Optional `workdir/1` (section 3.4). |
 | `Photon.Durable.ToolAPI` | boundary | unchanged | `workdir` field, `new/2`; `new/1` keeps nil. |
 | `Photon.Durable.ToolTask` | boundary | unchanged | Builds the API with the profile's `workdir/1`, for `execute`, `resume` and `on_interrupt` alike. |
@@ -1018,7 +1021,7 @@ never raw HTML.
 
 - `durable_test.exs`: `Tx.announce/3` reaches a subscriber only after
   the commit (subscribe, commit, `assert_receive`); a rolled-back commit
-  announces nothing (`refute_receive`); `busy/1` and `last_entry/2`.
+  announces nothing (`refute_receive`); `busy/1` and `last_entries/3`.
 - `tool_task_workdir_test.exs` (`@tag :durable`): with a test profile
   that implements `workdir/1` (add it to `Photon.TestProfile` as an
   option, or a new `Photon.TestProfile.Workdir`), a tool sees
@@ -1208,7 +1211,7 @@ S1. Durable: announcements, busy runs, last entry, working directory.
 - `apps/hub/lib/photon/durable/tx.ex` (`announce/3`),
   `durable/changes.ex` (`announcements`), `durable/store.ex` (broadcast
   them), `durable/queries.ex` and `durable.ex` (`busy/1`,
-  `busy_in_profile/1`, `last_entry/2`), `durable/profile.ex` (optional
+  `busy_in_profile/1`, `last_entries/3`), `durable/profile.ex` (optional
   `workdir/1`), `durable/tool_api.ex` (`workdir`, `new/2`),
   `durable/tool_task.ex` (build the API with the profile's `workdir/1`).
 - Tests: `test/core/durable/changes_test.exs`,

@@ -173,9 +173,10 @@ defmodule Photon.Durable do
   def busy_in_profile(profile),
     do: profile |> Queries.busy_in_profile() |> Repo.all() |> MapSet.new()
 
-  @doc "A conversation's newest entry of `kind`, or nil."
-  @spec last_entry(String.t(), String.t()) :: Entry.t() | nil
-  def last_entry(conversation_id, kind), do: Repo.one(Queries.last_entry(conversation_id, kind))
+  @doc "A conversation's newest `limit` entries of `kind`, newest first."
+  @spec last_entries(String.t(), String.t(), pos_integer()) :: [Entry.t()]
+  def last_entries(conversation_id, kind, limit),
+    do: Repo.all(Queries.last_entries(conversation_id, kind, limit))
 
   @doc "The conversation's inbox: queued submissions, oldest first."
   @spec queued(String.t()) :: [Submission.t()]

@@ -67,6 +67,10 @@ defmodule Photon.Threads do
 
   @profile "thread"
 
+  # How many of a thread's newest assistant messages `latest_answer/1` looks
+  # through for one with text (the others only call tools).
+  @answer_lookback 20
+
   @tools [
     Tools.ListContextFiles,
     Tools.ReadContextFile,
@@ -276,17 +280,19 @@ defmodule Photon.Threads do
   end
 
   @doc """
-  The text of the thread's latest answer (its newest assistant message),
-  or nil when it has none yet.
+  The text of the thread's latest answer: its newest assistant message that
+  has text, or nil when it has none yet. A message that only calls tools has
+  no text, so it is skipped; only the last #{@answer_lookback} assistant
+  messages are looked at.
   """
   @spec latest_answer(String.t()) :: String.t() | nil
   def latest_answer(thread_id) do
-    with %Entry{data: data} <- Durable.last_entry(thread_id, "assistant"),
-         text when text != "" <- data["message"] |> PhotonCore.Message.text_of() |> String.trim() do
-      text
-    else
-      _none -> nil
-    end
+    thread_id
+    |> Durable.last_entries("assistant", @answer_lookback)
+    |> Enum.find_value(fn %Entry{data: data} ->
+      text = data["message"] |> PhotonCore.Message.text_of() |> String.trim()
+      if text != "", do: text
+    end)
   end
 
   ## The conversation, for the thread page
