@@ -437,7 +437,11 @@ Blip's script does after section 5.9.
   call holds the conversation until its command exits, with `where`
   ("the machine's workspace" for Blip, "the project's folder" for
   threads). `Photon.Assistant.Prompt` uses it, and its text must come out
-  byte for byte as today (the existing prompt test pins it). Blip's own
+  byte for byte as today (the prompt test pins "How you work" word for
+  word). To fit Blip's list, the text is two Markdown list items: the
+  caller writes the first item's `- ` and any lead-in, and the second
+  item ("A shell call holds the conversation ...") starts with its own
+  `- ` on a new line and may be continued by the caller. Blip's own
   lines about `schedule` and checking back stay in its prompt; threads
   have no `schedule`.
 - `Photon.MachineTools.MockPhrases` (pure): the three machine phrasings

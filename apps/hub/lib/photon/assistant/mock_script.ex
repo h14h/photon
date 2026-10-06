@@ -13,13 +13,18 @@ defmodule Photon.Assistant.MockScript do
 
   After a tool result it relays the result. An image result gets "Here it
   is." and its dimensions line.
+
+  The three machine phrasings and the relay are
+  `Photon.MachineTools.MockPhrases`, which a thread's scripted model uses
+  too.
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]
+  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM, Photon.MachineTools]
 
   @behaviour PhotonCore.LLM.Mock
 
+  alias Photon.MachineTools.MockPhrases
   alias PhotonCore.LLM.Mock
   alias PhotonCore.Message
 
@@ -42,7 +47,7 @@ defmodule Photon.Assistant.MockScript do
 
     case List.last(messages) do
       %{"role" => "tool"} = result ->
-        result |> relay_result() |> Message.assistant()
+        result |> MockPhrases.relay_result() |> Message.assistant()
 
       %{"role" => "user"} = message ->
         message |> Message.text_of() |> String.trim() |> plan()
@@ -64,36 +69,16 @@ defmodule Photon.Assistant.MockScript do
   end
 
   # The phrasings it understands, in the order it tries them, each with the
-  # reply its captures make.
+  # reply its captures make: the shared machine ones first.
   defp phrasings do
-    [
-      {~r/\A(?:list )?machines\z/, &list_machines/1},
-      {~r/\Aon\s+([\w.-]+)\s*:\s*\$(.+)\z/s, &shell/1},
-      {~r/\Aon\s+([\w.-]+)\s*:\s*look at (.+)\z/s, &view_image/1},
-      {~r/\Aremember\s+(.+)\z/s, &remember/1},
-      {~r/\Ain\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("in_minutes", &1)},
-      {~r/\Aevery\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("every_minutes", &1)},
-      {~r/\A(?:schedules|list schedules)\z/, &list_schedules/1}
-    ]
+    MockPhrases.phrasings() ++
+      [
+        {~r/\Aremember\s+(.+)\z/s, &remember/1},
+        {~r/\Ain\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("in_minutes", &1)},
+        {~r/\Aevery\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("every_minutes", &1)},
+        {~r/\A(?:schedules|list schedules)\z/, &list_schedules/1}
+      ]
   end
-
-  defp list_machines([]), do: call("list_machines", %{}, "Checking your machines.")
-
-  defp shell([machine, command]),
-    do:
-      call(
-        "shell",
-        %{"machine" => machine, "command" => String.trim(command)},
-        "Running that on #{machine}."
-      )
-
-  defp view_image([machine, path]),
-    do:
-      call(
-        "view_image",
-        %{"machine" => machine, "path" => String.trim(path)},
-        "Looking at it on #{machine}."
-      )
 
   defp remember([fact]), do: call("update_memory", %{"action" => "add", "text" => fact}, "Noted.")
 
@@ -104,15 +89,4 @@ defmodule Photon.Assistant.MockScript do
   defp list_schedules([]), do: call("list_schedules", %{}, "Here's what's scheduled.")
 
   defp call(tool, args, intro), do: Message.assistant(intro, [Mock.call(tool, args)])
-
-  # An image result has the image and a line with its size and path.
-  defp relay_result(result) do
-    case Message.images(result) do
-      [] -> result |> Message.text_of() |> relay()
-      _images -> "Here it is.\n\n" <> Message.text_of(result)
-    end
-  end
-
-  defp relay("Error: " <> error), do: "That didn't work: " <> error
-  defp relay(text), do: text
 end

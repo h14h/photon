@@ -93,6 +93,14 @@ defmodule Photon.Settings do
     |> Map.update!("scheduled_work", &if(&1 == "true", do: "true", else: "false"))
   end
 
+  @doc """
+  The reasoning effort to ask for: the setting, or nil for the model's
+  default. Every conversation (Blip's and each thread's) uses it.
+  """
+  @spec reasoning(t()) :: String.t() | nil
+  def reasoning(%{"reasoning" => ""}), do: nil
+  def reasoning(settings), do: settings["reasoning"]
+
   @doc "The model in use: the setting, else the default."
   @spec model(t()) :: String.t()
   def model(%{"model" => ""}), do: @default_model

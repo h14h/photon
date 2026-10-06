@@ -21,7 +21,7 @@ defmodule Photon.MachineToolsTest do
   alias Photon.{Assistant, Machines}
   alias Photon.Durable.{Submission, TaskRecord, ToolAPI, Tx}
   alias Photon.Machines.Op
-  alias Photon.MachineTools.{ListMachines, Shell, Translate}
+  alias Photon.MachineTools.{ListMachines, Shell, Translate, ViewImage}
   alias PhotonCore.Message
 
   @endpoint PhotonWeb.Endpoint
@@ -99,8 +99,9 @@ defmodule Photon.MachineToolsTest do
   end
 
   # A tool task for a `shell` call in a fresh conversation, waiting on a
-  # signal that never fires, so the scheduler leaves it to the test.
-  defp tool_api(args) do
+  # signal that never fires, so the scheduler leaves it to the test. The
+  # API works in `workdir`, as a thread's does in its project's folder.
+  defp tool_api(args, workdir \\ nil) do
     conversation = Durable.create_conversation("test")
 
     task =
@@ -114,7 +115,7 @@ defmodule Photon.MachineToolsTest do
         })
       )
 
-    ToolAPI.new(task)
+    ToolAPI.new(task, workdir)
   end
 
   defp limits(limits) do
@@ -278,6 +279,36 @@ defmodule Photon.MachineToolsTest do
                Shell.execute(args, tool_api(args))
 
       assert Repo.aggregate(Op, :count) == 0
+    end
+  end
+
+  describe "a working directory" do
+    test "goes into the op's directory, in its row and in op.start" do
+      _socket = join_node("mm1")
+      args = %{"machine" => "mm1", "command" => "ls"}
+
+      assert {:wait, _waiting, %{"op_id" => id}} =
+               Shell.execute(args, tool_api(args, "garden"))
+
+      assert %Op{args: %{"command" => "ls", "directory" => "garden"}} = row(id)
+      assert_push "op.start", %{"id" => ^id, "args" => %{"directory" => "garden"}}
+    end
+
+    test "view_image takes it too, for a relative path" do
+      :ok = Photon.MachineOps.connect("mm1")
+      args = %{"machine" => "mm1", "path" => "shots/a.png"}
+
+      assert {:wait, _waiting, %{"op_id" => id}} =
+               ViewImage.execute(args, tool_api(args, "garden"))
+
+      assert %Op{args: %{"path" => "shots/a.png", "directory" => "garden"}} = row(id)
+    end
+
+    test "is none for Blip's calls, which run in the workspace" do
+      :ok = Photon.MachineOps.connect("mm1")
+      args = %{"machine" => "mm1", "command" => "ls"}
+      assert {:wait, _waiting, %{"op_id" => id}} = Shell.execute(args, tool_api(args))
+      assert %Op{args: %{"directory" => nil}} = row(id)
     end
   end
 
@@ -469,8 +500,31 @@ defmodule Photon.MachineToolsTest do
                )
     end
 
+    test "with a working directory, says what it is and names its path on each machine that takes commands" do
+      _key = key("nas")
+      _socket = join_node("mm1")
+      :ok = Photon.MachineOps.connect("old", [])
+
+      {:ok, text} = ListMachines.execute(%{}, tool_api(%{}, "garden"))
+
+      assert text ==
+               Enum.join(
+                 [
+                   "Your working directory on each machine is <workspace>/garden, made on first use.",
+                   "",
+                   "- mm1: online, linux, hostname mm1, workspace /home/me/photon, photon-node 0.2.0, " <>
+                     "working directory /home/me/photon/garden",
+                   "- old: online, but it runs an older photon-node that can't take commands; " <>
+                     "it needs reinstalling from the Nodes page",
+                   "- nas: offline"
+                 ],
+                 "\n"
+               )
+    end
+
     test "says when there are none" do
       assert {:ok, "No machines yet." <> _} = ListMachines.execute(%{}, tool_api(%{}))
+      assert {:ok, "No machines yet." <> _} = ListMachines.execute(%{}, tool_api(%{}, "garden"))
     end
   end
 

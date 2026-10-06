@@ -10,8 +10,8 @@ defmodule Photon.Assistant do
   This module is the assistant's API, which the web pages use, and its
   `Photon.Durable.Profile`. Behind it, by layer:
 
-    * functional core (pure): `Photon.Assistant.Prompt` (system prompt and
-      model settings), `Photon.Assistant.Memory`,
+    * functional core (pure): `Photon.Assistant.Prompt` (the system
+      prompt), `Photon.Assistant.Memory`,
       `Photon.Assistant.Notice` (what Blip says unasked),
       `Photon.Assistant.MockScript` (the mock model)
     * boundary: the tools in `Photon.Assistant.Tools`; the machine tools
@@ -183,7 +183,7 @@ defmodule Photon.Assistant do
         |> Map.put(:hosted_tools, [%{"type" => "web_search"}]),
       stream: &Photon.ChatGPT.stream/3,
       model: Settings.model(settings),
-      reasoning: Prompt.reasoning(settings),
+      reasoning: Settings.reasoning(settings),
       cache_key: conversation.id
     }
   end

@@ -4,7 +4,9 @@ defmodule Photon.MachineTools.Call do
   `Photon.MachineTools.ViewImage` share (section 3.2 of
   `docs/plans/step-1-machine-tools.md`).
 
-  `execute/3` checks the arguments (`Photon.MachineTools.Translate`),
+  `execute/3` checks the arguments and puts the conversation's working
+  directory (`api.workdir`, from its profile) in the op's `directory`
+  (`Photon.MachineTools.Translate`),
   derives the op ID from the call's task (`Photon.MachineTools.Wait`),
   asks `Photon.Machines` about the machine, commits the op and parks on
   the op's signal. A rerun after a hub restart that finds the op's row
@@ -43,14 +45,14 @@ defmodule Photon.MachineTools.Call do
   @doc "Runs a call of `kind` (shell or view_image) with the model's `args`."
   @spec execute(String.t(), map(), ToolAPI.t()) :: Tool.result()
   def execute(kind, args, api) do
-    case op_args(kind, args) do
+    case op_args(kind, args, api.workdir) do
       {:ok, op_args} -> start(kind, args["machine"], op_args, api)
       {:error, message} -> {:error, message}
     end
   end
 
-  defp op_args("shell", args), do: Translate.shell_args(args)
-  defp op_args("view_image", args), do: Translate.view_image_args(args)
+  defp op_args("shell", args, workdir), do: Translate.shell_args(args, workdir)
+  defp op_args("view_image", args, workdir), do: Translate.view_image_args(args, workdir)
 
   defp start(kind, machine, op_args, api) do
     op_id = Wait.op_id(ToolAPI.task_id(api))
