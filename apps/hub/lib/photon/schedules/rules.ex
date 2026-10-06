@@ -353,7 +353,7 @@ defmodule Photon.Schedules.Rules do
   fired in a burst.
   """
   @spec next_after(ms(), pos_integer(), ms()) :: ms()
-  def next_after(at, every, now) do
+  def next_after(at, every, now) when is_integer(at) and is_integer(every) and is_integer(now) do
     missed = div(max(now - at, 0), every)
     at + (missed + 1) * every
   end
