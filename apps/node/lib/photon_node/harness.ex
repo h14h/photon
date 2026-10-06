@@ -16,7 +16,8 @@ defmodule PhotonNode.Harness do
       (`PhotonCore.Operation`, `PhotonCore.Output`)
     * boundary: `PhotonNode.Harness.Coordinator`, the server that runs a
       session; `PhotonNode.Harness.Store`, its append-only log;
-      `PhotonNode.Harness.Ops`, the API over operation processes;
+      `PhotonNode.Harness.Ops`, the API over operation processes, and
+      `PhotonNode.Harness.Ops.Owner`, the contract for whatever owns them;
       `PhotonNode.Harness.Skills` and `PhotonNode.Harness.Env`, which read
       the machine
     * workers: model requests (`PhotonNode.Harness.ModelRequest`) and
@@ -32,10 +33,13 @@ defmodule PhotonNode.Harness do
 
   # The harness: this API, the servers and workers behind it, and its
   # functional core as strict sub-boundaries that depend on nothing else.
-  # `Link` is the contract a hub link implements.
+  # `Link` is the contract a hub link implements. `Ops`, `Ops.Owner` and
+  # `Env` are for the executor, which runs the hub's operations: it starts,
+  # finds and cancels them, owns them, and reads the shell to run commands
+  # with.
   use Boundary,
     deps: [PhotonNode, PhotonNode.Config, PhotonCore, PhotonCore.LLM, PhotonCore.LLM.Error, Jason],
-    exports: [Link]
+    exports: [Link, Ops, Ops.Owner, Env]
 
   require Logger
 

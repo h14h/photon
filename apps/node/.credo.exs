@@ -46,7 +46,9 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "PhotonNode.Harness.Inbox",
                    "PhotonNode.Harness.Image",
                    "PhotonNode.Harness.SkillPrompt",
-                   "PhotonNode.Harness.Tools.*"
+                   "PhotonNode.Harness.Tools.*",
+                   "PhotonNode.Executor.Request",
+                   "PhotonNode.Executor.Rules"
                  ],
                  nondeterministic_extra: ["PhotonCore.ID.new"],
                  allowed: [
@@ -83,7 +85,10 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
               {PhotonCredo.Check.ProcessNameOwnership,
                [
                  files: lib_only,
-                 api_modules: ["PhotonNode.Harness"],
+                 # PhotonNode.Executor is registered under its own module name, so,
+                 # like PhotonNode.Connection, it isn't in `names`: every call to its
+                 # API names the module. Only its own module uses the name.
+                 api_modules: ["PhotonNode.Harness", "PhotonNode.Executor"],
                  names: [
                    {"PhotonNode.AppSupervisor", ["PhotonNode.Application"]},
                    {"PhotonNode.SessionRegistry",
@@ -102,11 +107,11 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                  files: lib_only,
                  allowed: [
                    {"PhotonNode.Connection",
-                    "log records and live output for the hub link: a lost record is recovered (the hub resyncs gaps, every join replays) and live output is never stored; producers are bounded (see its moduledoc)"},
+                    "log records, operation snapshots and live output for the hub link: a lost record is recovered (the hub resyncs gaps, every join replays), lost snapshots are resent from the journal after every join, and live output is never stored; producers are bounded (see its moduledoc)"},
                    {"PhotonNode.Harness.Coordinator",
-                    "report_op/2: a lost snapshot is recovered, since Ops.add/2 makes a live operation resend it to a restarted coordinator"},
+                    "report/2 (its Ops.Owner callback): a lost snapshot is recovered, since Ops.add/2 makes a live operation resend it to a restarted coordinator"},
                    {"PhotonNode.Harness.Ops",
-                    ":resend and :cancel to a local operation process, which the coordinator monitors: a process that exits instead of answering is seen there"}
+                    ":resend and :cancel to a local operation process, which its owner monitors: a process that exits instead of answering is seen there"}
                  ]
                ]},
               # 80, 91, 16: processes start under supervisors.

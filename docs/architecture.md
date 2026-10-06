@@ -91,7 +91,7 @@ hotspots still refer to the original snapshot.
 | `PhotonNode` | lifecycle (node supervisor, with its lifecycle plan in the moduledoc) and global config accessor | is a process; `init/1` writes `:persistent_term` and creates directories | `Config`, `Harness`, `Connection`, Registry, DynamicSupervisor, Task.Supervisor |
 | `PhotonNode.CLI` | boundary (executable entry point) | does I/O (stdout/stderr, `System.halt`, logger config) | Logger |
 | `PhotonNode.Config` | data (struct with `t/0`) and boundary (`new/1`) | `new/1`, `hostname/0` do I/O (opts, app env, OS env, hostname); `sessions_dir/1`, `llm_base_url/1` pure | none |
-| `PhotonNode.Connection` | boundary and worker (the hub link) | is a process (Slipstream); reads session logs during replay; `event/3` and `live/2` are its client functions | Slipstream, `Harness`, `Harness.Store`, `Config`, `PhotonCore.ID` |
+| `PhotonNode.Connection` | boundary and worker (the hub link) | is a process (Slipstream); reads session logs during replay; hands `op.start`, `op.cancel` and `op.ack` to the executor and pushes its journaled snapshots after each join; `event/3` and `live/2` (`Harness.Link`) and `snapshot/1` and `output/3` (`Executor.Link`) are its client functions | Slipstream, `Harness`, `Harness.Store`, `Executor`, `Config`, `PhotonCore.ID`, `PhotonCore.Operation.Wire` |
 | `PhotonNode.Harness` | boundary (harness API: validates, then calls the coordinator) | does I/O (logs, `Store`); delegates process work to `Coordinator` | `Coordinator`, `Session`, `Inbox`, `Store`, `ModelRequest`, `Connection`, `PhotonCore.ID` |
 | `PhotonNode.Harness.Session` | functional core (one session's state machine; a token that collects effects) | pure* (new turn, settings and heartbeat IDs) | `Context`, `Inbox`, `Operation`, `Skills` (`prompt/1`), `Tools`, `PhotonCore.LLM` (types, `Error.to_map/1`), `Message` |
 | `PhotonNode.Harness.Coordinator` | boundary (the server for one session: runs `Session` steps and their effects) | is a process; fsyncs the log, starts tasks and ops, arms timers, sends to `Connection` | `Session`, `Store`, `ModelRequest`, `Ops`, `Skills`, `Env`, `Connection`, `Config`, `PhotonCore.LLM` |
@@ -106,9 +106,10 @@ hotspots still refer to the original snapshot.
 | `PhotonNode.Harness.Image` | functional core | pure | none |
 | `PhotonNode.Harness.Env` | boundary (OS environment for commands) | `shell/0` and `overrides/0` read the environment; `overrides/1` with an explicit env and `to_port/1` are pure | none |
 | `PhotonNode.Harness.Skills` | boundary (skill discovery) | `discover/1` does I/O (glob, reads); `prompt/1` pure | Logger |
-| `PhotonNode.Harness.Ops` | boundary (API over operation processes; owns their `:resend` and `:cancel` messages) | does I/O (Registry, DynamicSupervisor, sends) | `Ops.Shell`, `Ops.Job`, `Ops.ViewImage`, `Ops.SkillUse` |
-| `PhotonNode.Harness.Ops.Shell` | worker (one per command) | is a process; Port, files, `/bin/sh` kill (polled with `send_after`, not slept on), live output | `Env`, `Ops`, `Operation`, `Output`, `Coordinator`, `Connection` |
-| `PhotonNode.Harness.Ops.Job` | worker (one-shot operations, behaviour for jobs) | is a process; runs `job.run/1` once and reports | `Coordinator`, `Ops`, `Operation` |
+| `PhotonNode.Harness.Ops` | boundary (API over operation processes, each started for an `Ops.Owner`; owns their `:resend` and `:cancel` messages) | does I/O (Registry, DynamicSupervisor, sends) | `Ops.Shell`, `Ops.Job`, `Ops.ViewImage`, `Ops.SkillUse`, `Ops.Owner` |
+| `PhotonNode.Harness.Ops.Owner` | contract (behaviour for whatever owns operations: `checkpoint/2`, `report/2`, `output/4`) | pure dispatch on the `{module, owner_id}` pair | `Operation` |
+| `PhotonNode.Harness.Ops.Shell` | worker (one per command) | is a process; Port, files (including the `stopped` marker), `/bin/sh` kill (polled with `send_after`, not slept on), live output | `Env`, `Ops`, `Ops.Owner`, `Operation`, `Output` |
+| `PhotonNode.Harness.Ops.Job` | worker (one-shot operations, behaviour for jobs) | is a process; runs `job.run/1` once and reports | `Ops`, `Ops.Owner`, `Operation` |
 | `PhotonNode.Harness.Ops.ViewImage` | boundary (job: reads the image file) | does I/O (file) | `Image`, `Operation`, `Ops.Job` |
 | `PhotonNode.Harness.Ops.SkillUse` | boundary (job: reads `SKILL.md`) | does I/O (file) | `Operation`, `Output`, `Ops.Job` |
 | `Mix.Tasks.Photon.Package` | build tooling, outside the runtime layers | does I/O (`System.cmd`, an HTTP HEAD, files) | Burrito, Req, `QuietStream` |
@@ -278,9 +279,10 @@ PhotonNode.AppSupervisor  one_for_one     (PhotonNode.Application)
 - Model request tasks are linked to their coordinator (since the
   verification pass), so they die with it; the coordinator traps exits,
   monitors them and kills them on steer, stop or terminate.
-- Operations report to their coordinator by plain `send` through
-  `Coordinator.report_op/2` (`Coordinator.notify/2` before the refactor),
-  except a shell's `process` checkpoint, which is a call
+- Operations report to their owner (`Harness.Ops.Owner`), a session's
+  coordinator, by plain `send` through `Coordinator.report/2`
+  (`Coordinator.notify/2` before the refactor, then `report_op/2`), except
+  a shell's `process` checkpoint, which is a call
   (`Coordinator.checkpoint/2`) answered once it is persisted. The
   coordinator monitors operation processes. A coordinator that restarts
   catches up by calling `Ops.add/2`, which asks a live operation to resend
