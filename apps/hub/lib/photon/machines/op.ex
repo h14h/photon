@@ -6,6 +6,10 @@ defmodule Photon.Machines.Op do
   `status` is `open` until a terminal snapshot arrives, then `finished`
   (the snapshot is kept in `result` until the tool claims it) or `closed`
   (the tool has its result, or the op was canceled; `result` is null).
+  `output` is what a shell command printed, kept when the call ended
+  another way (the user stopped it, say) and the op's final snapshot
+  carried output, so the conversation can show it after a reload; nil
+  otherwise.
   The flags are facts the hub has learned:
 
     * `confirmed`: the node has sent a snapshot for the op, so it knows it
@@ -36,6 +40,7 @@ defmodule Photon.Machines.Op do
     field(:pushed, :boolean, default: false)
     field(:cancel, :boolean, default: false)
     field(:result, :map)
+    field(:output, :string)
     timestamps(type: :utc_datetime_usec)
   end
 end

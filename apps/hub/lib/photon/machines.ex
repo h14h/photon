@@ -50,7 +50,11 @@ defmodule Photon.Machines do
   is logged and dropped.
 
   Live output is never stored: `output/3` broadcasts each chunk to the tool
-  call's conversation (`Photon.Durable.live/2`). Which conversation and
+  call's conversation (`Photon.Durable.live/2`). The one exception is a
+  call that ended another way (stopped, say): its row keeps the tail of
+  what the op's final snapshot says the command printed
+  (`stopped_outputs/1`), which is all there is to show of it after a
+  reload. Which conversation and
   call an op belongs to is cached by the channel in a `t:routes/0` map, so
   a stream of output costs one read per op.
 
@@ -293,6 +297,25 @@ defmodule Photon.Machines do
       %Op{status: "closed"} -> :closed
       nil -> :none
     end
+  end
+
+  @doc """
+  What the shell commands of conversation `conversation_id` printed before
+  their calls ended another way (the user stopped them, say), by tool
+  call ID: the output the rows kept from the ops' final snapshots
+  (`Photon.Machines.Rules.output/1`). The conversation pages show it
+  under a stopped call after a reload.
+  """
+  @spec stopped_outputs(String.t()) :: %{optional(String.t()) => String.t()}
+  def stopped_outputs(conversation_id) do
+    Op
+    |> where(
+      [o],
+      o.conversation_id == ^conversation_id and not is_nil(o.call_id) and not is_nil(o.output)
+    )
+    |> select([o], {o.call_id, o.output})
+    |> Repo.all()
+    |> Map.new()
   end
 
   @doc """

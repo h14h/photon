@@ -1,8 +1,9 @@
 defmodule PhotonWeb.ProjectText do
   @moduledoc """
   The words the project pages use for times, file sizes and who changed a
-  context file: "5 minutes ago", "1.2 KB", "by you", "by Blip" or
-  `by "Fix the pump"`.
+  context file: "5 minutes ago", "1.2 KB", "by you", "by Blip", or "in
+  Fix the pump" for a change a thread made (the page can link the
+  thread's title, so it isn't quoted).
 
   Pure: the time to measure from and the thread titles are passed in, so
   a page reads the clock and the titles once and these only format them.
@@ -41,30 +42,41 @@ defmodule PhotonWeb.ProjectText do
   end
 
   @doc ~S"""
-  Who last wrote `file`: "you", "Blip", or the writing thread's title in
-  quotes from `titles` (thread ID to title), or "a thread" when it isn't
-  there.
+  Who last wrote `file`: `{:by, "you"}`, `{:by, "Blip"}`, or for a
+  thread `{:in, %{id: id, title: title}}` with its title from `titles`
+  (thread ID to title), or `{:by, "a thread"}` when it isn't there.
   """
-  @spec writer(ContextFile.t(), %{optional(String.t()) => String.t()}) :: String.t()
-  def writer(%ContextFile{updated_by: "owner"}, _titles), do: "you"
+  @spec writer(ContextFile.t(), %{optional(String.t()) => String.t()}) ::
+          {:by, String.t()} | {:in, %{id: String.t(), title: String.t()}}
+  def writer(%ContextFile{updated_by: "owner"}, _titles), do: {:by, "you"}
   # Ahead of the thread clause, which would look "blip" up as a thread ID.
-  def writer(%ContextFile{updated_by: "blip"}, _titles), do: "Blip"
+  def writer(%ContextFile{updated_by: "blip"}, _titles), do: {:by, "Blip"}
 
   def writer(%ContextFile{updated_by: thread_id}, titles) do
     case Map.fetch(titles, thread_id) do
-      {:ok, title} -> ~s("#{title}")
-      :error -> "a thread"
+      {:ok, title} -> {:in, %{id: thread_id, title: title}}
+      :error -> {:by, "a thread"}
     end
   end
 
   @doc ~S"""
+  When `file` changed, as words: "changed 5 minutes ago".
+  """
+  @spec changed_at(ContextFile.t(), DateTime.t()) :: String.t()
+  def changed_at(%ContextFile{} = file, now), do: "changed " <> ago(file.updated_at, now)
+
+  @doc ~S"""
   "changed 5 minutes ago by you", "changed just now by Blip", or
-  `changed yesterday by "Fix the pump"`.
+  "changed yesterday in Fix the pump" for a thread's change.
   """
   @spec changed(ContextFile.t(), %{optional(String.t()) => String.t()}, DateTime.t()) ::
           String.t()
-  def changed(%ContextFile{} = file, titles, now),
-    do: "changed #{ago(file.updated_at, now)} by #{writer(file, titles)}"
+  def changed(%ContextFile{} = file, titles, now) do
+    case writer(file, titles) do
+      {:by, who} -> "#{changed_at(file, now)} by #{who}"
+      {:in, thread} -> "#{changed_at(file, now)} in #{thread.title}"
+    end
+  end
 
   @doc ~s(A file's size: "Empty", "320 B", "4.2 KB" or "1.1 MB".)
   @spec size(String.t()) :: String.t()

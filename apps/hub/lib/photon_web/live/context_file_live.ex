@@ -126,12 +126,18 @@ defmodule PhotonWeb.ContextFileLive do
   # editor so a focused textarea shows it too.
   defp replace(socket, file), do: socket |> load(file) |> update(:revision, &(&1 + 1))
 
-  # "Version 4, changed 5 minutes ago by "Fix the pump"".
+  # "Version 4, changed 5 minutes ago" and who changed it: "by you", "by
+  # Blip", or "in Fix the pump", the thread linked.
   defp meta(nil), do: nil
 
   defp meta(%ContextFile{updated_by: by} = file) do
-    titles = if by == "owner", do: %{}, else: Threads.titles([by])
-    "Version #{file.version}, #{ProjectText.changed(file, titles, DateTime.utc_now())}"
+    titles = if by in ["owner", "blip"], do: %{}, else: Threads.titles([by])
+
+    %{
+      version: file.version,
+      changed: ProjectText.changed_at(file, DateTime.utc_now()),
+      writer: ProjectText.writer(file, titles)
+    }
   end
 
   # The form over `params`, with the context's `%{field => message}` errors.
@@ -341,7 +347,7 @@ defmodule PhotonWeb.ContextFileLive do
               </.button>
             </:actions>
           </.header>
-          <p :if={@meta} id="file-meta" class="mt-2 text-[12.5px] text-ink-faint">{@meta}</p>
+          <.meta_line :if={@meta} meta={@meta} slug={@project.slug} />
 
           <.banner
             :if={match?({:changed, _}, @conflict)}
@@ -462,4 +468,15 @@ defmodule PhotonWeb.ContextFileLive do
   defp changed_by({:changed, "blip"}), do: "Blip changed this file while you were editing."
 
   defp changed_by({:changed, _thread}), do: "A thread changed this file while you were editing."
+
+  attr :meta, :map, required: true
+  attr :slug, :string, required: true
+
+  # The file's version and its last change: who made it, or the thread it
+  # was made in, linked to the thread.
+  defp meta_line(assigns) do
+    ~H"""
+    <p id="file-meta" class="mt-2 text-[12.5px] text-ink-faint" phx-no-format>Version {@meta.version}, {@meta.changed} <%= case @meta.writer do %><% {:in, thread} -> %>in <.link id="file-meta-thread" navigate={~p"/projects/#{@slug}/threads/#{thread.id}"} class="text-ink-soft transition hover:text-accent-strong hover:underline">{thread.title}</.link><% {:by, who} -> %>by {who}<% end %></p>
+    """
+  end
 end

@@ -14,6 +14,11 @@ defmodule Photon.Assistant.Notice do
   threads' questions (`Photon.Assistant.Origin`'s `quiet?`): there Blip
   answers to the threads, so the owner hears only the questions it
   passes on. `scan/2` follows the runs across batches for that.
+
+  A question's notice names its thread by the title the conversation
+  recorded, and keeps the thread's ID: `text/2` says it with the
+  thread's current title, so a bubble on screen when the thread is named
+  or renamed reads the new title.
   """
 
   # Functional core: no processes, no I/O.
@@ -29,9 +34,15 @@ defmodule Photon.Assistant.Notice do
 
   @typedoc """
   One thing Blip says: `:reply` (its answer), `:error` (the conversation
-  failed) or `:question` (a thread's question is with the owner).
+  failed) or `:question` (a thread's question is with the owner). A
+  question also has its thread's ID and the title its text names it by.
   """
-  @type t :: %{kind: :reply | :error | :question, text: String.t()}
+  @type t :: %{
+          required(:kind) => :reply | :error | :question,
+          required(:text) => String.t(),
+          optional(:thread_id) => String.t() | nil,
+          optional(:title) => String.t() | nil
+        }
 
   @typedoc """
   What `scan/2` carries from one batch to the next: the sources of the
@@ -97,15 +108,20 @@ defmodule Photon.Assistant.Notice do
     details = data["details"]
 
     if Transcript.question_card(data),
-      do: question(details["title"], details["wording"]),
+      do: question(details["thread_id"], details["title"], details["wording"]),
       else: nil
   end
 
   defp of_entry(%{kind: "error", data: data} = entry) do
     cond do
-      Transcript.escalation(entry) -> question(data["title"], data["question"])
-      Transcript.quiet?(data) -> nil
-      true -> %{kind: :error, text: paragraph(data["message"] || "")}
+      Transcript.escalation(entry) ->
+        question(data["thread_id"], data["title"], data["question"])
+
+      Transcript.quiet?(data) ->
+        nil
+
+      true ->
+        %{kind: :error, text: paragraph(data["message"] || "")}
     end
   end
 
@@ -113,14 +129,36 @@ defmodule Photon.Assistant.Notice do
 
   # `"Fix the pump" asks: <the question>`, the question on one line and
   # cut to what a bubble holds.
-  defp question(title, text) do
-    title = if is_binary(title) and title != "", do: ~s("#{title}"), else: "A thread"
+  defp question(thread_id, title, text) do
+    title = if is_binary(title) and title != "", do: title
+    named = if title, do: ~s("#{title}"), else: "A thread"
+    thread_id = if is_binary(thread_id), do: thread_id
 
-    case one_line(text) do
-      "" -> %{kind: :question, text: title <> " has a question for you."}
-      text -> %{kind: :question, text: title <> " asks: " <> text}
+    text =
+      case one_line(text) do
+        "" -> named <> " has a question for you."
+        text -> named <> " asks: " <> text
+      end
+
+    %{kind: :question, text: text, thread_id: thread_id, title: title}
+  end
+
+  @doc """
+  What a notice says, with its thread under its current title from
+  `titles` (thread ID to title, nil for a thread that is gone): a
+  question's notice names the thread it came from by the title it had
+  then, which may since have changed. Anything else says its text.
+  """
+  @spec text(t(), Transcript.titles()) :: String.t()
+  def text(%{kind: :question, text: text, thread_id: id, title: old}, titles)
+      when is_binary(old) do
+    case Transcript.title(titles, id, old) do
+      ^old -> text
+      new -> ~s("#{new}") <> String.replace_prefix(text, ~s("#{old}"), "")
     end
   end
+
+  def text(%{text: text}, _titles), do: text
 
   defp one_line(text) when is_binary(text) do
     text = text |> String.split() |> Enum.join(" ")

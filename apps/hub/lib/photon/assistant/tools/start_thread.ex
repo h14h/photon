@@ -61,7 +61,7 @@ defmodule Photon.Assistant.Tools.StartThread do
     with {:ok, origin} <- Assistant.may_act_tx(tx, api.task, :start),
          {:ok, thread} <- started(Threads.start_tx(tx, project.id, message, opts)) do
       {:ok,
-       ~s(Started #{thread.id} "#{thread.title}" in #{project.slug}. ) <>
+       ~s(Started "#{thread.title}" in #{project.slug} \(#{thread.id}\). ) <>
          "You'll get an update when its run ends.",
        Map.merge(Origin.unattended_details(origin), %{
          "thread_id" => thread.id,

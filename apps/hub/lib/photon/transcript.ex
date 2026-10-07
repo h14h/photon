@@ -31,6 +31,13 @@ defmodule Photon.Transcript do
       `ask_owner` result, `escalation/1` for the hub's notice), and where
       each question put to the owner stands (`questions/3`), folded from
       the entries and the answers still queued in Blip's inbox
+    * which threads an entry or a queued message names (`thread_ids/1`),
+      and the title a page shows for one (`title/3`): its current title,
+      which the page reads by ID and keeps up to date, else the title the
+      entry recorded when it was written (a thread's first title is the
+      start of its first message until its run ends and it is named), so
+      a renamed or newly named thread reads the same everywhere; a
+      notice's words with the thread's current title (`notice_text/2`)
   """
 
   # Functional core: no processes, no I/O.
@@ -59,13 +66,21 @@ defmodule Photon.Transcript do
   @typedoc """
   A question Blip's conversation put to the owner, as its card shows it:
   open, answered (with the answer, when the conversation has it) or
-  withdrawn, and the asking thread's title.
+  withdrawn, and the asking thread's ID and title as the conversation
+  recorded it.
   """
   @type question :: %{
           status: :open | :answered | :withdrawn,
           answer: String.t() | nil,
-          title: String.t() | nil
+          title: String.t() | nil,
+          thread_id: String.t() | nil
         }
+
+  @typedoc """
+  Threads' current titles by ID, as the page read them; nil for one it
+  asked about that is gone.
+  """
+  @type titles :: %{optional(String.t()) => String.t() | nil}
 
   @typedoc "Blip's mood, as the avatar shows it."
   @type mood :: :idle | :thinking | :done | :error
@@ -120,6 +135,64 @@ defmodule Photon.Transcript do
     |> List.last(%{"text" => ""})
     |> Map.fetch!("text")
   end
+
+  @doc """
+  The threads an entry names, by ID, for the page to read their titles:
+  a signal message's threads, the thread an answer went to, the thread a
+  tool result's details name (shown in the answer that made the call),
+  and the thread of a question's notice. A queued submission names the
+  threads of its source the same way. Anything else names none.
+  """
+  @spec thread_ids(Entry.t() | map()) :: [String.t()]
+  def thread_ids(%{kind: "user", data: %{"source" => source}}), do: source_threads(source)
+
+  def thread_ids(%{kind: "tool_result", data: %{"details" => %{"thread_id" => id}}})
+      when is_binary(id),
+      do: [id]
+
+  def thread_ids(%{kind: "error", data: %{"thread_id" => id}}) when is_binary(id), do: [id]
+  def thread_ids(%{content: %{"source" => source}}), do: source_threads(source)
+  def thread_ids(_entry), do: []
+
+  defp source_threads(%{"kind" => "signal", "signals" => refs}) when is_list(refs),
+    do: for(%{"thread_id" => id} when is_binary(id) <- refs, uniq: true, do: id)
+
+  defp source_threads(%{"kind" => "answer", "thread_id" => id}) when is_binary(id), do: [id]
+  defp source_threads(_source), do: []
+
+  @doc """
+  The title a page shows for thread `id`: its current title from
+  `titles`, else `stored`, the title the entry recorded (nil when that
+  isn't text either).
+  """
+  @spec title(titles(), term(), term()) :: String.t() | nil
+  def title(titles, id, stored) do
+    case is_binary(id) and Map.get(titles, id) do
+      title when is_binary(title) -> title
+      _unknown when is_binary(stored) -> stored
+      _unknown -> nil
+    end
+  end
+
+  @doc """
+  A notice's words (an error entry's `"message"`), with the thread it
+  names in quotes under its current title from `titles` rather than the
+  title it had when the notice was written (`"title"`).
+  """
+  @spec notice_text(map(), titles()) :: String.t()
+  def notice_text(%{"message" => message} = data, titles) when is_binary(message) do
+    old = data["title"]
+
+    case title(titles, data["thread_id"], old) do
+      new when is_binary(old) and old != "" and new != old ->
+        String.replace(message, ~s("#{old}"), ~s("#{new}"))
+
+      _same ->
+        message
+    end
+  end
+
+  def notice_text(_data, _titles), do: ""
 
   @doc """
   The lines of a signal message (source kind `"signal"`), one per signal
@@ -229,26 +302,29 @@ defmodule Photon.Transcript do
   end
 
   defp row_event(%{id: id, status: "answered"} = row),
-    do: [event(id, :answered, Map.get(row, :thread_title), text_or_nil(Map.get(row, :answer)))]
+    do: [event(id, :answered, row_thread(row), text_or_nil(Map.get(row, :answer)))]
 
   defp row_event(%{id: id, status: "withdrawn"} = row),
-    do: [event(id, :withdrawn, Map.get(row, :thread_title), nil)]
+    do: [event(id, :withdrawn, row_thread(row), nil)]
 
   defp row_event(_row), do: []
+
+  defp row_thread(row),
+    do: %{"thread_id" => Map.get(row, :thread_id), "title" => Map.get(row, :thread_title)}
 
   defp question_events(%{kind: "tool_result", data: data}) do
     details = if is_map(data["details"]), do: data["details"], else: %{}
 
     cond do
       id = question_card(data) ->
-        [event(id, :open, details["title"], nil)]
+        [event(id, :open, details, nil)]
 
       answered_by_tool?(data, details) ->
         [
           event(
             details["question_id"],
             :answered,
-            details["title"],
+            details,
             text_or_nil(details["answer"])
           )
         ]
@@ -261,8 +337,8 @@ defmodule Photon.Transcript do
   defp question_events(%{kind: "error", data: %{"question_id" => id} = data})
        when is_binary(id) do
     case data["question_notice"] do
-      "escalated" -> [event(id, :open, data["title"], nil)]
-      "withdrawn" -> [event(id, :withdrawn, data["title"], nil)]
+      "escalated" -> [event(id, :open, data, nil)]
+      "withdrawn" -> [event(id, :withdrawn, data, nil)]
       _other -> []
     end
   end
@@ -284,25 +360,42 @@ defmodule Photon.Transcript do
 
   defp answer_event(content, %{"kind" => "answer", "question_id" => id} = source)
        when is_binary(id),
-       do: [event(id, :answered, source["title"], text_or_nil(typed(content, source)))]
+       do: [event(id, :answered, source, text_or_nil(typed(content, source)))]
 
   defp answer_event(_content, _source), do: []
 
   defp text_or_nil(text) when is_binary(text) and text != "", do: text
   defp text_or_nil(_text), do: nil
 
-  # What one entry says about question `id`: where it stands afterwards.
-  defp event(id, status, title, answer),
-    do: {id, %{status: status, answer: answer, title: title}}
+  # What one entry says about question `id`: where it stands afterwards,
+  # and its thread from `place` (a map with `"thread_id"` and `"title"`).
+  defp event(id, status, place, answer),
+    do:
+      {id,
+       %{
+         status: status,
+         answer: answer,
+         title: text_or_nil(place["title"]),
+         thread_id: text_or_nil(place["thread_id"])
+       }}
 
   defp fold_question({id, %{status: :open} = question}, questions),
     do: Map.put_new(questions, id, question)
 
   defp fold_question({id, question}, questions) do
     case questions[id] do
-      %{status: done} when done in [:answered, :withdrawn] -> questions
-      nil -> Map.put(questions, id, question)
-      known -> Map.put(questions, id, %{question | title: question.title || known.title})
+      %{status: done} when done in [:answered, :withdrawn] ->
+        questions
+
+      nil ->
+        Map.put(questions, id, question)
+
+      known ->
+        Map.put(questions, id, %{
+          question
+          | title: question.title || known.title,
+            thread_id: question.thread_id || known.thread_id
+        })
     end
   end
 

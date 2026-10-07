@@ -16,9 +16,10 @@ defmodule PhotonWeb.BlipLiveTest do
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Photon.Eventually, only: [eventually: 1]
   import Photon.Fixtures, only: [call: 3]
 
-  alias Photon.{Assistant, Durable, Machines, Projects, Questions, Threads}
+  alias Photon.{Assistant, Durable, Machines, Projects, Questions, Threads, Transcript}
   alias PhotonCore.Message
 
   @moduletag :durable
@@ -708,6 +709,61 @@ defmodule PhotonWeb.BlipLiveTest do
       refute has_element?(blip, "#message-#{signal.id} .whitespace-pre-wrap")
     end
 
+    test "a thread named or renamed since shows under its new title on its lines, card, chip and answer",
+         %{blip: blip, project: project, conversation: c} do
+      {thread, passed} = passed!(project, c, "which deploy branch?")
+      card = "#question-card-#{passed.id}"
+      line = "[id$=-signal-0][data-kind=question]"
+
+      _ = render(blip)
+      assert has_element?(blip, "#{card}-thread", thread.title)
+      assert has_element?(blip, "#{line} a", thread.title)
+
+      {:ok, _thread} = Threads.rename(thread.id, "Deploy branch")
+
+      assert eventually(fn -> has_element?(blip, "#{card}-thread", "Deploy branch") end)
+      assert has_element?(blip, "#{line} a", "Deploy branch")
+      refute has_element?(blip, "#{line} a", thread.title)
+
+      blip |> element("#{card}-answer") |> render_click()
+      assert has_element?(blip, "#reply-chip", "Deploy branch")
+
+      blip |> form("#composer", message: %{text: "main"}) |> render_submit()
+      answer = await_entry(c, &(&1.kind == "user" and &1.data["source"]["kind"] == "answer"))
+      _ = render(blip)
+      assert has_element?(blip, "#message-#{answer.id}-about", "Deploy branch")
+
+      {:ok, _thread} = Threads.rename(thread.id, "Branch to deploy")
+
+      assert eventually(fn ->
+               has_element?(blip, "#message-#{answer.id}-about", "Branch to deploy")
+             end)
+
+      assert has_element?(blip, "#{card}-thread", "Branch to deploy")
+    end
+
+    test "a thread Blip started shows its model-made title once its first run has it", %{
+      blip: blip,
+      conversation: c
+    } do
+      Application.put_env(:photon, Threads, auto_title: true)
+      on_exit(fn -> Application.put_env(:photon, Threads, auto_title: false) end)
+      render_hook(blip, "send", %{"message" => %{"text" => "start thread in garden: files"}})
+
+      result =
+        await_entry(c, &(&1.kind == "tool_result" and &1.data["name"] == "start_thread"))
+
+      thread_id = result.data["details"]["thread_id"]
+      action = "#action-#{Transcript.call_id(result)}-details summary"
+      _ = render(blip)
+      assert has_element?(blip, action, ~s(Started "files"))
+
+      # The scripted title model names a `files` thread once its run ends.
+      assert eventually(fn -> Threads.get(thread_id).title == "Check the context files" end)
+      assert eventually(fn -> has_element?(blip, action, ~s("Check the context files")) end)
+      refute has_element?(blip, action, ~s("files"))
+    end
+
     test "a question Blip passes on is a card; Answer puts the chip on the box, and sending answers it",
          %{blip: blip, project: project, conversation: c} do
       {thread, passed} = passed!(project, c, "which deploy branch?")
@@ -947,6 +1003,25 @@ defmodule PhotonWeb.BlipLiveTest do
       # thread: the question is the one thing it says.
       assert [_question] = bubbles(blip)
       assert has_element?(blip, "#blip-unread", "1")
+    end
+
+    test "a bubble names the thread by its new title once it is renamed", %{
+      blip: blip,
+      conversation: c
+    } do
+      {:ok, project} =
+        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+
+      {:ok, thread} = Threads.start(project.id, "ask blip: which deploy branch?")
+      _result = await_entry(c, &(&1.kind == "tool_result" and &1.data["name"] == "ask_owner"))
+      idle!(c)
+      assert has_element?(blip, "[data-bubble].is-question", ~s("#{thread.title}" asks:))
+
+      {:ok, _thread} = Threads.rename(thread.id, "Deploy branch")
+
+      assert eventually(fn ->
+               has_element?(blip, "[data-bubble].is-question", ~s("Deploy branch" asks:))
+             end)
     end
 
     test "a question Blip answers from memory says nothing to the owner", %{

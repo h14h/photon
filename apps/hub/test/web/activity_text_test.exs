@@ -184,6 +184,67 @@ defmodule PhotonWeb.ActivityTextTest do
     end
   end
 
+  describe "threads by their titles now" do
+    test "a call on one thread says the thread's title now; a thread not found keeps the summary" do
+      started =
+        action(
+          tool: "start_thread",
+          summary: ~s(Started "fix the pump please" in garden),
+          project_id: "p_garden",
+          thread_id: "c_pump"
+        )
+
+      assert ActivityText.row(started, @lookup).summary == ~s(Started "Fix the pump" in garden)
+
+      stopped =
+        action(tool: "stop_thread", status: "aborted", summary: "x", thread_id: "c_pump")
+
+      assert ActivityText.row(stopped, @lookup).summary == ~s(Stopped "Fix the pump": stopped)
+
+      gone = action(tool: "read_thread", summary: ~s(Read "Old title"), thread_id: "c_gone")
+      assert ActivityText.row(gone, @lookup).summary == ~s(Read "Old title")
+
+      # Other calls keep what they said.
+      answered =
+        action(tool: "answer_question", summary: "Answered: staging", thread_id: "c_pump")
+
+      assert ActivityText.row(answered, @lookup).summary == "Answered: staging"
+    end
+
+    test "a thread's question that led to a call on itself names the thread once" do
+      row =
+        ActivityText.row(
+          action(
+            tool: "answer_question",
+            summary: "Answered: staging",
+            origin: "thread",
+            origin_id: "c_pump",
+            project_id: "p_garden",
+            thread_id: "c_pump"
+          ),
+          @lookup
+        )
+
+      assert row.origin == %{by: "thread", lead: "", thread: @pump}
+      assert row.project == %{name: "Garden", slug: "garden"}
+      assert row.thread == nil
+
+      # A thread asking about another names both.
+      other = %{
+        @lookup
+        | places: Map.put(@lookup.places, "c_beds", %{title: "Beds", project_id: "p_garden"})
+      }
+
+      row =
+        ActivityText.row(
+          action(origin: "thread", origin_id: "c_beds", thread_id: "c_pump"),
+          other
+        )
+
+      assert row.thread == @pump
+    end
+  end
+
   test "status_text/1 names a mark for failures and stops only" do
     assert ActivityText.status_text(:failed) == "Failed"
     assert ActivityText.status_text(:stopped) == "Stopped"

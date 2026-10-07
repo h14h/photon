@@ -5,6 +5,9 @@ defmodule Photon.Activity.Rules do
 
     * `summary/3` - the line a tool call shows, in the past tense, naming
       the machine, project or thread it acted on
+    * `thread_summary/4` - the line of a call on one thread, under the
+      title the page reads now: a thread is named after its first run, so
+      the title a stored summary has may be the start of its first message
     * `message_summary/1` - the line for something Blip told the owner
       without a tool
     * `changes?/1` - whether a tool changes something, for the page's
@@ -106,7 +109,8 @@ defmodule Photon.Activity.Rules do
   defp line("read_project", %{"project" => project}, d) when is_binary(project),
     do: "Looked over " <> slug(d, project)
 
-  defp line("read_thread", %{"thread" => id}, d) when is_binary(id), do: "Read " <> thread(d, id)
+  defp line("read_thread", %{"thread" => id}, d) when is_binary(id),
+    do: thread_line("read_thread", thread(d, id), nil)
 
   # Starting, messaging and stopping work.
   defp line("start_project", %{"purpose" => purpose}, d) when is_binary(purpose) do
@@ -119,17 +123,17 @@ defmodule Photon.Activity.Rules do
   defp line("start_thread", %{"project" => project, "message" => message}, d)
        when is_binary(project) and is_binary(message) do
     case d["title"] do
-      title when is_binary(title) -> ~s(Started "#{one_line(title)}" in #{slug(d, project)})
+      title when is_binary(title) -> thread_line("start_thread", quoted(title), slug(d, project))
       _none -> "Started a thread in " <> slug(d, project)
     end
   end
 
   defp line("message_thread", %{"thread" => id, "message" => message}, d)
        when is_binary(id) and is_binary(message),
-       do: "Messaged " <> thread(d, id)
+       do: thread_line("message_thread", thread(d, id), nil)
 
   defp line("stop_thread", %{"thread" => id}, d) when is_binary(id),
-    do: "Stopped " <> thread(d, id)
+    do: thread_line("stop_thread", thread(d, id), nil)
 
   # Context files.
   defp line("list_context_files", %{"project" => project}, d) when is_binary(project),
@@ -200,6 +204,38 @@ defmodule Photon.Activity.Rules do
 
   defp line(_name, _args, _d), do: nil
 
+  # A call on one thread, the thread named as `named` (its title in
+  # quotes); `start_thread` also names the project it started in.
+  defp thread_line("read_thread", named, _slug), do: "Read " <> named
+  defp thread_line("start_thread", named, nil), do: "Started " <> named
+  defp thread_line("start_thread", named, slug), do: "Started #{named} in #{slug}"
+  defp thread_line("message_thread", named, _slug), do: "Messaged " <> named
+  defp thread_line("stop_thread", named, _slug), do: "Stopped " <> named
+  defp thread_line(_tool, _named, _slug), do: nil
+
+  @doc """
+  The line of a call on one thread (`read_thread`, `start_thread`,
+  `message_thread`, `stop_thread`) as `summary/3` words it, with the
+  thread under `title` and, for `start_thread`, in the project `slug`:
+  the activity page names a row's thread by its title now, which may
+  have changed since the row was written. Nil for any other tool.
+  """
+  @spec thread_summary(term(), term(), String.t(), String.t() | nil) :: String.t() | nil
+  def thread_summary(tool, status, title, slug) when is_binary(title) do
+    slug = if is_binary(slug), do: one_line(slug)
+
+    case thread_line(tool, quoted(title), slug) do
+      nil ->
+        nil
+
+      line ->
+        ending = ending(status)
+        cut(line, @summary_limit - String.length(ending)) <> ending
+    end
+  end
+
+  def thread_summary(_tool, _status, _title, _slug), do: nil
+
   # `line` with " in <slug>" when the call names a project; nil when its
   # `project` argument isn't text.
   defp with_place(line, args, d) do
@@ -246,10 +282,12 @@ defmodule Photon.Activity.Rules do
   # A thread's title in quotes from the details, else its ID as given.
   defp thread(d, id) do
     case d["title"] do
-      title when is_binary(title) -> ~s("#{one_line(title)}")
+      title when is_binary(title) -> quoted(title)
       _none -> one_line(id)
     end
   end
+
+  defp quoted(title), do: ~s("#{one_line(title)}")
 
   # A file's name as stored, from the details, else as given.
   defp file(d, name) do

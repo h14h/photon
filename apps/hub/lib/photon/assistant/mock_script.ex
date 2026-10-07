@@ -34,7 +34,10 @@ defmodule Photon.Assistant.MockScript do
   part.
 
   After a tool result it relays the result. An image result gets "Here it
-  is." and its dimensions line.
+  is." and its dimensions line. A result of its tools over threads is
+  said for the owner, by title and without IDs
+  (`Photon.Assistant.MockCoordinator.relay/3`), so it finds which tool
+  the result answers among the request's calls.
 
   The three machine phrasings and the relay are
   `Photon.MachineTools.MockPhrases`, and the skill phrasings
@@ -83,7 +86,9 @@ defmodule Photon.Assistant.MockScript do
 
     case List.last(messages) do
       %{"role" => "tool"} = result ->
-        result |> MockPhrases.relay_result() |> Message.assistant()
+        name = called(messages, result["tool_call_id"])
+        relayed = MockPhrases.relay_result(result)
+        Message.assistant(MockCoordinator.relay(name, Message.text_of(result), relayed))
 
       %{"role" => "user", "content" => content} ->
         MockCoordinator.unasked(texts(content), request) || typed(content, request)
@@ -91,6 +96,13 @@ defmodule Photon.Assistant.MockScript do
       _ ->
         Message.assistant(@help)
     end
+  end
+
+  # The name of the tool call `id` among `messages`, or nil.
+  defp called(messages, id) do
+    Enum.find_value(messages, fn message ->
+      Enum.find_value(Message.tool_calls(message), &(&1["id"] == id and &1["name"]))
+    end)
   end
 
   defp typed(content, request) do

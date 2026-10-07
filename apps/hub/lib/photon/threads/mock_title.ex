@@ -6,8 +6,12 @@ defmodule Photon.Threads.MockTitle do
   work in the first message the way the scripted thread
   (`Photon.Threads.MockScript`) understands it:
 
-    * `on mm1: $ df -h /` is "Run df on mm1" (the first program the
-      command runs, past shell keywords and loops)
+    * `on mm1: $ df -h /` is "Run df on mm1": what the command runs, in
+      order, past `sudo`, `env` and variable settings: each program by
+      name, and a loop or a condition as a whole ("a for loop", "an if
+      statement"), not the programs inside it. Two read "Run ps and grep
+      on mm1", more "Run df, ls and more on mm1", and a program named
+      twice is named once
     * `on mm1: look at shots/pump.png` is "Look at pump.png on mm1"
     * `machines` is "Check your machines", `files` "Check the context
       files"
@@ -32,8 +36,20 @@ defmodule Photon.Threads.MockTitle do
   alias Photon.Threads.Rules
   alias PhotonCore.Message
 
-  # Words that start a shell command without naming a program.
-  @keywords ~w(for while until if then else elif do done fi case esac in sudo time env exec ! { })
+  # Words that start a part of a command without naming a program.
+  @keywords ~w(then else elif do sudo time env exec ! { })
+
+  # The words that open a loop or a condition, what each is called in a
+  # title, and the words that close them.
+  @openers %{
+    "for" => "a for loop",
+    "while" => "a while loop",
+    "until" => "an until loop",
+    "select" => "a select loop",
+    "if" => "an if statement",
+    "case" => "a case statement"
+  }
+  @closers ~w(done fi esac)
 
   @impl true
   def respond(request) do
@@ -96,27 +112,50 @@ defmodule Photon.Threads.MockTitle do
   end
 
   defp run([machine, command]) do
-    case program(command) do
-      nil -> "Run a command on #{machine}"
-      program -> "Run #{program} on #{machine}"
+    case runs(command) do
+      [] -> "Run a command on #{machine}"
+      [one] -> "Run #{one} on #{machine}"
+      [one, two] -> "Run #{one} and #{two} on #{machine}"
+      [one, two | _more] -> "Run #{one}, #{two} and more on #{machine}"
     end
   end
 
-  # The first program a command runs: the first word of the first part
-  # (split at `;`, `&&`, `||`, `|` and new lines) that isn't a loop or a
-  # condition, past keywords and variable settings.
-  defp program(command) do
+  # What a command runs, in order, each once: the parts it splits into at
+  # `;`, `&&`, `||`, `|` and new lines, each named by its first word past
+  # keywords and variable settings. A part that opens a loop or a
+  # condition names it, and the parts up to its close are inside it.
+  defp runs(command) do
     command
     |> String.split(~r/;|&&|\|\||\||\n/)
-    |> Enum.map(&String.split/1)
-    |> Enum.reject(&match?([word | _] when word in ~w(for while until if case select), &1))
-    |> Enum.find_value(fn words ->
-      words
-      |> Enum.drop_while(&(&1 in @keywords or String.contains?(&1, "=")))
-      |> List.first()
-      |> program_name()
-    end)
+    |> Enum.map(
+      &(&1
+        |> String.split()
+        |> Enum.drop_while(fn word -> word in @keywords or String.contains?(word, "=") end))
+    )
+    |> Enum.reject(&(&1 == []))
+    |> Enum.reduce({[], 0}, &part/2)
+    |> elem(0)
+    |> Enum.reverse()
+    |> Enum.uniq()
   end
+
+  # A part at the top level names what it runs; inside a loop or a
+  # condition it only opens or closes one.
+  defp part([word | _rest], {names, 0}) when is_map_key(@openers, word),
+    do: {[Map.fetch!(@openers, word) | names], 1}
+
+  defp part([word | _rest], {names, 0}) do
+    case program_name(word) do
+      nil -> {names, 0}
+      name -> {[name | names], 0}
+    end
+  end
+
+  defp part([word | _rest], {names, depth}) when is_map_key(@openers, word),
+    do: {names, depth + 1}
+
+  defp part([word | _rest], {names, depth}) when word in @closers, do: {names, depth - 1}
+  defp part(_words, acc), do: acc
 
   defp program_name(nil), do: nil
 

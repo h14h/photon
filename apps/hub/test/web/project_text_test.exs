@@ -22,23 +22,28 @@ defmodule PhotonWeb.ProjectTextTest do
     assert ProjectText.ago(DateTime.add(@now, 30), @now) == "just now"
   end
 
-  test "changed/3 names the user or the thread" do
+  test "changed/3 names the user, or the thread the change was made in" do
     file = %ContextFile{updated_by: "owner", updated_at: before(5 * 60)}
     assert ProjectText.changed(file, %{}, @now) == "changed 5 minutes ago by you"
 
     by_thread = %{file | updated_by: "c_1"}
 
     assert ProjectText.changed(by_thread, %{"c_1" => "Fix the pump"}, @now) ==
-             ~s(changed 5 minutes ago by "Fix the pump")
+             "changed 5 minutes ago in Fix the pump"
 
-    assert ProjectText.writer(by_thread, %{}) == "a thread"
+    assert ProjectText.writer(by_thread, %{"c_1" => "Fix the pump"}) ==
+             {:in, %{id: "c_1", title: "Fix the pump"}}
+
+    assert ProjectText.changed(by_thread, %{}, @now) == "changed 5 minutes ago by a thread"
+    assert ProjectText.writer(by_thread, %{}) == {:by, "a thread"}
+    assert ProjectText.changed_at(by_thread, @now) == "changed 5 minutes ago"
   end
 
   test "changed/3 names Blip, without looking it up as a thread" do
     file = %ContextFile{updated_by: "blip", updated_at: before(5 * 60)}
 
     assert ProjectText.changed(file, %{}, @now) == "changed 5 minutes ago by Blip"
-    assert ProjectText.writer(file, %{"blip" => "Not Blip"}) == "Blip"
+    assert ProjectText.writer(file, %{"blip" => "Not Blip"}) == {:by, "Blip"}
   end
 
   test "size/1 in bytes, KB and MB" do

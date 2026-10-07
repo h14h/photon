@@ -288,7 +288,7 @@ defmodule PhotonWeb.ProjectLiveTest do
     _ = render(view)
 
     assert has_element?(view, "#context-file-#{notes.id}", "notes.md")
-    assert has_element?(view, "#context-file-#{notes.id}", ~s(by "Fix the pump"))
+    assert has_element?(view, "#context-file-#{notes.id}", "changed just now in Fix the pump")
 
     assert row_ids(view, "#context-files", "context-file-") == [
              "context-file-#{notes.id}",

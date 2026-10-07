@@ -90,7 +90,9 @@ defmodule PhotonWeb.ConversationComponentsTest do
       result = ok("c1", "<skill ...>", %{"skill" => "pdf-forms", "version" => 2})
       html = action(call, result)
       assert label(html) == "Loaded the pdf-forms skill"
-      assert html |> LazyHTML.query("summary .hero-book-open-micro") |> Enum.count() == 1
+      # A mortarboard: an open book at 14px reads as a pause sign.
+      assert html |> LazyHTML.query("summary .hero-academic-cap-micro") |> Enum.count() == 1
+      refute ConversationComponents.action_icon("list_skills") == "hero-book-open-micro"
 
       error = %{
         "message" => Message.tool_result("c1", "Error: No skills are turned on here."),
