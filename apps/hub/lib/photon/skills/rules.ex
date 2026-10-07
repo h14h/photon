@@ -198,8 +198,9 @@ defmodule Photon.Skills.Rules do
 
   @doc """
   Whether a skill may be turned on in a scope that has `enabled_count`
-  skills on already: at most 30 per scope, since every enabled skill's
-  description is in every prompt there.
+  skills on already: at most 30 per scope (Blip, each project and each
+  machine), since every enabled skill's description is in every prompt
+  there.
   """
   @spec enable_check(non_neg_integer()) :: :ok | {:error, String.t()}
   def enable_check(enabled_count) when enabled_count < @scope_limit, do: :ok
@@ -208,6 +209,23 @@ defmodule Photon.Skills.Rules do
     {:error,
      "30 skills are on here already. Turn one off first: agents read every enabled " <>
        "skill's description on every request."}
+  end
+
+  ## Machine skills
+
+  @doc """
+  Machine skills grouped by machine (section 2.3 of
+  `docs/plans/machine-skills.md`). `pairs` are `{machine_id, skill}` in
+  the order to list the skills; `known` are the machines the hub knows,
+  in the order to list them. Returns `{machine_id, skills}` for each
+  known machine with at least one skill, in `known`'s order, so a
+  removed machine's skills are left out.
+  """
+  @spec by_machine([{String.t(), skill}], [String.t()]) :: [{String.t(), [skill, ...]}]
+        when skill: term()
+  def by_machine(pairs, known) do
+    grouped = Enum.group_by(pairs, &elem(&1, 0), &elem(&1, 1))
+    for id <- known, skills = Map.get(grouped, id), do: {id, skills}
   end
 
   ## What install left out

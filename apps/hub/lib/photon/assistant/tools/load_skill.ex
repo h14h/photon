@@ -4,7 +4,9 @@ defmodule Photon.Assistant.Tools.LoadSkill do
   `docs/plans/step-3-skills-and-schedules.md`): loads one of the skills
   turned on for Blip, whose instructions become the call's result. A
   thread's is `Photon.Threads.Tools.LoadSkill`; both take their name,
-  description and parameters from `Photon.Skills.Prompt`.
+  description and parameters from `Photon.Skills.Prompt`. A skill turned
+  on for any machine the hub knows loads too, with that machine named
+  (section 4 of `docs/plans/machine-skills.md`).
 
   The skill is read inside the commit that records the result
   (`Photon.Skills.load_tx/3`), so a load racing a toggle returns either

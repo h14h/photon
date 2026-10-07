@@ -83,6 +83,51 @@ defmodule Photon.Skills.PromptTest do
     end
   end
 
+  describe "loaded/2" do
+    test "with no machines is loaded/1" do
+      assert Prompt.loaded(@pdf, []) == Prompt.loaded(@pdf)
+    end
+
+    test "names the machine in the element and says to follow it there" do
+      assert Prompt.loaded(@pdf, ["mm1"]) ==
+               """
+               <skill name="pdf-forms" id="sk_pdf" version="2" machines="mm1">
+               # PDF forms
+
+               Fill each field.
+               </skill>
+               This skill is turned on for mm1: follow it when you work on mm1.\
+               """
+    end
+
+    test "names several machines" do
+      [header | _rest] = String.split(Prompt.loaded(@pdf, ["mm1", "mp1"]), "\n")
+      assert header == ~s(<skill name="pdf-forms" id="sk_pdf" version="2" machines="mm1 mp1">)
+
+      assert String.ends_with?(
+               Prompt.loaded(@pdf, ["mm1", "mp1"]),
+               "</skill>\nThis skill is turned on for mm1 and mp1: " <>
+                 "follow it when you work on those machines."
+             )
+
+      assert String.ends_with?(
+               Prompt.loaded(@pdf, ["local", "mm1", "mp1"]),
+               "This skill is turned on for local, mm1 and mp1: " <>
+                 "follow it when you work on those machines."
+             )
+    end
+
+    test "puts the machine line before the files install left out" do
+      skill = %{@pdf | files_left_out: ["scripts/fill.py"]}
+      [_skill, lines] = String.split(Prompt.loaded(skill, ["mm1"]), "</skill>\n")
+
+      assert [
+               "This skill is turned on for mm1: follow it when you work on mm1.",
+               "This skill was installed without its other files (scripts/fill.py)." <> _
+             ] = String.split(lines, "\n")
+    end
+  end
+
   describe "not_loaded/2" do
     test "names the skills that are on" do
       assert Prompt.not_loaded("pdf-form", ["pdf-forms", "release-notes"]) ==
@@ -92,6 +137,31 @@ defmodule Photon.Skills.PromptTest do
 
     test "says when none are" do
       assert Prompt.not_loaded("pdf-form", []) == "No skills are turned on here."
+    end
+  end
+
+  describe "not_loaded/3" do
+    test "with no machine skills is not_loaded/2" do
+      assert Prompt.not_loaded("pdf-form", ["pdf-forms"], []) ==
+               Prompt.not_loaded("pdf-form", ["pdf-forms"])
+
+      assert Prompt.not_loaded("pdf-form", [], []) == "No skills are turned on here."
+    end
+
+    test "names the skills on here and each machine's" do
+      assert Prompt.not_loaded("ios", ["pdf-forms", "release-notes"], [
+               {"mm1", ["ios-simulators", "xcode"]},
+               {"mp1", ["hosting-private-apps"]}
+             ]) ==
+               "There's no skill called ios turned on here or for a machine. " <>
+                 "Turned on here: pdf-forms, release-notes. " <>
+                 "For machines: mm1 has ios-simulators, xcode; mp1 has hosting-private-apps."
+    end
+
+    test "names only the machines' when none are on here" do
+      assert Prompt.not_loaded("ios", [], [{"mm1", ["ios-simulators"]}]) ==
+               "There's no skill called ios turned on here or for a machine. " <>
+                 "For machines: mm1 has ios-simulators."
     end
   end
 

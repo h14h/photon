@@ -2,8 +2,8 @@ defmodule Photon.Assistant.Tools.ListSkills do
   @moduledoc """
   Blip's `list_skills` tool (section 5.5 of
   `docs/plans/step-4-blip-as-coordinator.md`): every skill on the hub,
-  with its description and where it is on, Blip's own set (`you`) and
-  projects' by slug (`Photon.Skills.list/0`,
+  with its description and where it is on, Blip's own set (`you`),
+  projects' by slug and machines' as `machine mm1` (`Photon.Skills.list/0`,
   `Photon.Assistant.Readout.skills/1`). `set_project_skill` turns one on
   or off for a project.
   """
@@ -45,4 +45,5 @@ defmodule Photon.Assistant.Tools.ListSkills do
 
   defp place(:blip, _slugs), do: "you"
   defp place({:project, project_id}, slugs), do: Map.get(slugs, project_id)
+  defp place({:machine, machine_id}, _slugs), do: "machine " <> machine_id
 end

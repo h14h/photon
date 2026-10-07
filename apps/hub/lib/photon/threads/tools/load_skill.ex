@@ -5,7 +5,9 @@ defmodule Photon.Threads.Tools.LoadSkill do
   turned on for the thread's project, whose instructions become the call's
   result. Blip's is `Photon.Assistant.Tools.LoadSkill`; the two differ
   only in the scope, which comes from the conversation, and take their
-  name, description and parameters from `Photon.Skills.Prompt`.
+  name, description and parameters from `Photon.Skills.Prompt`. A skill
+  turned on for any machine the hub knows loads too, with that machine
+  named (section 4 of `docs/plans/machine-skills.md`).
 
   The skill is read inside the commit that records the result
   (`Photon.Skills.load_tx/3`), so a load racing a toggle returns either

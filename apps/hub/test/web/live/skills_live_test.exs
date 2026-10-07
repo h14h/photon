@@ -83,6 +83,20 @@ defmodule PhotonWeb.SkillsLiveTest do
     assert text(view, "#skill-#{pasted.id}-origin") == "Pasted"
   end
 
+  test "a skill on for a machine names the machine", %{conn: conn} do
+    {:ok, _key} = Photon.NodeKeys.issue("mm1")
+    garden = project!("Garden")
+    ios = skill!("ios-simulators")
+    :ok = Skills.enable(ios.id, {:machine, "mm1"})
+
+    {:ok, view, _html} = live(conn, ~p"/skills")
+    assert text(view, "#skill-#{ios.id}-scopes") == "On for machine mm1"
+
+    :ok = Skills.enable(ios.id, :blip)
+    :ok = Skills.enable(ios.id, {:project, garden.id})
+    assert text(view, "#skill-#{ios.id}-scopes") == "On for Blip, machine mm1 and Garden"
+  end
+
   test "the Blip switch turns a skill on and off for Blip", %{conn: conn} do
     skill = skill!("pdf-forms")
     {:ok, view, _html} = live(conn, ~p"/skills")

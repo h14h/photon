@@ -152,6 +152,28 @@ defmodule Photon.Skills.RulesTest do
     end
   end
 
+  describe "by_machine/2" do
+    test "groups skills by machine in known's order, keeping the skills' order" do
+      pairs = [{"mp1", "alpha"}, {"mm1", "beta"}, {"mp1", "gamma"}, {"local", "delta"}]
+
+      assert Rules.by_machine(pairs, ["local", "mm1", "mp1"]) == [
+               {"local", ["delta"]},
+               {"mm1", ["beta"]},
+               {"mp1", ["alpha", "gamma"]}
+             ]
+    end
+
+    test "drops machines it doesn't know and leaves out known ones with no skills" do
+      pairs = [{"gone", "alpha"}, {"mm1", "beta"}]
+      assert Rules.by_machine(pairs, ["local", "mm1", "mp1"]) == [{"mm1", ["beta"]}]
+    end
+
+    test "is empty with no pairs" do
+      assert Rules.by_machine([], ["mm1"]) == []
+      assert Rules.by_machine([{"mm1", "alpha"}], []) == []
+    end
+  end
+
   describe "mentions/2 with a folder listing" do
     @left_out ["scripts/fill.py", "reference.md", "forms.md", "assets/logo.png"]
 

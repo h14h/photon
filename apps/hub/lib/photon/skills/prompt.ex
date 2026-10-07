@@ -20,6 +20,13 @@ defmodule Photon.Skills.Prompt do
   line naming them and telling the agent not to look for them: they are on
   no machine, and a file of the same name in a project's folder is
   something else.
+
+  A skill turned on for a machine is offered to every agent, beside its
+  own set (`t:offered/0`; section 4 of `docs/plans/machine-skills.md`).
+  `loaded/2` names the machines it is on for and says to follow it when
+  working there, and `not_loaded/3` lists the machines' skills too. With
+  no machines, both give exactly the text `loaded/1` and `not_loaded/2`
+  give, so a hub with no machine skills tells agents what it did before.
   """
 
   # Functional core: no processes, no I/O.
@@ -43,6 +50,12 @@ defmodule Photon.Skills.Prompt do
           required(:description) => String.t(),
           optional(atom()) => term()
         }
+
+  @typedoc """
+  What an agent is offered: its own set (Blip's, or its project's), and
+  each machine with skills on, with them, in the order to list them.
+  """
+  @type offered :: %{own: [listed()], machines: [{String.t(), [listed()]}]}
 
   @typedoc "What `loaded/1` needs of a skill: a `Photon.Skills.Skill` will do."
   @type loadable :: %{
@@ -86,21 +99,51 @@ defmodule Photon.Skills.Prompt do
   @doc """
   A loaded skill, as `load_skill` returns it: the instructions inside a
   `<skill>` element naming the skill, its ID and its version, then, when install
-  left files out, the line that names them.
+  left files out, the line that names them. The same as `loaded(skill, [])`.
   """
   @spec loaded(loadable()) :: String.t()
-  def loaded(skill) do
+  def loaded(skill), do: loaded(skill, [])
+
+  @doc """
+  A loaded skill that is on for `machines` (their IDs, in the order to
+  name them) rather than in the agent's own set: the `<skill>` element
+  also names them, and a line after it says to follow the skill when
+  working on them, before the line naming files install left out, if
+  any. With no machines, `loaded/1`'s text.
+  """
+  @spec loaded(loadable(), [String.t()]) :: String.t()
+  def loaded(skill, machines) do
+    on_for =
+      case machines do
+        [] -> ""
+        ids -> ~s( machines="#{escape(Enum.join(ids, " "))}")
+      end
+
     text = """
-    <skill name="#{skill.name}" id="#{skill.id}" version="#{skill.version}">
+    <skill name="#{skill.name}" id="#{skill.id}" version="#{skill.version}"#{on_for}>
     #{skill.instructions}
     </skill>\
     """
 
-    case Map.get(skill, :files_left_out) || [] do
-      [] -> text
-      files -> text <> "\n" <> left_out_line(files)
-    end
+    left_out =
+      case Map.get(skill, :files_left_out) || [] do
+        [] -> []
+        files -> [left_out_line(files)]
+      end
+
+    Enum.join([text | machine_line(machines) ++ left_out], "\n")
   end
+
+  defp machine_line([]), do: []
+
+  defp machine_line([id]),
+    do: ["This skill is turned on for #{id}: follow it when you work on #{id}."]
+
+  defp machine_line(ids),
+    do: ["This skill is turned on for #{join(ids)}: follow it when you work on those machines."]
+
+  defp join([one]), do: one
+  defp join(items), do: Enum.join(Enum.drop(items, -1), ", ") <> " and " <> List.last(items)
 
   defp left_out_line(files) do
     "This skill was installed without its other files (#{Enum.join(files, ", ")}). " <>
@@ -110,15 +153,35 @@ defmodule Photon.Skills.Prompt do
 
   @doc """
   The error when no skill called `name` is turned on here; `enabled` are
-  the names of the skills that are, by name.
+  the names of the skills that are, by name. The same as
+  `not_loaded(name, enabled, [])`.
   """
   @spec not_loaded(String.t(), [String.t()]) :: String.t()
-  def not_loaded(_name, []), do: "No skills are turned on here."
+  def not_loaded(name, enabled), do: not_loaded(name, enabled, [])
 
-  def not_loaded(name, enabled),
+  @doc """
+  The error when no skill called `name` is turned on here or for a
+  machine: `own` are the names of the skills on here, and `machines` each
+  machine with skills on and their names, `{machine_id, names}`. With no
+  machines, the text `not_loaded/2` gives.
+  """
+  @spec not_loaded(String.t(), [String.t()], [{String.t(), [String.t()]}]) :: String.t()
+  def not_loaded(_name, [], []), do: "No skills are turned on here."
+
+  def not_loaded(name, own, []),
     do:
       "There's no skill called #{name} turned on here. " <>
-        "Turned on here: #{Enum.join(enabled, ", ")}."
+        "Turned on here: #{Enum.join(own, ", ")}."
+
+  def not_loaded(name, own, machines) do
+    here = if own == [], do: "", else: " Turned on here: #{Enum.join(own, ", ")}."
+
+    on_machines =
+      Enum.map_join(machines, "; ", fn {id, names} -> "#{id} has #{Enum.join(names, ", ")}" end)
+
+    "There's no skill called #{name} turned on here or for a machine." <>
+      here <> " For machines: #{on_machines}."
+  end
 
   @doc """
   What the marker in an older, shortened `load_skill` result says to do

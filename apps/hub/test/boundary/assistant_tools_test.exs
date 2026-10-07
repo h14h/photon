@@ -458,6 +458,21 @@ defmodule Photon.AssistantToolsTest do
                   "release-notes: Write release notes. Off everywhere."}
     end
 
+    test "list_skills names a machine a skill is on for", %{garden: garden} = ctx do
+      {:ok, _key} = Photon.NodeKeys.issue("mm1")
+      ios = skill!("ios-simulators", "Run iOS simulators")
+      :ok = Skills.enable(ios.id, {:machine, "mm1"})
+
+      assert run(Tools.ListSkills, %{}, api(ctx, "list_skills")) ==
+               {:ok, "ios-simulators: Run iOS simulators. On for: machine mm1."}
+
+      :ok = Skills.enable(ios.id, :blip)
+      :ok = Skills.enable(ios.id, {:project, garden.id})
+
+      assert run(Tools.ListSkills, %{}, api(ctx, "list_skills")) ==
+               {:ok, "ios-simulators: Run iOS simulators. On for: you, machine mm1, garden."}
+    end
+
     test "set_project_skill turns a skill on and off for a project, once",
          %{garden: garden} = ctx do
       pdf = skill!("pdf-forms")

@@ -4,9 +4,11 @@ defmodule Photon.Skills.Enablement do
   `docs/plans/step-3-skills-and-schedules.md`). A skill is on for a scope
   exactly when this row exists; there is no "off" row.
 
-  `scope` is `"blip"` or a project's ID (`p_...`). Only `Photon.Skills`
-  turns it to and from the `:blip | {:project, id}` the rest of the code
-  uses. A later step may add the machines a skill is on for here.
+  `scope` is `"blip"`, a project's ID (`p_...`), or `"machine:<id>"` for
+  a machine (`"machine:mm1"`; section 2.1 of
+  `docs/plans/machine-skills.md`). Only `Photon.Skills` turns it to and
+  from the `:blip | {:project, id} | {:machine, id}` the rest of the code
+  uses.
   """
 
   # Data: an Ecto schema, no behaviour of its own.

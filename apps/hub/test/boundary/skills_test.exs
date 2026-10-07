@@ -7,8 +7,8 @@ defmodule Photon.SkillsTest do
   use Photon.DataCase, async: false
 
   alias Photon.Durable.Tx
-  alias Photon.{Projects, Skills}
-  alias Photon.Skills.Skill
+  alias Photon.{NodeKeys, Projects, Repo, Skills}
+  alias Photon.Skills.{Enablement, Prompt, Skill}
 
   # Writes go through the Store's commit line.
   @moduletag :durable
@@ -438,6 +438,221 @@ defmodule Photon.SkillsTest do
       assert pdf_id == pdf.id
       assert pdf_scopes == [:blip, {:project, garden.id}]
       assert Skills.scopes(pdf.id) == pdf_scopes
+    end
+  end
+
+  describe "machine scopes" do
+    defp machine!(id) do
+      {:ok, _key} = NodeKeys.issue(id)
+      id
+    end
+
+    defp local_node! do
+      Application.put_env(:photon, :local_node, true)
+      on_exit(fn -> Application.put_env(:photon, :local_node, false) end)
+    end
+
+    defp load(scope, name), do: Durable.commit(&Skills.load_tx(&1, scope, name))
+
+    test "turn a skill on and off for a machine, and announce" do
+      skill = skill!("ios-simulators")
+      machine!("mm1")
+      id = skill.id
+      :ok = Skills.subscribe()
+
+      assert Skills.enable(id, {:machine, "mm1"}) == :ok
+      assert_receive {:skills_changed, ^id}
+      assert Skills.scopes(id) == [{:machine, "mm1"}]
+      assert names(Skills.enabled({:machine, "mm1"})) == ["ios-simulators"]
+
+      # On already, or off already: nothing changes and nothing is announced.
+      assert Skills.enable(id, {:machine, "mm1"}) == :ok
+      refute_received {:skills_changed, _}
+
+      assert Skills.disable(id, {:machine, "mm1"}) == :ok
+      assert_receive {:skills_changed, ^id}
+      assert Skills.scopes(id) == []
+
+      assert Skills.disable(id, {:machine, "mm1"}) == :ok
+      refute_received {:skills_changed, _}
+    end
+
+    test "a machine the hub doesn't know is refused" do
+      skill = skill!("ios-simulators")
+
+      assert Skills.enable(skill.id, {:machine, "mm9"}) ==
+               {:error, "There's no machine called mm9."}
+
+      assert Durable.commit(&Skills.enable_tx(&1, skill.id, {:machine, "mm9"})) ==
+               {:error, "There's no machine called mm9."}
+
+      assert Skills.scopes(skill.id) == []
+    end
+
+    test "each machine takes at most 30 skills, apart from Blip and other machines" do
+      machine!("mm1")
+      machine!("mp1")
+      skills = for n <- 1..31, do: skill!("skill-#{n}")
+      {first_30, [last]} = Enum.split(skills, 30)
+      for skill <- first_30, do: :ok = Skills.enable(skill.id, {:machine, "mm1"})
+
+      assert {:error, "30 skills are on here already." <> _} =
+               Skills.enable(last.id, {:machine, "mm1"})
+
+      assert length(Skills.enabled({:machine, "mm1"})) == 30
+      assert Skills.enable(last.id, {:machine, "mp1"}) == :ok
+      assert Skills.enable(last.id, :blip) == :ok
+    end
+
+    test "machine_skills/0 groups them by machine, local first, apart from the agent's own" do
+      local_node!()
+      machine!("mp1")
+      machine!("mm1")
+      machine!("nas")
+      garden = project!("Garden")
+      ios = skill!("ios-simulators")
+      xcode = skill!("xcode")
+      hosting = skill!("hosting-private-apps")
+      pdf = skill!("pdf-forms")
+
+      :ok = Skills.enable(xcode.id, {:machine, "mm1"})
+      :ok = Skills.enable(hosting.id, {:machine, "mp1"})
+      :ok = Skills.enable(ios.id, {:machine, "mm1"})
+      :ok = Skills.enable(hosting.id, {:machine, "local"})
+      :ok = Skills.enable(pdf.id, :blip)
+
+      machines = Skills.machine_skills()
+
+      assert Enum.map(machines, fn {id, skills} -> {id, names(skills)} end) == [
+               {"local", ["hosting-private-apps"]},
+               {"mm1", ["ios-simulators", "xcode"]},
+               {"mp1", ["hosting-private-apps"]}
+             ]
+
+      assert [{"local", [%Skill{instructions: "# hosting-private-apps\n\nDo it."}]} | _] =
+               machines
+
+      assert %{own: [%Skill{name: "pdf-forms"}], machines: ^machines} = Skills.offered(:blip)
+
+      # A project with no skills of its own is still offered the machines'.
+      assert Skills.offered({:project, garden.id}) == %{own: [], machines: machines}
+    end
+
+    test "a removed machine's skills are hidden until it is installed again" do
+      machine!("mm1")
+      machine!("mp1")
+      ios = skill!("ios-simulators")
+      hosting = skill!("hosting-private-apps")
+      xcode = skill!("xcode")
+      :ok = Skills.enable(ios.id, {:machine, "mm1"})
+      :ok = Skills.enable(ios.id, :blip)
+      :ok = Skills.enable(hosting.id, {:machine, "mm1"})
+      :ok = Skills.enable(hosting.id, {:machine, "mp1"})
+
+      :ok = NodeKeys.revoke("mm1")
+      assert_hidden(ios, hosting)
+
+      # Turning one on for it is refused; turning one off still works.
+      assert Skills.enable(xcode.id, {:machine, "mm1"}) ==
+               {:error, "There's no machine called mm1."}
+
+      :ok = NodeKeys.forget("mm1")
+      assert_hidden(ios, hosting)
+
+      machine!("mm1")
+      assert Skills.scopes(ios.id) == [:blip, {:machine, "mm1"}]
+      assert Skills.scopes(hosting.id) == [{:machine, "mm1"}, {:machine, "mp1"}]
+
+      assert Enum.map(Skills.machine_skills(), fn {id, skills} -> {id, names(skills)} end) == [
+               {"mm1", ["hosting-private-apps", "ios-simulators"]},
+               {"mp1", ["hosting-private-apps"]}
+             ]
+
+      assert {:ok, _text, %{"machines" => ["mm1", "mp1"]}} = load(:blip, "hosting-private-apps")
+    end
+
+    defp assert_hidden(ios, hosting) do
+      assert Skills.scopes(ios.id) == [:blip]
+      assert Skills.scopes(hosting.id) == [{:machine, "mp1"}]
+
+      assert [
+               %{skill: %{name: "hosting-private-apps"}, scopes: [{:machine, "mp1"}]},
+               %{skill: %{name: "ios-simulators"}, scopes: [:blip]},
+               %{skill: %{name: "xcode"}, scopes: []}
+             ] = Skills.list()
+
+      assert [{"mp1", [%Skill{name: "hosting-private-apps"}]}] = Skills.machine_skills()
+      assert {:ok, _text, %{"machines" => ["mp1"]}} = load(:blip, "hosting-private-apps")
+
+      # ios-simulators is still Blip's own, but no longer loads as mm1's.
+      assert {:ok, _text, details} = load(:blip, "ios-simulators")
+      refute Map.has_key?(details, "machines")
+
+      garden = project!("Garden #{System.unique_integer([:positive])}")
+
+      assert load({:project, garden.id}, "ios-simulators") ==
+               {:error,
+                "There's no skill called ios-simulators turned on here or for a machine. " <>
+                  "For machines: mp1 has hosting-private-apps."}
+    end
+
+    test "load_tx/3 loads a machine's skill for Blip and for a project, naming the machines" do
+      machine!("mm1")
+      machine!("mp1")
+      garden = project!("Garden")
+      ios = skill!("ios-simulators")
+      :ok = Skills.enable(ios.id, {:machine, "mp1"})
+      :ok = Skills.enable(ios.id, {:machine, "mm1"})
+
+      for scope <- [:blip, {:project, garden.id}] do
+        assert load(scope, " iOS-Simulators ") ==
+                 {:ok, Prompt.loaded(ios, ["mm1", "mp1"]),
+                  %{
+                    "skill" => "ios-simulators",
+                    "version" => 1,
+                    "full_output" => Prompt.full_output_hint("ios-simulators"),
+                    "machines" => ["mm1", "mp1"]
+                  }}
+      end
+    end
+
+    test "load_tx/3 loads an own skill that is also on for a machine as an own skill" do
+      machine!("mm1")
+      garden = project!("Garden")
+      ios = skill!("ios-simulators")
+      :ok = Skills.enable(ios.id, {:machine, "mm1"})
+      :ok = Skills.enable(ios.id, {:project, garden.id})
+
+      assert load({:project, garden.id}, "ios-simulators") ==
+               {:ok, Prompt.loaded(ios),
+                %{
+                  "skill" => "ios-simulators",
+                  "version" => 1,
+                  "full_output" => Prompt.full_output_hint("ios-simulators")
+                }}
+    end
+
+    test "load_tx/3 names the skills on here and each machine's when the name isn't on" do
+      machine!("mm1")
+      ios = skill!("ios-simulators")
+      pdf = skill!("pdf-forms")
+      :ok = Skills.enable(ios.id, {:machine, "mm1"})
+      :ok = Skills.enable(pdf.id, :blip)
+
+      assert load(:blip, "xcode") ==
+               {:error,
+                "There's no skill called xcode turned on here or for a machine. " <>
+                  "Turned on here: pdf-forms. For machines: mm1 has ios-simulators."}
+    end
+
+    test "deleting a skill deletes its machine rows" do
+      machine!("mm1")
+      ios = skill!("ios-simulators")
+      :ok = Skills.enable(ios.id, {:machine, "mm1"})
+      :ok = NodeKeys.revoke("mm1")
+
+      assert Skills.delete(ios.id) == :ok
+      assert Repo.aggregate(Enablement, :count) == 0
     end
   end
 end

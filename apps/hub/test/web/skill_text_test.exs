@@ -24,6 +24,13 @@ defmodule PhotonWeb.SkillTextTest do
              ) == "On for Garden, House and Shed"
     end
 
+    test "names a machine as a machine" do
+      assert SkillText.scopes([:blip, {:project, "p_garden"}, {:machine, "mm1"}], @names) ==
+               "On for Blip, Garden and machine mm1"
+
+      assert SkillText.scopes([{:machine, "mm1"}], @names) == "On for machine mm1"
+    end
+
     test "leaves out a project it has no name for" do
       assert SkillText.scopes([{:project, "p_gone"}], @names) == "Off everywhere"
       assert SkillText.scopes([:blip, {:project, "p_gone"}], @names) == "On for Blip"
