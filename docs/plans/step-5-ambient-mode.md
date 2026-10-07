@@ -437,9 +437,12 @@ ms}` read before the commit, as `Routine` reads consent and the clock:
    (`Schedules.prompts/1`) and every project's slug and name
    (`Projects.list/0`).
 5. `Ambient.Rules.digest(items, board, places)` sorts each item into new,
-   smaller or gone, by the tables of section 3.1. It keeps one
-   `"finished"` item per thread (the newest), one `"file_written"` per
-   project and file, one `"purpose_changed"` per project, and orders each
+   smaller or gone, by the tables of section 3.1. It keeps one item per
+   subject, the newest: one `"finished"`, `"thread_started"` or
+   `"resolved"` per thread, one `"schedule_stopped"` per schedule, one
+   `"file_written"` per project and file, one `"project_created"` or
+   `"purpose_changed"` per project (folded items aren't gone; they go
+   with the digest that carries their subject). It orders each
    group by project name, then time. It returns `%{new: rows, smaller:
    rows, more_new: n, more_smaller: n, gone: item_ids, snapshot: counts}`:
    at most 20 new rows and 15 smaller rows, how many more of each, the
@@ -488,8 +491,9 @@ New to the user:
 Already seen by the user, or done by them:
 - Garden / "Order seeds" (c_321) finished; the user has opened it.
 - Garden / context file notes.md written by "Fix the pump" (c_123).
-- House / context file colours.md edited by the user.
+- House / context file colours.md written by the user.
 - The user started project Shed.
+- The user edited project Garden's name or Purpose.
 - The user started "Gutters" (c_789) in House.
 - The user resolved Garden / "Old pump" (c_222).
 ...and 3 more smaller changes.
@@ -502,7 +506,12 @@ ambient mode was turned on (<on_since>)". Notes are cut to 280
 characters (they are stored at 600); smaller rows carry no notes. The
 whole text is at most 6,000 characters. The "Already seen" block is left
 out when it is empty. The "Now" line leaves out zero counts, and is
-"Now: nothing running or waiting." when all are zero.
+"Now: nothing running or waiting." when all are zero. A deleted file
+reads "deleted by" instead of "written by", and Blip's own schedule reads
+"Your schedule sc_9 ...". Rows that don't fit in the 6,000 characters
+are counted in the "...and N more" lines. `Text.digest/2` takes the
+doc for the window, so the text test can check a skip between two
+sends.
 
 The ref, in the message's `source["signals"]`, is
 
@@ -533,7 +542,8 @@ requests see in place of the text (section 5.3):
 }
 ```
 
-The stub names at most five subjects and is at most 300 characters.
+The stub names at most five subjects and is at most 300 characters,
+ending ", and N more" when it names fewer than it carries.
 `Signals.post_tx/2` takes it as an optional `older:` field and puts it
 in the source next to `"signals"`.
 
@@ -678,7 +688,12 @@ to resolve a thread; closing one stays the owner's button.
 
 A waiting thread shows its open question (Blip's wording when it asked
 in its own words), or its run's note when its answer asked. Lines are
-cut to 400 characters. "4 days ago" is whole days, or hours under a day.
+cut to 400 characters. "4 days ago" is whole days, or hours under a day,
+or minutes under an hour (with `PHOTON_QUIET_AFTER_HOURS=0`). The count
+in the header is every thread due, shown or not; with `quiet_after`
+under an hour the header leaves out "for ... or more". `Text.review/3`
+takes the review, the latest answers by thread ID (a stopped thread's
+line quotes it) and the time.
 
 The ref:
 
@@ -1071,8 +1086,8 @@ No changes.
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
 | `Photon.Ambient` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Schedules, Photon.Settings, Photon.Signals, Photon.Threads, PhotonCore], exports: []` | `status/0`, `subscribe/0`, `configure/2`, `digest_now/0`, `review_now/0`, `fire_tx/3` (`@doc false`, for the timer and tests, as `Routine.fire_tx/3` is), `every_options/0` (the three intervals). Moduledoc: the doc, the timers, collection, the fence, what turning off cancels, the cost bounds. |
-| `Photon.Ambient.Rules` | core | `use Boundary, type: :strict, deps: [Photon.Threads]` (it reaches `Threads.State` through the parent's export, as `Assistant.Readout` does) | `config/2`, `changes/3`, `next_firing/3`, `next_review/2`, `digest/3`, `review/3`, `last_touch/1`, `firing/1` (the skip decisions of section 3.3 steps 1 to 3 from a facts map). Takes the time as an argument. |
-| `Photon.Ambient.Text` | core | `use Boundary, type: :strict, deps: []` | `digest/3`, `digest_ref/3`, `digest_older/2`, `review/3`, `review_ref/3`, `review_older/2`, `ago/2` (sections 3.4, 4.4). |
+| `Photon.Ambient.Rules` | core | `use Boundary, type: :strict, deps: [Photon.Threads]` (it reaches `Threads.State` through the parent's export, as `Assistant.Readout` does) | `config/2` (`%{on?:, every_minutes:, offset_minutes:}`), `changes/3` (`%{digest: action, review: action, clear?:, turned_on?:}`, each action `:keep`, `:arm`, `:rearm` (retire the live one, then arm) or `:retire`), `next_firing/3`, `next_review/2`, `digest/3` (places: `%{prompts: %{id => prompt}, projects: [project]}`), `review/3` (`%{rows:, more:, quiet_after:}`), `last_touch/1`, `firing/1` (the skip decisions of section 3.3 steps 1 to 3 from `%{on?:, allowed?:, queued?:}`: `:go` or `{:skip, outcome}`), `every_options/0`. Takes the time as an argument. |
+| `Photon.Ambient.Text` | core | `use Boundary, type: :strict, deps: []` | `digest/2` (the digest and the doc), `digest_ref/2` (the digest and the key), `digest_older/2`, `review/3` (the review, the latest answers by thread ID, now), `review_ref/2`, `review_older/2`, `ago/2` (sections 3.4, 4.4). |
 | `Photon.Ambient.Timer` | worker logic (task kind) | inside `Photon.Ambient` | Section 6; `task/2` (a timer's task attributes for a job and its input, which `configure/2` and the tests use). |
 | `Photon.Threads` | boundary | unchanged | `mark_reviewed_tx/3`, `unmark_reviewed_tx/2`. |
 | `Photon.Threads.Thread` | data | unchanged | `reviewed_at`. |
