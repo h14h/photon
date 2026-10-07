@@ -596,6 +596,9 @@ defmodule Photon.SkillsTest do
                   "For machines: mp1 has hosting-private-apps."}
     end
 
+    # Which skill loads, own or machine, and the error's names are
+    # Rules.find_offered/2's (test/core/skills/rules_test.exs); this checks
+    # the commit wiring once.
     test "load_tx/3 loads a machine's skill for Blip and for a project, naming the machines" do
       machine!("mm1")
       machine!("mp1")
@@ -614,35 +617,6 @@ defmodule Photon.SkillsTest do
                     "machines" => ["mm1", "mp1"]
                   }}
       end
-    end
-
-    test "load_tx/3 loads an own skill that is also on for a machine as an own skill" do
-      machine!("mm1")
-      garden = project!("Garden")
-      ios = skill!("ios-simulators")
-      :ok = Skills.enable(ios.id, {:machine, "mm1"})
-      :ok = Skills.enable(ios.id, {:project, garden.id})
-
-      assert load({:project, garden.id}, "ios-simulators") ==
-               {:ok, Prompt.loaded(ios),
-                %{
-                  "skill" => "ios-simulators",
-                  "version" => 1,
-                  "full_output" => Prompt.full_output_hint("ios-simulators")
-                }}
-    end
-
-    test "load_tx/3 names the skills on here and each machine's when the name isn't on" do
-      machine!("mm1")
-      ios = skill!("ios-simulators")
-      pdf = skill!("pdf-forms")
-      :ok = Skills.enable(ios.id, {:machine, "mm1"})
-      :ok = Skills.enable(pdf.id, :blip)
-
-      assert load(:blip, "xcode") ==
-               {:error,
-                "There's no skill called xcode turned on here or for a machine. " <>
-                  "Turned on here: pdf-forms. For machines: mm1 has ios-simulators."}
     end
 
     test "deleting a skill deletes its machine rows" do

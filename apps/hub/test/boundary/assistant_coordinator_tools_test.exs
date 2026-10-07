@@ -210,6 +210,28 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       assert by_id == text
     end
 
+    test "a project with no skills of its own names the machines' skills its threads get",
+         %{blip: blip} do
+      {:ok, _key} = Photon.NodeKeys.issue("mm1")
+
+      {:ok, skill} =
+        Skills.create(%{
+          "name" => "ios-simulators",
+          "description" => "Run iOS simulators.",
+          "instructions" => "Boot one."
+        })
+
+      :ok = Skills.enable(skill.id, {:machine, "mm1"})
+
+      {text, _data} = tool!(blip, "project garden", "read_project")
+
+      assert String.ends_with?(
+               text,
+               "Skills on: none.\n" <>
+                 "Also offered to its threads, for work on that machine: mm1 has ios-simulators."
+             )
+    end
+
     test "an unknown project lists the slugs there are", %{blip: blip} do
       {text, data} = tool!(blip, "project gardn", "read_project")
       assert data["status"] == "error"

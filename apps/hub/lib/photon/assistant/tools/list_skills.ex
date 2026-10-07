@@ -20,7 +20,8 @@ defmodule Photon.Assistant.Tools.ListSkills do
     do:
       "List every skill on the hub, with what it's for and where it's on: for you, for " <>
         "a project's threads, or for a machine (the user turns machine skills on and off " <>
-        "on the skill's page)."
+        "on the skill's page). A skill on for a machine reaches you and every thread in " <>
+        "every project, for work on that machine."
 
   @impl true
   def parameters, do: %{"type" => "object", "properties" => %{}}

@@ -473,6 +473,18 @@ defmodule Photon.AssistantToolsTest do
                {:ok, "ios-simulators: Run iOS simulators. On for: you, machine mm1, garden."}
     end
 
+    test "list_skills and set_project_skill tell Blip a machine's skills reach every thread" do
+      # So Blip doesn't turn a machine's skill on for a project to get it
+      # to that project's threads.
+      assert Tools.ListSkills.description() =~
+               "A skill on for a machine reaches you and every thread in every project, " <>
+                 "for work on that machine."
+
+      assert Tools.SetProjectSkill.description() =~
+               "A skill on for a machine already reaches every thread, and you, for work on " <>
+                 "that machine: there's no need to turn it on for a project as well."
+    end
+
     test "set_project_skill turns a skill on and off for a project, once",
          %{garden: garden} = ctx do
       pdf = skill!("pdf-forms")

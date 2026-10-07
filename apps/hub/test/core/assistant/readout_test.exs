@@ -69,7 +69,10 @@ defmodule Photon.Assistant.ReadoutTest do
 
   describe "read_project" do
     defp facts(overrides \\ []) do
-      Map.merge(%{files: [], board: [], schedules: [], skills: []}, Map.new(overrides))
+      Map.merge(
+        %{files: [], board: [], schedules: [], skills: [], machine_skills: []},
+        Map.new(overrides)
+      )
     end
 
     test "every list says none when empty" do
@@ -173,6 +176,24 @@ defmodule Photon.Assistant.ReadoutTest do
                """
 
       assert String.ends_with?(text, "Skills on: pdf-forms, notes.")
+    end
+
+    test "names each machine's skills after the project's own, which its threads get too" do
+      machines = [{"mm1", ["ios-simulators", "xcode"]}, {"mp1", ["hosting-private-apps"]}]
+
+      assert String.ends_with?(
+               Readout.project(project(), facts(machine_skills: machines)),
+               "\n\nSkills on: none.\n" <>
+                 "Also offered to its threads, for work on that machine: " <>
+                 "mm1 has ios-simulators, xcode; mp1 has hosting-private-apps."
+             )
+
+      assert String.ends_with?(
+               Readout.project(project(), facts(skills: ["pdf-forms"], machine_skills: machines)),
+               "\n\nSkills on: pdf-forms.\nAlso offered to its threads" <>
+                 ", for work on that machine: " <>
+                 "mm1 has ios-simulators, xcode; mp1 has hosting-private-apps."
+             )
     end
 
     test "shows 40 threads, then how many more" do

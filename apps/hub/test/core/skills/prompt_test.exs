@@ -37,7 +37,10 @@ defmodule Photon.Skills.PromptTest do
   @machine_paragraph "Some skills are turned on for a machine because they are about working on it. " <>
                        "Each is listed under its machine. Before you start work on one of these " <>
                        "machines, load the ones your work there needs with load_skill, and follow " <>
-                       "them while you work on that machine. They don't apply to work on other machines."
+                       "them while you work on that machine. They don't apply to work on other machines. " <>
+                       "If you loaded a skill earlier in this conversation and it is now listed only " <>
+                       "under a machine, it is no longer on for all your work: follow it only when you " <>
+                       "work on that machine."
 
   @pdf_line ~s(<skill><name>pdf-forms</name><version>2</version><id>sk_pdf</id><description>Fill in PDF forms. Use when the user asks to fill or flatten one.</description></skill>)
   @notes_line ~s(<skill><name>release-notes</name><version>1</version><id>sk_notes</id><description>Write &lt;release&gt; notes &amp; &#34;changelogs&#34; for the team&#39;s repos.</description></skill>)
@@ -113,6 +116,21 @@ defmodule Photon.Skills.PromptTest do
                  </machine>
                  </machine_skills>\
                  """
+    end
+
+    test "says a skill loaded earlier and now listed only under a machine applies only there" do
+      # pdf-forms was in the agent's own set and is now on only for mm1:
+      # still listed, same id and version, so only this sentence says
+      # the earlier load no longer applies everywhere.
+      section = Prompt.section(%{own: [], machines: [{"mm1", [@pdf]}]})
+
+      assert section =~
+               "If you loaded a skill earlier in this conversation and it is now listed only " <>
+                 "under a machine, it is no longer on for all your work: follow it only when " <>
+                 "you work on that machine."
+
+      # Only in the machine part, so a hub with no machine skills keeps its prompt.
+      refute Prompt.section(own([@pdf])) =~ "listed only under a machine"
     end
 
     test "escapes a machine's name like the other fields" do

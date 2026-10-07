@@ -239,7 +239,7 @@ nothing about digests.
 | `Photon.Assistant.Tools.Schedule` | boundary (tool: one of Blip's own schedules or, with `project`, a project's that starts a new thread or wakes one, made with `Schedules.tool_schedule_tx/4` inside the commit that records the result, with the call's task ID as its request ID and `asked_by` from the run's origin; refuses in a question's run, and a project's in any run the owner didn't type into) | does I/O (a commit, clock) | `Schedules`, `Assistant`, `Threads`, `Origin`, `Readout`, `ToolAPI` |
 | `Photon.Assistant.Tools.ListSchedules` | boundary (tool: Blip's waiting schedules with their `sc_` IDs, or a project's with `project`) | does I/O (DB) | `Assistant`, `Threads`, `Readout` |
 | `Photon.Assistant.Tools.CancelSchedule` | boundary (tool: `Schedules.delete_tx/3` with the scope `:any`, Blip's or a project's; refuses in a question's run) | does I/O (a commit) | `Schedules`, `Assistant`, `Projects` |
-| `Photon.Assistant.Tools.ListProjects`, `.ReadProject`, `.ListThreads`, `.ReadThread` | boundary (durable tools, `replay: :safe`: every project with its purpose, thread counts and files; one project with its threads, files, schedules and skills; threads with their states and open questions, filtered by project or state; a thread's recent entries, never a tool's output; reading a thread doesn't mark it seen) | does I/O (DB) | `Assistant`, `Projects`, `Skills`, `Threads`, `Readout` |
+| `Photon.Assistant.Tools.ListProjects`, `.ReadProject`, `.ListThreads`, `.ReadThread` | boundary (durable tools, `replay: :safe`: every project with its purpose, thread counts and files; one project with its threads, files, schedules and skills, and the machines' skills its threads also get; threads with their states and open questions, filtered by project or state; a thread's recent entries, never a tool's output; reading a thread doesn't mark it seen) | does I/O (DB) | `Assistant`, `Projects`, `Skills`, `Threads`, `Readout` |
 | `Photon.Assistant.Tools.StartProject`, `.StartThread`, `.MessageThread`, `.StopThread` | boundary (durable tools, `replay: :safe`: each acts inside the commit that records its result (`Projects.create_tx/2`, `Threads.start_tx/4` and `send_tx/4` with a `"blip"` source and the call's task ID in the request ID, `Threads.stop_tx/2`); each refuses in a question's run, and `start_thread` and `message_thread` also at the unattended limit (`Assistant.may_act_tx/3`), marking their results from unattended runs so only those count) | does I/O (a commit) | `Assistant`, `Projects`, `Threads` |
 | `Photon.Assistant.Tools.ListContextFiles`, `.ReadContextFile`, `.WriteContextFile`, `.EditContextFile` | boundary (durable tools, `replay: :safe`: any project's context files from Blip's side; a write or edit is `Projects.write_file_tx/5` or `edit_file_tx/6` as `"blip"` inside the commit that records the result, refused in a question's run) | does I/O (DB, a commit) | `Assistant`, `Projects`, `Threads` (`describe_files/2`, `read_file_text/3`), `Readout` |
 | `Photon.Assistant.Tools.AnswerQuestion`, `.AskOwner` | boundary (durable tools, `replay: :safe`: answer a thread's question (`Questions.answer_tx/4`, with `owner_wrote?` from the run's origin) or pass it to the owner in Blip's words (`Questions.pass_tx/4`), inside the commit that records the result; the details name the question and thread for the panel's card) | does I/O (a commit) | `Questions`, `Questions.Rules`, `Assistant` |
@@ -275,10 +275,10 @@ nothing about digests.
 | `Photon.Activity.Action` | data (Ecto schema, table `activity`: a call or a message, its summary, status, whether it changes something, who asked, the project and thread it acted on, its entry) | pure | Ecto |
 | `Photon.Activity.Rules` | functional core (`summary/3` over the raw call, `message_summary/1`, `changes?/1`, `origin_label/2` (with "Blip's follow-up on the digest" and "... on the daily review"), `origins/0`; total) | pure | `Message` |
 | **Skills** | | | |
-| `Photon.Skills` | boundary (the skills context: `list/0` with each skill's scopes, `get/1`, `get_by_name/1`, `create/1`, `install/2`, `update/3` against a version, `delete/1`, `enable/2` and `disable/2` per scope (`:blip`, `{:project, id}` or `{:machine, id}`, stored as `"blip"`, the project's ID or `"machine:<id>"`, at most 30 each; enabling for a machine the hub doesn't know is refused), `enable_tx/3` and `disable_tx/3` for Blip's `set_project_skill` inside its commit, `enabled/1` for one set, `machine_skills/0` (each known machine with its skills, in `Machines.known/0` order) and `offered/1` (an agent's own set and every machine's) for the prompts, `load_tx/3` for the `load_skill` tools inside their commit (own set first, then the machines'); `list/0`, `scopes/1` and `machine_skills/0` leave out removed machines' rows, which stay until the machine is installed again under the same name; `read/1` for a pasted SKILL.md, `fetch/1` for a link; every write is a Store commit announced with `Tx.announce/3` on `"skills"`; no process) | does I/O (DB through commits, PubSub through `Events`, clock, IDs; HTTP through `Fetch`) | `Durable`, `Tx`, `Repo`, `Events`, `Machines` (`known/0`), `Projects`, `Rules`, `Source`, `Fetch`, `Skill`, `Enablement` |
+| `Photon.Skills` | boundary (the skills context: `list/0` with each skill's scopes, `get/1`, `get_by_name/1`, `create/1`, `install/2`, `update/3` against a version, `delete/1`, `enable/2` and `disable/2` per scope (`:blip`, `{:project, id}` or `{:machine, id}`, stored as `"blip"`, the project's ID or `"machine:<id>"`, at most 30 each; enabling for a machine the hub doesn't know is refused), `enable_tx/3` and `disable_tx/3` for Blip's `set_project_skill` inside its commit, `enabled/1` for one set, `machine_skills/0` (each known machine with its skills, in `Machines.known/0` order) and `offered/1` (an agent's own set and every machine's) for the prompts, `load_tx/3` for the `load_skill` tools inside their commit (own set first, then the machines', as `Rules.find_offered/2` decides); `list/0`, `scopes/1` and `machine_skills/0` leave out removed machines' rows, which stay until the machine is installed again under the same name; `read/1` for a pasted SKILL.md, `fetch/1` for a link; every write is a Store commit announced with `Tx.announce/3` on `"skills"`; no process) | does I/O (DB through commits, PubSub through `Events`, clock, IDs; HTTP through `Fetch`) | `Durable`, `Tx`, `Repo`, `Events`, `Machines` (`known/0`), `Projects`, `Rules`, `Source`, `Fetch`, `Skill`, `Enablement` |
 | `Photon.Skills.Skill` | data (Ecto schema, table `skills`: name, description, instructions, version, origin, source URL, install notes, the files install left out) | pure | Ecto |
 | `Photon.Skills.Enablement` | data (Ecto schema, table `skill_enablements`: one skill on in one scope, `"blip"`, a project's ID or `"machine:<id>"`; there is no "off" row) | pure | Ecto |
-| `Photon.Skills.Rules` | functional core (the name, description and instructions limits, name suggestions, the 30-per-scope limit (Blip, each project, each machine), machine skills grouped by known machine (`by_machine/2`), the version check, which paths the instructions mention) | pure | none |
+| `Photon.Skills.Rules` | functional core (the name, description and instructions limits, name suggestions, the 30-per-scope limit (Blip, each project, each machine), machine skills grouped by known machine (`by_machine/2`), where a `load_skill` call finds a skill, own set before machines (`find_offered/2`), the version check, which paths the instructions mention) | pure | none |
 | `Photon.Skills.SkillMd` | functional core (reads a SKILL.md: the subset of YAML front matter SKILL.md files use, then the instructions) | pure | none |
 | `Photon.Skills.Source` | functional core (what a link is, the GitHub API and raw URLs, which folders of a tree hold a SKILL.md, a downloaded SKILL.md and its folder to a candidate with its notes and left-out files, and the messages for each failure) | pure | `Rules`, `SkillMd` |
 | `Photon.Skills.Fetch` | boundary (the only HTTP for skills: two GitHub API calls at most per link, then the SKILL.md downloads through `Task.async_stream/3`, six at a time; every request bounded in size, time and redirects) | does I/O (HTTP, in the caller's process) | Req, `Source` |
@@ -2039,18 +2039,26 @@ What was added:
   the hub doesn't know; the 30 limit counts each machine's own rows.
   `machine_skills/0` groups every known machine's skills
   (`Rules.by_machine/2`), and `offered/1` is an agent's own set plus
-  those. `load_tx/3` searches the own set first, then the machines', and
-  a machine skill loads with `Prompt.loaded/2` naming its machines;
-  `Prompt.not_loaded/3` names both lists.
+  those. `load_tx/3` searches the own set first, then the machines' (the
+  pure `Rules.find_offered/2` decides), and a machine skill loads with
+  `Prompt.loaded/2` naming its machines; `Prompt.not_loaded/3` names
+  both lists.
 - Hub, prompts: `Skills.Prompt.section/1` takes the `offered()` map and
   adds a `<machine_skills>` block, one `<machine>` per machine, after the
-  agent's own skills. With no machine skills the section is the old text
+  agent's own skills. Its paragraph also says that a skill loaded earlier
+  and now listed only under a machine applies only there, since turning
+  a skill off for the agent's own set while it stays on for a machine
+  leaves it listed with the same ID and version. With no machine skills the section is the old text
   exactly, so deploying this changed no cached prompt. Both profiles'
   `system_prompt/1` pass `Skills.offered/1`.
 - Hub, tools: `list_machines` ends a machine's line with its skills
   ("; skills: a, b"), and `list_skills` names a machine as `machine mm1`
   and says the owner turns machine skills on and off on the skill's
-  page. Blip gets no tool to change them.
+  page. `read_project` adds a line naming each machine's skills, which
+  the project's threads get too, and the `list_skills` and
+  `set_project_skill` descriptions say a machine's skills already reach
+  every thread and Blip, so Blip doesn't turn one on for a project to get
+  it there. Blip gets no tool to change them.
 - Hub, scripted models: `skills` adds "For machines: ..." when the prompt
   lists machine skills; the help lines say so.
 - Hub, web: the skill page's MACHINES group, one switch per known machine

@@ -269,11 +269,13 @@ LiveView tests in `apps/hub`:
   `test/web/live/skills_live_test.exs`: "a removed machine drops out of
   the line".
 - A load finds the agent's own skill first, then a machine's, inside its
-  commit. `test/boundary/skills_test.exs`: "load_tx/3 loads a machine's
-  skill for Blip and for a project, naming the machines", "load_tx/3
-  loads an own skill that is also on for a machine as an own skill",
-  "load_tx/3 names the skills on here and each machine's when the name
-  isn't on". `test/boundary/skill_tools_test.exs`, through the scripted
+  commit. The decision is pure, `Photon.Skills.Rules.find_offered/2`, in
+  `test/core/skills/rules_test.exs` ("the own set wins over a machine
+  that has the same skill", "names every machine that has it, in the
+  order given", and the not-found cases). `test/boundary/skills_test.exs`
+  checks it through the commit once: "load_tx/3 loads a machine's skill
+  for Blip and for a project, naming the machines", and the removal
+  case above. `test/boundary/skill_tools_test.exs`, through the scripted
   models: "a thread in a project with no skills lists and loads a
   machine's", "Blip lists and loads a machine's skill", and "turned off
   between two messages, it is no longer listed and won't load".

@@ -27,7 +27,9 @@ defmodule Photon.Skills.Prompt do
   `docs/plans/machine-skills.md`). `section/1` lists those after the
   agent's own, each under its machine in a `<machine_skills>` block, and
   says to load them before starting work on that machine and to follow
-  them only there. That part changes only when a machine's skills change
+  them only there, including a skill loaded earlier from the agent's own
+  set that is now listed only under a machine (turned off for the
+  agent's own set, left on for the machine). That part changes only when a machine's skills change
   or a machine with skills is installed or removed, never as machines
   connect. `loaded/2` names the machines a skill is on for and says to
   follow it when working there, and `not_loaded/3` lists the machines'
@@ -50,7 +52,7 @@ defmodule Photon.Skills.Prompt do
   """
 
   @machine_preamble """
-  Some skills are turned on for a machine because they are about working on it. Each is listed under its machine. Before you start work on one of these machines, load the ones your work there needs with #{@tool_name}, and follow them while you work on that machine. They don't apply to work on other machines.
+  Some skills are turned on for a machine because they are about working on it. Each is listed under its machine. Before you start work on one of these machines, load the ones your work there needs with #{@tool_name}, and follow them while you work on that machine. They don't apply to work on other machines. If you loaded a skill earlier in this conversation and it is now listed only under a machine, it is no longer on for all your work: follow it only when you work on that machine.
   """
 
   @typedoc "What the prompt needs of a skill: a `Photon.Skills.Skill` will do."

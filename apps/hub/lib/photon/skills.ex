@@ -262,7 +262,8 @@ defmodule Photon.Skills do
   `scope` or for a known machine, as the tool's result, or an error that
   names the skills that are on (`Photon.Skills.Prompt.not_loaded/3`).
 
-  The agent's own set is searched first, and a skill found there loads
+  Which one loads is `Photon.Skills.Rules.find_offered/2`'s decision:
+  the agent's own set is searched first, and a skill found there loads
   as today (`Photon.Skills.Prompt.loaded/1`, with the skill's name and
   version and how to load it again in the details). One found only on
   machines loads with them named (`Photon.Skills.Prompt.loaded/2`), and
@@ -272,29 +273,18 @@ defmodule Photon.Skills do
           {:ok, String.t(), %{String.t() => term()}} | {:error, String.t()}
   def load_tx(_tx, scope, name) do
     name = name |> String.trim() |> String.downcase()
-    %{own: own, machines: machines} = offered(scope)
 
-    case named(own, name) do
-      %Skill{} = skill -> {:ok, Prompt.loaded(skill), load_details(skill)}
-      nil -> load_from_machines(machines, name, own)
-    end
-  end
+    case Rules.find_offered(offered(scope), name) do
+      {:own, skill} ->
+        {:ok, Prompt.loaded(skill), load_details(skill)}
 
-  defp load_from_machines(machines, name, own) do
-    case for({id, skills} <- machines, skill = named(skills, name), do: {id, skill}) do
-      [{_id, skill} | _more] = found ->
-        ids = Enum.map(found, &elem(&1, 0))
+      {:machines, skill, ids} ->
         {:ok, Prompt.loaded(skill, ids), Map.put(load_details(skill), "machines", ids)}
 
-      [] ->
-        machine_names = for {id, skills} <- machines, do: {id, names(skills)}
-        {:error, Prompt.not_loaded(name, names(own), machine_names)}
+      {:none, own, machines} ->
+        {:error, Prompt.not_loaded(name, own, machines)}
     end
   end
-
-  defp named(skills, name), do: Enum.find(skills, &(&1.name == name))
-
-  defp names(skills), do: Enum.map(skills, & &1.name)
 
   defp load_details(skill) do
     %{

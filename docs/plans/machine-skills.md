@@ -231,7 +231,7 @@ Only the skills listed here are turned on. If you loaded a skill earlier in this
 <skill><name>pdf-forms</name><version>2</version><id>sk_...</id><description>Fill in PDF forms.</description></skill>
 </available_skills>
 
-Some skills are turned on for a machine because they are about working on it. Each is listed under its machine. Before you start work on one of these machines, load the ones your work there needs with load_skill, and follow them while you work on that machine. They don't apply to work on other machines.
+Some skills are turned on for a machine because they are about working on it. Each is listed under its machine. Before you start work on one of these machines, load the ones your work there needs with load_skill, and follow them while you work on that machine. They don't apply to work on other machines. If you loaded a skill earlier in this conversation and it is now listed only under a machine, it is no longer on for all your work: follow it only when you work on that machine.
 
 <machine_skills>
 <machine name="mm1">
@@ -268,6 +268,7 @@ places; that is rare and costs one line.
 |---|---|
 | A skill is turned on or off for a machine | Listed under it, or not, from the next request. A load in flight is ordered against the toggle by the Store (section 4). |
 | A machine skill is saved, renamed or deleted | As step 3's section 2.7 says for any skill: new version or name, or gone. |
+| A skill is turned off for the agent's own set but left on for a machine | It is listed only under the machine from the next request, with the same ID and version. The machine paragraph's last sentence says a skill loaded earlier and now listed only under a machine applies only there. |
 | A machine with skills is removed | Its group goes from the next request. The preamble already says to stop following a skill that isn't listed any more. |
 | It is reinstalled under the same name | Its group is back. |
 | A machine connects or disconnects | Nothing changes (`known/0` doesn't depend on it). |
@@ -293,7 +294,10 @@ Both tools keep their modules and arguments
 `Skills.load_tx/3` changes, so their moduledocs gain one sentence each
 saying a machine's skills load too.
 
-`load_tx(tx, scope, name)`:
+`load_tx(tx, scope, name)` (which skill loads is the pure
+`Photon.Skills.Rules.find_offered(offered, name)`, returning `{:own,
+skill}`, `{:machines, skill, ids}` or `{:none, own_names,
+machine_names}`; `load_tx/3` reads, calls it and maps the answer):
 
 - reads `offered(scope)` inside the commit that records the result, as
   it reads `enabled/1` today, so a load racing a toggle returns the text
@@ -363,8 +367,14 @@ no longer lists the skill, which tells the agent to stop following it).
   `list_skills` fails. Their machine clauses therefore land in K2, the
   task that starts returning `{:machine, id}` (section 12).
   `ListSkills`'s description and the `list_machines` suffix wait for K4.
-- `Photon.Assistant.Tools.SetProjectSkill`, `ReadProject` and the
-  project page's list read only a project's own scope and don't change.
+- `Photon.Assistant.Tools.SetProjectSkill` and the project page's list
+  read only a project's own scope. `set_project_skill`'s description,
+  like `list_skills`', says a machine's skills already reach every thread
+  and Blip for work on that machine, so there's no need to turn one on
+  for a project as well. `ReadProject` keeps "Skills on: ..." for the
+  project's own set and, when any machine has skills, adds "Also offered
+  to its threads, for work on that machine: mm1 has ios-simulators."
+  (`Skills.machine_skills/0`, one more query).
 - The project page's copy does change, since a project with no skills of
   its own still gets machine skills. `PhotonWeb.ProjectLive`'s empty
   state (`#no-project-skills`) becomes "No skills turned on. Skills are
@@ -627,7 +637,9 @@ false`, so `local` is known only in tests that register it.
   out when the hub doesn't run its own node and it isn't connected.
 - `test/core/skills/rules_test.exs`, `by_machine/2`: groups in `known`
   order with skills in input order; drops unknown IDs; leaves out known
-  machines with no pairs; `[]` for no pairs.
+  machines with no pairs; `[]` for no pairs. `find_offered/2`: own set
+  found; own wins over a machine with the same skill; several machines
+  in order; not found with and without own skills, and with nothing on.
 - `test/core/skills/prompt_test.exs`:
   - `section/1` with `machines: []` equals the old text for the same
     skills (the existing cases, with their input wrapped in the map)
@@ -676,9 +688,9 @@ false`, so `local` is known only in tests that register it.
   `machine_skills/0` and `load_tx/3` leave mm1's skills out; after
   `forget/1` too; after `NodeKeys.issue("mm1")` again they are back
 - `load_tx/3` (inside `Durable.commit/1`): a machine skill loads for
-  `:blip` and for a project scope, with `"machines"` in the details; an
-  own skill that's also on for a machine loads without them; a missing
-  name names both lists
+  `:blip` and for a project scope, with `"machines"` in the details. The
+  precedence and the error's names are `find_offered/2`'s, tested in the
+  core (rule 53)
 - deleting a skill removes its machine rows
 
 `test/boundary/skill_tools_test.exs` (durable, scripted models):
@@ -947,3 +959,29 @@ Applied in part:
   refusal text stays. It says agents read every enabled skill's
   description on every request, which is as true for a machine scope as
   for a project.
+
+## Final review
+
+A review of the built follow-up raised three findings. Each was checked
+against the code and fixed.
+
+- A skill loaded from the agent's own set, then turned off there and
+  left on for a machine, stays listed (only under the machine) with the
+  same ID and version, so neither preamble rule told the agent the
+  earlier load no longer applied everywhere. The machine paragraph
+  (section 3.1) now ends "If you loaded a skill earlier in this
+  conversation and it is now listed only under a machine, it is no
+  longer on for all your work: follow it only when you work on that
+  machine." It is only in the machine part, so a hub with no machine
+  skills still sends the old text. Section 3.3 has the row.
+- The load decision (own set first, then every machine that has it, or
+  the names for the error) was in the boundary. It is now the pure
+  `Rules.find_offered/2` (section 4), tested in the core; the boundary
+  tests keep one load through the commit and the removal case.
+- Blip wasn't told that a machine's skills reach every thread, and
+  `read_project` said "Skills on: none." for a project whose threads get
+  machine skills, so Blip could turn a machine skill on for a project it
+  already reached. `read_project` now names the machines' skills, and
+  the `list_skills` and `set_project_skill` descriptions say machine
+  skills already reach every thread and Blip (section 5). No new tool.
+  Both descriptions change Blip's tool list once, on deploy.

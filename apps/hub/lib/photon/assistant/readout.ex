@@ -92,12 +92,17 @@ defmodule Photon.Assistant.Readout do
   """
   @type skill :: %{name: String.t(), description: String.t(), on_for: [String.t()]}
 
-  @typedoc "What `read_project` shows besides the project: its files, threads, schedules and skills on."
+  @typedoc """
+  What `read_project` shows besides the project: its files, threads,
+  schedules and skills on, and each machine with skills on and their
+  names.
+  """
   @type project_facts :: %{
           files: [file()],
           board: [board_entry()],
           schedules: [schedule()],
-          skills: [String.t()]
+          skills: [String.t()],
+          machine_skills: [{String.t(), [String.t()]}]
         }
 
   @typedoc "A conversation entry (`Photon.Durable.Entry`), or a map with its fields."
@@ -216,7 +221,9 @@ defmodule Photon.Assistant.Readout do
   purpose; its context files (size, changed when and by whom, as Blip sees
   it); its threads, most recent first, at most #{@thread_limit}, each
   with its state and note; its schedules; and the skills turned on for
-  it. An empty list says "none".
+  it, then, when any machine has skills on, a line naming them, since the
+  project's threads get those too for work on that machine. An empty
+  list says "none".
   """
   @spec project(project(), project_facts()) :: String.t()
   def project(project, facts) do
@@ -228,7 +235,7 @@ defmodule Photon.Assistant.Readout do
         files_section(facts.files, titles),
         threads_section(facts.board),
         schedules_section(facts.schedules, titles),
-        skills_section(facts.skills)
+        skills_section(facts.skills, facts.machine_skills)
       ],
       "\n\n"
     )
@@ -282,8 +289,26 @@ defmodule Photon.Assistant.Readout do
     end
   end
 
-  defp skills_section([]), do: "Skills on: none."
-  defp skills_section(names), do: "Skills on: " <> Enum.join(names, ", ") <> "."
+  defp skills_section(names, machines) do
+    own =
+      case names do
+        [] -> "Skills on: none."
+        names -> "Skills on: " <> Enum.join(names, ", ") <> "."
+      end
+
+    case machines do
+      [] ->
+        own
+
+      machines ->
+        on_machines =
+          Enum.map_join(machines, "; ", fn {id, names} ->
+            "#{id} has #{Enum.join(names, ", ")}"
+          end)
+
+        own <> "\nAlso offered to its threads, for work on that machine: " <> on_machines <> "."
+    end
+  end
 
   ## list_threads
 
