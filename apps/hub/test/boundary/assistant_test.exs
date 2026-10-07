@@ -39,6 +39,29 @@ defmodule Photon.AssistantTest do
     assert %Photon.Durable.Conversation{profile: "assistant"} = Durable.conversation(c)
   end
 
+  describe "ambient mode" do
+    defp ambient!(on?),
+      do: _doc = Durable.commit(&Photon.Signals.put_ambient_doc_tx(&1, %{"on" => on?}))
+
+    # The prompt up to its time, which names the hour.
+    defp prompt, do: hd(String.split(Assistant.system_prompt(nil), "\n\n## Now"))
+
+    test "the prompt has the Ambient mode section only while it is on; the tools stay" do
+      off_prompt = prompt()
+      off_tools = Enum.map(Assistant.tools(nil), & &1.name())
+      refute off_prompt =~ "## Ambient mode"
+
+      ambient!(true)
+      on_prompt = prompt()
+      assert on_prompt =~ "## Ambient mode"
+      assert on_prompt =~ ~s(A message starting with "[Digest]")
+      assert Enum.map(Assistant.tools(nil), & &1.name()) == off_tools
+
+      ambient!(false)
+      assert prompt() == off_prompt
+    end
+  end
+
   describe "tools" do
     test "lists machines", %{conversation: c} do
       fake_node("box")

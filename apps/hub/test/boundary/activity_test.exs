@@ -72,6 +72,14 @@ defmodule Photon.ActivityTest do
     Durable.commit(&Signals.post_tx(&1, %{key: key, text: text, ref: ref}))
   end
 
+  # Posts a digest or a daily review into Blip's conversation, as ambient
+  # mode does, whose text is one of the scripted Blip's phrasings.
+  defp post_ambient!(kind, text) do
+    key = "#{kind}:test:#{System.unique_integer([:positive])}"
+    ref = %{"kind" => kind, "key" => key, "items" => [], "more" => 0}
+    Durable.commit(&Signals.post_tx(&1, %{key: key, text: text, ref: ref}))
+  end
+
   defp fake_machine(name) do
     {:ok, _owner} =
       Registry.register(Photon.MachineRegistry, name, %{
@@ -187,6 +195,40 @@ defmodule Photon.ActivityTest do
         assert message.origin == origin
         :ok = idle!(blip)
       end
+    end
+
+    test "a digest's run is Blip's follow-up on the digest, its reply a message row", %{
+      blip: blip
+    } do
+      :ok = idle!(blip)
+      digest = post_ambient!("digest", "projects")
+      await_settled(blip, digest.id)
+
+      call = await_row!(&(&1.tool == "list_projects"))
+      assert %Action{origin: "follow_up", origin_id: "digest"} = call
+
+      message = await_row!(&(&1.kind == "message"))
+      assert %Action{origin: "follow_up", origin_id: "digest", tool: nil} = message
+      assert %Entry{kind: "assistant"} = entry!(blip, message.entry_id)
+    end
+
+    test "a call in a daily review's run is Blip's follow-up on the review", %{
+      garden: garden,
+      blip: blip
+    } do
+      {:ok, thread} = Threads.start(garden.id, "files")
+      :ok = idle!(thread.id)
+      :ok = idle!(blip)
+
+      review = post_ambient!("review", "read thread #{thread.id}")
+      await_settled(blip, review.id)
+
+      row = await_row!(&(&1.tool == "read_thread"))
+      assert %Action{origin: "follow_up", origin_id: "review", changes: false} = row
+      assert row.thread_id == thread.id
+
+      message = await_row!(&(&1.kind == "message"))
+      assert %Action{origin: "follow_up", origin_id: "review"} = message
     end
 
     test "a call stopped while it runs records aborted", %{blip: blip} do

@@ -123,6 +123,34 @@ defmodule Photon.TranscriptTest do
     end
   end
 
+  describe "nothing to tell" do
+    test "is [nothing to tell], trimmed, in any case, with or without a period" do
+      for text <- [
+            "[nothing to tell]",
+            "[Nothing to tell].",
+            "  [NOTHING TO TELL]  \n",
+            "\n[nothing to tell]."
+          ] do
+        assert Transcript.nothing_to_tell?(text), inspect(text)
+      end
+    end
+
+    test "anything else, or what isn't text, is something to tell" do
+      for text <- [
+            "",
+            "Nothing to tell.",
+            "[nothing to tell]..",
+            "[nothing to tell] about the pump",
+            "The pump: [nothing to tell]",
+            nil,
+            42,
+            %{"text" => "[nothing to tell]"}
+          ] do
+        refute Transcript.nothing_to_tell?(text), inspect(text)
+      end
+    end
+  end
+
   describe "the in-flight answer" do
     test "collects text, reasoning and the tools being prepared" do
       live =

@@ -149,6 +149,54 @@ defmodule Photon.Assistant.PromptTest do
     assert named =~ "The user's name is Henry."
   end
 
+  describe "ambient mode" do
+    @one_skill [%{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."}]
+
+    # Pinned word for word: section 5.5 of docs/plans/step-5-ambient-mode.md.
+    @section ~S"""
+    ## Ambient mode
+
+    - The user turned on ambient mode: you follow along with their projects and speak up on your own.
+    - A message starting with "[Digest]" lists what changed since the last digest. "New to the user" is work that finished while they weren't looking and schedules that stopped. "Already seen by the user, or done by them" is for you to keep track of; mention it only when it matters to something new. Tell them what's worth their attention in a few lines, by project and thread, and leave out what isn't. If nothing is, answer with just [nothing to tell] and they won't be disturbed.
+    - A message starting with "[Daily review]" lists threads left stopped, failed or waiting on the user for days. Say in a few lines which look worth picking up and which look finished with. Offer to pick up the first kind; for the second, tell them they can press Resolve on the thread on Home or on its page. If none needs anything, answer with just [nothing to tell].
+    - In a run started by a digest or a review you can read anything and check machines, but you can't start, message or stop threads, or change projects or schedules; the tools refuse. Do what the user asks once they answer.
+    - Earlier digests and reviews show as one-line notes, and ones you had nothing to tell about are left out.
+    """
+
+    test "off, there is no Ambient mode section, and the prompt is step 4's" do
+      for skills <- [[], @one_skill] do
+        off = Prompt.system_prompt(settings(), "- the NAS is mp1", @now, skills, false)
+        assert off == Prompt.system_prompt(settings(), "- the NAS is mp1", @now, skills)
+        refute off =~ "## Ambient mode"
+        refute off =~ "[Digest]"
+        refute off =~ "[Daily review]"
+        refute off =~ "[nothing to tell]"
+      end
+    end
+
+    test "on, the section sits right after Projects and threads, and nothing else moves" do
+      for skills <- [[], @one_skill] do
+        on = Prompt.system_prompt(settings(), "- the NAS is mp1", @now, skills, true)
+        off = Prompt.system_prompt(settings(), "- the NAS is mp1", @now, skills, false)
+
+        assert on =~ "are for your tools only.\n\n" <> @section <> "\n"
+        assert String.replace(on, @section <> "\n", "") == off
+      end
+    end
+
+    test "comes before the Skills section" do
+      on = Prompt.system_prompt(settings(), "", @now, @one_skill, true)
+      [_before, rest] = String.split(on, @section)
+      assert rest =~ ~r/\A\n## Skills\n/
+    end
+
+    test "names no thread, so the prompt stays the same between requests" do
+      on = Prompt.system_prompt(settings(), "", @now, [], true)
+      refute on =~ ~r/\b(q|c)_\w*\d/
+      assert on == Prompt.system_prompt(settings(), "", @now, [], true)
+    end
+  end
+
   describe "skills" do
     @skills [
       %{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."},

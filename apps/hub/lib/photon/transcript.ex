@@ -38,6 +38,9 @@ defmodule Photon.Transcript do
       start of its first message until its run ends and it is named), so
       a renamed or newly named thread reads the same everywhere; a
       notice's words with the thread's current title (`notice_text/2`)
+    * whether Blip's answer is `[nothing to tell]` (`nothing_to_tell?/1`),
+      its reply to a digest or daily review with nothing worth the
+      owner's attention, which makes no bubble and no activity row
   """
 
   # Functional core: no processes, no I/O.
@@ -100,6 +103,23 @@ defmodule Photon.Transcript do
   # docs/plans/step-1-machine-tools.md). The node sends at most 64 KB per
   # stream a second; the page shows the latest of it.
   @tail 8_000
+
+  # What Blip answers to a digest or daily review with nothing worth
+  # saying (section 5.4 of docs/plans/step-5-ambient-mode.md).
+  @nothing_to_tell "[nothing to tell]"
+
+  @doc """
+  Whether `text` is Blip's `[nothing to tell]`: the text trimmed,
+  lowercased and without a trailing `.` is exactly that. Anything that
+  isn't text is false.
+  """
+  @spec nothing_to_tell?(term()) :: boolean()
+  def nothing_to_tell?(text) when is_binary(text),
+    do:
+      text |> String.trim() |> String.downcase() |> String.replace_suffix(".", "") ==
+        @nothing_to_tell
+
+  def nothing_to_tell?(_text), do: false
 
   @doc "Whether an entry is shown in the conversation on its own."
   @spec shown?(Entry.t()) :: boolean()

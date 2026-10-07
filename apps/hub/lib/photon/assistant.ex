@@ -45,7 +45,12 @@ defmodule Photon.Assistant do
   threads only `unattended_limit/0` times in runs the owner didn't type
   into, and it sets up a project's schedule only in a run the owner typed
   into (`may_act_tx/3`), so a loop between Blip and a thread stops in
-  code.
+  code. In ambient mode a run started by a digest or a daily review only
+  reports until the owner types into it: the tools that start or change
+  work refuse, so a digest can't cause the next one. Its prompt gains a
+  section on digests and reviews only while ambient mode is on
+  (`Photon.Signals.mode/0`), and an answer of `[nothing to tell]`
+  (`Photon.Transcript.nothing_to_tell?/1`) makes no activity row.
 
   Everything Blip does goes in the activity log (`Photon.Activity`), from
   the profile's two hooks: `on_tool_result/4` records each tool call's
@@ -380,7 +385,8 @@ defmodule Photon.Assistant do
 
   @doc """
   Whether Blip's tool call `task` may act, inside the commit that records
-  its result:
+  its result. A run that only reports (`report_only?`: a digest or daily
+  review the owner hasn't typed into) refuses every kind. Otherwise:
 
     * `:change` for the tools that change a project or stop or schedule
       work, which a thread's question forbids (`restricted?`)
@@ -400,6 +406,9 @@ defmodule Photon.Assistant do
     cond do
       origin.restricted? ->
         {:error, Origin.restricted_message()}
+
+      origin.report_only? ->
+        {:error, Origin.report_only_message()}
 
       kind == :schedule_work and not Origin.schedule_work_ok?(origin) ->
         {:error, Origin.schedule_work_message()}
@@ -554,7 +563,8 @@ defmodule Photon.Assistant do
   def system_prompt(_conversation) do
     settings = Settings.load()
     now = DateTime.utc_now()
-    Prompt.system_prompt(settings, memory(), now, Skills.enabled(:blip))
+    ambient? = Signals.mode() == :ambient
+    Prompt.system_prompt(settings, memory(), now, Skills.enabled(:blip), ambient?)
   end
 
   ## The activity log's hooks
@@ -587,8 +597,9 @@ defmodule Photon.Assistant do
   model turn with an answer that has text: the owner didn't watch that
   reply come in, so the activity page shows it. Runs the owner wrote
   to, runs that only handle threads' questions (their calls already say
-  what Blip did, and the reply isn't for the owner), and answers with no
-  text record nothing.
+  what Blip did, and the reply isn't for the owner), answers with no
+  text, and an answer of `[nothing to tell]` to a digest or review
+  (`Photon.Transcript.nothing_to_tell?/1`) record nothing.
   """
   @impl true
   def on_settled(conversation, settled, tx), do: settled_tx(tx, conversation, settled)
@@ -597,13 +608,24 @@ defmodule Photon.Assistant do
        when is_binary(entry_id) do
     with %{by: by, quiet?: false} = origin when by != "owner" <-
            origin_tx(tx, Map.get(settled, :task)),
-         %Entry{data: %{"message" => message}} <- Durable.entry(conversation.id, entry_id),
-         text when text != "" <- String.trim(Message.text_of(message)) do
+         text when is_binary(text) <- told(conversation.id, entry_id) do
       Activity.record_tx(tx, %{kind: "message", entry_id: entry_id, text: text, origin: origin})
     else
-      _owner_or_no_text -> :ok
+      _owner_or_nothing_told -> :ok
     end
   end
 
   defp settled_tx(_tx, _conversation, _settled), do: :ok
+
+  # What Blip's answer `entry_id` told the owner: its text, or nil when it
+  # has none or is `[nothing to tell]`.
+  defp told(conversation_id, entry_id) do
+    with %Entry{data: %{"message" => message}} <- Durable.entry(conversation_id, entry_id),
+         text when text != "" <- String.trim(Message.text_of(message)),
+         false <- Transcript.nothing_to_tell?(text) do
+      text
+    else
+      _nothing -> nil
+    end
+  end
 end

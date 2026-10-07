@@ -18,6 +18,24 @@ defmodule Photon.Assistant.NoticeTest do
              ]
     end
 
+    test "[nothing to tell] is nothing to say, however it is written; other answers speak" do
+      digest =
+        entry("user", %{
+          "message" => Message.user("[Digest] Since the last digest ..."),
+          "source" => %{"kind" => "signal", "signals" => [%{"kind" => "digest"}]}
+        })
+
+      for answer <- ["[nothing to tell]", "[Nothing to tell].", "  [NOTHING TO TELL]\n"] do
+        assert Notice.from_entries([digest, assistant_entry(answer)]) == [], answer
+      end
+
+      for answer <- ["[nothing to tell] except the pump", "Nothing to tell.", "Pump fixed."] do
+        assert Notice.from_entries([digest, assistant_entry(answer)]) == [
+                 %{kind: :reply, text: answer}
+               ]
+      end
+    end
+
     test "a stopped run or a notice is nothing to say" do
       assert Notice.from_entries([
                entry("error", %{"message" => "Stopped.", "stopped" => true}),

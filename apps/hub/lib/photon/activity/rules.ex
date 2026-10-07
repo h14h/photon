@@ -336,8 +336,10 @@ defmodule Photon.Activity.Rules do
     * `"thread"` (a thread's question): its title, or "A thread"
     * `"schedule"`: "Schedule: <prompt>", or "A schedule"
     * `"follow_up"`: "Blip's follow-up", with "on <title>" when
-      `origin_id` names a thread (a `c_` ID) whose title is known; a
-      follow-up from a schedule Blip made for itself names no thread
+      `origin_id` names a thread (a `c_` ID) whose title is known, "on
+      the digest" for `"digest"` and "on the daily review" for
+      `"review"` (ambient mode); a follow-up from a schedule Blip made
+      for itself names no thread
     * anything else: "Blip"
   """
   @spec origin_label(term(), names()) :: String.t()
@@ -354,6 +356,9 @@ defmodule Photon.Activity.Rules do
   defp label("thread", _id, title) when is_binary(title), do: title
   defp label("schedule", _id, nil), do: "A schedule"
   defp label("schedule", _id, prompt), do: "Schedule: " <> prompt
+
+  defp label("follow_up", "digest", _name), do: "Blip's follow-up on the digest"
+  defp label("follow_up", "review", _name), do: "Blip's follow-up on the daily review"
 
   defp label("follow_up", "c_" <> _rest, title) when is_binary(title),
     do: "Blip's follow-up on " <> title
