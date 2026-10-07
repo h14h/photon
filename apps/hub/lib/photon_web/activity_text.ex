@@ -8,6 +8,12 @@ defmodule PhotonWeb.ActivityText do
   (`Photon.Activity.Rules.origin_label/2`, with the thread to link when
   the asker is a thread the page found) and where it acted.
 
+  Threads are named by their titles as the page reads them, not as they
+  were when the row was written: a thread is named after its first run
+  ends, and the owner may rename it. A call on one thread has its summary
+  worded again with the thread's title now
+  (`Photon.Activity.Rules.thread_summary/4`).
+
   Pure: the page reads the titles, prompts and projects (the `lookup`)
   and passes them in, and renders times with
   `PhotonWeb.TimeComponents.local_time/1`. A row naming something that
@@ -148,24 +154,33 @@ defmodule PhotonWeb.ActivityText do
   (see `t:row/0`). A thread who asked is linked when the page found it
   and its project; a follow-up names and links the thread it was about
   the same way. Where it acted is the row's project and thread, each
-  only when the page found it.
+  only when the page found it. A call on one thread the page found says the thread's
+  title now in its summary.
   """
   @spec row(Action.t(), lookup()) :: row()
   def row(%Action{} = action, lookup) do
     thread = thread(action.thread_id, lookup)
+    origin = origin(action, lookup)
 
     %{
       id: action.id,
       kind: action.kind,
       tool: action.tool,
-      summary: action.summary,
+      summary: summary(action, thread),
       at: action.inserted_at,
       status: status(action.status),
-      origin: origin(action, lookup),
+      origin: origin,
       project: project(action.project_id, action.thread_id, lookup),
       thread: thread
     }
   end
+
+  # A call on one thread names the thread by its title now; any other row,
+  # or a thread the page didn't find, keeps the summary as written.
+  defp summary(%Action{kind: "call"} = action, %{title: title, slug: slug}),
+    do: Rules.thread_summary(action.tool, action.status, title, slug) || action.summary
+
+  defp summary(action, _thread), do: action.summary
 
   @doc ~S"""
   A status mark's words: "Failed", "Stopped", "Cut short by a restart",

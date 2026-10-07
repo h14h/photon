@@ -14,6 +14,7 @@ defmodule PhotonWeb.ActivityLiveTest do
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Photon.Eventually, only: [eventually: 1]
 
   alias Photon.{Activity, Durable, Projects, Repo}
   alias Photon.Activity.Action
@@ -153,6 +154,43 @@ defmodule PhotonWeb.ActivityLiveTest do
     # A thread that is gone reads as plain text.
     assert has_element?(view, "#activity-a_5-origin", "A thread")
     refute has_element?(view, "#activity-a_5-origin a")
+  end
+
+  test "a thread named or renamed since shows its new title", %{
+    conn: conn,
+    garden: garden
+  } do
+    row!("a_1", 1,
+      tool: "start_thread",
+      summary: ~s(Started "fix the pump please" in garden),
+      project_id: garden.id,
+      thread_id: "c_pump"
+    )
+
+    row!("a_2", 2,
+      tool: "answer_question",
+      summary: "Answered: staging",
+      origin: "thread",
+      origin_id: "c_pump",
+      project_id: garden.id,
+      thread_id: "c_pump"
+    )
+
+    view = activity(conn)
+    assert has_element?(view, "#activity-a_1-summary", ~s(Started "Fix the pump" in garden))
+    assert has_element?(view, "#activity-a_1-thread", "Fix the pump")
+
+    assert has_element?(view, "#activity-a_2-origin-thread", "Fix the pump")
+
+    {:ok, _thread} = Photon.Threads.rename("c_pump", "Pump repair")
+
+    assert eventually(fn ->
+             has_element?(view, "#activity-a_1-summary", ~s(Started "Pump repair" in garden))
+           end)
+
+    assert has_element?(view, "#activity-a_1-thread", "Pump repair")
+    assert has_element?(view, "#activity-a_2-origin-thread", "Pump repair")
+    assert shown(view) == ~w(activity-a_2 activity-a_1)
   end
 
   test "the filters narrow by who asked and to changes", %{conn: conn} do

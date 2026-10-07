@@ -65,6 +65,27 @@ defmodule Photon.Activity.RulesTest do
       assert ok("stop_thread", %{"thread" => "c_1"}, @pump) == ~s(Stopped "Fix the pump")
     end
 
+    test "a call on one thread, worded again with the thread's title now" do
+      assert Rules.thread_summary("read_thread", "ok", "Fix the pump", nil) ==
+               ~s(Read "Fix the pump")
+
+      assert Rules.thread_summary("start_thread", "ok", "Fix the pump", "garden") ==
+               ~s(Started "Fix the pump" in garden)
+
+      assert Rules.thread_summary("start_thread", "ok", "Fix the pump", nil) ==
+               ~s(Started "Fix the pump")
+
+      assert Rules.thread_summary("message_thread", "ok", "Fix\nthe  pump", nil) ==
+               ~s(Messaged "Fix the pump")
+
+      assert Rules.thread_summary("stop_thread", "aborted", "Fix the pump", nil) ==
+               ~s(Stopped "Fix the pump": stopped)
+
+      # Other tools, or no title, have nothing to word again.
+      assert Rules.thread_summary("shell", "ok", "Fix the pump", nil) == nil
+      assert Rules.thread_summary("read_thread", "ok", nil, nil) == nil
+    end
+
     test "context files" do
       file = Map.put(@garden, "file", "notes.md")
       args = %{"project" => "garden", "name" => "Notes.md"}

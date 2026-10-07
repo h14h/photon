@@ -18,6 +18,13 @@ defmodule PhotonWeb.ActivityLive do
   `Photon.Schedules.prompts/1`, `Photon.Projects.list/0`); the words and
   what links where are `PhotonWeb.ActivityText`'s. Times are shown in
   the owner's time zone (`PhotonWeb.TimeComponents.local_time/1`).
+
+  The threads the rows on screen name are kept with the titles they
+  were shown under (`named`). On `{:projects_changed, _}` (through
+  `PhotonWeb.Shell`: a thread named after its first run, or renamed),
+  the page reads those titles again, one read by ID however often
+  projects change (rule 73), and only when one changed reads the rows
+  on screen again (`shown` of them), so they say the new title.
   Everything else the shell passes on is ignored.
   """
 
@@ -47,11 +54,14 @@ defmodule PhotonWeb.ActivityLive do
   def handle_event("more", _params, socket) do
     opts = [before: socket.assigns.cursor] ++ ActivityText.list_opts(socket.assigns.filter)
     {actions, more?} = Activity.list(opts)
+    {rows, named} = present(actions)
 
     {:noreply,
      socket
-     |> stream(:actions, present(actions))
-     |> assign(more?: more?, cursor: cursor(actions, socket.assigns.cursor))}
+     |> stream(:actions, rows)
+     |> assign(more?: more?, cursor: cursor(actions, socket.assigns.cursor))
+     |> assign(named: Map.merge(socket.assigns.named, named))
+     |> update(:shown, &(&1 + length(actions)))}
   end
 
   ## What changed elsewhere
@@ -64,27 +74,51 @@ defmodule PhotonWeb.ActivityLive do
     end
   end
 
+  # A thread may have a new title: the rows naming one say it.
+  def handle_info({:projects_changed, _project_id}, socket), do: {:noreply, retitle(socket)}
+
   def handle_info(_message, socket), do: {:noreply, socket}
 
   ## Reading
 
   # The newest page of rows for `filter`, in place of what was shown.
-  defp load(socket, filter) do
-    {actions, more?} = Activity.list(ActivityText.list_opts(filter))
+  defp load(socket, filter), do: load(socket, filter, [])
+
+  # The newest rows for `filter` (`opts` may ask for more than a page),
+  # in place of what was shown.
+  defp load(socket, filter, opts) do
+    {actions, more?} = Activity.list(opts ++ ActivityText.list_opts(filter))
+    {rows, named} = present(actions)
 
     socket
     |> assign(filter: filter, form: to_form(ActivityText.params(filter), as: :filter))
     |> assign(more?: more?, empty?: actions == [], cursor: cursor(actions, nil))
-    |> stream(:actions, present(actions), reset: true)
+    |> assign(named: named, shown: length(actions))
+    |> stream(:actions, rows, reset: true)
   end
+
+  # Reads the titles of the threads on screen, and the rows again when
+  # one of them changed.
+  defp retitle(%{assigns: %{named: named}} = socket) when map_size(named) > 0 do
+    titles = named |> Map.keys() |> Threads.titles()
+
+    if Enum.all?(named, fn {id, title} -> titles[id] == title end),
+      do: socket,
+      else: load(socket, socket.assigns.filter, limit: max(socket.assigns.shown, 1))
+  end
+
+  defp retitle(socket), do: socket
 
   # A row recorded while the page is open goes on top, if it passes the
   # filter. The cursor stays: Show older goes on past the oldest row.
   defp added(socket, action) do
     if ActivityText.matches?(action, socket.assigns.filter) do
+      {[row], named} = present([action])
+
       socket
-      |> stream_insert(:actions, hd(present([action])), at: 0)
-      |> assign(empty?: false)
+      |> stream_insert(:actions, row, at: 0)
+      |> assign(empty?: false, named: Map.merge(socket.assigns.named, named))
+      |> update(:shown, &(&1 + 1))
     else
       socket
     end
@@ -93,8 +127,9 @@ defmodule PhotonWeb.ActivityLive do
   defp cursor([], cursor), do: cursor
   defp cursor(actions, _cursor), do: List.last(actions)
 
-  # Rows as the page draws them, with what they name.
-  defp present([]), do: []
+  # Rows as the page draws them, with what they name, and the titles of
+  # the threads they name, by ID.
+  defp present([]), do: {[], %{}}
 
   defp present(actions) do
     wanted = ActivityText.wanted(actions)
@@ -105,7 +140,8 @@ defmodule PhotonWeb.ActivityLive do
       projects: Map.new(Projects.list(), &{&1.id, %{name: &1.name, slug: &1.slug}})
     }
 
-    Enum.map(actions, &ActivityText.row(&1, lookup))
+    {Enum.map(actions, &ActivityText.row(&1, lookup)),
+     Map.new(lookup.places, fn {id, place} -> {id, place.title} end)}
   end
 
   ## Rendering
