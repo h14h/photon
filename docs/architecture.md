@@ -2003,7 +2003,11 @@ still fine. Nodes are unchanged.
 Results at the end of step 5's build, 2026-10-07: core 187 passed (12
 properties, 175 tests; unchanged), node 106 passed (1 property, 105
 tests; one more than step 4's final count, from the step 4 polish), hub
-1651 passed (12 properties, 1639 tests). `mix precommit` passes in the
-hub, the only app this step changed; the Credo checks' own 66 tests
-pass. No TLC run: the specs didn't change. `mix dialyzer` and `mix test
---cover` are left to the final checks, which record their results here.
+1668 passed (12 properties, 1656 tests) after the build's review
+(section 17 of the plan). `mix precommit` passes in all three apps; the
+Credo checks' own 66 tests pass. `mix dialyzer` passes in all three with
+no new ignore entries; the final checks fixed two hub findings
+(`Ambient.Text.digest/2` could be read as returning nil, and
+`Threads.quiet_after/0` as returning a float from an odd config value).
+`mix test --cover`: core 99.11% (threshold 95), node 85.87% (85), hub
+95.20% (85). No TLC run: the specs didn't change.

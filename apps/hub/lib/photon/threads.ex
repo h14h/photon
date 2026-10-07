@@ -614,12 +614,11 @@ defmodule Photon.Threads do
   """
   @spec quiet_after() :: non_neg_integer()
   def quiet_after do
-    hours =
-      :photon
-      |> Application.get_env(__MODULE__, [])
-      |> Keyword.get(:quiet_after_hours, @quiet_after_hours)
-
-    hours * 3600
+    case :photon |> Application.get_env(__MODULE__, []) |> Keyword.get(:quiet_after_hours) do
+      hours when is_integer(hours) and hours >= 0 -> hours * 3600
+      # Unset, or not a whole number of hours: the default.
+      _other -> @quiet_after_hours * 3600
+    end
   end
 
   @doc """

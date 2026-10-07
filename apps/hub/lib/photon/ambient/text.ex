@@ -66,6 +66,7 @@ defmodule Photon.Ambient.Text do
     {new_lines, more_new, budget} = block(digest, :new, :more_new, @digest_limit - reserved)
     {smaller_lines, more_smaller, _budget} = block(digest, :smaller, :more_smaller, budget)
 
+    # The header is never blank, so the text needs no blank check.
     [
       header,
       new_heading(new_lines, more_new),
@@ -74,11 +75,13 @@ defmodule Photon.Ambient.Text do
       seen_block(smaller_lines, more_smaller),
       now_line
     ]
-    |> List.flatten()
-    |> Enum.reject(&is_nil/1)
-    |> Enum.join("\n")
-    |> cut(@digest_limit)
+    |> lines()
+    |> clip(@digest_limit)
   end
+
+  # The text's lines, nested lists flattened and nils left out, trimmed.
+  defp lines(parts),
+    do: parts |> List.flatten() |> Enum.reject(&is_nil/1) |> Enum.join("\n") |> String.trim()
 
   # A block's lines that fit in `budget`, how many more there are (those
   # the digest cut and those that didn't fit), and what is left of it.
@@ -444,9 +447,14 @@ defmodule Photon.Ambient.Text do
         nil
 
       text ->
-        if String.length(text) <= limit,
-          do: text,
-          else: String.trim_trailing(String.slice(text, 0, limit - 3)) <> "..."
+        clip(text, limit)
     end
+  end
+
+  # `text` cut to `limit` characters, ending "..." when it was longer.
+  defp clip(text, limit) do
+    if String.length(text) <= limit,
+      do: text,
+      else: String.trim_trailing(String.slice(text, 0, limit - 3)) <> "..."
   end
 end
