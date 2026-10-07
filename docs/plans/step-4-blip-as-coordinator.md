@@ -688,16 +688,24 @@ Two of Blip's tools (section 5.3):
 - `answer_question(question_id, answer)`: `{:commit, fn tx ->
   Questions.answer_tx(tx, id, text, {:blip, owner_wrote?}) end}`, with
   `owner_wrote?` from `Assistant.origin_tx/2` inside the same commit
-  (section 5.4). Result: `Sent your answer to "Fix the pump".` An error is
+  (section 5.4). Result: `Sent your answer to "Fix the pump".` with
+  details `%{"question_id", "thread_id", "title", "project_id", "slug",
+  "answered_by"}`. An error is
   `Rules.message(reason, :blip, q)`, or for an unknown ID lists the open
   ones: `There's no open question q_999. Open: q_456 from "Fix the pump"
-  (with the user), q_457 from "Plant list" (yours to answer).`
+  (with the user), q_457 from "Plant list" (yours to answer).` (`No
+  questions are open.` when there are none). Both tools word their
+  refusals through `Assistant.question_refusal/2`, which reads the
+  question or the open ones inside the commit and uses
+  `Readout.unknown_question/2` for the list.
 - `ask_owner(question_id, question)`: `{:commit, fn tx ->
   Questions.pass_tx(tx, id, wording, :blip) end}`. `question` is Blip's
   wording for the owner (required, at most 2,000 characters). Result:
   `Asked the user. Their answer goes straight to "Fix the pump"; you'll
   see it here.` with details `%{"question_id", "thread_id", "title",
-  "slug", "project"}` so the panel can draw the card (section 10.6).
+  "project_id", "slug", "project"}` so the panel can draw the card
+  (section 10.6) and the activity log has the project (section 5.1). An
+  unknown ID lists the open questions, as for `answer_question`.
 
 `Questions.answer_tx/4` applies `Rules.step/2`, writes `answer`,
 `answered_by`, `answered_at`, records the signal
@@ -1280,7 +1288,12 @@ of the last user message (a signal message may carry several):
   colour should the gate be?` reaches the owner. A question ending in
   `(prose)` gets a plain reply and no tool call, the way a real model
   sometimes slips; that is how the owner and the tests see the hub pass
-  an unhandled question on (section 4.6).
+  an unhandled question on (section 4.6). The calls' answer text says
+  what it is doing (`Answering "Fix the pump" from memory.`, `Asking you
+  for "Fix the pump".`), and the prose reply is `I'm not sure what to
+  tell "Fix the pump".` `MockCoordinator.unasked/2` reads these
+  messages; `MockScript` tries it before the phrasings, and a signal
+  whose text is none of these still goes to the phrasings.
 - `[Thread update]` parts and nothing else: a reply with one line per
   update, `Fix the pump in Garden finished.`, `... failed: <reason>` or
   `... is waiting on you: <note>`. No tool call.
@@ -1558,8 +1571,8 @@ labels.
 | `message_thread` | Messaging c_123 | Messaged "Fix the pump" | Stopped messaging c_123 / Couldn't message c_123 |
 | `stop_thread` | Stopping c_123 | Stopped "Fix the pump" | Didn't stop c_123 / Couldn't stop c_123 |
 | Blip's file tools | as the thread's, with "in garden" | | |
-| `answer_question` | Answering "Fix the pump" | Answered "Fix the pump" | |
-| `ask_owner` | the question card (10.6) | | |
+| `answer_question` | Answering q_456 (the title only arrives in the result's details) | Answered "Fix the pump" (linked) | Stopped answering q_456 / Couldn't answer q_456 |
+| `ask_owner` | Asking you about q_456 | the question card (10.6); until C16 adds it, Asked you about "Fix the pump" (linked) | Stopped asking you about q_456 / Couldn't ask you about q_456 (a refused call keeps this line after C16) |
 | `list_skills`, `set_project_skill` | Checking skills / Turning on pdf-forms for garden | Checked skills / Turned on ... | |
 
 Names and titles come from the result's details where there are some,
@@ -1612,11 +1625,11 @@ No changes.
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Assistant` | boundary (API and the `"assistant"` profile) | deps add `Photon.Activity`, `Photon.Questions`, `Photon.Signals`; `exports: [Notice]` | `conversation_id/0` delegates to `Signals`; `answer/2` (the panel's reply chip, through `Questions.answer/2`); `find_project/1`, `find_thread/1` for the tools; `origin_tx/2` (takes the generation or one of its tool tasks); `unattended_count_tx/1`; `unattended_limit/0`; `may_act_tx/3` (the refusals of section 5.4, which the tools that start or change work call in their commit); `on_tool_result/4` and `on_settled/3` (`settled_tx/3`) record activity; the tool list (sections 5.2 to 5.5). It goes past `ModuleDependencies`' 20, as `Photon.Threads` did in step 3; disable the check on the module with the same reason (it is the context's API and the profile). |
+| `Photon.Assistant` | boundary (API and the `"assistant"` profile) | deps add `Photon.Activity`, `Photon.Questions`, `Photon.Signals`; `exports: [Notice]` | `conversation_id/0` delegates to `Signals`; `answer/2` (the panel's reply chip, through `Questions.answer/2`); `question_refusal/2` (Blip's words for a refused `answer_question` or `ask_owner`, read inside the tool's commit); `find_project/1`, `find_thread/1` for the tools; `origin_tx/2` (takes the generation or one of its tool tasks); `unattended_count_tx/1`; `unattended_limit/0`; `may_act_tx/3` (the refusals of section 5.4, which the tools that start or change work call in their commit); `on_tool_result/4` and `on_settled/3` (`settled_tx/3`) record activity; the tool list (sections 5.2 to 5.5). It goes past `ModuleDependencies`' 20, as `Photon.Threads` did in step 3; disable the check on the module with the same reason (it is the context's API and the profile). |
 | `Photon.Assistant.Prompt` | core | unchanged | Section 5.6. |
 | `Photon.Assistant.Origin` | core | `use Boundary, type: :strict, deps: [PhotonCore]` (`for_call/3` decodes the raw arguments with `PhotonCore.Message.arguments/1`) | `of/1`, `for_call/3`, `unattended_ok?/3` (section 5.4), and the two refusals' words, `restricted_message/0` and `unattended_message/1`. |
-| `Photon.Assistant.Readout` | core | `use Boundary, type: :strict, deps: [Photon.Threads, PhotonCore]` (it reaches `Threads.State` through the parent's export, as prompts reach `Skills.Prompt`) | The read tools' texts (section 5.2): `projects/3`, `project/2` (schedules come in with their `when` text, which the tool gets from `Schedules.when_text/1`), `threads/2`, `thread/3` over recent entries (takes `now`), `unknown_project/2`, `unknown_thread/1`, and `state_names/0` and `state_named/1` for `list_threads`' `state` argument; `file_written/4` and `file_edited/2` for the write and edit tools' results (the listing and read texts are `Threads.describe_files/2` and `read_file_text/3`). |
-| `Photon.Assistant.MockCoordinator` | core | `use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]` | Section 8.2: `phrasings/1`, and `help/0`, the lines `MockScript`'s help text includes. |
+| `Photon.Assistant.Readout` | core | `use Boundary, type: :strict, deps: [Photon.Threads, PhotonCore]` (it reaches `Threads.State` through the parent's export, as prompts reach `Skills.Prompt`) | The read tools' texts (section 5.2): `projects/3`, `project/2` (schedules come in with their `when` text, which the tool gets from `Schedules.when_text/1`), `threads/2`, `thread/3` over recent entries (takes `now`), `unknown_project/2`, `unknown_thread/1`, `unknown_question/2` (an unknown question's ID, with the open ones), and `state_names/0` and `state_named/1` for `list_threads`' `state` argument; `file_written/4` and `file_edited/2` for the write and edit tools' results (the listing and read texts are `Threads.describe_files/2` and `read_file_text/3`). |
+| `Photon.Assistant.MockCoordinator` | core | `use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]` | Section 8.2: `phrasings/1`, `unasked/2` (the replies to questions, updates and the owner's answers, which `MockScript` tries first), and `help/0`, the lines `MockScript`'s help text includes. |
 | `Photon.Assistant.MockScript` | core | deps add `Photon.Assistant.MockCoordinator` (same boundary) | Tries `MockCoordinator.phrasings/1`; help text. |
 | `Photon.Assistant.Notice` | core | unchanged | `:question` notices (section 10.6). |
 | `Photon.Assistant.Tools.ListProjects`, `.ReadProject`, `.ListThreads`, `.ReadThread`, `.StartProject`, `.StartThread`, `.MessageThread`, `.StopThread`, `.ListContextFiles`, `.ReadContextFile`, `.WriteContextFile`, `.EditContextFile`, `.AnswerQuestion`, `.AskOwner`, `.ListSkills`, `.SetProjectSkill` | boundary (durable tools) | inside `Photon.Assistant` | Sections 5.2 to 5.5. The ones that change things check `Origin` (section 5.4) inside their commit; `StartThread` and `MessageThread` also check the unattended count. |
@@ -2276,6 +2289,11 @@ C10. Blip's question tools and prompt. After C6 and C8.
   (`answer/2`, the tool list); `assistant/prompt.ex` (section 5.6);
   `assistant/mock_coordinator.ex` (questions, signals, answers,
   `(prose)`); `transcript.ex` (`typed/2` for signal and answer messages).
+  `assistant/readout.ex` (`unknown_question/2`); `conversation_components.ex`
+  (the `answer_question` and `ask_owner` lines of section 10.8, which C16's
+  card replaces for an ok `ask_owner`). The C5 escalation test in
+  `questions_test.exs` now asks with `(prose)`, since the scripted Blip
+  passes a plain question on with `ask_owner` itself.
 - Tests: `test/core/assistant/prompt_test.exs`,
   `assistant/mock_coordinator_test.exs`, `transcript_test.exs` (`typed`),
   the Blip-driven cases of `test/boundary/questions_test.exs` (answer from

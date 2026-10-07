@@ -44,7 +44,7 @@ defmodule PhotonWeb.ConversationComponents do
 
   @file_tools ~w(list_context_files read_context_file write_context_file edit_context_file)
   @read_tools ~w(list_projects read_project list_threads read_thread)
-  @work_tools ~w(start_project start_thread message_thread stop_thread)
+  @work_tools ~w(start_project start_thread message_thread stop_thread answer_question ask_owner)
 
   @doc "One entry of the conversation: a message, an answer with its calls, an error or a reset."
   attr :entry, :map, required: true
@@ -479,9 +479,21 @@ defmodule PhotonWeb.ConversationComponents do
     {verb, thread_name(args, details), ""}
   end
 
-  # A thread Blip started links to its page.
-  defp work_href("start_thread", :done, %{"slug" => slug, "thread_id" => id})
-       when is_binary(slug) and is_binary(id),
+  # A thread's question: the thread's title once the result names it, the
+  # question's ID while the call runs.
+  defp work_words("answer_question", args, details, status),
+    do:
+      {status_verb(status, "Answering", "Answered", "answer"), question_thread(args, details), ""}
+
+  defp work_words("ask_owner", args, details, status),
+    do:
+      {status_verb(status, "Asking you about", "Asked you about", "ask you about"),
+       question_thread(args, details), ""}
+
+  # A thread Blip started, or whose question it handled, links to its page.
+  defp work_href(name, :done, %{"slug" => slug, "thread_id" => id})
+       when name in ~w(start_thread answer_question ask_owner) and is_binary(slug) and
+              is_binary(id),
        do: ~p"/projects/#{slug}/threads/#{id}"
 
   defp work_href(_name, _status, _details), do: nil
@@ -490,6 +502,13 @@ defmodule PhotonWeb.ConversationComponents do
     case details["title"] do
       title when is_binary(title) -> ~s("#{title}")
       _none -> args["thread"]
+    end
+  end
+
+  defp question_thread(args, details) do
+    case details["title"] do
+      title when is_binary(title) -> ~s("#{title}")
+      _none -> args["question_id"]
     end
   end
 
@@ -534,6 +553,8 @@ defmodule PhotonWeb.ConversationComponents do
   defp action_icon("start_thread"), do: "hero-play-circle-micro"
   defp action_icon("message_thread"), do: "hero-paper-airplane-micro"
   defp action_icon("stop_thread"), do: "hero-stop-circle-micro"
+  defp action_icon("answer_question"), do: "hero-chat-bubble-bottom-center-text-micro"
+  defp action_icon("ask_owner"), do: "hero-question-mark-circle-micro"
 
   defp action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
     do: "hero-clock-micro"

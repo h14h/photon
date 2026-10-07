@@ -20,6 +20,25 @@ defmodule Photon.Assistant.MockCoordinator do
       several lines, as the whole file (`write_context_file`)
     * `edit <slug>/<name>: <old> => <new>` changes one passage
       (`edit_context_file`)
+    * `answer <question id>: <text>` answers a thread's question
+      (`answer_question`), and `answer: <text>` answers the newest
+      question this conversation asked the owner about (the last
+      `ask_owner` call among the request's messages)
+
+  Messages the owner didn't type (`unasked/2`), read from every text part
+  of the last user message, since a signal message may carry several:
+
+    * `[Question q_... from ...]` parts: a question whose text holds the
+      key of a memory line `- <key>: <value>` (in the request's system
+      text, under `## Memory`; at least three characters, ignoring case)
+      is answered with the value (`answer_question`); any other is passed
+      to the owner as `"<title>" asks: <question>` (`ask_owner`). One call
+      per question, in one answer. A question ending in `(prose)` gets a
+      plain reply and no call, the way a real model sometimes slips, so
+      the hub passes it on itself
+    * `[Thread update]` parts and nothing else: one line per update
+      (`Fix the pump in Garden finished.`), no call
+    * the owner's answer to a question (`[Your answer to ...`): "Noted."
 
   After a tool result, the script's usual relay prints it.
   """
@@ -42,6 +61,8 @@ defmodule Photon.Assistant.MockCoordinator do
   - `files in <slug>` lists a project's context files, and `read <slug>/<name>` reads one
   - `write <slug>/<name>: <text>` writes a whole file, like `write garden/notes.md: hello`
   - `edit <slug>/<name>: <old text> => <new text>` changes one passage
+  - `answer <question id>: <text>` answers a thread's question, and `answer: <text>` the last one I asked you about
+  - a thread's question is answered from my memory when a `- <key>: <value>` line's key is in it, else passed to you; one ending in `(prose)` gets a plain reply
   """
 
   @doc """
@@ -50,7 +71,8 @@ defmodule Photon.Assistant.MockCoordinator do
   don't look at it.
   """
   @spec phrasings(map()) :: [phrasing()]
-  def phrasings(_request), do: read_phrasings() ++ work_phrasings() ++ file_phrasings()
+  def phrasings(request),
+    do: read_phrasings() ++ work_phrasings() ++ file_phrasings() ++ question_phrasings(request)
 
   # The read tools' phrasings.
   defp read_phrasings do
@@ -84,6 +106,15 @@ defmodule Photon.Assistant.MockCoordinator do
       {~r/\Aread\s+([^\s\/]+)\/([^\s\/:]+)\z/i, &read_file/1},
       {~r/\Awrite\s+([^\s\/]+)\/([^\s\/:]+)\s*:\s*(.*)\z/s, &write_file/1},
       {~r/\Aedit\s+([^\s\/]+)\/([^\s\/:]+)\s*:\s*(.+?)\s*=>\s*(.*)\z/s, &edit_file/1}
+    ]
+  end
+
+  # The phrasings that answer a thread's question. `answer: <text>` finds
+  # the question in the request.
+  defp question_phrasings(request) do
+    [
+      {~r/\Aanswer\s+(\S+?)\s*:\s*(.+)\z/is, fn [id, text] -> answer(id, text) end},
+      {~r/\Aanswer\s*:\s*(.+)\z/is, fn [text] -> answer_last(request, text) end}
     ]
   end
 
@@ -150,6 +181,141 @@ defmodule Photon.Assistant.MockCoordinator do
         %{"project" => slug, "name" => name, "old_text" => old_text, "new_text" => new_text},
         "Editing #{name} in #{slug}."
       )
+
+  defp answer(id, text),
+    do:
+      call(
+        "answer_question",
+        %{"question_id" => id, "answer" => String.trim(text)},
+        "Sending your answer to #{id}."
+      )
+
+  defp answer_last(request, text) do
+    case last_asked(request[:messages] || []) do
+      nil -> Message.assistant("I don't have a question waiting on you.")
+      id -> answer(id, text)
+    end
+  end
+
+  # The question of the last `ask_owner` call in `messages`, or nil.
+  defp last_asked(messages) do
+    messages
+    |> Enum.flat_map(&Message.tool_calls/1)
+    |> Enum.filter(&(&1["name"] == "ask_owner"))
+    |> Enum.flat_map(fn call ->
+      case Message.arguments(call) do
+        {:ok, %{"question_id" => id}} when is_binary(id) -> [id]
+        _garbage -> []
+      end
+    end)
+    |> List.last()
+  end
+
+  ## What the owner didn't type
+
+  @doc """
+  The scripted reply to a message the owner didn't type, from the text
+  parts of the last user message (`texts`): thread questions, thread
+  updates, or the owner's answer to a question going by. Nil for anything
+  else, which the phrasings handle.
+  """
+  @spec unasked([String.t()], map()) :: Message.t() | nil
+  def unasked(texts, request) do
+    questions = for "[Question " <> _ = text <- texts, q = question(text), q != nil, do: q
+
+    cond do
+      questions != [] ->
+        handle(questions, memory(request[:system] || ""))
+
+      match?(["[Your answer to" <> _ | _], texts) ->
+        Message.assistant("Noted.")
+
+      texts != [] and Enum.all?(texts, &String.starts_with?(&1, "[Thread update]")) ->
+        updates(texts)
+
+      true ->
+        nil
+    end
+  end
+
+  # `[Question q_456 from Garden / "Fix the pump" (c_123)]`, then the question.
+  defp question(text) do
+    [header | body] = String.split(text, "\n", parts: 2)
+
+    case Regex.run(~r/\A\[Question (\S+) from .*? \/ "(.*)" \([^()]*\)\]\z/, header,
+           capture: :all_but_first
+         ) do
+      [id, title] -> %{id: id, title: title, text: String.trim(Enum.join(body))}
+      nil -> nil
+    end
+  end
+
+  # The `- <key>: <value>` lines of the memory in the system text, with keys
+  # of at least three characters.
+  defp memory(system) do
+    case String.split(system, "## Memory\n", parts: 2) do
+      [_before, rest] -> rest |> String.split("\n## ", parts: 2) |> hd() |> memory_lines()
+      _no_memory -> []
+    end
+  end
+
+  defp memory_lines(shown) do
+    for line <- String.split(shown, "\n"),
+        [key, value] <- [
+          Regex.run(~r/\A-\s*([^:]+?)\s*:\s*(.+)\z/, String.trim(line), capture: :all_but_first)
+        ],
+        String.length(key) >= 3,
+        do: {String.downcase(key), String.trim(value)}
+  end
+
+  # One call per question (or a plain line for one ending in `(prose)`), in
+  # one answer.
+  defp handle(questions, memory) do
+    {lines, calls} =
+      questions
+      |> Enum.map(&handle_one(&1, memory))
+      |> Enum.unzip()
+
+    Message.assistant(Enum.join(lines, "\n"), Enum.reject(calls, &is_nil/1))
+  end
+
+  defp handle_one(%{id: id, title: title, text: text}, memory) do
+    known =
+      Enum.find(memory, fn {key, _value} -> String.contains?(String.downcase(text), key) end)
+
+    cond do
+      String.ends_with?(text, "(prose)") ->
+        {~s{I'm not sure what to tell "#{title}".}, nil}
+
+      known != nil ->
+        {_key, value} = known
+
+        {~s{Answering "#{title}" from memory.},
+         Mock.call("answer_question", %{"question_id" => id, "answer" => value})}
+
+      true ->
+        {~s{Asking you for "#{title}".},
+         Mock.call("ask_owner", %{"question_id" => id, "question" => ~s{"#{title}" asks: #{text}}})}
+    end
+  end
+
+  # `[Thread update] Garden / "Fix the pump" (c_123) finished. It said: ...`
+  # reads `Fix the pump in Garden finished.`
+  defp updates(texts), do: texts |> Enum.map_join("\n", &update/1) |> Message.assistant()
+
+  defp update(text) do
+    case Regex.run(~r/\A\[Thread update\] (.*?) \/ "(.*)" \([^()]*\) (.*)\z/s, text,
+           capture: :all_but_first
+         ) do
+      [project, title, outcome] -> "#{title} in #{project} #{outcome_words(outcome)}"
+      nil -> "A thread changed."
+    end
+  end
+
+  defp outcome_words("finished" <> _note), do: "finished."
+  defp outcome_words("is waiting on the user: " <> note), do: "is waiting on you: " <> note
+  defp outcome_words("is waiting on the user" <> _), do: "is waiting on you."
+  defp outcome_words(other), do: other
 
   defp call(tool, args, intro), do: Message.assistant(intro, [Mock.call(tool, args)])
 end

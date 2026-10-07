@@ -422,4 +422,18 @@ defmodule Photon.Assistant.ReadoutTest do
 
     assert Readout.unknown_thread("c_999") == "There's no thread c_999. list_threads shows them."
   end
+
+  test "the words for a question that isn't open name the ones that are" do
+    open = [
+      %{id: "q_456", thread_title: "Fix the pump", status: "with_owner"},
+      %{id: "q_457", thread_title: "Plant list", status: "asked"}
+    ]
+
+    assert Readout.unknown_question("q_999", open) ==
+             ~s{There's no open question q_999. Open: q_456 from "Fix the pump" (with the user), } <>
+               ~s{q_457 from "Plant list" (yours to answer).}
+
+    assert Readout.unknown_question("q_999", []) ==
+             "There's no open question q_999. No questions are open."
+  end
 end

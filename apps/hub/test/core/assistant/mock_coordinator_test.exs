@@ -111,6 +111,141 @@ defmodule Photon.Assistant.MockCoordinatorTest do
     assert help =~ MockCoordinator.help()
   end
 
+  describe "questions" do
+    @system "You are Blip.\n\n## Memory\n\n- the NAS is mp1\n- deploy branch: staging\n- ab: never\n\n## Now\n\nIt's about noon."
+
+    defp question(id, title, text),
+      do: ~s{[Question #{id} from Garden / "#{title}" (c_1)]\n#{text}}
+
+    defp unasked(texts, system \\ @system),
+      do:
+        MockScript.respond(%{
+          system: system,
+          messages: [Message.user(Enum.map(texts, &Message.text/1))]
+        })
+
+    test "a question its memory settles is answered with the memory's value" do
+      reply = unasked([question("q_1", "Deploy", "Which Deploy Branch should I use?")])
+
+      assert calls(reply) == [
+               {"answer_question", %{"question_id" => "q_1", "answer" => "staging"}}
+             ]
+
+      assert Message.text_of(reply) == ~s{Answering "Deploy" from memory.}
+    end
+
+    test "a question its memory doesn't settle goes to the owner, in Blip's words" do
+      reply = unasked([question("q_2", "Gate", "What colour should the gate be?")])
+
+      assert calls(reply) == [
+               {"ask_owner",
+                %{
+                  "question_id" => "q_2",
+                  "question" => ~s{"Gate" asks: What colour should the gate be?}
+                }}
+             ]
+
+      # With no memory at all, the same.
+      assert [{"ask_owner", _args}] =
+               calls(unasked([question("q_2", "Gate", "Which deploy branch?")], "No memory."))
+    end
+
+    test "a key shorter than three characters never matches" do
+      assert [{"ask_owner", _args}] =
+               calls(unasked([question("q_3", "Lab", "Should the lab be locked?")]))
+    end
+
+    test "several questions in one message make one call each, in one answer" do
+      reply =
+        unasked([
+          question("q_1", "Deploy", "Which deploy branch?"),
+          question("q_2", "Gate", "What colour should the gate be?")
+        ])
+
+      assert [
+               {"answer_question", %{"question_id" => "q_1"}},
+               {"ask_owner", %{"question_id" => "q_2"}}
+             ] =
+               calls(reply)
+    end
+
+    test "a question ending in (prose) gets a plain reply and no call" do
+      reply = unasked([question("q_4", "Gate", "Is the gate locked? (prose)")])
+      assert calls(reply) == []
+      assert Message.text_of(reply) == ~s{I'm not sure what to tell "Gate".}
+    end
+
+    test "answer <id>: answers a question by its ID" do
+      assert calls(ask("answer q_9: the second one")) ==
+               [{"answer_question", %{"question_id" => "q_9", "answer" => "the second one"}}]
+    end
+
+    test "answer: answers the last question it asked the owner about, if there is one" do
+      asked = fn id ->
+        Message.assistant("", [
+          %{
+            "id" => "call_#{id}",
+            "name" => "ask_owner",
+            "arguments" => Jason.encode!(%{"question_id" => id, "question" => "?"})
+          }
+        ])
+      end
+
+      request = %{
+        messages: [
+          asked.("q_1"),
+          Message.tool_result("call_q_1", "Asked the user."),
+          asked.("q_2"),
+          Message.tool_result("call_q_2", "Asked the user."),
+          Message.user("answer: green")
+        ]
+      }
+
+      assert calls(MockScript.respond(request)) ==
+               [{"answer_question", %{"question_id" => "q_2", "answer" => "green"}}]
+
+      reply = ask("answer: green")
+      assert calls(reply) == []
+      assert Message.text_of(reply) == "I don't have a question waiting on you."
+    end
+  end
+
+  describe "thread updates and answers" do
+    test "updates get a line each, and no call" do
+      reply =
+        unasked([
+          ~s{[Thread update] Garden / "Fix the pump" (c_1) finished. It said: Done.},
+          ~s{[Thread update] Garden / "Plant list" (c_2) failed: HTTP 500: the pump is unplugged},
+          ~s{[Thread update] House / "Paint" (c_3) is waiting on the user: Which colour?}
+        ])
+
+      assert calls(reply) == []
+
+      assert Message.text_of(reply) ==
+               "Fix the pump in Garden finished.\n" <>
+                 "Plant list in Garden failed: HTTP 500: the pump is unplugged\n" <>
+                 "Paint in House is waiting on you: Which colour?"
+    end
+
+    test "the owner's answer going by is noted" do
+      reply =
+        unasked([
+          ~s{[Your answer to q_1 from Garden / "Gate" (c_1) went straight to the thread.]},
+          "green"
+        ])
+
+      assert calls(reply) == []
+      assert Message.text_of(reply) == "Noted."
+    end
+
+    test "a signal that isn't a question or an update goes to the phrasings" do
+      assert calls(unasked(["threads in garden"])) == [{"list_threads", %{"project" => "garden"}}]
+
+      assert MockCoordinator.unasked(["threads"], %{}) == nil
+      assert MockCoordinator.unasked([], %{}) == nil
+    end
+  end
+
   test "relays what a read tool said" do
     listed = ~s(c_1 "Fix the pump" \(garden\): failed: the pump is unplugged)
     result = Message.tool_result("call_1", listed)

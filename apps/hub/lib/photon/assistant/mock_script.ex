@@ -20,11 +20,14 @@ defmodule Photon.Assistant.MockScript do
       <purpose>`, `start thread in <slug>: <message>`, `tell <id>:
       <message>`, `stop thread <id>`, `files in <slug>`, `read
       <slug>/<name>`, `write <slug>/<name>: <text>`, `edit <slug>/<name>:
-      <old> => <new>`
+      <old> => <new>`, `answer <question id>: <text>`, `answer: <text>`
 
   It reads the last text part of the user's message, which is what the
   user typed: a message sent from a page has the page's note in front of
-  it, as a part of its own.
+  it, as a part of its own. A message the user didn't type (a thread's
+  question or update, or the user's answer to a question going by) is
+  `Photon.Assistant.MockCoordinator.unasked/2`'s, which reads every text
+  part.
 
   After a tool result it relays the result. An image result gets "Here it
   is." and its dimensions line.
@@ -79,13 +82,22 @@ defmodule Photon.Assistant.MockScript do
         result |> MockPhrases.relay_result() |> Message.assistant()
 
       %{"role" => "user", "content" => content} ->
-        {note, typed} = split(content)
-        typed |> String.trim() |> plan(note, request)
+        MockCoordinator.unasked(texts(content), request) || typed(content, request)
 
       _ ->
         Message.assistant(@help)
     end
   end
+
+  defp typed(content, request) do
+    {note, typed} = split(content)
+    typed |> String.trim() |> plan(note, request)
+  end
+
+  defp texts(content) when is_list(content),
+    do: for(%{"type" => "text", "text" => text} when is_binary(text) <- content, do: text)
+
+  defp texts(content), do: [Message.text_of(content)]
 
   # The note of the page (nil without one) and what the user typed: the
   # last text part.

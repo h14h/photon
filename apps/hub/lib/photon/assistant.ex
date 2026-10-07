@@ -27,6 +27,12 @@ defmodule Photon.Assistant do
   as a thread's file tools do, and write as `"blip"` through
   `Photon.Projects`.
 
+  It handles the threads' `ask_blip` questions (`Photon.Questions`),
+  which reach it as signals: it answers one from what it knows
+  (`answer_question`), or asks the owner in its own words (`ask_owner`).
+  The owner answers from Blip's panel through `answer/2`, and the answer
+  goes straight to the thread.
+
   Who asked for a run is read from the sources of the messages it
   answers (`origin_tx/2`, `Photon.Assistant.Origin`): the owner, a
   schedule, Blip's own follow-up on a thread update, or a thread's
@@ -65,6 +71,7 @@ defmodule Photon.Assistant do
       Photon.Durable,
       Photon.MachineTools,
       Photon.Projects,
+      Photon.Questions,
       Photon.Schedules,
       Photon.Settings,
       Photon.Signals,
@@ -84,6 +91,7 @@ defmodule Photon.Assistant do
     Durable,
     MachineTools,
     Projects,
+    Questions,
     Schedules,
     Settings,
     Signals,
@@ -94,6 +102,8 @@ defmodule Photon.Assistant do
 
   alias Photon.Durable.{Entry, Submission, TaskRecord, Tx}
   alias Photon.Projects.Project
+  alias Photon.Questions.Question
+  alias Photon.Questions.Rules, as: QuestionRules
   alias Photon.Threads.Thread
   alias PhotonCore.Message
 
@@ -114,7 +124,9 @@ defmodule Photon.Assistant do
     Tools.ListContextFiles,
     Tools.ReadContextFile,
     Tools.WriteContextFile,
-    Tools.EditContextFile
+    Tools.EditContextFile,
+    Tools.AnswerQuestion,
+    Tools.AskOwner
   ]
 
   # The tools that start or wake threads, which the unattended limit counts.
@@ -275,6 +287,28 @@ defmodule Photon.Assistant do
       nil -> {:error, Readout.unknown_thread(id)}
     end
   end
+
+  ## Questions
+
+  @doc """
+  The owner's answer to question `question_id`, from the reply chip in
+  Blip's panel (`Photon.Questions.answer/2`): the thread gets it
+  unchanged, and Blip gets it as a message of its own. A refusal is the
+  owner's words for it, to show as it is.
+  """
+  @spec answer(String.t(), String.t()) :: {:ok, Question.t()} | {:error, String.t()}
+  def answer(question_id, text), do: Questions.answer(question_id, text)
+
+  @doc """
+  Why Blip's `answer_question` or `ask_owner` on question `id` was
+  refused, in Blip's words (`Photon.Questions.Rules.message/3`). An
+  unknown ID lists the questions that are open
+  (`Photon.Assistant.Readout.unknown_question/2`), so Blip can pick the
+  right one. Read inside the tool's commit.
+  """
+  @spec question_refusal(Questions.reason(), String.t()) :: String.t()
+  def question_refusal(:not_found, id), do: Readout.unknown_question(id, Questions.open())
+  def question_refusal(reason, id), do: QuestionRules.message(reason, :blip, Questions.get(id))
 
   ## Who asked, and what a run may do
 

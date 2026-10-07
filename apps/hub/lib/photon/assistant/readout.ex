@@ -5,8 +5,8 @@ defmodule Photon.Assistant.Readout do
   (`projects/3`), `read_project` (`project/2`), `list_threads`
   (`threads/2`) and `read_thread` (`thread/3`), what its file tools say
   after a write or an edit (`file_written/4`, `file_edited/2`), and the
-  words for a project or thread that isn't there (`unknown_project/2`,
-  `unknown_thread/1`). Its file tools' listing and read text are the
+  words for a project, thread or question that isn't there
+  (`unknown_project/2`, `unknown_thread/1`, `unknown_question/2`). Its file tools' listing and read text are the
   threads' (`Photon.Threads.describe_files/2`, `read_file_text/3`), seen
   from Blip's side.
 
@@ -555,6 +555,28 @@ defmodule Photon.Assistant.Readout do
   @doc "The error for a `thread` argument that names no thread."
   @spec unknown_thread(String.t()) :: String.t()
   def unknown_thread(id), do: "There's no thread #{id}. list_threads shows them."
+
+  @doc """
+  The error for a `question_id` that names no question, with the
+  questions that are open (`Photon.Questions.open/0`), so Blip can pick
+  the one it meant: `There's no open question q_999. Open: q_456 from
+  "Fix the pump" (with the user), q_457 from "Plant list" (yours to
+  answer).`
+  """
+  @spec unknown_question(String.t(), [map()]) :: String.t()
+  def unknown_question(id, []), do: "There's no open question #{id}. No questions are open."
+
+  def unknown_question(id, open) do
+    listed =
+      Enum.map_join(open, ", ", fn question ->
+        ~s{#{question.id} from "#{question.thread_title}" (#{whose(question.status)})}
+      end)
+
+    "There's no open question #{id}. Open: #{listed}."
+  end
+
+  defp whose("with_owner"), do: "with the user"
+  defp whose(_asked), do: "yours to answer"
 
   ## Words
 

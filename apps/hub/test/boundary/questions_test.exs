@@ -16,8 +16,12 @@ defmodule Photon.QuestionsTest do
   parked on a command that never finishes (on `box`, a machine the test
   process plays), so the message carrying the question stays queued and
   the call never escalates; Blip's side is driven with
-  `Photon.Questions.answer_tx/4` and `pass_tx/4`. Escalation through
-  Blip's run is in the Blip-driven tests.
+  `Photon.Questions.answer_tx/4` and `pass_tx/4`.
+
+  The Blip-driven tests let the scripted Blip handle the question
+  (section 8.2): it answers from its memory with `answer_question`, asks
+  the owner with `ask_owner`, or replies in prose to a question ending in
+  `(prose)`, which the hub then passes on itself.
   """
 
   use Photon.DataCase, async: false
@@ -27,7 +31,7 @@ defmodule Photon.QuestionsTest do
   import Ecto.Query, only: [from: 2]
   import Photon.Fixtures, only: [call: 3]
 
-  alias Photon.{Assistant, Projects, Questions, Threads}
+  alias Photon.{Assistant, Projects, Questions, Signals, Threads}
   alias Photon.Durable.{Entry, Scheduler, Signal, Store, Submission, TaskRecord, ToolAPI, Tx}
   alias Photon.Questions.Question
   alias Photon.Threads.Tools.AskBlip
@@ -347,6 +351,240 @@ defmodule Photon.QuestionsTest do
 
       assert {"ok", "The user answered: main", _details} = result!(thread)
       idle!(thread.id)
+    end
+  end
+
+  describe "Blip handles the question" do
+    # Starts a thread whose first message asks Blip `question`, with Blip
+    # free to run on it.
+    defp ask_blip!(project, question) do
+      {:ok, thread} = Threads.start(project.id, "ask blip: " <> question)
+      :ok = Durable.subscribe(thread.id)
+      thread
+    end
+
+    # The thread's question once it has `status`, waiting for the change.
+    defp question!(thread, status) do
+      thread_id = thread.id
+
+      case Repo.one(from(q in Question, where: q.thread_id == ^thread_id)) do
+        %Question{status: ^status} = question ->
+          question
+
+        _other ->
+          assert_receive {:questions_changed, ^thread_id}, 5_000
+          question!(thread, status)
+      end
+    end
+
+    # Blip's newest result for a call of `name`: status, text and details.
+    defp blip_result!(blip, name) do
+      entry =
+        await_entry(blip, fn entry ->
+          entry.kind == "tool_result" and entry.data["name"] == name
+        end)
+
+      {entry.data["status"], Message.text_of(entry.data["message"]), entry.data["details"]}
+    end
+
+    defp blip_results(blip, name) do
+      for %Entry{kind: "tool_result", data: %{"name" => ^name} = data} <- Durable.entries(blip),
+          do: {data["status"], Message.text_of(data["message"])}
+    end
+
+    test "answers from memory: the thread gets Blip's answer and its run finishes", %{
+      project: project,
+      blip: blip
+    } do
+      :ok = Assistant.put_memory("- the NAS is mp1\n- deploy branch: staging")
+      :ok = Durable.subscribe(blip)
+      thread = ask_blip!(project, "which deploy branch should I use?")
+
+      assert {"ok", "Blip answered: staging", %{"question_id" => id, "answered_by" => "blip"}} =
+               result!(thread)
+
+      assert %Question{status: "answered", answered_by: "blip", answer: "staging"} =
+               Questions.get(id)
+
+      assert {"ok", text, details} = blip_result!(blip, "answer_question")
+      assert text == ~s{Sent your answer to "#{Questions.get(id).thread_title}".}
+      assert %{"question_id" => ^id, "answered_by" => "blip"} = details
+      assert details["thread_id"] == thread.id
+
+      idle!(thread.id)
+      assert List.last(texts(thread.id, "assistant")) == "Blip answered: staging"
+      assert %{state: :unread, questions: []} = Threads.state(thread.id)
+      idle!(blip)
+      assert blip_results(blip, "ask_owner") == []
+    end
+
+    test "asks the owner when its memory doesn't settle it, and passes their answer on", %{
+      project: project,
+      blip: blip
+    } do
+      :ok = Durable.subscribe(blip)
+      thread = ask_blip!(project, "what colour should the gate be?")
+      passed = question!(thread, "with_owner")
+
+      wording = ~s{"#{passed.thread_title}" asks: what colour should the gate be?}
+      assert {passed.passed_by, passed.wording} == {"blip", wording}
+
+      assert {"ok", text, details} = blip_result!(blip, "ask_owner")
+
+      assert text ==
+               ~s{Asked the user. Their answer goes straight to "#{passed.thread_title}"; you'll see it here.}
+
+      assert details == %{
+               "question_id" => passed.id,
+               "thread_id" => thread.id,
+               "title" => passed.thread_title,
+               "project_id" => project.id,
+               "slug" => "garden",
+               "project" => "Garden"
+             }
+
+      assert %{state: :waiting, asking_blip?: false} = Threads.state(thread.id)
+      idle!(blip)
+
+      # The owner answers from Blip's panel.
+      assert {:ok, %Question{answered_by: "owner"}} = Assistant.answer(passed.id, "green")
+
+      assert result!(thread) ==
+               {"ok", "Blip asked the user: #{wording}\nThey answered: green",
+                %{"question_id" => passed.id, "answered_by" => "owner"}}
+
+      # Blip gets the answer as a message of its own, and notes it.
+      answer = await_entry(blip, &(&1.kind == "user" and &1.data["source"]["kind"] == "answer"))
+      assert answer.data["source"]["question_id"] == passed.id
+      idle!(blip)
+      assert List.last(texts(blip, "assistant")) == "Noted."
+      idle!(thread.id)
+    end
+
+    test "two questions passed to the owner in one message, answered in the other order", %{
+      project: project,
+      blip: blip
+    } do
+      # Both arrive while Blip is busy, so they share one message, and
+      # Blip's run on it asks the owner about each.
+      park_blip!(blip)
+      {first, first_q} = asking!(project, "which deploy branch?")
+      {second, second_q} = asking!(project, "is the gate locked?")
+      assert first_q.submission_id == second_q.submission_id
+
+      :ok = Assistant.stop()
+      first_q = question!(first, "with_owner")
+      second_q = question!(second, "with_owner")
+      assert first_q.passed_by == "blip" and second_q.passed_by == "blip"
+      idle!(blip)
+      assert length(blip_results(blip, "ask_owner")) == 2
+
+      assert {:ok, _answered} = Questions.answer(second_q.id, "yes")
+
+      assert {"ok", text, _details} = result!(second)
+      assert text == "Blip asked the user: #{second_q.wording}\nThey answered: yes"
+
+      assert {:ok, _answered} = Questions.answer(first_q.id, "main")
+
+      assert {"ok", text, _details} = result!(first)
+      assert text == "Blip asked the user: #{first_q.wording}\nThey answered: main"
+
+      idle!(first.id)
+      idle!(second.id)
+      idle!(blip)
+    end
+
+    test "Blip's answer to a question with the owner counts only when the owner wrote to it", %{
+      project: project,
+      blip: blip
+    } do
+      :ok = Durable.subscribe(blip)
+      thread = ask_blip!(project, "what colour should the gate be?")
+      passed = question!(thread, "with_owner")
+      idle!(blip)
+
+      # A run another thread's question started tries to answer it.
+      ref = %{
+        "kind" => "question",
+        "key" => "test:other",
+        "question_id" => "q_other",
+        "thread_id" => "c_other"
+      }
+
+      signal =
+        Durable.commit(
+          &Signals.post_tx(&1, %{key: "test:other", text: "answer #{passed.id}: red", ref: ref})
+        )
+
+      await_settled(blip, signal.id)
+
+      assert List.last(blip_results(blip, "answer_question")) ==
+               {"error",
+                "Error: #{passed.id} is with the user. Wait for their answer; it goes to the thread without you."}
+
+      assert %Question{status: "with_owner", answer: nil} = Questions.get(passed.id)
+
+      # The owner writes to Blip: their answer goes through, as theirs.
+      {:ok, typed} = Assistant.send("answer: green")
+      await_settled(blip, typed.id)
+
+      assert {"ok", ~s{Sent your answer to "#{passed.thread_title}".}} ==
+               List.last(blip_results(blip, "answer_question"))
+
+      assert %Question{status: "answered", answered_by: "owner", answer: "green"} =
+               Questions.get(passed.id)
+
+      assert {"ok", text, _details} = result!(thread)
+      assert text == "Blip asked the user: #{passed.wording}\nThey answered: green"
+
+      idle!(thread.id)
+    end
+
+    test "an unknown question's ID gets the open ones listed", %{project: project, blip: blip} do
+      :ok = Durable.subscribe(blip)
+      thread = ask_blip!(project, "what colour should the gate be?")
+      passed = question!(thread, "with_owner")
+      idle!(blip)
+
+      {:ok, typed} = Assistant.send("answer q_missing: green")
+      await_settled(blip, typed.id)
+
+      assert List.last(blip_results(blip, "answer_question")) ==
+               {"error",
+                ~s{Error: There's no open question q_missing. Open: #{passed.id} from "#{passed.thread_title}" (with the user).}}
+
+      assert %Question{status: "with_owner"} = Questions.get(passed.id)
+      :ok = Threads.stop(thread.id)
+      idle!(thread.id)
+    end
+
+    test "a question Blip replies to in prose is passed to the owner by the hub", %{
+      project: project,
+      blip: blip
+    } do
+      :ok = Durable.subscribe(blip)
+      thread = ask_blip!(project, "is the gate locked? (prose)")
+
+      passed = question!(thread, "with_owner")
+      assert {passed.passed_by, passed.wording} == {"hub", nil}
+      assert blip_results(blip, "ask_owner") == []
+      assert blip_results(blip, "answer_question") == []
+
+      assert [%{"message" => message, "question_id" => question_id}] = notices(blip)
+
+      assert message ==
+               ~s{I didn't get to "#{passed.thread_title}"'s question, so it's with you now.}
+
+      assert question_id == passed.id
+      assert %{state: :waiting} = Threads.state(thread.id)
+
+      assert {:ok, _answered} = Questions.answer(passed.id, "yes, since Monday")
+
+      assert {"ok", "The user answered: yes, since Monday",
+              %{"question_id" => passed.id, "answered_by" => "owner"}} == result!(thread)
+
+      idle!(thread.id)
+      idle!(blip)
     end
   end
 
@@ -793,7 +1031,7 @@ defmodule Photon.QuestionsTest do
       thread = thread!(project)
       idle!(thread.id)
       :ok = Durable.subscribe(blip)
-      {asked, _task} = ask!(thread, project, "Which deploy branch?")
+      {asked, _task} = ask!(thread, project, "Is the gate locked? (prose)")
 
       # Blip's scripted run answers the message in prose and settles it.
       assert %{status: "done"} = await_settled(blip, asked.submission_id)

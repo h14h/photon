@@ -6,7 +6,8 @@ defmodule Photon.Transcript do
 
     * which entries are shown (`shown?/1`), and what the user typed in a
       message (`typed/2`), without the note of the page Blip was told
-      about; tool results aren't shown on
+      about or the note in front of an answer to a thread's question, and
+      nothing for a thread's signal; tool results aren't shown on
       their own but inside the assistant entry whose call they answer, so
       the page keeps an index of results by call ID and of calls by ID
       (`index/1`, `add_result/2`, `add_calls/2`). The index leaves image
@@ -75,22 +76,34 @@ defmodule Photon.Transcript do
 
   @doc """
   A user message's text as the user typed it, from the message (or its
-  content) and the `"source"` it was submitted with. A message sent with
-  a page (`source["page"]`) starts with a note of that page for the model,
-  so only its last text part was typed; any other message's text is all of
-  it.
+  content) and the `"source"` it was submitted with:
+
+    * a message sent with a page (`source["page"]`) starts with a note of
+      that page for the model, so only its last text part was typed
+    * the owner's answer to a thread's question (source kind `"answer"`)
+      starts with a note that it went to the thread, so only its last
+      text part was typed
+    * a signal from a thread (source kind `"signal"`) is nothing the owner
+      typed
+    * any other message's text is all of it
   """
   @spec typed(Message.t() | Message.content(), map() | nil) :: String.t()
   def typed(%{"content" => content}, source), do: typed(content, source)
+  def typed(_content, %{"kind" => "signal"}), do: ""
 
-  def typed(parts, %{"page" => page}) when is_list(parts) and is_map(page) do
+  def typed(parts, %{"kind" => "answer"}) when is_list(parts), do: last_text(parts)
+
+  def typed(parts, %{"page" => page}) when is_list(parts) and is_map(page),
+    do: last_text(parts)
+
+  def typed(content, _source), do: Message.text_of(content)
+
+  defp last_text(parts) do
     parts
     |> Enum.filter(&match?(%{"type" => "text", "text" => text} when is_binary(text), &1))
     |> List.last(%{"text" => ""})
     |> Map.fetch!("text")
   end
-
-  def typed(content, _source), do: Message.text_of(content)
 
   @doc "Whether a conversation has nothing to show yet (only tool results, or nothing)."
   @spec empty?([Entry.t()]) :: boolean()

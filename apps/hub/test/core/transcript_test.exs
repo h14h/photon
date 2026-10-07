@@ -86,6 +86,31 @@ defmodule Photon.TranscriptTest do
       assert Transcript.typed("plain", %{"page" => @page}) == "plain"
     end
 
+    test "a thread's signal is nothing the owner typed" do
+      message =
+        Message.user([
+          Message.text(~s{[Thread update] Garden / "Fix the pump" (c_1) finished.}),
+          Message.text(~s{[Thread update] Garden / "Plant list" (c_2) failed.})
+        ])
+
+      assert Transcript.typed(message, %{"kind" => "signal", "signals" => []}) == ""
+      assert Transcript.typed("[Question q_1 from ...]", %{"kind" => "signal"}) == ""
+    end
+
+    test "the owner's answer to a question shows what they wrote, without the note" do
+      message =
+        Message.user([
+          Message.text(
+            ~s{[Your answer to q_1 from Garden / "Gate" (c_1) went straight to the thread.]}
+          ),
+          Message.text("green, like the shed")
+        ])
+
+      source = %{"kind" => "answer", "question_id" => "q_1", "title" => "Gate"}
+      assert Transcript.typed(message, source) == "green, like the shed"
+      assert Transcript.typed(message["content"], source) == "green, like the shed"
+    end
+
     test "images and other parts aren't text, and no text part reads as empty" do
       image = Message.image("image/png", "cG5n")
 

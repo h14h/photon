@@ -1,8 +1,8 @@
 defmodule PhotonWeb.ConversationComponentsTest do
   @moduledoc """
   The conversation pieces Blip's panel and a thread page share: the
-  context-file (a thread's and Blip's), `load_skill`, `ask_blip` and Blip's read and work calls'
-  lines, the ID prefix
+  context-file (a thread's and Blip's), `load_skill`, `ask_blip` and Blip's read, work and
+  question calls' lines, the ID prefix
   that keeps two conversations on one page apart, and images loaded from
   the page's own route.
   """
@@ -242,6 +242,47 @@ defmodule PhotonWeb.ConversationComponentsTest do
 
       assert label(action(call("stop_thread", %{"thread" => "c_1"}, "c1"), stopped)) ==
                "Didn't stop c_1"
+    end
+  end
+
+  describe "Blip's calls on a thread's question" do
+    test "name the question while they run, then the thread, linked" do
+      details = %{
+        "question_id" => "q_4",
+        "thread_id" => "c_9",
+        "title" => "Fix the pump",
+        "slug" => "garden"
+      }
+
+      for {tool, args, running, done} <- [
+            {"answer_question", %{"question_id" => "q_4", "answer" => "staging"}, "Answering q_4",
+             ~s(Answered "Fix the pump")},
+            {"ask_owner", %{"question_id" => "q_4", "question" => "Which branch?"},
+             "Asking you about q_4", ~s(Asked you about "Fix the pump")}
+          ] do
+        call = call(tool, args, "c1")
+        assert label(action(call, nil)) == running
+        html = action(call, ok("c1", "Text.", details))
+        assert label(html) == done
+
+        assert html |> LazyHTML.query("summary a") |> LazyHTML.attribute("href") ==
+                 ["/projects/garden/threads/c_9"]
+      end
+    end
+
+    test "a refused call says so" do
+      error = %{
+        "message" => Message.tool_result("c1", "Error: q_4 is with the user."),
+        "status" => "error",
+        "details" => %{},
+        "entry_id" => "e_1"
+      }
+
+      assert label(action(call("answer_question", %{"question_id" => "q_4"}, "c1"), error)) ==
+               "Couldn't answer q_4"
+
+      assert label(action(call("ask_owner", %{"question_id" => "q_4"}, "c1"), error)) ==
+               "Couldn't ask you about q_4"
     end
   end
 
