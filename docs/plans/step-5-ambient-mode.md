@@ -1063,24 +1063,30 @@ its local node.
    now". The flash says "Sent Blip a digest of 3 changes." (the count is
    new plus smaller, as `"last_digest"` records it). Blip's bubble says
    the thread in Garden finished. Open Blip's panel: above the reply is
-   a faint "Digest: 1 new" line; tap it to see the thread.
+   a faint "Digest: 1 new, 2 smaller" line (section 7.4's heading); tap
+   it to see the thread, with the project and the thread's start under
+   "Already seen, or done by you".
 4. Press "Send a digest now" again: "Nothing new since the last digest."
    No new message in Blip's panel.
 5. In Blip's panel, send `remember ignore: pump`. On Garden's page press
    New thread and send `on local: $ sleep 30; echo pump checked`, then go
-   Home and wait for it under Finished. In Settings press "Send a digest
-   now": Blip's panel shows only a new "Digest: 1 new" line, with no
-   reply under it, and no bubble appears.
+   Home and wait for it under Finished. Settings says "1 change waiting,
+   and 1 smaller one." Press "Send a digest now" ("Sent Blip a digest of
+   2 changes."): Blip's panel shows only a new "Digest: 1 new, 1 smaller"
+   line, with no reply under it, and no bubble appears.
 6. On Garden's page press New thread and send `on local: $ sleep 600`;
    on the thread's page press Stop. Press New thread again and send
-   `fail: the ladder is missing`. Go Home: the first is under Gone quiet,
-   the second under Failed.
+   `fail: the ladder is missing`. Blip tells you the second one failed,
+   as quiet mode does. Go Home: the first is under Gone quiet, the
+   second under Failed.
 7. In Settings, press "Run the review now". Blip lists both threads with
    their IDs. Home now shows "In Blip's review" on both rows.
 8. On Home, press Resolve on the stopped thread's row under Gone quiet.
    It leaves the list.
 9. Open Activity: "Told you: ..." rows from "Blip's follow-up on the
-   digest" and "Blip's follow-up on the daily review".
+   digest" and "Blip's follow-up on the daily review" (and the failure's,
+   from "Blip's follow-up on" the failed thread). The ignored digest of
+   step 5 has no row.
 10. In Settings, untick Ambient mode and save. The status block goes,
     and a thread that finishes now never reaches a digest.
 
@@ -1581,7 +1587,14 @@ M10. Blip's panel and the activity page's rows. After M5 and M6.
 M11. End to end. After M7, M8, M9 and M10.
 - `apps/hub/test/integration/machine_tools_e2e_test.exs` (section 11.4).
 - Walk section 8.4 by hand with `PHOTON_MOCK_MODEL=1
-  PHOTON_QUIET_AFTER_HOURS=0`, and fix what it shows.
+  PHOTON_QUIET_AFTER_HOURS=0`, and fix what it shows. Done through the
+  LiveViews (`Phoenix.LiveViewTest`, with `quiet_after_hours: 0`) against
+  the real local node, since no dev server was to be started: every step
+  behaved as written, but section 8.4's panel headings and step 5's
+  counts were wrong, and steps 6 and 9 left out the failure quiet mode
+  already reports; 8.4 is corrected. What only a browser shows (local
+  times, the UTC offset hook, a digest line staying open across a
+  rename) is left for the recorded demo.
 
 M12. Docs and the final checks. After M11.
 - `docs/projects-and-blip.md`: the status line at the top says all five

@@ -36,16 +36,39 @@ defmodule Photon.MachineToolsE2ETest do
   that runs in its project's folder and hears how it ended, the thread
   asks Blip one question Blip answers from its memory and one it passes to
   the owner, and the activity log says who asked for each thing Blip did.
+
+  The ambient mode test (`docs/plans/step-5-ambient-mode.md`, section
+  11.4) walks step 5's demo on the node: a thread the owner started
+  finishes there unseen, a digest tells Blip and Blip tells the owner, a
+  second digest has nothing to send, the daily review raises a stopped
+  thread and a failed one, and once ambient mode is off a finished thread
+  leaves nothing for a digest and the timers are gone.
   """
 
   use Photon.DataCase, async: false
 
+  import Ecto.Query, only: [from: 2]
   import Photon.Eventually
 
-  alias Photon.{Activity, Assistant, Machines, Projects, Questions, Schedules, Skills, Threads}
+  alias Photon.{
+    Activity,
+    Ambient,
+    Assistant,
+    Machines,
+    Projects,
+    Questions,
+    Schedules,
+    Signals,
+    Skills,
+    Threads
+  }
+
   alias Photon.Activity.Action
+  alias Photon.Durable.TaskRecord
   alias Photon.Machines.Op
   alias Photon.Questions.Question
+  alias Photon.Signals.DigestItem
+  alias Photon.Threads.Thread
   alias PhotonCore.Message
   alias PhotonNode.Executor.Journal
 
@@ -183,6 +206,48 @@ defmodule Photon.MachineToolsE2ETest do
       end,
       @wait
     )
+  end
+
+  # Waits until the thread's run has ended, however it ended.
+  defp await_ended(thread_id) do
+    assert eventually(
+             fn -> not Threads.busy?(thread_id) and Threads.get(thread_id).last_run_ended_at end,
+             @wait
+           )
+  end
+
+  # Waits until Blip has no run in progress.
+  defp await_blip_idle(c), do: assert(eventually(fn -> not Durable.busy?(c) end, @wait))
+
+  # The op of the call `conversation_id` has in flight.
+  defp open_op(conversation_id) do
+    eventually(
+      fn ->
+        Repo.one(
+          from(o in Op, where: o.conversation_id == ^conversation_id and o.status != "closed")
+        )
+      end,
+      @wait
+    )
+  end
+
+  # Blip's messages that ambient mode posted (`kind` is "digest" or
+  # "review"), oldest first.
+  defp ambient_entries(c, kind) do
+    for %{
+          kind: "user",
+          data: %{"source" => %{"kind" => "signal", "signals" => [%{"kind" => ^kind} | _]}}
+        } =
+          entry <- Durable.entries(c),
+        do: entry
+  end
+
+  # Moves a thread's last touch four days back, past the review's 72 hours.
+  defp backdate!(thread_id) do
+    at = DateTime.add(DateTime.utc_now(), -4 * 86_400, :second)
+    query = from(t in Thread, where: t.id == ^thread_id)
+    {1, _rows} = Repo.update_all(query, set: [last_run_ended_at: at, active_at: at])
+    :ok
   end
 
   defp kill(pid) do
@@ -481,5 +546,112 @@ defmodule Photon.MachineToolsE2ETest do
     assert %Action{origin_id: ^thread_id, summary: "Told you: " <> _told} = message
     assert %Action{origin: "thread", origin_id: ^thread_id, status: "ok"} = answered
     assert %Action{origin: "thread", origin_id: ^thread_id, status: "ok"} = passed
+  end
+
+  test "ambient mode on the node: a digest tells Blip of an unseen finish, the review raises quiet threads, and off leaves nothing",
+       %{conversation: c, node: node, ops_dir: ops_dir} do
+    start_node(node)
+
+    {:ok, project} =
+      Projects.create(%{"name" => "Garden", "purpose" => "Look after the garden."})
+
+    :ok = Ambient.configure(%{"ambient" => "true"})
+    %{"digest_task_id" => digest_task, "review_task_id" => review_task} = Signals.ambient_doc()
+
+    assert %{on?: true, next_digest_at: %DateTime{}, next_review_at: %DateTime{}} =
+             Ambient.status()
+
+    # A thread the owner started finishes on the node, and nobody opens it.
+    fixed = run_thread!(project, "on local: $ echo pump fixed")
+    assert output(fixed) == "pump fixed\n"
+    assert %{last_run_status: "done", seen_at: nil, started_by: "owner"} = Threads.get(fixed)
+    assert Ambient.status().pending == %{new: 1, smaller: 1}
+
+    # The digest tells Blip, and Blip tells the owner, in its own words.
+    assert %{outcome: "sent", count: 2} = Ambient.digest_now()
+    assert [digest] = ambient_entries(c, "digest")
+    assert Message.text_of(digest.data["message"]) =~ "[Digest]"
+    assert Message.text_of(digest.data["message"]) =~ "(#{fixed}) finished"
+    title = Threads.get(fixed).title
+
+    told =
+      await_entry(
+        c,
+        &(&1.kind == "assistant" and Message.text_of(&1.data["message"]) =~ "in Garden finished"),
+        @wait
+      )
+
+    assert Message.text_of(told.data["message"]) =~ "#{title} in Garden finished: pump fixed"
+
+    [message] =
+      activity!([
+        &(&1.kind == "message" and &1.origin == "follow_up" and &1.origin_id == "digest")
+      ])
+
+    assert %Action{tool: nil, summary: "Told you: " <> _told} = message
+    assert Repo.all(DigestItem) == []
+    await_blip_idle(c)
+
+    # A second digest has nothing new, and posts nothing.
+    assert %{outcome: "skipped_nothing", count: 0} = Ambient.digest_now()
+    assert [_digest] = ambient_entries(c, "digest")
+
+    # The owner stops one thread mid-command, and another fails.
+    {:ok, quiet} = Threads.start(project.id, "on local: $ sleep 600")
+    %Op{id: op_id} = open_op(quiet.id)
+    await_running(ops_dir, op_id)
+    :ok = Threads.stop(quiet.id)
+    await_ended(quiet.id)
+    assert eventually(fn -> match?(%Op{status: "closed"}, Repo.get(Op, op_id)) end, @wait)
+
+    {:ok, failed} = Threads.start(project.id, "fail: the ladder is missing")
+    await_ended(failed.id)
+    assert %{last_run_status: "failed"} = Threads.get(failed.id)
+
+    # The failure reached Blip as a thread update, as in quiet mode; once
+    # Blip is done with it, both threads are left alone for days.
+    await_blip_idle(c)
+    :ok = backdate!(quiet.id)
+    :ok = backdate!(failed.id)
+
+    assert %{outcome: "sent", count: 2, at: at} = Ambient.review_now()
+    assert [review] = ambient_entries(c, "review")
+    assert Message.text_of(review.data["message"]) =~ "[Daily review] 2 threads"
+
+    listed =
+      await_entry(
+        c,
+        &(&1.kind == "assistant" and
+            Message.text_of(&1.data["message"]) =~ "These have sat for a while:"),
+        @wait
+      )
+
+    for id <- [quiet.id, failed.id] do
+      assert Message.text_of(listed.data["message"]) =~ "(#{id})"
+      assert DateTime.compare(Threads.get(id).reviewed_at, at) == :eq
+    end
+
+    _rows =
+      activity!([
+        &(&1.kind == "message" and &1.origin == "follow_up" and &1.origin_id == "review")
+      ])
+
+    await_blip_idle(c)
+
+    # Off: the timers are retired, and a thread that finishes now leaves
+    # nothing for a digest.
+    :ok = Ambient.configure(%{"ambient" => "false"})
+    assert %{on?: false, next_digest_at: nil, next_review_at: nil} = Ambient.status()
+
+    checked = run_thread!(project, "on local: $ echo pump checked")
+    assert output(checked) == "pump checked\n"
+    assert Repo.all(DigestItem) == []
+
+    for task_id <- [digest_task, review_task] do
+      assert eventually(
+               fn -> match?(%TaskRecord{status: "aborted"}, Durable.task(task_id)) end,
+               @wait
+             )
+    end
   end
 end
