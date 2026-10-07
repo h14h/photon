@@ -948,7 +948,9 @@ defmodule PhotonWeb.ConversationComponents do
   def action_icon("read_context_file"), do: "hero-document-text-micro"
   def action_icon("write_context_file"), do: "hero-document-plus-micro"
   def action_icon("edit_context_file"), do: "hero-pencil-square-micro"
-  def action_icon("load_skill"), do: "hero-book-open-micro"
+  # A skill is something learned; an open book at this size reads as a
+  # pause sign.
+  def action_icon("load_skill"), do: "hero-academic-cap-micro"
   def action_icon("ask_blip"), do: "hero-chat-bubble-left-ellipsis-micro"
   def action_icon(name) when name in ~w(list_projects read_project), do: "hero-folder-micro"
   def action_icon("list_threads"), do: "hero-queue-list-micro"
@@ -959,7 +961,7 @@ defmodule PhotonWeb.ConversationComponents do
   def action_icon("stop_thread"), do: "hero-stop-circle-micro"
   def action_icon("answer_question"), do: "hero-chat-bubble-bottom-center-text-micro"
   def action_icon("ask_owner"), do: "hero-question-mark-circle-micro"
-  def action_icon("list_skills"), do: "hero-book-open-micro"
+  def action_icon("list_skills"), do: "hero-academic-cap-micro"
   def action_icon("set_project_skill"), do: "hero-adjustments-horizontal-micro"
 
   def action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
