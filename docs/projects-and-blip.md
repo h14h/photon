@@ -1,7 +1,8 @@
 # Projects, threads and Blip
 
-Status: written 2026-10-05. Steps 1, 2 and 3 of the build order are
-built (2026-10-06); the rest is still a design. See "Build order".
+Status: written 2026-10-05. Steps 1 to 4 of the build order are built
+(2026-10-06 to 2026-10-07); step 5 and what comes after it are still a
+design. See "Build order".
 
 Photon is meant to be a self-hostable replacement for two things at once:
 
@@ -74,6 +75,12 @@ skipped, and the project page or the conversation says so.
 > survives hub restarts. A project's are listed on its page and made or
 > edited in a form there; Blip's are still made by asking Blip and listed
 > on the home page.
+>
+> Step 4 let Blip make, list and cancel a project's schedules too. The
+> threads a schedule Blip made starts or wakes count as Blip's work, so
+> Blip hears how they end. The schedule also remembers whether you asked
+> for it or Blip set it up on its own, which decides whether the activity
+> log credits its firings to a schedule or to Blip's follow-up.
 
 **Thread.** One agent conversation inside a project, run on the hub by the
 durable harness. Its tools take a `machine` argument, so one thread can run
@@ -88,6 +95,24 @@ with a specific question. Blip answers from what it knows when it can do
 so confidently. Only when it can't does it ask you, as a message of its
 own in its conversation, and pass your answer back. The thread waits for
 the answer durably, and shows as waiting until it arrives.
+
+> Status: step 4 built `ask_blip` (`docs/plans/step-4-blip-as-coordinator.md`,
+> section 4). A question is a row, and the thread's tool call waits on it
+> as a durable task, so neither a hub restart nor a long wait loses it.
+> The question reaches Blip as a message in its conversation. Blip either
+> answers it with `answer_question` or asks you with `ask_owner`, and
+> while Blip has it the thread shows "Asking Blip", a state of its own,
+> so it doesn't look like a thread at work. If Blip's run ends without
+> doing either, the hub passes the question to you in the thread's own
+> words and says so in Blip's conversation. You answer from the question's
+> card in Blip's panel, from the home page, or from the thread page, where
+> the answer box takes the composer's place. Your answer goes straight to
+> the thread by code, never through the model, with Blip's wording of the
+> question when Blip asked in its own words; Blip sees it afterwards and
+> may remember it. Blip can answer a question it passed to you only in a
+> run you typed into (relaying what you said in chat), so its guess is
+> never recorded as your answer. Stopping the thread withdraws its
+> question.
 
 **Blip.** One conversation outside all projects, and your general-purpose
 assistant. Blip:
@@ -106,16 +131,45 @@ assistant. Blip:
 - keeps a log of everything it did and who asked (you, a thread, a
   schedule, its own follow-up)
 
+> Status: step 4 gave Blip tools over every project and thread
+> (`docs/plans/step-4-blip-as-coordinator.md`, section 5): list and read
+> projects and threads, start a project, start a thread, message and
+> stop threads, list, read, write and edit any project's context files,
+> manage a project's schedules, and turn skills on or off for a project.
+> Blip's own skill set stays yours to change. Two limits hold in code:
+>
+> - A run that carries a thread's question and that you haven't typed
+>   into can't start, wake, stop or schedule threads, or change a
+>   project. A question is a thread talking to Blip, and threads can't
+>   start work. Thread updates carry no such limit, since Blip acts on
+>   them to carry out what you asked.
+> - Between two of your messages, Blip can start or message threads at
+>   most 10 times on its own (`unattended_limit`), so Blip and a thread
+>   can't keep waking each other.
+>
+> The activity log is a table with one row per tool call Blip makes,
+> reads included, and one row for each message Blip sent you from a run
+> nobody typed into (a thread update, a question, a schedule). Each row
+> says who asked. You asked for runs you typed into or answered a
+> question in. A schedule asked when it is one you asked Blip for
+> (whether it repeats or not). Blip's follow-up covers schedules Blip made
+> on its own and runs a thread update started, naming the thread it
+> followed up on. A thread asked only when Blip handled that thread's
+> question, and each call is credited to the thread whose question it
+> was. The log is on the Activity page (`/activity`), filtered by who
+> asked or to changes only.
+
 ## Keeping track
 
 This is Blip's main job once there are many projects with several threads
 running in each. It rests on two layers:
 
 1. **Thread state, worked out by code, not by a model.** Each thread is in
-   one of: running, waiting on you (it asked a question and its run
-   ended, or its `ask_blip` question was passed to you), failed, done and
-   unread, idle, or quiet (unresolved and untouched for a while). These are
-   cheap to compute and drive the UI directly.
+   one of: running, asking Blip (its `ask_blip` question is with Blip),
+   waiting on you (it asked a question and its run ended, or its
+   `ask_blip` question was passed to you), failed, done and unread, idle,
+   or quiet (a run that was stopped part way, left alone for a while).
+   These are cheap to compute and drive the UI directly.
 2. **Blip's judgement on top.** State changes reach Blip as signals in its
    conversation, the way node reports did before step 1 removed them.
    Blip decides what is worth telling you, and in what words.
@@ -130,6 +184,46 @@ fast, so signals are filtered:
 
 The home page shows the state layer directly ("needs you", "running",
 "recently finished") whether or not Blip says anything.
+
+> Status: step 4 built both layers in quiet mode
+> (`docs/plans/step-4-blip-as-coordinator.md`, sections 2 and 3).
+>
+> A thread's state is derived when it is read, from facts the hub stores
+> as they happen: how and when its last run ended, whether that answer
+> ended with a question (its last paragraph ends in `?`), when you last
+> had its page open, whether you resolved it, whether it is busy, and its
+> open questions. Nothing stores the state itself. The rules, first match
+> wins: a question with you is waiting on you; a busy thread whose
+> question Blip has is asking Blip; a busy thread is running; a resolved
+> thread is idle; a failed run is failed; a finished run that asked is
+> waiting on you; a finished run you haven't looked at since is unread
+> ("Finished"); a stopped run, or one with no recorded end, left alone
+> for 72 hours (`quiet_after_hours`) is quiet; anything else is idle
+> ("Done" after a finished run). Unread has no time limit: finished work
+> stays listed until you open it or mark it read.
+>
+> Quiet means work left unfinished in substance. A run that finished
+> cleanly, asked nothing and has been read is done, however old, so it
+> never drifts into "Gone quiet". Step 5's daily review of quiet threads
+> builds on this meaning, so it won't spend model runs following up on
+> finished work.
+>
+> Resolve is how you say a thread is finished with: the thread page and
+> the home page can mark a thread resolved, which makes it idle. Any new
+> message reopens it.
+>
+> Quiet mode's filter, decided by code on each settled run: Blip hears
+> how every run it started or messaged ends (unless it was stopped),
+> every `ask_blip` question, and failures and end-of-run questions in
+> your threads. Whose a thread is comes from the messages the run
+> answered, not from who started the thread. Threads a project schedule
+> starts or wakes belong to whoever made the schedule: your schedules
+> make your threads, and schedules Blip made make Blip's. Updates that
+> arrive while Blip is busy merge into one queued message, and questions
+> into another, so a burst wakes Blip's model once. A question never
+> shares a message with an update. Ambient mode (digests, the daily
+> review, the setting) is step 5; the filter takes the mode as an
+> argument, so it plugs in there.
 
 ## Hub and nodes
 
@@ -205,6 +299,15 @@ the Nodes link.
 haven't looked at, what's running, what's gone quiet. This replaces
 today's overview.
 
+> Status: step 4 built the home page at `/`
+> (`docs/plans/step-4-blip-as-coordinator.md`, section 10.3): Needs you
+> (questions with an answer box each, threads whose last answer asked,
+> failed and finished threads, with Mark all read), Running (threads
+> asking Blip after the ones at work), Gone quiet, and Blip's schedules.
+> It dropped the overview's machine cards. The sidebar marks each thread
+> with its state, counts the threads that need you next to Home, and has
+> an Activity entry for the activity log.
+
 **Project page.** Purpose, context files, skills, threads, schedules.
 
 **Thread page.** The conversation, as today's session page shows it, with
@@ -237,6 +340,15 @@ Each step leaves a working app.
 > only its own schedules until step 4. Asked for recurring work in a
 > project, Blip tells you to add it with New schedule on the project's
 > page.
+>
+> Step 4 (`docs/plans/step-4-blip-as-coordinator.md`) built Blip as
+> coordinator: its tools over projects and threads, `ask_blip`, thread
+> state and the signals quiet mode lets through, the home page, and the
+> activity log. Blip's schedule tools now reach project schedules too. It
+> left out, for later: ambient mode (step 5), Blip resolving, archiving
+> or deleting threads and deleting projects, and pruning the activity
+> log. Every flow can be tried with `PHOTON_MOCK_MODEL=1`; section 8.3 of
+> the plan walks through it.
 
 1. **Machine tools on the hub.** Make nodes executors and give Blip shell
    and view_image on any machine, replacing `run_on_node` and node

@@ -6,10 +6,14 @@ defmodule Photon do
 
   The contexts (the APIs the web layer and nodes use):
 
-    * `Photon.Assistant`: Blip's conversation and memory, its tools over
-      its own skills and schedules and its read tools over every project
-      and thread, the page the user has open under it, and its
-      `"assistant"` profile for the durable harness
+    * `Photon.Assistant`: Blip's conversation and memory, the page the
+      user has open under it, its `"assistant"` profile for the durable
+      harness, and its tools: over every project and thread (read, start,
+      message, stop, context files, project schedules and skills), over
+      threads' questions (answer one, or ask the owner), and over its own
+      memory, skills and schedules. Who asked for each of its runs, and
+      what a thread's question may not make it do, is
+      `Photon.Assistant.Origin`
     * `Photon.Projects`: projects (a purpose, for any body of work) and
       their context files, the Markdown notes the user and the project's
       threads share
@@ -44,16 +48,20 @@ defmodule Photon do
 
   None of them adds a process for a project, a thread, a skill, a
   schedule, a signal, a question or an operation: projects, context
-  files, skills, questions and activity are rows, a thread is a conversation in the durable harness, a signal
-  is a message in Blip's, a schedule is a row and a durable task waiting
-  for its time, and an operation is a row its tool call waits on.
+  files, skills, questions and activity are rows, a thread is a
+  conversation in the durable harness, a signal is a message in Blip's,
+  a schedule is a row and a durable task waiting for its time, and an
+  operation or a question is a row its tool call waits on. A thread's
+  state is never stored: `Photon.Threads.State` derives it from facts on
+  the thread's row when it is read.
 
   Layers, after *Designing Elixir Systems with OTP*: each context's
   moduledoc names its pure core and its processes. The pure modules are
   `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall,
   Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Page,
-  Readout, MockScript, MockCoordinator}`, `Photon.Transcript` (what a conversation page shows),
-  `Photon.Projects.Rules`, `Photon.Threads.{Rules, State, Prompt, MockScript}`,
+  Origin, Readout, MockScript, MockCoordinator}`, `Photon.Transcript`
+  (what a conversation page shows), `Photon.Projects.Rules`,
+  `Photon.Threads.{Rules, State, Prompt, MockScript, MockTitle}`,
   `Photon.Signals.{Rules, Text}`, `Photon.Questions.Rules`,
   `Photon.Activity.Rules`,
   `Photon.Skills.{Rules, SkillMd, Source, Prompt, MockPhrases}`,
@@ -64,8 +72,8 @@ defmodule Photon do
   `Photon.Application` holds the lifecycle plan. `PhotonWeb` is the
   boundary for browsers and nodes: its LiveViews, channel and controllers
   call the contexts above and hold no business logic; its pure
-  `PhotonWeb.{ProjectText, ScheduleText, SkillText}` only put the pages'
-  words together.
+  `PhotonWeb.{ProjectText, ScheduleText, SkillText, ThreadText,
+  ActivityText}` only put the pages' words together.
   """
 
   # The hub's contexts, each a boundary of its own; this root exports
