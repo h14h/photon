@@ -71,6 +71,20 @@ defmodule PhotonWeb.ConversationView do
     |> stream(:entries, Enum.filter(entries, &Transcript.shown?/1))
   end
 
+  @doc """
+  Closes the questions the conversation shows as open whose rows say
+  they are answered or withdrawn (`Photon.Transcript.close_from_rows/2`).
+  The page reads `rows` for `open_questions/1` after mounting.
+  """
+  @spec close_questions(Socket.t(), [map()]) :: Socket.t()
+  def close_questions(socket, rows),
+    do: update(socket, :questions, &Transcript.close_from_rows(&1, rows))
+
+  @doc "The IDs of the questions the conversation shows as open."
+  @spec open_questions(Socket.t()) :: [String.t()]
+  def open_questions(socket),
+    do: for({id, %{status: :open}} <- socket.assigns.questions, do: id)
+
   defp configure(socket, nil), do: socket
   defp configure(socket, dom_id), do: stream_configure(socket, :entries, dom_id: dom_id)
 

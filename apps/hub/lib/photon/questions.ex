@@ -105,6 +105,15 @@ defmodule Photon.Questions do
   def get(id) when is_binary(id), do: Repo.get(Question, id)
   def get(_id), do: nil
 
+  @doc "The questions with IDs among `ids`, in no particular order. One query."
+  @spec get_many([String.t()]) :: [Question.t()]
+  def get_many([]), do: []
+
+  def get_many(ids) do
+    query = from(q in Question, where: q.id in ^ids)
+    Repo.all(query)
+  end
+
   @doc "The question tool task `task_id` asked, or nil."
   @spec by_task(String.t()) :: Question.t() | nil
   def by_task(task_id) when is_binary(task_id), do: Repo.get_by(Question, task_id: task_id)

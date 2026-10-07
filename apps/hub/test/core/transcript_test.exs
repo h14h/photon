@@ -505,6 +505,35 @@ defmodule Photon.TranscriptTest do
       # Nor does an open after the end.
       assert Transcript.questions([ask_owner_result("c3", "q_1")], [], answered) == answered
     end
+
+    test "the question rows close what the conversation shows as open" do
+      known =
+        Transcript.questions(
+          [
+            ask_owner_result("c1", "q_1"),
+            ask_owner_result("c2", "q_2"),
+            answer_entry("q_3", "x")
+          ],
+          []
+        )
+
+      rows = [
+        %{id: "q_1", status: "answered", answer: "staging", thread_title: "Gate"},
+        %{id: "q_2", status: "with_owner", answer: nil, thread_title: "Gate"},
+        %{id: "q_3", status: "withdrawn", answer: nil, thread_title: "Gate"},
+        %{id: "q_4", status: "withdrawn", answer: nil, thread_title: "Shed"}
+      ]
+
+      assert Transcript.close_from_rows(known, rows) == %{
+               "q_1" => %{status: :answered, answer: "staging", title: "Gate"},
+               "q_2" => @open,
+               # Answered stays answered, and a row's answer may be blank.
+               "q_3" => known["q_3"],
+               "q_4" => %{status: :withdrawn, answer: nil, title: "Shed"}
+             }
+
+      assert Transcript.close_from_rows(known, []) == known
+    end
   end
 
   describe "a signal message's lines" do

@@ -69,9 +69,14 @@ defmodule Photon.Signals.Text do
     "[Your answer to #{field(ref, "question_id")} from #{where(ref)} went straight to the thread.]"
   end
 
-  @doc "The notice when the hub passed a question Blip didn't get to on to the owner."
+  @doc """
+  The notice when the hub passed a question Blip didn't handle with a
+  tool on to the owner. It says nothing about why: Blip may well have
+  asked it in prose already.
+  """
   @spec escalated(map()) :: String.t()
-  def escalated(ref), do: "I didn't get to #{title(ref)}'s question, so it's with you now."
+  def escalated(ref),
+    do: "Here's #{title(ref)}'s question as the thread asked it. Your answer goes straight to it."
 
   @doc "The notice when a thread whose question was with the owner was stopped."
   @spec withdrawn(map()) :: String.t()

@@ -84,7 +84,8 @@ defmodule Photon.Signals.TextTest do
 
   test "the notices name the thread by title, with no question ID" do
     assert Text.escalated(@question) ==
-             ~s{I didn't get to "Fix the pump"'s question, so it's with you now.}
+             ~s{Here's "Fix the pump"'s question as the thread asked it. } <>
+               "Your answer goes straight to it."
 
     assert Text.withdrawn(@question) ==
              ~s{"Fix the pump" was stopped, so its question was withdrawn.}

@@ -41,6 +41,7 @@ defmodule PhotonWeb.HomeLive do
 
   use PhotonWeb, :live_view
 
+  import PhotonWeb.ConversationComponents, only: [answer_box: 1]
   import PhotonWeb.ScheduleComponents
 
   alias Photon.{Assistant, Questions, Schedules, Threads}
@@ -440,7 +441,8 @@ defmodule PhotonWeb.HomeLive do
       <.link
         navigate={~p"/projects/#{@entry.project.slug}"}
         id={"#{@id}-project"}
-        class="shrink-0 text-ink-faint transition hover:text-ink"
+        class="max-w-[50%] shrink-0 truncate text-ink-faint transition hover:text-ink"
+        title={@entry.project.name}
       >
         {@entry.project.name}
       </.link>
@@ -449,6 +451,7 @@ defmodule PhotonWeb.HomeLive do
         navigate={thread_path(@entry)}
         id={"#{@id}-thread"}
         class="min-w-0 truncate font-medium text-ink transition hover:text-accent-strong"
+        title={@entry.thread.title}
       >
         {@entry.thread.title}
       </.link>
@@ -464,12 +467,13 @@ defmodule PhotonWeb.HomeLive do
   slot :actions
 
   # A thread's row: its mark, where it is, a line about it, when, and any
-  # actions.
+  # actions. On a narrow screen the time and actions wrap under the text
+  # rather than squeezing it (the text keeps at least 12rem).
   defp thread_row(assigns) do
     ~H"""
     <div
       id={@id}
-      class="group flex items-start gap-3 rounded-xl border border-line bg-surface px-4 py-3 shadow-xs transition hover:border-line-strong"
+      class="group flex flex-wrap items-start gap-x-3 gap-y-1.5 rounded-xl border border-line bg-surface px-4 py-3 shadow-xs transition hover:border-line-strong"
       {@rest}
     >
       <span class="mt-1 flex size-3.5 shrink-0 items-center justify-center">
@@ -480,7 +484,7 @@ defmodule PhotonWeb.HomeLive do
           class="size-3.5 text-ink-faint"
         />
       </span>
-      <div class="min-w-0 flex-1">
+      <div class="min-w-0 flex-1 basis-48">
         <.place id={@id} entry={@entry} />
         <p
           :for={detail <- @detail}
@@ -490,11 +494,16 @@ defmodule PhotonWeb.HomeLive do
           {render_slot(detail)}
         </p>
       </div>
-      <span :for={at <- @at} class="mt-0.5 shrink-0 text-[12px] text-ink-faint">
-        {render_slot(at)}
-      </span>
-      <div :if={@actions != []} class="flex shrink-0 items-center gap-1.5">
-        {render_slot(@actions)}
+      <div
+        :if={@at != [] or @actions != []}
+        class={["ml-auto flex shrink-0 items-center gap-3", @actions == [] && "mt-0.5"]}
+      >
+        <span :for={at <- @at} class="text-[12px] text-ink-faint">
+          {render_slot(at)}
+        </span>
+        <div :if={@actions != []} class="flex items-center gap-1.5">
+          {render_slot(@actions)}
+        </div>
       </div>
     </div>
     """
@@ -526,12 +535,12 @@ defmodule PhotonWeb.HomeLive do
     ~H"""
     <div
       id={@id}
-      class="flex items-start gap-3 rounded-xl border border-warn/35 bg-surface px-4 py-3 shadow-xs"
+      class="flex flex-wrap items-start gap-x-3 gap-y-1.5 rounded-xl border border-warn/35 bg-surface px-4 py-3 shadow-xs"
     >
       <span class="mt-1 flex size-3.5 shrink-0 items-center justify-center">
         <.state_mark state={:waiting} class="size-3.5" />
       </span>
-      <div class="min-w-0 flex-1">
+      <div class="min-w-0 flex-1 basis-48">
         <.place id={@id} entry={@entry} />
         <p
           :if={@entry.thread.last_run_note}
@@ -541,7 +550,7 @@ defmodule PhotonWeb.HomeLive do
           {@entry.thread.last_run_note}
         </p>
       </div>
-      <div class="flex shrink-0 items-center gap-1.5">
+      <div class="ml-auto flex shrink-0 items-center gap-1.5">
         <.button navigate={thread_path(@entry)} id={"#{@id}-open"} size="sm">Open</.button>
         <.resolve id={"#{@id}-resolve"} thread_id={@entry.thread.id} />
       </div>
@@ -586,7 +595,7 @@ defmodule PhotonWeb.HomeLive do
             {if(@hub?, do: @question.question, else: @question.wording)}
           </p>
           <p :if={@hub?} id={"#{@id}-note"} class="mt-1 text-[12.5px] text-ink-faint">
-            Blip didn't get to this one, so this is the thread's own question.
+            In the thread's own words. Your answer goes straight to it.
           </p>
           <.form
             for={@row.form}
@@ -596,15 +605,7 @@ defmodule PhotonWeb.HomeLive do
             class="mt-3"
           >
             <input type="hidden" name="question_id" value={@row.id} />
-            <.input
-              field={@row.form[:text]}
-              id={"#{@id}-answer"}
-              type="textarea"
-              rows="2"
-              placeholder="Your answer goes straight to the thread"
-              phx-debounce="300"
-              class={[field_class(), "h-auto min-h-16 resize-y py-2 leading-relaxed"]}
-            />
+            <.answer_box field={@row.form[:text]} id={"#{@id}-answer"} />
             <div class="mt-2 flex items-center gap-3">
               <p
                 :if={@row.error}

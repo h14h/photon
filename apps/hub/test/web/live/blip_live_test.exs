@@ -788,6 +788,31 @@ defmodule PhotonWeb.BlipLiveTest do
       assert [queued] = Assistant.queued(c)
       assert has_element?(blip, "#queued-#{queued.id}", "main")
       refute Enum.any?(Durable.entries(c), &(&1.data["source"]["kind"] == "answer"))
+
+      # It has already gone to the thread, so it can't be taken back.
+      assert has_element?(blip, "#queued-#{queued.id}-sent")
+      refute has_element?(blip, "#queued-#{queued.id} button[phx-click=withdraw]")
+      render_click(blip, "withdraw", %{"id" => queued.id})
+      assert [%{id: id, status: "queued"}] = Assistant.queued(c)
+      assert id == queued.id
+    end
+
+    test "a card whose question was settled where the conversation doesn't show it opens closed",
+         %{conn: conn, blip: blip, project: project, conversation: c} do
+      {_thread, passed} = passed!(project, c, "which deploy branch?")
+      card = "#question-card-#{passed.id}"
+
+      # Answered by Blip with nothing in its conversation yet.
+      {:ok, _answered} =
+        Durable.commit(&Questions.answer_tx(&1, passed.id, "staging", {:blip, true}))
+
+      _ = render(blip)
+      assert has_element?(blip, "#{card}[data-status=open]")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      fresh = find_live_child(view, "blip")
+      assert has_element?(fresh, "#{card}[data-status=answered]", "staging")
+      refute has_element?(fresh, "#{card}-answer")
     end
 
     test "a refused answer says why and keeps what was typed", %{
@@ -889,7 +914,7 @@ defmodule PhotonWeb.BlipLiveTest do
       _ = render(blip)
       assert has_element?(blip, "#entries-#{notice.id} #{card}[data-status=open]")
       assert has_element?(blip, "#{card}-text", "Is the gate locked? (prose)")
-      assert has_element?(blip, "#{card}-note", "Blip didn't get to this one")
+      assert has_element?(blip, "#{card}-note", "In the thread's own words")
 
       blip |> element("#{card}-answer") |> render_click()
       blip |> form("#composer", message: %{text: "yes"}) |> render_submit()

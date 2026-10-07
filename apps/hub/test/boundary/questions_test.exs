@@ -574,7 +574,8 @@ defmodule Photon.QuestionsTest do
       assert [%{"message" => message, "question_id" => question_id}] = notices(blip)
 
       assert message ==
-               ~s{I didn't get to "#{passed.thread_title}"'s question, so it's with you now.}
+               ~s{Here's "#{passed.thread_title}"'s question as the thread asked it. } <>
+                 "Your answer goes straight to it."
 
       assert question_id == passed.id
       assert %{state: :waiting} = Threads.state(thread.id)
@@ -1047,7 +1048,10 @@ defmodule Photon.QuestionsTest do
       assert_receive {:questions_changed, _}
 
       assert [%{"message" => message, "question_id" => question_id} = notice] = notices(blip)
-      assert message == ~s{I didn't get to "files"'s question, so it's with you now.}
+
+      assert message ==
+               ~s{Here's "files"'s question as the thread asked it. Your answer goes straight to it.}
+
       assert question_id == asked.id
 
       # The panel draws it as the question's card, in the thread's own words.

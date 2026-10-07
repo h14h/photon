@@ -213,6 +213,29 @@ defmodule Photon.Transcript do
     Enum.reduce(events, known, &fold_question/2)
   end
 
+  @doc """
+  Folds what the questions' rows say into `questions` (from
+  `questions/3`): one the conversation shows as open whose row is
+  answered or withdrawn closes, so a card opened from a fresh read can't
+  offer Answer for a question settled where the conversation doesn't
+  show it. Rows are maps with `id`, `status`, `answer` and
+  `thread_title`; open rows change nothing.
+  """
+  @spec close_from_rows(%{String.t() => question()}, [map()]) :: %{String.t() => question()}
+  def close_from_rows(questions, rows) do
+    rows
+    |> Enum.flat_map(&row_event/1)
+    |> Enum.reduce(questions, &fold_question/2)
+  end
+
+  defp row_event(%{id: id, status: "answered"} = row),
+    do: [event(id, :answered, Map.get(row, :thread_title), text_or_nil(Map.get(row, :answer)))]
+
+  defp row_event(%{id: id, status: "withdrawn"} = row),
+    do: [event(id, :withdrawn, Map.get(row, :thread_title), nil)]
+
+  defp row_event(_row), do: []
+
   defp question_events(%{kind: "tool_result", data: data}) do
     details = if is_map(data["details"]), do: data["details"], else: %{}
 

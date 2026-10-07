@@ -274,7 +274,9 @@ defmodule PhotonWeb.HomeLiveTest do
 
       view = home(conn)
       assert has_element?(view, "#question-#{asked.id}-text", "which deploy branch?")
-      assert has_element?(view, "#question-#{asked.id}-note", "Blip didn't get to this one")
+      assert has_element?(view, "#question-#{asked.id}-note", "In the thread's own words")
+      # Enter sends the answer, as in the composer.
+      assert has_element?(view, "#question-#{asked.id}-answer[phx-hook$=AnswerBox]")
     end
 
     test "a question asked from another process appears, and moves when it is passed on", %{

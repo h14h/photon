@@ -576,23 +576,35 @@ defmodule PhotonWeb.ThreadLive do
     doc: "whether Stop is here (without a model it's in the header)"
 
   # In the composer's place: each question with the owner, with its own
-  # answer form, and Stop.
+  # answer form, and Stop. The questions scroll inside at most 60% of the
+  # screen, under the conversation, so a long question (or two) on a
+  # phone can't push the forms or Stop off it; Stop stays below them.
   defp owner_questions(assigns) do
     ~H"""
     <div
       id="thread-questions"
-      class="blip-clear-x shrink-0 border-t border-line bg-canvas/90 px-3 pt-3 pb-3 backdrop-blur sm:px-4 sm:pb-4"
+      class="blip-clear-x flex max-h-[60dvh] shrink-0 flex-col border-t border-line bg-canvas/90 backdrop-blur"
     >
-      <div class="mx-auto w-full max-w-3xl space-y-2.5">
-        <.asking_blip :if={@with_blip != []} questions={@with_blip} />
-        <.queued_messages queued={@queued} id_prefix="thread-" />
-        <.question_banner
-          :for={question <- @questions}
-          question={question}
-          draft={Map.get(@drafts, question.id, "")}
-          error={Map.get(@errors, question.id)}
-        />
-        <div :if={@stop} class="flex items-center gap-3 px-1">
+      <div
+        id="thread-questions-list"
+        class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pt-3 sm:px-4"
+      >
+        <div class={[
+          "mx-auto w-full max-w-3xl space-y-2.5",
+          if(@stop, do: "pb-2", else: "pb-3 sm:pb-4")
+        ]}>
+          <.asking_blip :if={@with_blip != []} questions={@with_blip} />
+          <.queued_messages queued={@queued} id_prefix="thread-" />
+          <.question_banner
+            :for={question <- @questions}
+            question={question}
+            draft={Map.get(@drafts, question.id, "")}
+            error={Map.get(@errors, question.id)}
+          />
+        </div>
+      </div>
+      <div :if={@stop} class="shrink-0 px-3 pt-1 pb-3 sm:px-4 sm:pb-4">
+        <div class="mx-auto flex w-full max-w-3xl items-center gap-3 px-1">
           <p class="flex-1 text-[12px] leading-relaxed text-ink-faint">
             The thread is waiting for your answer.
           </p>
@@ -642,28 +654,21 @@ defmodule PhotonWeb.ThreadLive do
               <.local_time id={"#{@id}-at"} at={@passed_at} />
             </span>
           </div>
+          <%!-- A long question scrolls on its own, so its answer box stays near. --%>
           <p
             id={"#{@id}-text"}
-            class="mt-1 text-[14.5px] leading-relaxed whitespace-pre-line text-ink"
+            class="mt-1 max-h-[30dvh] overflow-y-auto overscroll-contain text-[14.5px] leading-relaxed whitespace-pre-line text-ink"
           >
             {@text}
           </p>
           <p :if={@hub?} id={"#{@id}-note"} class="mt-1 text-[12.5px] text-ink-faint">
-            Blip didn't get to this one, so this is the thread's own question.
+            In the thread's own words. Your answer goes straight to it.
           </p>
         </div>
       </div>
       <.form for={@form} id={"#{@id}-form"} phx-change="draft" phx-submit="answer" class="mt-3">
         <input type="hidden" name="question_id" value={@question.id} />
-        <.input
-          field={@form[:text]}
-          id={"#{@id}-answer"}
-          type="textarea"
-          rows="2"
-          placeholder="Your answer goes straight to the thread"
-          phx-debounce="300"
-          class={[field_class(), "h-auto min-h-16 resize-y py-2 leading-relaxed"]}
-        />
+        <.answer_box field={@form[:text]} id={"#{@id}-answer"} />
         <div class="mt-2 flex items-center gap-3">
           <p :if={@error} id={"#{@id}-error"} class="flex items-center gap-1.5 text-[12.5px] text-bad">
             <.icon name="hero-exclamation-circle-micro" class="size-4 shrink-0" />

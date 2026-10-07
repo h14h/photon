@@ -49,7 +49,8 @@ defmodule Photon.Assistant.NoticeTest do
     test "the hub's escalation notice says the thread's own question" do
       notice =
         entry("error", %{
-          "message" => ~s(I didn't get to "Gate"'s question, so it's with you now.),
+          "message" =>
+            ~s(Here's "Gate"'s question as the thread asked it. Your answer goes straight to it.),
           "notice" => true,
           "question_id" => "q_2",
           "question_notice" => "escalated",

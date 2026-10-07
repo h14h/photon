@@ -674,7 +674,7 @@ defmodule PhotonWeb.ThreadLiveTest do
 
       banner = "#thread-question-#{asked.id}"
       assert has_element?(view, "#{banner}-text", "what colour is the gate?")
-      assert has_element?(view, "#{banner}-note", "Blip didn't get to this one")
+      assert has_element?(view, "#{banner}-note", "In the thread's own words")
     end
 
     test "two questions with the owner get a banner and a form each", %{
@@ -718,6 +718,18 @@ defmodule PhotonWeb.ThreadLiveTest do
              )
 
       assert has_element?(view, "#thread-question-#{second.id}-answer")
+
+      # The questions scroll in their own area; Stop stays under it, in view.
+      assert ids(view, "#thread-questions-list [id^=thread-question-][id$=-form]") == [
+               "thread-question-#{first.id}-form",
+               "thread-question-#{second.id}-form"
+             ]
+
+      assert has_element?(view, "#thread-questions #thread-stop")
+      refute has_element?(view, "#thread-questions-list #thread-stop")
+
+      # Enter sends an answer, as in the composer.
+      assert has_element?(view, "#thread-question-#{first.id}-answer[phx-hook$=AnswerBox]")
     end
   end
 

@@ -44,7 +44,8 @@ defmodule PhotonWeb.BlipLive do
   question stands is `@questions`, which `PhotonWeb.ConversationView`
   folds from the conversation, the answers still queued included, so a
   card stops offering `Answer` as soon as the answer is sent, even while
-  Blip is busy. Only a question that is open on the page takes a reply:
+  Blip is busy. On mount, the rows of the questions that fold as open
+  close any that were settled where the conversation doesn't show it. Only a question that is open on the page takes a reply:
   the ID comes from the browser.
 
   The conversation is shared with a project's thread page.
@@ -69,7 +70,7 @@ defmodule PhotonWeb.BlipLive do
 
   import PhotonWeb.ConversationComponents
 
-  alias Photon.{Assistant, Markdown, Transcript}
+  alias Photon.{Assistant, Markdown, Questions, Transcript}
   alias Photon.Assistant.Notice
   alias PhotonWeb.ConversationView
 
@@ -110,6 +111,8 @@ defmodule PhotonWeb.BlipLive do
         queued: Assistant.queued(conversation)
       )
 
+    open = ConversationView.open_questions(socket)
+    socket = ConversationView.close_questions(socket, Questions.get_many(open))
     {:ok, socket, layout: false}
   end
 

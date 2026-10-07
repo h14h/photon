@@ -417,7 +417,7 @@ defmodule PhotonWeb.ConversationComponents do
             id={"#{@dom_id}-note"}
             class="mt-1 text-[12.5px] text-ink-faint"
           >
-            Blip didn't get to this one, so this is the thread's own question.
+            In the thread's own words. Your answer goes straight to it.
           </p>
           <div :if={@status == :open} class="mt-2.5 flex items-center gap-2">
             <.button
@@ -1162,10 +1162,49 @@ defmodule PhotonWeb.ConversationComponents do
   end
 
   @doc """
+  The answer box of a thread's question with the owner, inside its form
+  (the home page's question rows and the thread page's banners): Enter
+  sends, Shift+Enter starts a new line, as in the composer.
+  """
+  attr :field, Phoenix.HTML.FormField, required: true
+  attr :id, :string, required: true
+
+  @spec answer_box(map()) :: Phoenix.LiveView.Rendered.t()
+  def answer_box(assigns) do
+    ~H"""
+    <.input
+      field={@field}
+      id={@id}
+      type="textarea"
+      rows="2"
+      placeholder="Your answer goes straight to the thread"
+      phx-debounce="300"
+      phx-hook=".AnswerBox"
+      enterkeyhint="send"
+      class={[field_class(), "h-auto min-h-16 resize-y py-2 leading-relaxed"]}
+    />
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".AnswerBox">
+      export default {
+        mounted() {
+          this.el.addEventListener("keydown", e => {
+            if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+              e.preventDefault()
+              if (this.el.value.trim() !== "") this.el.form.requestSubmit()
+            }
+          })
+        }
+      }
+    </script>
+    """
+  end
+
+  @doc """
   The messages waiting in a conversation's inbox, each with whether it
   steers the current work or comes next, and a button to withdraw it
-  (`"withdraw"` with its ID). Shown above the composer, or above whatever
-  takes the composer's place.
+  (`"withdraw"` with its ID). The owner's answer to a thread's question
+  has no such button: it has already gone to the thread, so its chip
+  says so instead. Shown above the composer, or above whatever takes the
+  composer's place.
   """
   attr :queued, :list, required: true
   attr :id_prefix, :string, default: ""
@@ -1179,9 +1218,18 @@ defmodule PhotonWeb.ConversationComponents do
         id={"#{@id_prefix}queued-#{s.id}"}
         class="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-surface py-1 pr-1 pl-3 text-[12px] text-ink-soft"
       >
-        <span class="font-medium text-ink-faint">{if(s.mode == "steer", do: "Steer", else: "Next")}</span>
+        <span class="font-medium text-ink-faint">{queued_label(s)}</span>
         <span class="max-w-60 truncate">{queued_text(s.content)}</span>
+        <span
+          :if={answer?(s)}
+          id={"#{@id_prefix}queued-#{s.id}-sent"}
+          class="rounded-full p-0.5 text-ok"
+          title="Already sent to the thread. Blip reads it next."
+        >
+          <.icon name="hero-check-micro" class="size-3.5" />
+        </span>
         <button
+          :if={!answer?(s)}
           phx-click="withdraw"
           phx-value-id={s.id}
           class="rounded-full p-0.5 hover:bg-sunken"
@@ -1192,6 +1240,18 @@ defmodule PhotonWeb.ConversationComponents do
       </span>
     </div>
     """
+  end
+
+  # The owner's answer to a thread's question, relayed to Blip.
+  defp answer?(%{content: %{"source" => %{"kind" => "answer"}}}), do: true
+  defp answer?(_submission), do: false
+
+  defp queued_label(submission) do
+    cond do
+      answer?(submission) -> "Answered"
+      submission.mode == "steer" -> "Steer"
+      true -> "Next"
+    end
   end
 
   # What a queued message says on its chip: what was typed, or for a

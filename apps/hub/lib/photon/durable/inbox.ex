@@ -73,8 +73,16 @@ defmodule Photon.Durable.Inbox do
     end
   end
 
-  @doc "Whether a submission can still be withdrawn: only while it is queued."
+  @doc """
+  Whether a submission can still be withdrawn: only while it is queued,
+  and never the owner's answer to a thread's question (source kind
+  `"answer"`), which has already gone to the thread; the copy in this
+  inbox only tells the conversation what was said.
+  """
   @spec withdrawable?(Submission.t() | nil) :: boolean()
+  def withdrawable?(%Submission{status: "queued", content: %{"source" => %{"kind" => "answer"}}}),
+    do: false
+
   def withdrawable?(%Submission{status: "queued"}), do: true
   def withdrawable?(_submission), do: false
 end
