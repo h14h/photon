@@ -546,4 +546,39 @@ defmodule Photon.ThreadsTest do
       assert Repo.all(DigestItem) == []
     end
   end
+
+  describe "review marks" do
+    test "mark_reviewed_tx/3 and unmark_reviewed_tx/2 set and clear the column, and announce once per project",
+         %{project: project} do
+      {:ok, other} = Projects.create(%{"purpose" => "Paint the house.", "name" => "House"})
+      one = idle_thread!(project, "hello")
+      two = idle_thread!(project, "files")
+      three = idle_thread!(other, "hello")
+      untouched = idle_thread!(project, "hello again")
+      # The Store announces a commit before the next one runs, so after
+      # this one the runs' own announcements are out of the way.
+      :ok = Durable.commit(fn _tx -> :ok end)
+      :ok = Projects.subscribe()
+      now = DateTime.utc_now()
+
+      assert Durable.commit(&Threads.mark_reviewed_tx(&1, [one, two, three], now)) == :ok
+      assert_receive {:projects_changed, project_id}
+      assert_receive {:projects_changed, other_id}
+      refute_receive {:projects_changed, _}, 50
+      assert Enum.sort([project_id, other_id]) == Enum.sort([project.id, other.id])
+
+      assert Enum.map([one, two, three], &Threads.get(&1).reviewed_at) == [now, now, now]
+      assert Threads.get(untouched).reviewed_at == nil
+      assert Threads.state(one).thread.reviewed_at == now
+
+      assert Durable.commit(&Threads.unmark_reviewed_tx(&1, [one, two])) == :ok
+      assert_receive {:projects_changed, project_id}
+      refute_receive {:projects_changed, _}, 50
+      assert project_id == project.id
+      assert Enum.map([one, two, three], &Threads.get(&1).reviewed_at) == [nil, nil, now]
+
+      assert Durable.commit(&Threads.unmark_reviewed_tx(&1, [])) == :ok
+      refute_receive {:projects_changed, _}, 50
+    end
+  end
 end

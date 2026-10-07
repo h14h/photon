@@ -120,7 +120,7 @@ be one step. A crash between them would leave a digest timer firing with
 the setting off, or the setting on with no timer.
 
 So ambient mode's settings are a durable doc, `global/ambient`, written
-by `Photon.Ambient.configure/2` in the same commit that arms or retires
+by `Photon.Ambient.configure/1` in the same commit that arms or retires
 the timers. The Settings page shows and saves them with the rest of its
 form (section 2.2); only the storage differs. The doc:
 
@@ -133,7 +133,7 @@ form (section 2.2); only the storage differs. The doc:
   "digest_task_id" => nil,         # the live digest timer, or nil
   "review_task_id" => nil,         # the live review timer, or nil
   "on_since" => nil,               # iso8601, when it was last turned on
-  "last_sent_at" => nil,           # iso8601, the last digest that was posted ("sent" or "queued")
+  "last_sent_at" => nil,           # iso8601, the last digest posted ("sent" or "queued") since then
   "last_digest" => nil,            # %{"at" => iso8601, "outcome" => String.t(), "count" => n}
   "last_review" => nil,            # the same, for the review
   "stopped" => nil                 # %{"job" => "digest" | "review", "reason" => text} after a timer failed
@@ -226,7 +226,7 @@ consent; it needs it. The checkbox's hint says both, and
 ### 2.3 Saving, changing and turning off
 
 `SettingsLive`'s `"save"` handler calls `Settings.save(params)` as today,
-then `Ambient.configure(params, settings)`. Two writes, each consistent on
+then `Ambient.configure(params)`. Two writes, each consistent on
 its own: the settings file, then one commit for the doc and the timers.
 `Settings.normalize/2` drops the ambient keys, so the file never holds
 them. The handler then rebuilds the form from
@@ -235,7 +235,9 @@ them. The handler then rebuilds the form from
 today's handler does, would draw the box unticked after a Save, and the
 next Save would send `"false"`.
 
-`Photon.Ambient.configure(params, settings)` is one `Durable.commit`:
+`Photon.Ambient.configure(params)` is one `Durable.commit` (the first
+draft also passed the settings `Settings.save/1` returned; nothing in the
+commit reads them, so it takes only the params):
 
 1. Read the doc (`Signals.ambient_doc_tx/1`) and the live state of its
    two timer tasks (`Tx.get_task/2`; a missing or terminal task counts as
@@ -265,9 +267,12 @@ next Save would send `"false"`.
 | on | on, nothing changed and both live | nothing | nothing | keep |
 
 4. Apply it, write the doc (new values, `version` + 1 when anything was
-   armed, the new task IDs, `stopped: nil` when anything was armed,
-   `on_since` when it went from off to on) and announce
-   `{:ambient_changed}` on `"ambient"`.
+   armed, the new task IDs (both nil when it is off), `stopped: nil` when
+   anything was armed or it was turned off, and `on_since`, with
+   `last_sent_at` back to nil, when it went from off to on, so the first
+   digest's window starts there and not at a digest from an earlier
+   spell) and announce `{:ambient_changed}` on `"ambient"`. It returns
+   `:ok`.
 
 Arming creates a task of kind `"ambient"` (section 6) with request ID
 `"ambient:<job>:v<version>"`. The digest's first firing is
@@ -426,7 +431,8 @@ the routine's shape (section 6). Each firing, `Ambient.fire_tx(tx,
 ms}` read before the commit, as `Routine` reads consent and the clock:
 
 1. Read the doc. Not on (only reachable through `digest_now/0`, since a
-   retired timer's commit is fenced out): outcome `"off"`.
+   retired timer's commit is fenced out): outcome `"off"`, and nothing
+   is written (step 8 is skipped too).
 2. Not `allowed?`: outcome `"skipped_consent"`. Items stay.
 3. A digest message is still queued in Blip's inbox
    (`Signals.queued_ambient?(tx, "digest")`): outcome `"skipped_queued"`.
@@ -473,8 +479,9 @@ one and posts nothing. A posted digest and the deletion of the items it
 carries are one commit: no item is reported twice or lost.
 
 `Ambient.digest_now/0` runs the same `fire_tx/3` in a commit of its own,
-with `allowed?: true` and key `"digest:now:<random id>"`, and returns the
-outcome. It doesn't move the timer. Only the scripted model's buttons
+with `allowed?: true` and key `"digest:now:<random id>"`, and returns
+what `fire_tx/3` returns: `%{at: DateTime.t(), outcome: String.t(),
+count: n}`, the firing as step 8 records it. It doesn't move the timer. Only the scripted model's buttons
 and the tests call it.
 
 ### 3.4 What Blip reads, and what the panel draws
@@ -639,8 +646,11 @@ message, no model run.
 
 `Ambient.fire_tx(tx, "review", firing)` follows the digest's steps 1 to
 3 (off, consent, a review still queued), then reads the board, applies
-`review/3`, and for each row it shows reads the thread's latest answer
-(`Threads.latest_answer/1`, at most 10 reads) for the text. It posts one
+`review/3`, and for each stopped (`:quiet`) row it shows reads the
+thread's latest answer (`Threads.latest_answer/1`, at most 10 reads) for
+the text; failed and waiting lines use the board's detail. Its
+`quiet_after` is `Threads.quiet_after/0`, the seconds the threads' state
+uses. It posts one
 signal with its older stub, sets `reviewed_at` to now on the threads it
 showed (`Threads.mark_reviewed_tx(tx, ids, now)`, which announces
 `{:projects_changed, project_id}` once per project), and writes
@@ -861,7 +871,7 @@ What survives what:
   fence ignores) or didn't (and the rerun does it). The signal's key is
   the task and run count, so a rerun can't post a second message.
 - A commit that collected an item rolled back: its item went with it.
-- Settings saved but the hub died before `configure/2`'s commit: the file
+- Settings saved but the hub died before `configure/1`'s commit: the file
   has the other settings and the doc has the old ambient ones; the page
   shows what the doc says, and the next Save fixes it. No timer runs
   against a setting that says off, since both live in the doc's commit.
@@ -884,13 +894,14 @@ Section 2.2 has the section's elements and words. Behaviour:
   `Ambient.subscribe/0` and `Projects.subscribe/0`; the form's starting
   values merge `AmbientText.form_values(status)` (`"ambient"`,
   `"ambient_every"`) into the settings map.
-- `"save"`: `Settings.save(params)`, then `Ambient.configure(params,
-  settings)`, then the form is rebuilt from
+- `"save"`: `Settings.save(params)`, then `Ambient.configure(params)`,
+  then the form is rebuilt from
   `Map.merge(settings, AmbientText.form_values(Ambient.status()))`, then
   the flash as today ("Saved. The next message uses these settings.").
 - `"digest_now"` and `"review_now"` (scripted model only) call
   `Ambient.digest_now/0` and `review_now/0` and flash
-  `AmbientText.ran(job, outcome)`: "Sent Blip a digest of 3 changes.",
+  `AmbientText.ran(job, result)` (the `%{at:, outcome:, count:}` they
+  return): "Sent Blip a digest of 3 changes.",
   "Nothing new since the last digest.", "Blip still has the last digest
   waiting.", "Sent Blip a review of 2 threads.", "No threads need a
   review.", "Turn on ambient mode first."
@@ -901,7 +912,10 @@ Section 2.2 has the section's elements and words. Behaviour:
 
 `Ambient.status/0` returns `%{on?:, every_minutes:, next_digest_at:,
 next_review_at:, pending: %{new: n, smaller: n}, last_digest:,
-last_review:, stopped:, consent?:, scripted?:}`. `pending` comes from
+last_review:, stopped:, consent?:, scripted?:}`, with `last_digest` and
+`last_review` as `%{at: DateTime.t(), outcome:, count:}` (nil before
+the first) and `stopped` as `%{job:, reason:}` or nil. `consent?` is the
+Settings consent alone, without the scripted model. `pending` comes from
 `Ambient.Rules.digest/3` over the pending items and the board (section
 3.3 step 5), so opening a finished thread moves it from "changes
 waiting" to "smaller", and the page never claims a change that "Send a
@@ -1049,7 +1063,7 @@ commit with `Tx.announce/3`, through `Photon.Events`.
 
 | Topic | Message | Sent when | Who listens |
 |---|---|---|---|
-| `"ambient"` (new, `Signals.ambient_topic/0`, `Ambient.subscribe/0`) | `{:ambient_changed}` | `configure/2`, every firing (timer or now), a timer's `on_fail/3`, `Signals.collect_tx/2` when it inserts | `SettingsLive`, `HomeLive` |
+| `"ambient"` (new, `Signals.ambient_topic/0`, `Ambient.subscribe/0`) | `{:ambient_changed}` | `configure/1`, every firing (timer or now), a timer's `on_fail/3`, `Signals.collect_tx/2` when it inserts | `SettingsLive`, `HomeLive` |
 | `"projects"` (existing) | `{:projects_changed, project_id}` | also `Threads.mark_reviewed_tx/3` and `unmark_reviewed_tx/2`, once per project | as today, and `SettingsLive` |
 | `"durable:" <> blip` (existing) | `{:durable, ...}` | a digest or review posted or withdrawn | `BlipLive` |
 | `"activity"` (existing) | `{:activity_added, id}` | as today, for digest and review runs' calls and messages | `ActivityLive` |
@@ -1085,11 +1099,11 @@ No changes.
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Ambient` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Schedules, Photon.Settings, Photon.Signals, Photon.Threads, PhotonCore], exports: []` | `status/0`, `subscribe/0`, `configure/2`, `digest_now/0`, `review_now/0`, `fire_tx/3` (`@doc false`, for the timer and tests, as `Routine.fire_tx/3` is), `every_options/0` (the three intervals). Moduledoc: the doc, the timers, collection, the fence, what turning off cancels, the cost bounds. |
+| `Photon.Ambient` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Schedules, Photon.Settings, Photon.Signals, Photon.Threads, PhotonCore], exports: []` | `status/0`, `subscribe/0`, `configure/1`, `digest_now/0`, `review_now/0`, `fire_tx/3` (`@doc false`, for the timer and tests, as `Routine.fire_tx/3` is), `every_options/0` (the three intervals). Moduledoc: the doc, the timers, collection, the fence, what turning off cancels, the cost bounds. |
 | `Photon.Ambient.Rules` | core | `use Boundary, type: :strict, deps: [Photon.Threads]` (it reaches `Threads.State` through the parent's export, as `Assistant.Readout` does) | `config/2` (`%{on?:, every_minutes:, offset_minutes:}`), `changes/3` (`%{digest: action, review: action, clear?:, turned_on?:}`, each action `:keep`, `:arm`, `:rearm` (retire the live one, then arm) or `:retire`), `next_firing/3`, `next_review/2`, `digest/3` (places: `%{prompts: %{id => prompt}, projects: [project]}`), `review/3` (`%{rows:, more:, quiet_after:}`), `last_touch/1`, `firing/1` (the skip decisions of section 3.3 steps 1 to 3 from `%{on?:, allowed?:, queued?:}`: `:go` or `{:skip, outcome}`), `every_options/0`. Takes the time as an argument. |
 | `Photon.Ambient.Text` | core | `use Boundary, type: :strict, deps: []` | `digest/2` (the digest and the doc), `digest_ref/2` (the digest and the key), `digest_older/2`, `review/3` (the review, the latest answers by thread ID, now), `review_ref/2`, `review_older/2`, `ago/2` (sections 3.4, 4.4). |
-| `Photon.Ambient.Timer` | worker logic (task kind) | inside `Photon.Ambient` | Section 6; `task/2` (a timer's task attributes for a job and its input, which `configure/2` and the tests use). |
-| `Photon.Threads` | boundary | unchanged | `mark_reviewed_tx/3`, `unmark_reviewed_tx/2`. |
+| `Photon.Ambient.Timer` | worker logic (task kind) | inside `Photon.Ambient` | Section 6; `task/2` (a timer's task attributes for a job and `%{first_at:, every_ms:, version:}`, which `configure/1` and the tests use). Its `on_fail/3` writes through `Ambient.stopped_tx/4` (`@doc false`). |
+| `Photon.Threads` | boundary | unchanged | `mark_reviewed_tx/3`, `unmark_reviewed_tx/2`, `quiet_after/0` (the quiet threshold in seconds, which the state and the review share). |
 | `Photon.Threads.Thread` | data | unchanged | `reviewed_at`. |
 
 ### 10.5 apps/hub: Blip and the activity log
@@ -1137,7 +1151,7 @@ As in the earlier steps: core logic in `test/core` with plain inputs
 (rule 52); boundary tests through the public API with `assert_receive`,
 `start_supervised!/1` and no sleeping (rule 55), without retesting core
 tables (rule 53); LiveView tests through element IDs, never raw HTML.
-Tests turn ambient mode on through `Ambient.configure/2` (or, before M5
+Tests turn ambient mode on through `Ambient.configure/1` (or, before M5
 exists, `Signals.put_ambient_doc_tx/2` in a commit). A test that needs
 a thread to count as untouched backdates `last_run_ended_at` and
 `active_at` with `Repo.update_all` rather than relying on
@@ -1229,7 +1243,7 @@ with `>`, and a thread that ended in the same second isn't quiet yet.
 - `schedules_test.exs`: a routine that fails with ambient on collects a
   `"schedule_stopped"` item; with it off, none.
 - `ambient_test.exs` (`@tag :durable`):
-  - `configure/2` on arms two `"ambient"` tasks and stores their IDs; the
+  - `configure/1` on arms two `"ambient"` tasks and stores their IDs; the
     status has both next times; a second identical save changes nothing;
     a save with no `"ambient"` key keeps it on and changes no timer; a new
     interval replaces only the digest timer and a new offset only the
@@ -1256,7 +1270,7 @@ with `>`, and a thread that ended in the same second isn't quiet yet.
     written on the doc) is fired by the Scheduler, and a digest is
     posted; after a durable restart (stop and start the durable
     children, as `durable_lifecycle_test.exs` does) a timer waiting for
-    a later time is still waiting; after `configure/2` turns ambient
+    a later time is still waiting; after `configure/1` turns ambient
     mode off, calling the old task's `step("fire", task, runtime)` with
     the task as it was read before returns `:ignored` and posts nothing
     (the fence).
@@ -1266,7 +1280,7 @@ with `>`, and a thread that ended in the same second isn't quiet yet.
     with `reviewed_at` older than seven days includes it again; a recent
     stopped thread and an unread one are left out.
   - A timer whose `fire_tx/3` raises fails the task and writes
-    `"stopped"` on the doc; the next `configure/2` re-arms.
+    `"stopped"` on the doc; the next `configure/1` re-arms.
 - `assistant_coordinator_tools_test.exs` (`@tag :durable`): in a run
   started by a posted digest signal, `start_thread`, `message_thread`,
   `stop_thread`, `write_context_file` and `schedule` refuse with the
@@ -1321,7 +1335,7 @@ with `>`, and a thread that ended in the same second isn't quiet yet.
 `apps/hub/test/integration/machine_tools_e2e_test.exs` gains one test
 against the real local node, with the scripted models:
 
-1. A project `garden`; `Ambient.configure/2` turns ambient mode on.
+1. A project `garden`; `Ambient.configure/1` turns ambient mode on.
 2. The owner starts a thread with `on local: $ echo pump fixed`; it
    finishes on the node and nobody marks it seen. `digest_now/0` is
    `"sent"`; Blip's conversation gets the `[Digest]` message and a reply
@@ -1333,7 +1347,7 @@ against the real local node, with the scripted models:
    ended, the test backdates both threads' `last_run_ended_at` and
    `active_at` past 72 hours with `Repo.update_all`. `review_now/0` is
    `"sent"`; the reply lists both; both have `reviewed_at`.
-5. `Ambient.configure/2` turns it off; a third thread that finishes makes
+5. `Ambient.configure/1` turns it off; a third thread that finishes makes
    no item, and the timers' tasks are `"aborted"`.
 
 ### 11.5 Checks
@@ -1384,7 +1398,7 @@ The reasons, against what made the earlier steps need one:
   fence, between a step's start and its park, and three writers raced on
   one row. Nothing in step 5 commits outside a fence on a task's behalf:
   every read and write of a firing is inside the step's one commit;
-  `configure/2`, `digest_now/0` and `review_now/0` are single commits of
+  `configure/1`, `digest_now/0` and `review_now/0` are single commits of
   their own that read and write only rows the Store serializes; an item
   from a settle is written in the settle hook's commit, which `HookOnce`
   already checks runs once per settle; and the other items are written
@@ -1465,7 +1479,7 @@ M4. Earlier digests shrink in Blip's context. After M1.
 
 M5. The ambient context and its timers. After M1, M3 and M4.
 - New `apps/hub/lib/photon/ambient.ex` (`status/0` with the pending
-  counts from `Rules.digest/3`, `subscribe/0`, `configure/2`,
+  counts from `Rules.digest/3`, `subscribe/0`, `configure/1`,
   `digest_now/0`, `review_now/0`, `fire_tx/3`, `every_options/0`) and
   `ambient/timer.ex`.
 - `threads.ex` (`mark_reviewed_tx/3`, `unmark_reviewed_tx/2`).

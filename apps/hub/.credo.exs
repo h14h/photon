@@ -178,6 +178,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                  files: lib_only,
                  api_modules: [
                    "Photon.Activity",
+                   "Photon.Ambient",
                    "Photon.Assistant",
                    "Photon.ChatGPT",
                    "Photon.Durable",

@@ -61,6 +61,7 @@ config :photon, Photon.Durable,
     "test_workdir" => Photon.TestProfile.Workdir
   },
   kinds: %{
+    "ambient" => Photon.Ambient.Timer,
     "routine" => Photon.Schedules.Routine,
     "thread_title" => Photon.Threads.Titling
   }

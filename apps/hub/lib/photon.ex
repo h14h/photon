@@ -34,6 +34,10 @@ defmodule Photon do
       Blip or per project
     * `Photon.Schedules`: schedules, prompts that fire at set times: a
       project's start or wake its threads, and Blip's post to Blip
+    * `Photon.Ambient`: ambient mode, the setting that lets Blip follow
+      along: a digest of what changed every few hours and a daily review
+      of threads left alone, each posted into Blip's conversation by a
+      durable timer, while Settings lets schedules use the owner's plan
     * `Photon.Durable`: the durable agent harness Blip and threads run on
     * `Photon.Machines`: the machines the hub knows, which are connected,
       and the operations (shell commands, image reads) it runs on them;
@@ -50,7 +54,8 @@ defmodule Photon do
   schedule, a signal, a question or an operation: projects, context
   files, skills, questions and activity are rows, a thread is a
   conversation in the durable harness, a signal is a message in Blip's,
-  a schedule is a row and a durable task waiting for its time, and an
+  a schedule is a row and a durable task waiting for its time (as are
+  ambient mode's two timers), and an
   operation or a question is a row its tool call waits on. A thread's
   state is never stored: `Photon.Threads.State` derives it from facts on
   the thread's row when it is read.
@@ -62,7 +67,8 @@ defmodule Photon do
   Origin, Readout, MockScript, MockCoordinator}`, `Photon.Transcript`
   (what a conversation page shows), `Photon.Projects.Rules`,
   `Photon.Threads.{Rules, State, Prompt, MockScript, MockTitle}`,
-  `Photon.Signals.{Rules, Text}`, `Photon.Questions.Rules`,
+  `Photon.Signals.{Rules, Text}`, `Photon.Ambient.{Rules, Text}`,
+  `Photon.Questions.Rules`,
   `Photon.Activity.Rules`,
   `Photon.Skills.{Rules, SkillMd, Source, Prompt, MockPhrases}`,
   `Photon.Schedules.Rules`,
@@ -86,6 +92,7 @@ defmodule Photon do
       Activity,
       Activity.Action,
       Activity.Rules,
+      Ambient,
       Assistant,
       Assistant.Notice,
       Auth,

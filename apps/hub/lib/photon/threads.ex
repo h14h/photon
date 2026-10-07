@@ -99,6 +99,9 @@ defmodule Photon.Threads do
   instead (`Photon.Signals.collect_tx/2`), in the same commit, and so are
   a thread the owner starts (`start/2`, not `start_tx/4`, which Blip's
   tools and schedules use) and the owner's Resolve (`resolve/1`).
+  Ambient mode's daily review records when it listed a thread
+  (`mark_reviewed_tx/3`, `reviewed_at`), a fact Home and the next review
+  read and the thread's state doesn't.
 
   There is no process here: the harness runs the conversations, and the
   rows hold the rest.
@@ -601,13 +604,22 @@ defmodule Photon.Threads do
     end
   end
 
-  defp state_opts do
+  defp state_opts, do: %{quiet_after: quiet_after()}
+
+  @doc """
+  How long, in seconds, a stopped thread is left alone before it reads as
+  quiet (`config :photon, Photon.Threads, quiet_after_hours:`, 72 by
+  default). Ambient mode's daily review uses it too, so it covers the
+  threads Home lists as gone quiet.
+  """
+  @spec quiet_after() :: non_neg_integer()
+  def quiet_after do
     hours =
       :photon
       |> Application.get_env(__MODULE__, [])
       |> Keyword.get(:quiet_after_hours, @quiet_after_hours)
 
-    %{quiet_after: hours * 3600}
+    hours * 3600
   end
 
   @doc """
@@ -706,6 +718,36 @@ defmodule Photon.Threads do
       thread_id: thread.id,
       project_id: thread.project_id
     })
+  end
+
+  ## Ambient mode's review marks
+
+  @doc """
+  Records, inside the caller's commit, that ambient mode's daily review
+  listed threads `thread_ids` at `now` (`reviewed_at`, section 4.2 of
+  `docs/plans/step-5-ambient-mode.md`), and announces
+  `{:projects_changed, project_id}` once per project. The mark is a fact
+  the next review and Home read; a thread's state doesn't.
+  """
+  @spec mark_reviewed_tx(Tx.t(), [String.t()], DateTime.t()) :: :ok
+  def mark_reviewed_tx(tx, thread_ids, %DateTime{} = now),
+    do: set_reviewed_tx(tx, thread_ids, now)
+
+  @doc """
+  Clears the review marks of threads `thread_ids` inside the caller's
+  commit, and announces once per project: for a review withdrawn before
+  Blip read it, when ambient mode is turned off.
+  """
+  @spec unmark_reviewed_tx(Tx.t(), [String.t()]) :: :ok
+  def unmark_reviewed_tx(tx, thread_ids), do: set_reviewed_tx(tx, thread_ids, nil)
+
+  defp set_reviewed_tx(_tx, [], _reviewed_at), do: :ok
+
+  defp set_reviewed_tx(tx, thread_ids, reviewed_at) when is_list(thread_ids) do
+    threads = where(Thread, [t], t.id in ^thread_ids)
+    project_ids = threads |> select([t], t.project_id) |> distinct(true) |> Repo.all()
+    {_count, _rows} = Repo.update_all(threads, set: [reviewed_at: reviewed_at])
+    Enum.each(project_ids, &(:ok = Projects.threads_changed_tx(tx, &1)))
   end
 
   @doc "Which of `thread_ids` are running."

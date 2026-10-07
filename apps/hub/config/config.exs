@@ -29,6 +29,7 @@ config :photon, Photon.Repo,
 config :photon, Photon.Durable,
   profiles: %{"assistant" => Photon.Assistant, "thread" => Photon.Threads},
   kinds: %{
+    "ambient" => Photon.Ambient.Timer,
     "routine" => Photon.Schedules.Routine,
     "thread_title" => Photon.Threads.Titling
   }
@@ -37,6 +38,11 @@ config :photon, Photon.Durable,
 # quiet once nothing has happened in it for this long (section 2.3 of
 # docs/plans/step-4-blip-as-coordinator.md).
 config :photon, Photon.Threads, quiet_after_hours: 72
+
+# Ambient mode's daily review lists a thread again when it is still
+# untouched this long after a review listed it (section 4.2 of
+# docs/plans/step-5-ambient-mode.md).
+config :photon, Photon.Ambient, review_again_days: 7
 
 # Between two of the owner's messages, Blip can start or message threads at
 # most this many times on its own, so a loop between Blip and a thread
