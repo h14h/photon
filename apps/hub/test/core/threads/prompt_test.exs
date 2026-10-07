@@ -42,7 +42,7 @@ defmodule Photon.Threads.PromptTest do
     prompt = Prompt.system_prompt(@project, @now, [])
 
     for tool <-
-          ~w(shell view_image list_machines list_context_files read_context_file write_context_file edit_context_file),
+          ~w(shell view_image list_machines list_context_files read_context_file write_context_file edit_context_file ask_blip),
         do: assert(prompt =~ tool)
 
     refute prompt =~ ~r/\bschedule\b/
@@ -60,6 +60,30 @@ defmodule Photon.Threads.PromptTest do
     assert [_top, section] = String.split(prompt, "## How you work\n")
     assert [how_you_work, _rest] = String.split(section, "\n\n## ", parts: 2)
     assert how_you_work =~ "Keep them short and current.\n" <> line <> "- You can search the web"
+  end
+
+  test "says to ask Blip for the user's judgement, and when to end asking, under How you work" do
+    prompt = Prompt.system_prompt(@project, @now, [])
+
+    ask_blip =
+      "- When you need the user's judgement or preferences (which option they'd pick, how they " <>
+        "like something done, a fact about them), call ask_blip with one specific question. " <>
+        "Blip answers from what it knows or asks the user, and you wait for the answer. " <>
+        "Don't ask what you can find out yourself.\n"
+
+    end_asking =
+      "- End your answer with a question only when you need the user's reply before you can go on.\n"
+
+    assert [_top, section] = String.split(prompt, "## How you work\n")
+    assert [how_you_work, _rest] = String.split(section, "\n\n## ", parts: 2)
+    assert how_you_work =~ "link where the answer came from.\n" <> ask_blip <> end_asking
+  end
+
+  test "still says nothing about the user: no name, voice, settings or memory" do
+    prompt = Prompt.system_prompt(@project, @now, [])
+
+    for text <- ["You are Blip", "Henry", "time zone", "memory", "instructions"],
+        do: refute(prompt =~ text, "the prompt has #{inspect(text)}")
   end
 
   test "names the time to the hour, so it is the same all hour" do

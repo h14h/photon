@@ -13,7 +13,9 @@ defmodule Photon.Threads do
   project, with its title and when it last got a message (`active_at`).
   Every thread belongs to a project. The user starts threads; a thread
   can't start one, schedule anything or touch Blip's memory, and its prompt
-  says nothing about the user.
+  says nothing about the user. What it needs to know of the user it asks
+  Blip with `ask_blip` (`Photon.Threads.Tools.AskBlip`, through
+  `Photon.Questions`), and its call waits for the answer.
 
   A thread works with the machine tools (`Photon.MachineTools`: `shell`,
   `view_image`, `list_machines`) in its project's folder on whichever
@@ -35,8 +37,9 @@ defmodule Photon.Threads do
       `Photon.Threads.MockScript` (the scripted model)
     * boundary: the tools in `Photon.Threads.Tools`: the context-file
       tools, which write through `Photon.Projects` inside the commit that
-      records their result, and `load_skill`, which reads through
-      `Photon.Skills` the same way
+      records their result, `load_skill`, which reads through
+      `Photon.Skills` the same way, and `ask_blip`, which asks through
+      `Photon.Questions` and parks on the answer
 
   Starting a thread makes the row, the conversation and the first message
   in one commit, so there is never a thread without its first message or a
@@ -146,7 +149,8 @@ defmodule Photon.Threads do
     Tools.ReadContextFile,
     Tools.WriteContextFile,
     Tools.EditContextFile,
-    Tools.LoadSkill
+    Tools.LoadSkill,
+    Tools.AskBlip
   ]
 
   # How long a stopped thread is left alone before it reads as quiet, when

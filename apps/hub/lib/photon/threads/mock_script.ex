@@ -18,6 +18,8 @@ defmodule Photon.Threads.MockScript do
     * `skills` says which skills the prompt lists, and `load skill <name>`
       loads one (`load_skill`), the same as Blip's
       (`Photon.Skills.MockPhrases`)
+    * `ask blip: <question>` asks Blip the question (`ask_blip`), and the
+      call waits for the answer, which it then relays
     * `ask me: <question>` answers with the question, ending in `?`, so
       the run ends asking the user and the thread waits on them
     * `fail: <reason>` fails the model request with `<reason>`, so the
@@ -53,6 +55,7 @@ defmodule Photon.Threads.MockScript do
   - `edit <name>: <old text> => <new text>` changes one passage
   - `skills` lists the skills turned on for this project
   - `load skill <name>` loads one, like `load skill pdf-forms`
+  - `ask blip: <question>` asks Blip, like `ask blip: which deploy branch?`
   - `ask me: <question>` ends the run asking you, like `ask me: which zone first?`
   - `fail: <reason>` makes the run fail, like `fail: the pump is unplugged`
 
@@ -105,10 +108,17 @@ defmodule Photon.Threads.MockScript do
         {~r/\A(?:list )?files\z/, &list_files/1},
         {~r/\Aread\s+([^\s:]+)\z/, &read/1},
         {~r/\Awrite\s+([^\s:]+)\s*:\s*(.*)\z/s, &write/1},
-        {~r/\Aedit\s+([^\s:]+)\s*:\s*(.+?)\s*=>\s*(.*)\z/s, &edit/1},
-        {~r/\Aask me\s*:\s*(\S.*)\z/s, &ask_me/1},
-        {~r/\Afail\s*:\s*(\S.*)\z/s, &fail/1}
-      ]
+        {~r/\Aedit\s+([^\s:]+)\s*:\s*(.+?)\s*=>\s*(.*)\z/s, &edit/1}
+      ] ++ asking_phrasings()
+  end
+
+  # Asking Blip, ending the run asking the user, and failing it.
+  defp asking_phrasings do
+    [
+      {~r/\Aask blip\s*:\s*(\S.*)\z/s, &ask_blip/1},
+      {~r/\Aask me\s*:\s*(\S.*)\z/s, &ask_me/1},
+      {~r/\Afail\s*:\s*(\S.*)\z/s, &fail/1}
+    ]
   end
 
   defp list_files([]), do: call("list_context_files", %{}, "Checking the context files.")
@@ -130,6 +140,9 @@ defmodule Photon.Threads.MockScript do
         %{"name" => name, "old_text" => old_text, "new_text" => new_text},
         "Editing #{name}."
       )
+
+  defp ask_blip([question]),
+    do: call("ask_blip", %{"question" => String.trim(question)}, "Asking Blip.")
 
   # The question as the answer, so the run ends asking.
   defp ask_me([question]) do

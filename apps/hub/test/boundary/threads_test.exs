@@ -311,15 +311,21 @@ defmodule Photon.ThreadsTest do
   end
 
   describe "the thread profile" do
-    test "has the machine tools, the four context-file tools and load_skill, nothing else", %{
-      project: project
-    } do
+    test "has the machine tools, the four context-file tools, load_skill and ask_blip, nothing else",
+         %{
+           project: project
+         } do
       thread = start!(project, "hello")
       conversation = Durable.conversation(thread.id)
 
       assert conversation |> Threads.tools() |> Enum.map(& &1.name()) |> Enum.sort() ==
                Enum.sort(~w(shell view_image list_machines list_context_files read_context_file
-                   write_context_file edit_context_file load_skill))
+                   write_context_file edit_context_file load_skill ask_blip))
+
+      # None of Blip's own (they share only the machine tools): a thread
+      # can't schedule anything or touch Blip's memory.
+      blips = Assistant.tools(nil) -- Photon.MachineTools.tools()
+      assert Threads.tools(conversation) -- blips == Threads.tools(conversation)
     end
 
     test "works in the project's folder, and searches the web with the model in Settings", %{
@@ -356,7 +362,8 @@ defmodule Photon.ThreadsTest do
       assert prompt =~ "Keep the garden watered."
       assert prompt =~ "`<workspace>/garden`"
 
-      for text <- ["Henry", "Europe/London", "French", "mp1", "Blip"],
+      # It names Blip only as the one ask_blip asks, never in Blip's voice.
+      for text <- ["Henry", "Europe/London", "French", "mp1", "You are Blip"],
           do: refute(prompt =~ text, "the prompt has #{inspect(text)}")
     end
 

@@ -641,7 +641,9 @@ Index on `[status]`. A question is open while it is `"asked"` or
 - `execute(args, api)`:
   1. `Questions.Rules.question/1`; an error is the call's error result.
   2. Reads the thread and its project (`Threads.get/1`, `Projects.get/1`)
-     for the signal's words.
+     for the signal's words. A missing one (not reachable from a real
+     thread) is the error `This thread's project is gone, so there's no
+     one to ask.`
   3. `Questions.ask(%{task_id: ToolAPI.task_id(api), thread_id:,
      thread_title:, project_id:, project_slug:, project_name:, question:
      text})`, a plain map, in one Store commit of its own (below). `{:error, :stopped}` gives `{:error, "The call was stopped
@@ -654,8 +656,9 @@ Index on `[status]`. A question is open while it is `"asked"` or
 |---|---|
 | `"answered"` | `{:ok, Rules.result(q), %{"question_id" => id, "answered_by" => by}}` |
 | `"with_owner"` | parks on the signal alone (no `until`): only an answer or a stop moves it now |
-| `"asked"`, carrier still queued or placed | parks again on the signal and a new `until` |
-| `"asked"`, `Rules.escalate?/2` | `Questions.escalate(id)` (its own commit, section 4.6), then parks on the signal alone |
+| `"asked"` | `Questions.escalate(id)` (its own commit, section 4.6), which applies `Rules.escalate?/2` to the question and its carrier as they are in that commit and returns the question as it is afterwards; the call goes on from that row |
+| `"asked"` after it, carrier still queued or placed | parks again on the signal and a new `until` |
+| `"with_owner"` after it (escalated) | parks on the signal alone |
 | `"withdrawn"` | `{:error, "This question was withdrawn."}` (only reachable if a withdraw and a resume race; the call is ending anyway) |
 | missing | `{:error, "The hub has no record of this question."}` |
 
@@ -1519,7 +1522,7 @@ labels.
 
 | Tool | Running | Done | Stopped / error |
 |---|---|---|---|
-| `ask_blip` | Asking Blip: <question, one line> | Asked Blip: <question> | Stopped asking Blip / Couldn't ask Blip |
+| `ask_blip` | Asking Blip: <question, one line> | Asked Blip: <question> | Stopped asking Blip: <question> / Couldn't ask Blip: <question> |
 | `list_projects`, `read_project` | Looking over projects / garden | Looked over ... | |
 | `list_threads`, `read_thread` | Checking threads / Reading "Fix the pump" | Checked threads / Read "Fix the pump" | |
 | `start_project` | Starting a project | Started the project garden | |

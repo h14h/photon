@@ -7,20 +7,31 @@ defmodule Photon.QuestionsTest do
   step: the signal to Blip, the answer's wake-up signal and its message
   in Blip's conversation, the notices, and the announcements.
 
-  A question belongs to a tool call. Until `ask_blip` arrives, a test
-  stands one in with a waiting task in the thread's conversation that
-  nothing wakes. Most tests stop the Scheduler first (`still!/0`), so
-  nothing runs under them: Blip's runs and the thread's stay where the
-  commits left them.
+  A question belongs to a tool call. The API's tests stand one in with a
+  waiting task in the thread's conversation that nothing wakes, and most
+  stop the Scheduler first (`still!/0`), so nothing runs under them:
+  Blip's runs and the thread's stay where the commits left them.
+
+  The `ask_blip` tests run the scripted thread's `ask blip:` with Blip
+  parked on a command that never finishes (on `box`, a machine the test
+  process plays), so the message carrying the question stays queued and
+  the call never escalates; Blip's side is driven with
+  `Photon.Questions.answer_tx/4` and `pass_tx/4`. Escalation through
+  Blip's run is in the Blip-driven tests.
   """
 
   use Photon.DataCase, async: false
 
   @moduletag :durable
 
+  import Ecto.Query, only: [from: 2]
+  import Photon.Fixtures, only: [call: 3]
+
   alias Photon.{Assistant, Projects, Questions, Threads}
-  alias Photon.Durable.{Entry, Scheduler, Signal, Submission, TaskRecord, Tx}
+  alias Photon.Durable.{Entry, Scheduler, Signal, Store, Submission, TaskRecord, ToolAPI, Tx}
   alias Photon.Questions.Question
+  alias Photon.Threads.Tools.AskBlip
+  alias PhotonCore.Message
 
   setup do
     {:ok, project} =
@@ -86,6 +97,372 @@ defmodule Photon.QuestionsTest do
       do: await_change(conversation_id, fn _changes -> not Durable.busy?(conversation_id) end)
 
     :ok
+  end
+
+  ## The ask_blip tool
+
+  defp fake_machine(name) do
+    {:ok, _owner} =
+      Registry.register(Photon.MachineRegistry, name, %{
+        "platform" => "test",
+        "workspace" => "/w",
+        "version" => "0",
+        "capabilities" => ["ops:2"]
+      })
+  end
+
+  # Parks Blip on a command that never finishes, so a question's message
+  # queues behind its run and stays there.
+  defp park_blip!(blip) do
+    fake_machine("box")
+    {:ok, _parked} = Assistant.send("on box: $ sleep 1000")
+    assert Durable.busy?(blip)
+    :ok
+  end
+
+  # Starts a thread whose first message asks Blip `question`; returns the
+  # thread and its question once it is asked.
+  defp asking!(project, question) do
+    {:ok, thread} = Threads.start(project.id, "ask blip: " <> question)
+    :ok = Durable.subscribe(thread.id)
+    thread_id = thread.id
+    assert_receive {:questions_changed, ^thread_id}, 5_000
+    assert %{^thread_id => [asked]} = Questions.open_by_thread([thread_id])
+    {thread, asked}
+  end
+
+  # The call's task once it is parked and `fun` holds for what it waits on.
+  defp parked!(thread, task_id, fun) do
+    task = Durable.task(task_id)
+
+    if task.status == "waiting" and fun.(task.waiting) do
+      task
+    else
+      changes =
+        await_change(thread.id, fn changes ->
+          Enum.any?(changes.tasks, &(&1.id == task_id and parked?(&1, fun)))
+        end)
+
+      Enum.find(changes.tasks, &(&1.id == task_id))
+    end
+  end
+
+  defp parked?(task, fun), do: task.status == "waiting" and fun.(task.waiting)
+
+  # Waits for two more of the call's checks, each parking it with a later one.
+  defp checked_twice!(thread, task_id) do
+    first = parked!(thread, task_id, &is_integer(&1["until"]))
+    second = parked!(thread, task_id, &(&1["until"] > first.waiting["until"]))
+    _third = parked!(thread, task_id, &(&1["until"] > second.waiting["until"]))
+    :ok
+  end
+
+  # The ask_blip call's result: status, text and details.
+  defp result!(thread) do
+    entry =
+      await_entry(thread.id, &(&1.kind == "tool_result" and &1.data["name"] == "ask_blip"))
+
+    {entry.data["status"], Message.text_of(entry.data["message"]), entry.data["details"]}
+  end
+
+  defp restart_durable! do
+    :ok = stop_supervised!(Scheduler)
+    :ok = stop_supervised!(Store)
+    _store = start_supervised!(Store)
+    _scheduler = start_supervised!(Scheduler)
+    :ok
+  end
+
+  describe "the ask_blip tool" do
+    test "waits while Blip has the question, and Blip's answer ends the call", %{
+      project: project,
+      blip: blip
+    } do
+      park_blip!(blip)
+      {thread, asked} = asking!(project, "which deploy branch?")
+
+      assert {asked.question, asked.thread_title, asked.project_slug} ==
+               {"which deploy branch?", thread.title, "garden"}
+
+      assert Repo.get!(Submission, asked.submission_id).status == "queued"
+      assert %{state: :asking, asking_blip?: true} = Threads.state(thread.id)
+
+      # The call checks on it, and while the message waits in Blip's queue
+      # it leaves the question with Blip.
+      checked_twice!(thread, asked.task_id)
+      assert %Question{status: "asked", passed_by: nil} = Questions.get(asked.id)
+      assert notices(blip) == []
+
+      assert {:ok, _answered} = answer_tx(asked.id, "staging", {:blip, false})
+
+      assert result!(thread) ==
+               {"ok", "Blip answered: staging",
+                %{"question_id" => asked.id, "answered_by" => "blip"}}
+
+      idle!(thread.id)
+      assert List.last(texts(thread.id, "assistant")) == "Blip answered: staging"
+      assert %{state: :unread, questions: []} = Threads.state(thread.id)
+    end
+
+    test "once the owner has it, the call waits for their answer alone, and gets it", %{
+      project: project,
+      blip: blip
+    } do
+      park_blip!(blip)
+      {first, first_q} = asking!(project, "which deploy branch?")
+      {second, second_q} = asking!(project, "is the gate locked?")
+
+      {:ok, _passed} = pass_tx(first_q.id, "Which branch should deploys go to?", :blip)
+      {:ok, _passed} = pass_tx(second_q.id, nil, :hub)
+
+      # No more checks: only an answer or a Stop moves the call now.
+      for {thread, question} <- [{first, first_q}, {second, second_q}] do
+        key = Questions.signal_key(question.id)
+        _task = parked!(thread, question.task_id, &(&1 == %{"signal" => key}))
+        assert %{state: :waiting, asking_blip?: false} = Threads.state(thread.id)
+      end
+
+      # Answered in the other order: each call gets its own answer.
+      assert {:ok, _answered} = Questions.answer(second_q.id, "yes")
+
+      assert result!(second) ==
+               {"ok", "The user answered: yes",
+                %{"question_id" => second_q.id, "answered_by" => "owner"}}
+
+      assert {:ok, _answered} = Questions.answer(first_q.id, "main")
+
+      assert result!(first) ==
+               {"ok",
+                "Blip asked the user: Which branch should deploys go to?\nThey answered: main",
+                %{"question_id" => first_q.id, "answered_by" => "owner"}}
+
+      idle!(first.id)
+      idle!(second.id)
+    end
+
+    test "Stop while Blip has the question withdraws it and takes back its message", %{
+      project: project,
+      blip: blip
+    } do
+      park_blip!(blip)
+      {thread, asked} = asking!(project, "which deploy branch?")
+      _task = parked!(thread, asked.task_id, &is_integer(&1["until"]))
+
+      :ok = Threads.stop(thread.id)
+
+      assert result!(thread) == {"aborted", "Stopped by the user before it finished.", %{}}
+      assert %Question{status: "withdrawn"} = Questions.get(asked.id)
+      assert Repo.get!(Submission, asked.submission_id).status == "withdrawn"
+      assert notices(blip) == []
+
+      assert Questions.answer(asked.id, "main") ==
+               {:error, ~s{"#{thread.title}" was stopped, so its question was withdrawn.}}
+
+      assert answer_tx(asked.id, "staging", {:blip, false}) == {:error, :withdrawn}
+    end
+
+    test "Stop while the owner has the question withdraws it with a notice", %{
+      project: project,
+      blip: blip
+    } do
+      park_blip!(blip)
+      {thread, asked} = asking!(project, "which deploy branch?")
+      {:ok, _passed} = pass_tx(asked.id, "Which branch?", :blip)
+      key = Questions.signal_key(asked.id)
+      _task = parked!(thread, asked.task_id, &(&1 == %{"signal" => key}))
+
+      :ok = Threads.stop(thread.id)
+
+      assert result!(thread) == {"aborted", "Stopped by the user before it finished.", %{}}
+      assert %Question{status: "withdrawn", answer: nil} = Questions.get(asked.id)
+
+      assert [%{"message" => message, "question_id" => question_id}] = notices(blip)
+      assert message == ~s{"#{thread.title}" was stopped, so its question was withdrawn.}
+      assert question_id == asked.id
+
+      assert Questions.answer(asked.id, "main") == {:error, message}
+      refute Repo.get(Signal, key)
+    end
+
+    @tag :capture_log
+    test "a raise in the tool withdraws the question in the commit that records the error", %{
+      project: project,
+      blip: blip
+    } do
+      park_blip!(blip)
+      {thread, asked} = asking!(project, "which deploy branch?")
+      _task = parked!(thread, asked.task_id, &is_integer(&1["until"]))
+
+      # The parked call's state is lost, so its next check raises.
+      :ok = stop_supervised!(Scheduler)
+
+      {1, _} =
+        Repo.update_all(from(t in TaskRecord, where: t.id == ^asked.task_id),
+          set: [checkpoint: %{"state" => %{}}, waiting: %{"until" => 0}]
+        )
+
+      _scheduler = start_supervised!(Scheduler)
+
+      assert {"error", "Error: " <> _message, %{}} = result!(thread)
+      assert %Question{status: "withdrawn"} = Questions.get(asked.id)
+      assert Repo.get!(Submission, asked.submission_id).status == "withdrawn"
+      idle!(thread.id)
+    end
+
+    test "a hub restart while the call waits on the owner loses nothing", %{
+      project: project,
+      blip: blip
+    } do
+      park_blip!(blip)
+      {thread, asked} = asking!(project, "which deploy branch?")
+      {:ok, _passed} = pass_tx(asked.id, "Which branch?", :blip)
+      key = Questions.signal_key(asked.id)
+      _task = parked!(thread, asked.task_id, &(&1 == %{"signal" => key}))
+
+      :ok = restart_durable!()
+      assert %TaskRecord{status: "waiting"} = Durable.task(asked.task_id)
+
+      assert {:ok, _answered} = Questions.answer(asked.id, "main")
+
+      assert {"ok", "Blip asked the user: Which branch?\nThey answered: main", _details} =
+               result!(thread)
+
+      idle!(thread.id)
+    end
+
+    test "an answer recorded while the Scheduler is down wakes the call when it starts", %{
+      project: project,
+      blip: blip
+    } do
+      park_blip!(blip)
+      {thread, asked} = asking!(project, "which deploy branch?")
+      {:ok, _passed} = pass_tx(asked.id, nil, :hub)
+      key = Questions.signal_key(asked.id)
+      _task = parked!(thread, asked.task_id, &(&1 == %{"signal" => key}))
+
+      :ok = stop_supervised!(Scheduler)
+      assert {:ok, _answered} = Questions.answer(asked.id, "main")
+      assert %TaskRecord{status: "waiting"} = Durable.task(asked.task_id)
+      _scheduler = start_supervised!(Scheduler)
+
+      assert {"ok", "The user answered: main", _details} = result!(thread)
+      idle!(thread.id)
+    end
+  end
+
+  describe "AskBlip, called directly" do
+    setup %{project: project} do
+      still!()
+      %{thread: thread!(project)}
+    end
+
+    # A tool call in the thread for `args`, waiting, as the harness runs it.
+    defp api(thread, args) do
+      task =
+        Durable.create_task(%{
+          kind: "tool",
+          conversation_id: thread.id,
+          phase: "run",
+          input: %{"call" => call("ask_blip", args, "call_1")},
+          waiting: %{"signal" => "never"}
+        })
+
+      ToolAPI.new(task)
+    end
+
+    defp blip_messages(blip),
+      do: Repo.aggregate(from(s in Submission, where: s.conversation_id == ^blip), :count)
+
+    test "a rerun of execute finds the question: no second one, no second signal", %{
+      thread: thread,
+      blip: blip
+    } do
+      args = %{"question" => "  Which deploy branch? "}
+      api = api(thread, args)
+
+      assert {:wait, %{"signal" => "question:" <> id, "until" => until}, %{"question_id" => id}} =
+               AskBlip.execute(args, api)
+
+      assert is_integer(until)
+      assert %Question{question: "Which deploy branch?", task_id: task_id} = Questions.get(id)
+      assert task_id == api.task.id
+
+      assert {:wait, %{"signal" => "question:" <> ^id}, %{"question_id" => ^id}} =
+               AskBlip.execute(args, api)
+
+      assert Repo.aggregate(Question, :count) == 1
+      assert blip_messages(blip) == 1
+    end
+
+    test "resume follows the question: waits on, escalates, or returns the answer", %{
+      thread: thread,
+      blip: blip
+    } do
+      api = api(thread, %{"question" => "Which deploy branch?"})
+      {:wait, _waiting, state} = AskBlip.execute(%{"question" => "Which deploy branch?"}, api)
+      %{"question_id" => id} = state
+      key = Questions.signal_key(id)
+
+      # Blip's run has the message: check again later.
+      assert {:wait, %{"signal" => ^key, "until" => _until}, ^state} = AskBlip.resume(state, api)
+      assert %Question{status: "asked"} = Questions.get(id)
+
+      # Blip's run went past it: the hub passes it on, and the call waits
+      # on the answer alone.
+      {1, _} =
+        Repo.update_all(
+          from(s in Submission, where: s.id == ^Questions.get(id).submission_id),
+          set: [status: "done"]
+        )
+
+      assert AskBlip.resume(state, api) == {:wait, %{"signal" => key}, state}
+      assert %Question{status: "with_owner", passed_by: "hub"} = Questions.get(id)
+      assert [%{"question_id" => ^id}] = notices(blip)
+
+      {:ok, _answered} = Questions.answer(id, "staging")
+
+      assert AskBlip.resume(state, api) ==
+               {:ok, "The user answered: staging",
+                %{"question_id" => id, "answered_by" => "owner"}}
+
+      assert AskBlip.resume(%{"question_id" => "q_missing"}, api) ==
+               {:error, "The hub has no record of this question."}
+    end
+
+    test "on_interrupt withdraws the call's question, and resume then says so", %{
+      thread: thread
+    } do
+      args = %{"question" => "Which deploy branch?"}
+      api = api(thread, args)
+      {:wait, _waiting, state} = AskBlip.execute(args, api)
+
+      assert Durable.commit(&AskBlip.on_interrupt(api, &1)) == :ok
+      assert %Question{status: "withdrawn"} = Questions.get(state["question_id"])
+      assert AskBlip.resume(state, api) == {:error, "This question was withdrawn."}
+    end
+
+    test "a bad question, or a call already being stopped, asks nothing", %{
+      thread: thread,
+      blip: blip
+    } do
+      api = api(thread, %{"question" => " "})
+      assert AskBlip.execute(%{"question" => " "}, api) == {:error, "Ask one specific question."}
+
+      long = String.duplicate("a", 2_001)
+
+      assert {:error, "Keep the question under 2,000 characters" <> _} =
+               AskBlip.execute(%{"question" => long}, api)
+
+      args = %{"question" => "Which deploy branch?"}
+      stopping = api(thread, args)
+      _task = Durable.abort_task(stopping.task.id)
+
+      assert AskBlip.execute(args, stopping) ==
+               {:error, "The call was stopped before Blip got the question."}
+
+      assert Repo.aggregate(Question, :count) == 0
+      assert blip_messages(blip) == 0
+    end
   end
 
   describe "ask/1" do

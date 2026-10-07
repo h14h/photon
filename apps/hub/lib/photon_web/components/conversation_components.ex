@@ -284,8 +284,9 @@ defmodule PhotonWeb.ConversationComponents do
 
   @doc """
   What a call did, in a line. A machine call names its command or path,
-  and the machine; a context-file call names the file, and `load_skill`
-  the skill. They are in the present while they run.
+  and the machine; a context-file call names the file, `load_skill` the
+  skill, and `ask_blip` its question. They are in the present while they
+  run.
   """
   attr :name, :string, required: true
   attr :args, :map, required: true
@@ -339,6 +340,19 @@ defmodule PhotonWeb.ConversationComponents do
     """
   end
 
+  def action_label(%{name: "ask_blip"} = assigns) do
+    assigns =
+      assign(assigns,
+        verb: ask_verb(assigns.status),
+        question: truncate(assigns.args["question"]),
+        whole: truncate(assigns.args["question"], 300)
+      )
+
+    ~H"""
+    <span phx-no-format>{@verb}<span :if={@question != ""}>: <span class="text-ink" title={@whole}>{@question}</span></span></span>
+    """
+  end
+
   def action_label(assigns) do
     assigns = assign(assigns, :text, label_text(assigns.name, assigns.args))
 
@@ -364,6 +378,12 @@ defmodule PhotonWeb.ConversationComponents do
   defp skill_words(:stopped), do: {"Stopped loading the", " skill"}
   defp skill_words(_done), do: {"Loaded the", " skill"}
 
+  # A question can wait for hours, so the running words say it is asking.
+  defp ask_verb(:pending), do: "Asking Blip"
+  defp ask_verb(:error), do: "Couldn't ask Blip"
+  defp ask_verb(:stopped), do: "Stopped asking Blip"
+  defp ask_verb(_done), do: "Asked Blip"
+
   # Listing names no file; the others name the one they touched.
   defp file_verb("list_context_files", :pending), do: "Checking the context files"
   defp file_verb("list_context_files", _status), do: "Checked the context files"
@@ -383,6 +403,7 @@ defmodule PhotonWeb.ConversationComponents do
   defp action_icon("write_context_file"), do: "hero-document-plus-micro"
   defp action_icon("edit_context_file"), do: "hero-pencil-square-micro"
   defp action_icon("load_skill"), do: "hero-book-open-micro"
+  defp action_icon("ask_blip"), do: "hero-chat-bubble-left-ellipsis-micro"
 
   defp action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
     do: "hero-clock-micro"

@@ -116,6 +116,32 @@ defmodule Photon.Threads.MockScriptTest do
     end
   end
 
+  describe "ask blip" do
+    test "asks Blip the question, trimmed" do
+      asked = ask("ask blip:  which deploy branch? ")
+      assert calls(asked) == [{"ask_blip", %{"question" => "which deploy branch?"}}]
+      assert Message.text_of(asked) == "Asking Blip."
+
+      assert calls(ask("[Scheduled] ask blip: is the gate locked? (prose)")) ==
+               [{"ask_blip", %{"question" => "is the gate locked? (prose)"}}]
+    end
+
+    test "an empty question is only help" do
+      assert calls(ask("ask blip:")) == []
+    end
+
+    test "relays Blip's answer, and the user's" do
+      assert relay("Blip answered: staging") == "Blip answered: staging"
+
+      assert relay("Error: This question was withdrawn.") ==
+               "That didn't work: This question was withdrawn."
+    end
+
+    test "the help lists it" do
+      assert Message.text_of(ask("tidy the shed")) =~ "`ask blip: <question>`"
+    end
+  end
+
   describe "run endings" do
     test "ask me: answers with the question, so the run ends asking" do
       asked = ask("ask me: which zone should I water first?")

@@ -1,8 +1,9 @@
 defmodule PhotonWeb.ConversationComponentsTest do
   @moduledoc """
   The conversation pieces Blip's panel and a thread page share: the
-  context-file calls' lines, the ID prefix that keeps two conversations on
-  one page apart, and images loaded from the page's own route.
+  context-file, `load_skill` and `ask_blip` calls' lines, the ID prefix
+  that keeps two conversations on one page apart, and images loaded from
+  the page's own route.
   """
 
   use Photon.Case, async: true
@@ -79,6 +80,51 @@ defmodule PhotonWeb.ConversationComponentsTest do
 
       call = call("load_skill", %{"name" => "pdf-form"}, "c1")
       assert label(action(call, error)) == "Couldn't load pdf-form"
+    end
+  end
+
+  describe "an ask_blip call" do
+    test "says it is asking while it waits, then that it asked, with the question" do
+      call = call("ask_blip", %{"question" => "Which deploy\nbranch?"}, "c1")
+      html = action(call, nil)
+      assert label(html) == "Asking Blip: Which deploy branch?"
+
+      assert html |> LazyHTML.query("summary [title]") |> LazyHTML.attribute("title") == [
+               "Which deploy branch?"
+             ]
+
+      result =
+        ok("c1", "Blip answered: staging", %{"question_id" => "q_1", "answered_by" => "blip"})
+
+      html = action(call, result)
+      assert label(html) == "Asked Blip: Which deploy branch?"
+
+      assert html
+             |> LazyHTML.query("summary .hero-chat-bubble-left-ellipsis-micro")
+             |> Enum.count() == 1
+    end
+
+    test "a stopped call and one that couldn't ask say so" do
+      call = call("ask_blip", %{"question" => "Which branch?"}, "c1")
+
+      stopped = %{
+        "message" => Message.tool_result("c1", "Stopped by the user before it finished."),
+        "status" => "aborted",
+        "details" => %{},
+        "entry_id" => "e_1"
+      }
+
+      assert label(action(call, stopped)) == "Stopped asking Blip: Which branch?"
+
+      error = %{
+        "message" => Message.tool_result("c1", "Error: Ask one specific question."),
+        "status" => "error",
+        "details" => %{},
+        "entry_id" => "e_1"
+      }
+
+      assert label(action(call, error)) == "Couldn't ask Blip: Which branch?"
+      assert label(action(call("ask_blip", %{}, "c2"), nil)) == "Asking Blip"
     end
   end
 

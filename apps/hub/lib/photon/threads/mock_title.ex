@@ -13,8 +13,10 @@ defmodule Photon.Threads.MockTitle do
       files"
     * `read notes.md`, `write notes.md: ...` and `edit notes.md: ...` are
       "Read notes.md", "Write notes.md" and "Edit notes.md"
-    * `ask me: which zone first?` is "Ask you about which zone first" (the
-      question's first five words), and `fail: ...` is "Fail on purpose"
+    * `ask blip: which deploy branch?` is "Ask Blip about which deploy
+      branch" and `ask me: which zone first?` "Ask you about which zone
+      first" (the question's first five words), and `fail: ...` is "Fail
+      on purpose"
 
   A schedule's `"[Scheduled] "` in front is dropped first, as the scripted
   thread drops it. Anything else is its first line's first five words,
@@ -65,7 +67,14 @@ defmodule Photon.Threads.MockTitle do
       {~r/\A(?:list )?files\z/, fn [] -> "Check the context files" end},
       {~r/\Aread\s+([^\s:]+)\z/, fn [name] -> "Read #{name}" end},
       {~r/\Awrite\s+([^\s:]+)\s*:/, fn [name] -> "Write #{name}" end},
-      {~r/\Aedit\s+([^\s:]+)\s*:/, fn [name] -> "Edit #{name}" end},
+      {~r/\Aedit\s+([^\s:]+)\s*:/, fn [name] -> "Edit #{name}" end}
+    ] ++ asking_phrasings()
+  end
+
+  # Asking Blip, ending the run asking the user, and failing it.
+  defp asking_phrasings do
+    [
+      {~r/\Aask blip\s*:\s*(\S.*)\z/s, fn [question] -> about("Ask Blip about", question) end},
       {~r/\Aask me\s*:\s*(\S.*)\z/s, fn [question] -> about("Ask you about", question) end},
       {~r/\Afail\s*:\s*\S/, fn [] -> "Fail on purpose" end}
     ]
