@@ -18,15 +18,42 @@ defmodule PhotonWeb.ThreadLive do
   to the sign-in, and Stop moves to the header, so a running command can
   still be stopped.
 
+  The thread's state (section 10.4 of
+  `docs/plans/step-4-blip-as-coordinator.md`) is its board entry,
+  `Photon.Threads.state/1`: a chip by the title (`#thread-state`, words
+  from `PhotonWeb.ThreadText.state/1`), and `Resolve` while it isn't
+  running and isn't resolved, `Reopen` once it is (`Photon.Threads.resolve/1`
+  and `reopen/1`). Having the page open is the owner looking: on connected
+  mount, and on each announcement for its project (a run ending among
+  them), it calls `Photon.Threads.mark_seen/1` before reading the state,
+  which writes and announces nothing unless the thread was unread.
+
+  The entry's open `ask_blip` questions change the composer. While Blip
+  has one, a line above the composer says what the thread asked
+  (`#thread-asking-blip`) and a note under it says a message waits until
+  Blip answers. While one is with the owner, the text box and Send give
+  way to a banner per question (`#thread-question-<id>`) with its own
+  answer form, which calls `Photon.Questions.answer/2`; Stop stays. A
+  refusal shows under its form in the owner's words. Each form's text is
+  kept in `drafts` by question ID as it is typed, so a re-read draws it
+  again; a draft goes when its question closes. Only this thread's open
+  questions are answered: the ID comes from the browser.
+
   What it hears, and from where:
 
     * `{:durable, id, changes}` and `{:live, id, event}`
       (`Photon.Threads.subscribe/1`): the thread's commits, and its
-      in-flight answer and running commands' output
+      in-flight answer and running commands' output. A commit that
+      starts or ends its work also re-reads the state
     * `{:projects_changed, id}` (through `PhotonWeb.Shell`'s subscription):
-      for this project, reload it and the thread, since the project's name
-      and the thread's title are in the header (the title changes when the
-      model names the thread after its first run, or the owner renames it)
+      for this project, reload it and the thread's entry, since the
+      project's name and the thread's title are in the header (the title
+      changes when the model names the thread after its first run, or the
+      owner renames it), and its state may have moved (a run ended, it was
+      resolved or seen elsewhere)
+    * `{:questions_changed, id}` (also through the shell, which subscribes
+      with `Photon.Questions.subscribe/0`): for this thread, re-read its
+      entry, whose open questions changed
 
   `Schedule` (`#thread-schedule`) beside the title opens a new schedule
   for the project with this thread as its target
@@ -50,10 +77,10 @@ defmodule PhotonWeb.ThreadLive do
 
   import PhotonWeb.ConversationComponents
 
-  alias Photon.{Markdown, Projects, Threads, Transcript}
+  alias Photon.{Markdown, Projects, Questions, Threads, Transcript}
   alias Photon.Projects.Project
   alias Photon.Threads.Thread
-  alias PhotonWeb.ConversationView
+  alias PhotonWeb.{ConversationView, ThreadText}
 
   @impl true
   def mount(%{"slug" => slug} = params, _session, socket) do
@@ -62,7 +89,7 @@ defmodule PhotonWeb.ThreadLive do
       {:ok,
        socket
        |> assign(page_title: title(project, thread), project: project, thread: thread)
-       |> assign(title_form: nil)
+       |> assign(title_form: nil, entry: nil, drafts: %{}, errors: %{})
        |> conversation(thread)}
     else
       {:error, message} -> {:ok, gone(socket, message)}
@@ -102,6 +129,40 @@ defmodule PhotonWeb.ThreadLive do
       queued: Threads.queued(id),
       dom_id: &"thread-entry-#{&1.id}"
     )
+    |> look()
+  end
+
+  # The owner has the page open, so a finished run is now seen; the state
+  # is read after that, so the chip doesn't show Finished for a moment.
+  # Only once connected: the first, static render isn't someone looking.
+  defp look(%{assigns: %{thread: nil}} = socket), do: socket
+
+  defp look(socket) do
+    if connected?(socket) do
+      # Threads aren't deleted; a missing one only leaves the state as it was.
+      _seen = Threads.mark_seen(socket.assigns.thread.id)
+    end
+
+    load_state(socket)
+  end
+
+  # The thread's board entry: its state, and its open questions. The
+  # thread row comes with it, for the title. Drafts and refusals of
+  # questions no longer open go.
+  defp load_state(socket) do
+    case Threads.state(socket.assigns.thread.id) do
+      nil ->
+        socket
+
+      entry ->
+        open = Enum.map(entry.questions, & &1.id)
+
+        socket
+        |> assign(entry: entry, thread: entry.thread)
+        |> assign(page_title: title(socket.assigns.project, entry.thread))
+        |> update(:drafts, &Map.take(&1, open))
+        |> update(:errors, &Map.take(&1, open))
+    end
   end
 
   defp no_thread(project), do: "There's no such thread in #{project.name}."
@@ -178,6 +239,22 @@ defmodule PhotonWeb.ThreadLive do
     {:noreply, assign(socket, queued: Threads.queued(socket.assigns.thread.id))}
   end
 
+  def handle_event("resolve", _params, socket),
+    do: {:noreply, resolved(socket, Threads.resolve(socket.assigns.thread.id))}
+
+  def handle_event("reopen", _params, socket),
+    do: {:noreply, resolved(socket, Threads.reopen(socket.assigns.thread.id))}
+
+  def handle_event("draft", %{"question_id" => id, "answer" => %{"text" => text}}, socket),
+    do: {:noreply, update(socket, :drafts, &Map.put(&1, id, text))}
+
+  # Only one of this thread's open questions: the ID comes from the browser.
+  def handle_event("answer", %{"question_id" => id, "answer" => %{"text" => text}}, socket) do
+    if Enum.any?(socket.assigns.entry.questions, &(&1.id == id)),
+      do: {:noreply, answer(socket, id, text)},
+      else: {:noreply, load_state(socket)}
+  end
+
   defp title_form(title, error \\ nil),
     do:
       to_form(%{"title" => title},
@@ -193,6 +270,27 @@ defmodule PhotonWeb.ThreadLive do
     )
   end
 
+  defp resolved(socket, :ok), do: load_state(socket)
+  defp resolved(socket, {:error, :not_found}), do: gone(socket, no_thread(socket.assigns.project))
+
+  # The answer goes straight to the thread; a refusal stays under the
+  # form with what was typed, to be fixed.
+  defp answer(socket, id, text) do
+    case Questions.answer(id, text) do
+      {:ok, _question} ->
+        socket
+        |> update(:drafts, &Map.delete(&1, id))
+        |> update(:errors, &Map.delete(&1, id))
+        |> load_state()
+
+      {:error, message} ->
+        socket
+        |> update(:drafts, &Map.put(&1, id, text))
+        |> update(:errors, &Map.put(&1, id, message))
+        |> load_state()
+    end
+  end
+
   # Only a message queued for this thread: the ID comes from the browser.
   defp withdraw(id, queued) do
     if Enum.any?(queued, &(&1.id == id)), do: Threads.withdraw(id), else: :ok
@@ -203,6 +301,7 @@ defmodule PhotonWeb.ThreadLive do
   @impl true
   def handle_info({:durable, id, changes}, %{assigns: %{thread: %{id: id}}} = socket) do
     busy = Threads.busy?(id)
+    socket = if busy == socket.assigns.busy, do: socket, else: load_state(socket)
     {:noreply, ConversationView.apply_changes(socket, changes, busy, Threads.queued(id))}
   end
 
@@ -210,21 +309,22 @@ defmodule PhotonWeb.ThreadLive do
     do: {:noreply, ConversationView.apply_live(socket, event)}
 
   def handle_info({:projects_changed, id}, %{assigns: %{project: %{id: id}}} = socket) do
-    case {Projects.get(id), reload(socket.assigns.thread)} do
-      {%Project{} = project, thread} ->
-        {:noreply,
-         assign(socket, project: project, thread: thread, page_title: title(project, thread))}
+    case Projects.get(id) do
+      %Project{} = project ->
+        socket =
+          assign(socket, project: project, page_title: title(project, socket.assigns.thread))
 
-      {nil, _thread} ->
+        {:noreply, look(socket)}
+
+      nil ->
         {:noreply, gone(socket)}
     end
   end
 
-  def handle_info(_message, socket), do: {:noreply, socket}
+  def handle_info({:questions_changed, id}, %{assigns: %{thread: %{id: id}}} = socket),
+    do: {:noreply, load_state(socket)}
 
-  # The thread as stored now, for its title (threads aren't deleted).
-  defp reload(nil), do: nil
-  defp reload(%Thread{id: id} = thread), do: Threads.get(id) || thread
+  def handle_info(_message, socket), do: {:noreply, socket}
 
   ## Rendering
 
@@ -285,9 +385,13 @@ defmodule PhotonWeb.ThreadLive do
   end
 
   def render(assigns) do
+    questions = assigns.entry.questions
+
     assigns =
       assign(assigns,
-        mood: Transcript.mood(%{outcome: nil, live: assigns.live, busy: assigns.busy})
+        mood: Transcript.mood(%{outcome: nil, live: assigns.live, busy: assigns.busy}),
+        with_blip: Enum.filter(questions, &(&1.status == "asked")),
+        with_owner: Enum.filter(questions, &(&1.status == "with_owner"))
       )
 
     ~H"""
@@ -317,7 +421,33 @@ defmodule PhotonWeb.ThreadLive do
               <.icon name="hero-clock-micro" class="size-4" />
               <span class="hidden sm:inline">Schedule</span>
             </.button>
-            <.status busy={@busy} />
+            <.state_chip entry={@entry} />
+            <.button
+              :if={!@busy and is_nil(@thread.resolved_at)}
+              type="button"
+              id="thread-resolve"
+              size="sm"
+              variant="ghost"
+              phx-click="resolve"
+              title="Take it off Home's lists until it gets a new message"
+              class="shrink-0"
+            >
+              <.icon name="hero-check-circle-micro" class="size-4" />
+              <span class="hidden sm:inline">Resolve</span>
+            </.button>
+            <.button
+              :if={@thread.resolved_at}
+              type="button"
+              id="thread-reopen"
+              size="sm"
+              variant="ghost"
+              phx-click="reopen"
+              title="Put it back on Home's lists"
+              class="shrink-0"
+            >
+              <.icon name="hero-arrow-uturn-left-micro" class="size-4" />
+              <span class="hidden sm:inline">Reopen</span>
+            </.button>
             <%!-- Without a model the composer, and its Stop, give way to the sign-in. --%>
             <.button
               :if={@busy and !@shell.model_ready}
@@ -362,8 +492,18 @@ defmodule PhotonWeb.ThreadLive do
           <.jump_to_latest />
         </div>
 
+        <%!-- A question with the owner takes the composer's place: they answer where it's asked. --%>
+        <.owner_questions
+          :if={@with_owner != []}
+          questions={@with_owner}
+          with_blip={@with_blip}
+          drafts={@drafts}
+          errors={@errors}
+          queued={@queued}
+          stop={@busy and @shell.model_ready}
+        />
         <.composer
-          :if={@shell.model_ready}
+          :if={@with_owner == [] and @shell.model_ready}
           form={@form}
           busy={@busy}
           mode={@mode}
@@ -371,9 +511,22 @@ defmodule PhotonWeb.ThreadLive do
           id_prefix="thread-"
           placeholder="Message this thread..."
           class="blip-clear-x border-t border-line bg-canvas/90 pt-3 backdrop-blur"
-        />
+        >
+          <:above :if={@with_blip != []}>
+            <.asking_blip questions={@with_blip} />
+          </:above>
+          <:footer :if={@with_blip != []}>
+            <p
+              id="thread-composer-note"
+              class="mt-2 flex items-start gap-1.5 px-1 text-[12px] leading-relaxed text-ink-faint"
+            >
+              <.icon name="hero-information-circle-micro" class="mt-px size-3.5 shrink-0" />
+              Blip has this thread's question. What you send here reaches the thread after Blip answers.
+            </p>
+          </:footer>
+        </.composer>
         <.sign_in_to_talk
-          :if={!@shell.model_ready}
+          :if={@with_owner == [] and !@shell.model_ready}
           chatgpt={@shell.chatgpt}
           who="This thread"
           id_prefix="thread-"
@@ -381,6 +534,147 @@ defmodule PhotonWeb.ThreadLive do
         />
       </div>
     </Layouts.app>
+    """
+  end
+
+  attr :questions, :list, required: true, doc: "the thread's questions Blip has"
+
+  # What the thread is waiting on Blip for, above the composer.
+  defp asking_blip(assigns) do
+    ~H"""
+    <div
+      id="thread-asking-blip"
+      class="mb-2 flex items-start gap-2 rounded-xl border border-accent/20 bg-accent-soft/50 px-3 py-2"
+    >
+      <.state_mark state={:asking} class="mt-0.5 size-4" />
+      <div class="min-w-0 flex-1 space-y-0.5">
+        <p
+          :for={question <- @questions}
+          id={"thread-asking-blip-#{question.id}"}
+          class="line-clamp-2 text-[13px] leading-relaxed text-ink-soft"
+          title={question.question}
+        >
+          <span class="font-medium text-accent-strong">Asking Blip:</span>
+          {ThreadText.one_line(question.question)}
+        </p>
+      </div>
+    </div>
+    """
+  end
+
+  attr :questions, :list,
+    required: true,
+    doc: "the thread's questions with the owner, oldest first"
+
+  attr :with_blip, :list, required: true
+  attr :drafts, :map, required: true
+  attr :errors, :map, required: true
+  attr :queued, :list, required: true
+
+  attr :stop, :boolean,
+    required: true,
+    doc: "whether Stop is here (without a model it's in the header)"
+
+  # In the composer's place: each question with the owner, with its own
+  # answer form, and Stop.
+  defp owner_questions(assigns) do
+    ~H"""
+    <div
+      id="thread-questions"
+      class="blip-clear-x shrink-0 border-t border-line bg-canvas/90 px-3 pt-3 pb-3 backdrop-blur sm:px-4 sm:pb-4"
+    >
+      <div class="mx-auto w-full max-w-3xl space-y-2.5">
+        <.asking_blip :if={@with_blip != []} questions={@with_blip} />
+        <.queued_messages queued={@queued} id_prefix="thread-" />
+        <.question_banner
+          :for={question <- @questions}
+          question={question}
+          draft={Map.get(@drafts, question.id, "")}
+          error={Map.get(@errors, question.id)}
+        />
+        <div :if={@stop} class="flex items-center gap-3 px-1">
+          <p class="flex-1 text-[12px] leading-relaxed text-ink-faint">
+            The thread is waiting for your answer.
+          </p>
+          <.button type="button" id="thread-stop" variant="secondary" size="sm" phx-click="stop">
+            <.icon name="hero-stop-solid" class="size-3.5" /> Stop
+          </.button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr :question, :map, required: true
+  attr :draft, :string, required: true
+  attr :error, :string, default: nil
+
+  # One question with the owner: Blip's wording of it (or the thread's own
+  # words when the hub passed it on), when, and the answer form.
+  defp question_banner(assigns) do
+    question = assigns.question
+    hub? = question.passed_by == "hub" or is_nil(question.wording)
+
+    assigns =
+      assign(assigns,
+        id: "thread-question-#{question.id}",
+        hub?: hub?,
+        text: if(hub?, do: question.question, else: question.wording),
+        passed_at: question.passed_at || question.inserted_at,
+        form: to_form(%{"text" => assigns.draft}, as: :answer)
+      )
+
+    ~H"""
+    <div
+      id={@id}
+      class="animate-rise rounded-2xl border border-warn/40 bg-surface px-4 py-3.5 shadow-sm shadow-warn/5"
+    >
+      <div class="flex items-start gap-2.5">
+        <span class="mt-1.5 flex size-3.5 shrink-0 items-center justify-center">
+          <.state_mark state={:waiting} class="size-3.5" />
+        </span>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-baseline gap-3">
+            <p class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
+              {if(@hub?, do: "The thread asks you", else: "Blip passed this on")}
+            </p>
+            <span :if={@passed_at} class="ml-auto shrink-0 text-[12px] text-ink-faint">
+              <.local_time id={"#{@id}-at"} at={@passed_at} />
+            </span>
+          </div>
+          <p
+            id={"#{@id}-text"}
+            class="mt-1 text-[14.5px] leading-relaxed whitespace-pre-line text-ink"
+          >
+            {@text}
+          </p>
+          <p :if={@hub?} id={"#{@id}-note"} class="mt-1 text-[12.5px] text-ink-faint">
+            Blip didn't get to this one, so this is the thread's own question.
+          </p>
+        </div>
+      </div>
+      <.form for={@form} id={"#{@id}-form"} phx-change="draft" phx-submit="answer" class="mt-3">
+        <input type="hidden" name="question_id" value={@question.id} />
+        <.input
+          field={@form[:text]}
+          id={"#{@id}-answer"}
+          type="textarea"
+          rows="2"
+          placeholder="Your answer goes straight to the thread"
+          phx-debounce="300"
+          class={[field_class(), "h-auto min-h-16 resize-y py-2 leading-relaxed"]}
+        />
+        <div class="mt-2 flex items-center gap-3">
+          <p :if={@error} id={"#{@id}-error"} class="flex items-center gap-1.5 text-[12.5px] text-bad">
+            <.icon name="hero-exclamation-circle-micro" class="size-4 shrink-0" />
+            {@error}
+          </p>
+          <.button id={"#{@id}-send"} type="submit" size="sm" variant="primary" class="ml-auto">
+            Send <.icon name="hero-paper-airplane-micro" class="size-4" />
+          </.button>
+        </div>
+      </.form>
+    </div>
     """
   end
 
@@ -464,21 +758,28 @@ defmodule PhotonWeb.ThreadLive do
     """
   end
 
-  attr :busy, :boolean, required: true
+  attr :entry, :map, required: true, doc: "the thread's board entry (`Photon.Threads.state/1`)"
 
-  # Whether the thread is working on something: a run, between its steps too.
-  defp status(assigns) do
+  # The thread's state, in the words and mark the sidebar and Home use.
+  defp state_chip(assigns) do
+    assigns = assign(assigns, state: assigns.entry.state)
+
     ~H"""
     <span
-      id="thread-status"
-      data-state={if(@busy, do: "running", else: "idle")}
+      id="thread-state"
+      data-state={@state}
       class={[
         "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium",
-        if(@busy, do: "bg-accent-soft text-accent-strong", else: "bg-sunken text-ink-soft")
+        @state in [:running, :asking, :unread] && "bg-accent-soft text-accent-strong",
+        @state == :waiting && "bg-warn-soft text-ink",
+        @state == :failed && "bg-bad-soft text-bad",
+        @state in [:quiet, :idle] && "bg-sunken text-ink-soft"
       ]}
     >
-      <.dot status={if(@busy, do: :busy, else: :off)} class="size-1.5" />
-      {if(@busy, do: "Running", else: "Idle")}
+      <.state_mark state={@state} class="size-3.5" />
+      <.icon :if={@state == :quiet} name="hero-pause-circle-micro" class="size-3.5 text-ink-faint" />
+      <.dot :if={@state == :idle} status={:off} class="size-1.5" />
+      {ThreadText.state(@entry)}
     </span>
     """
   end

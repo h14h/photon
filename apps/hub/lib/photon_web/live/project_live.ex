@@ -8,9 +8,14 @@ defmodule PhotonWeb.ProjectLive do
   schedules.
 
   The lists are streams (`#project-threads`, `#context-files`,
-  `#project-skills`, `#project-schedules`). A thread row carries whether
-  it is running, so it changes only by re-streaming; every change resets
-  the list it touches, since its order may have moved. Besides the streams
+  `#project-skills`, `#project-schedules`). The threads are the project's
+  board (`Photon.Threads.board/1`, section 10.5 of
+  `docs/plans/step-4-blip-as-coordinator.md`): each row shows its state
+  (`#project-thread-<id>-state`) with the mark and words the sidebar and
+  Home use (`PhotonWeb.CoreComponents.state_mark/1`,
+  `PhotonWeb.ThreadText.state/1`), and how long ago it was active when
+  nothing is going on in it. A row changes only by re-streaming; every
+  change resets the list it touches, since its order may have moved. Besides the streams
   the socket keeps the project, the IDs of its threads (to tell which
   `{:durable_tasks, tasks}` concern it without a query per message), the
   edit form, and for the schedules the title of the thread each one wakes
@@ -39,6 +44,9 @@ defmodule PhotonWeb.ProjectLive do
     * `{:durable_tasks, tasks}` (also through the shell): when a task
       belongs to one of its threads, reload the threads, whose running
       state may have changed
+    * `{:questions_changed, thread_id}` (also through the shell): when it
+      is one of its threads, reload the threads, since an `ask_blip`
+      question moves a thread between asking Blip and waiting on you
     * `{:settings_changed, _}` (also through the shell): whether scheduled
       work is allowed, for the banner
     * `{:project_files_changed, id, key}` (`Projects.subscribe_files/1`):
@@ -61,7 +69,7 @@ defmodule PhotonWeb.ProjectLive do
 
   alias Photon.{Markdown, Projects, Schedules, Skills, Threads}
   alias Photon.Projects.Project
-  alias PhotonWeb.{ProjectText, ScheduleText}
+  alias PhotonWeb.{ProjectText, ScheduleText, ThreadText}
 
   @tick_ms :timer.minutes(1)
 
@@ -107,25 +115,17 @@ defmodule PhotonWeb.ProjectLive do
     :ok
   end
 
-  # The project's threads, most recently active first, each with whether
-  # it is running and when it last got a message.
+  # The project's threads, most recently active first, each with its
+  # state and when it last got a message.
   defp load_threads(socket) do
-    threads = Threads.list(socket.assigns.project.id)
-    ids = Enum.map(threads, & &1.id)
-    running = Threads.running(ids)
+    board = Threads.board({:project, socket.assigns.project.id})
     now = DateTime.utc_now()
 
     rows =
-      for thread <- threads do
-        %{
-          thread: thread,
-          running?: MapSet.member?(running, thread.id),
-          ago: ProjectText.ago(thread.active_at, now)
-        }
-      end
+      for entry <- board, do: Map.put(entry, :ago, ProjectText.ago(entry.thread.active_at, now))
 
     socket
-    |> assign(thread_ids: MapSet.new(ids))
+    |> assign(thread_ids: MapSet.new(board, & &1.id))
     |> stream(:threads, rows, reset: true)
   end
 
@@ -312,6 +312,12 @@ defmodule PhotonWeb.ProjectLive do
     {:noreply, socket |> load_threads() |> load_files()}
   end
 
+  def handle_info({:questions_changed, thread_id}, socket) do
+    if MapSet.member?(socket.assigns.thread_ids, thread_id),
+      do: {:noreply, load_threads(socket)},
+      else: {:noreply, socket}
+  end
+
   def handle_info({:durable_tasks, tasks}, socket) do
     if Enum.any?(tasks, &MapSet.member?(socket.assigns.thread_ids, &1.conversation_id)),
       do: {:noreply, load_threads(socket)},
@@ -420,23 +426,20 @@ defmodule PhotonWeb.ProjectLive do
                   :for={{dom_id, row} <- @streams.threads}
                   id={dom_id}
                   navigate={~p"/projects/#{@project.slug}/threads/#{row.thread.id}"}
-                  data-running={row.running? && "true"}
-                  class="group flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 shadow-xs transition hover:border-line-strong hover:bg-sunken/40"
+                  class={[
+                    "group flex items-center gap-3 rounded-xl border bg-surface px-4 py-3 shadow-xs transition hover:bg-sunken/40",
+                    if(row.state == :waiting,
+                      do: "border-warn/35 hover:border-warn/60",
+                      else: "border-line hover:border-line-strong"
+                    )
+                  ]}
                 >
                   <.icon
                     name="hero-chat-bubble-left-right"
                     class="size-4 shrink-0 text-ink-faint transition group-hover:text-ink-soft"
                   />
                   <span class="min-w-0 flex-1 truncate text-[14px] text-ink">{row.thread.title}</span>
-                  <span
-                    :if={row.running?}
-                    class="flex shrink-0 items-center gap-1.5 text-[12px] text-accent-strong"
-                  >
-                    <.dot status={:busy} class="size-1.5" /> running
-                  </span>
-                  <span :if={!row.running?} class="shrink-0 text-[12px] text-ink-faint">
-                    {row.ago}
-                  </span>
+                  <.thread_state id={"#{dom_id}-state"} row={row} />
                 </.link>
               </div>
             </section>
@@ -494,6 +497,45 @@ defmodule PhotonWeb.ProjectLive do
         </div>
       </div>
     </Layouts.app>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :row, :map, required: true, doc: "a board entry, with `ago`"
+
+  # A thread row's state: the mark and words while something is going on
+  # in it (running, asking Blip, waiting on the owner, failed, finished
+  # unread), with how long ago it was active once it isn't running, and
+  # only that when it's quiet or idle.
+  defp thread_state(assigns) do
+    assigns = assign(assigns, state: assigns.row.state, words: ThreadText.state(assigns.row))
+
+    ~H"""
+    <span
+      id={@id}
+      data-state={@state}
+      title={@words}
+      class="flex shrink-0 items-center gap-1.5 text-[12px] text-ink-faint"
+    >
+      <%= if @state in [:quiet, :idle] do %>
+        <.icon :if={@state == :quiet} name="hero-pause-circle-micro" class="size-3.5" />
+        {@row.ago}
+      <% else %>
+        <.state_mark state={@state} class="size-3.5" />
+        <span class={[
+          "font-medium",
+          @state in [:running, :asking] && "text-accent-strong",
+          @state == :waiting && "text-ink",
+          @state == :failed && "text-bad",
+          @state == :unread && "text-ink-soft"
+        ]}>
+          {@words}
+        </span>
+        <span :if={@state not in [:running, :asking]} class="hidden sm:inline">
+          · {@row.ago}
+        </span>
+      <% end %>
+    </span>
     """
   end
 

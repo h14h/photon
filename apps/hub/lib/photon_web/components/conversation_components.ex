@@ -77,6 +77,25 @@ defmodule PhotonWeb.ConversationComponents do
             <p class="mt-0.5 text-ink-soft">{String.replace_prefix(@text, "[Scheduled] ", "")}</p>
           </div>
         </div>
+      <% "blip" -> %>
+        <%!-- Blip's words to a thread: a bubble like the owner's, tinted, and signed. --%>
+        <div class="flex flex-col items-end gap-1 pl-10">
+          <div class="max-w-full rounded-2xl rounded-br-md bg-accent-soft/60 px-3.5 py-2 text-[14.5px] leading-relaxed text-ink ring-1 ring-accent/20">
+            <span
+              id={"#{@id_prefix}message-#{@entry.id}"}
+              phx-no-format
+              class="whitespace-pre-wrap"
+            >{@text}</span>
+          </div>
+          <p
+            id={"#{@id_prefix}message-#{@entry.id}-about"}
+            class="flex items-center gap-1 pr-1 text-[11.5px] text-ink-faint"
+            title="Blip sent this message to the thread"
+          >
+            <.blip id={"#{@id_prefix}message-#{@entry.id}-blip"} size={13} still />
+            <span>From Blip</span>
+          </p>
+        </div>
       <% _ -> %>
         <div class="flex flex-col items-end gap-1 pl-10">
           <div class="max-w-full rounded-2xl rounded-br-md bg-sunken px-3.5 py-2 text-[14.5px] leading-relaxed text-ink ring-1 ring-line">
@@ -722,31 +741,16 @@ defmodule PhotonWeb.ConversationComponents do
   slot :context,
     doc: "what goes with the next message, shown inside the box above the text (Blip's page chip)"
 
+  slot :above, doc: "a line above the queued messages (a thread's question to Blip)"
+  slot :footer, doc: "a note under the box (a thread's while Blip has its question)"
+
   @spec composer(map()) :: Phoenix.LiveView.Rendered.t()
   def composer(assigns) do
     ~H"""
     <div class={["shrink-0 px-3 pt-1 pb-3 sm:px-4 sm:pb-4", @class]}>
       <div class="mx-auto w-full max-w-3xl">
-        <div :if={@queued != []} id={"#{@id_prefix}queued"} class="mb-2 flex flex-wrap gap-1.5">
-          <span
-            :for={s <- @queued}
-            id={"#{@id_prefix}queued-#{s.id}"}
-            class="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-surface py-1 pr-1 pl-3 text-[12px] text-ink-soft"
-          >
-            <span class="font-medium text-ink-faint">{if(s.mode == "steer", do: "Steer", else: "Next")}</span>
-            <span class="max-w-60 truncate">
-              {Transcript.typed(s.content["parts"], s.content["source"])}
-            </span>
-            <button
-              phx-click="withdraw"
-              phx-value-id={s.id}
-              class="rounded-full p-0.5 hover:bg-sunken"
-              title="Withdraw"
-            >
-              <.icon name="hero-x-mark-micro" class="size-3.5" />
-            </button>
-          </span>
-        </div>
+        {render_slot(@above)}
+        <.queued_messages queued={@queued} id_prefix={@id_prefix} />
 
         <.form
           for={@form}
@@ -803,6 +807,7 @@ defmodule PhotonWeb.ConversationComponents do
             </.button>
           </div>
         </.form>
+        {render_slot(@footer)}
       </div>
 
       <script :type={Phoenix.LiveView.ColocatedHook} name=".Composer">
@@ -824,6 +829,41 @@ defmodule PhotonWeb.ConversationComponents do
           }
         }
       </script>
+    </div>
+    """
+  end
+
+  @doc """
+  The messages waiting in a conversation's inbox, each with whether it
+  steers the current work or comes next, and a button to withdraw it
+  (`"withdraw"` with its ID). Shown above the composer, or above whatever
+  takes the composer's place.
+  """
+  attr :queued, :list, required: true
+  attr :id_prefix, :string, default: ""
+
+  @spec queued_messages(map()) :: Phoenix.LiveView.Rendered.t()
+  def queued_messages(assigns) do
+    ~H"""
+    <div :if={@queued != []} id={"#{@id_prefix}queued"} class="mb-2 flex flex-wrap gap-1.5">
+      <span
+        :for={s <- @queued}
+        id={"#{@id_prefix}queued-#{s.id}"}
+        class="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-surface py-1 pr-1 pl-3 text-[12px] text-ink-soft"
+      >
+        <span class="font-medium text-ink-faint">{if(s.mode == "steer", do: "Steer", else: "Next")}</span>
+        <span class="max-w-60 truncate">
+          {Transcript.typed(s.content["parts"], s.content["source"])}
+        </span>
+        <button
+          phx-click="withdraw"
+          phx-value-id={s.id}
+          class="rounded-full p-0.5 hover:bg-sunken"
+          title="Withdraw"
+        >
+          <.icon name="hero-x-mark-micro" class="size-3.5" />
+        </button>
+      </span>
     </div>
     """
   end

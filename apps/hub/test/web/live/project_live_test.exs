@@ -14,7 +14,18 @@ defmodule PhotonWeb.ProjectLiveTest do
   import Ecto.Query, only: [where: 2]
   import Phoenix.LiveViewTest
 
-  alias Photon.{Durable, Machines, Projects, Schedules, Settings, Skills, Threads}
+  alias Photon.{
+    Assistant,
+    Durable,
+    Machines,
+    Projects,
+    Questions,
+    Schedules,
+    Settings,
+    Skills,
+    Threads
+  }
+
   alias Photon.Durable.Tx
   alias Photon.Schedules.{Routine, Schedule}
 
@@ -166,7 +177,7 @@ defmodule PhotonWeb.ProjectLiveTest do
 
     path = "/projects/garden/threads/#{older}"
     assert has_element?(view, ~s(#project-thread-#{older}[href="#{path}"]), "Fix the pump")
-    refute has_element?(view, "#project-thread-#{older}[data-running]")
+    refute has_element?(view, "#project-thread-#{older}-state[data-state=running]")
 
     {:ok, _submission} = Threads.send(older, "on box: $ sleep 1000")
     until(older, fn -> Threads.busy?(older) end)
@@ -177,14 +188,75 @@ defmodule PhotonWeb.ProjectLiveTest do
              "project-thread-#{newer}"
            ]
 
-    assert has_element?(view, "#project-thread-#{older}[data-running=true]", "running")
-    refute has_element?(view, "#project-thread-#{newer}[data-running]")
+    assert has_element?(view, "#project-thread-#{older}-state[data-state=running]", "Running")
+    refute has_element?(view, "#project-thread-#{newer}-state[data-state=running]")
 
     Threads.stop(older)
     idle!(older)
     _ = settled(view)
 
-    refute has_element?(view, "#project-thread-#{older}[data-running]")
+    refute has_element?(view, "#project-thread-#{older}-state[data-state=running]")
+  end
+
+  test "each thread row shows its state", %{conn: conn, project: project} do
+    unread = idle_thread!(project, "files")
+    waiting = idle_thread!(project, "ask me: which zone should I water first")
+    failed = idle_thread!(project, "fail: the pump is unplugged")
+    read = idle_thread!(project, "files")
+    :ok = Threads.mark_seen(read)
+
+    {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}")
+
+    assert has_element?(view, "#project-thread-#{unread}-state[data-state=unread]", "Finished")
+    assert has_element?(view, "#project-thread-#{unread}-state [data-mark=unread]")
+    assert has_element?(view, "#project-thread-#{unread}-state", "just now")
+
+    assert has_element?(
+             view,
+             "#project-thread-#{waiting}-state[data-state=waiting]",
+             "Waiting on you"
+           )
+
+    assert has_element?(view, "#project-thread-#{failed}-state[data-state=failed]", "Failed")
+
+    # Done and read: only how long ago, with the words as its title.
+    assert has_element?(view, ~s(#project-thread-#{read}-state[data-state=idle][title=Done]))
+    assert text(view, "#project-thread-#{read}-state") == "just now"
+  end
+
+  test "a thread asking Blip shows it, and moves to waiting once it's passed on", %{
+    conn: conn,
+    project: project
+  } do
+    # Blip parked on a command that never finishes, so the question stays with it.
+    fake_machine("box")
+    {:ok, _parked} = Assistant.send("on box: $ sleep 1000")
+    :ok = Questions.subscribe()
+
+    {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}")
+
+    {:ok, thread} = Threads.start(project.id, "ask blip: which deploy branch?")
+    thread_id = thread.id
+    assert_receive {:questions_changed, ^thread_id}, 5_000
+    _ = settled(view)
+
+    assert has_element?(
+             view,
+             "#project-thread-#{thread_id}-state[data-state=asking]",
+             "Asking Blip"
+           )
+
+    assert has_element?(view, "#project-thread-#{thread_id}-state [data-mark=asking]")
+
+    %{^thread_id => [asked]} = Questions.open_by_thread([thread_id])
+    {:ok, _passed} = Durable.commit(&Questions.pass_tx(&1, asked.id, "Which branch?", :blip))
+    _ = settled(view)
+
+    assert has_element?(
+             view,
+             "#project-thread-#{thread_id}-state[data-state=waiting]",
+             "Waiting on you"
+           )
   end
 
   test "a thread started elsewhere appears", %{conn: conn, project: project} do

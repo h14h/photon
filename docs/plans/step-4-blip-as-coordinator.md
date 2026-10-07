@@ -1510,28 +1510,42 @@ is the warn colour with a halo, so it isn't read as the accent.
 `PhotonWeb.ThreadLive` `:show`:
 
 - A state chip by the title, `#thread-state` with `data-state`, using
-  `ThreadText.state/1`.
+  `ThreadText.state/1` and `state_mark/1`. It takes the place of step
+  2's Running/Idle chip (`#thread-status`), which goes. The page reads
+  the state with `Threads.state/1`, and again when a commit of the
+  thread's starts or ends its work (`busy` changes), so the chip follows
+  a run without an announcement.
 - `Resolve` (`#thread-resolve`) when the thread isn't running and isn't
   resolved; `Reopen` (`#thread-reopen`) when it is.
 - While its question is with Blip: a line above the composer,
-  `#thread-asking-blip`, "Asking Blip: <question>", and a note under the
+  `#thread-asking-blip`, "Asking Blip: <question>" (one line per question
+  Blip has, `#thread-asking-blip-<id>`), and a note under the
   composer, `#thread-composer-note`, "Blip has this thread's question.
-  What you send here reaches the thread after Blip answers."
+  What you send here reaches the thread after Blip answers." The
+  composer gains `:above` and `:footer` slots for them.
 - While a question is with the owner: the composer's text box and Send
-  are replaced by the question (Stop stays). Each question with the owner
-  is a banner `#thread-question-<id>`, "Blip passed this on: <wording or
-  the question>", with its own form `#thread-question-<id>-form`
+  are replaced by the question (Stop stays), in `#thread-questions`,
+  with the queued messages above (`ConversationComponents.queued_messages/1`,
+  taken out of the composer). Each question with the owner
+  is a banner `#thread-question-<id>`, headed "Blip passed this on" over
+  Blip's wording (`#thread-question-<id>-text`), or, when the hub passed
+  it on, "The thread asks you" over the thread's own words with the
+  home page's note "Blip didn't get to this one, ..." (`-note`), and when
+  it was passed (`-at`). Each has its own form `#thread-question-<id>-form`
   (textarea `#thread-question-<id>-answer`, button
-  `#thread-question-<id>-send`) that calls `Questions.answer/2`; an error
-  shows as `#thread-question-<id>-error` in the owner's words. The IDs
+  `#thread-question-<id>-send`) that calls `Questions.answer/2`, for one
+  of this thread's open questions only; an error
+  shows as `#thread-question-<id>-error` in the owner's words, and the
+  typed text is kept in a `drafts` assign as on the home page. The IDs
   are keyed by question because a thread can have several open. Once
   the last one is answered the normal composer comes back. So an owner
   who sees "Waiting on you" can only type the answer where it will be
   answered, and the thread moves when they send it.
 - On connected mount, and on `{:projects_changed, id}` for its project,
-  it calls `Threads.mark_seen/1`. It subscribes with
-  `Questions.subscribe/0` and re-reads its question on
-  `{:questions_changed, thread_id}` for its own thread.
+  it calls `Threads.mark_seen/1`, before it reads the state. It
+  re-reads its state and questions on `{:questions_changed, thread_id}`
+  for its own thread, which `PhotonWeb.Shell` (subscribed with
+  `Questions.subscribe/0`) passes on, as for the home page.
 - The `ask_blip` tool line (section 10.8).
 - A message Blip sent (source kind `"blip"`) shows as a message bubble
   with "From Blip" under it (`#thread-message-<entry id>-about`), so the
@@ -1541,9 +1555,11 @@ is the warn colour with a halo, so it isn't read as the accent.
 
 `PhotonWeb.ProjectLive`'s thread rows read `Threads.board({:project,
 id})` and show the state in place of "running": `#project-thread-<id>-state`
-with `data-state`, words from `ThreadText.state/1`, the running dot for
-running, the Asking Blip mark for asking, and the age for idle and
-quiet. It re-reads them on
+with `data-state`, words from `ThreadText.state/1` and the mark from
+`state_mark/1` (the running dot for running, the Asking Blip mark for
+asking), and the age for idle and quiet, with the words as its title.
+Waiting, failed and finished rows show the age after the words too (from
+the `sm` width up). The row's `data-running` goes. It re-reads them on
 `{:questions_changed, _}` for one of its threads too.
 
 ### 10.6 Blip's panel
@@ -1983,9 +1999,12 @@ children first: `activity questions schedules threads ...`.
   form is gone, `#thread-question-<id>` and `#thread-question-<id>-form`
   are there, typing the answer into it and sending ends the wait, and
   the composer comes back; two questions with the owner render two
-  banners with distinct form IDs; the `ask_blip` line.
+  banners with distinct form IDs; a refused answer shows
+  `#thread-question-<id>-error`; a question the hub passed on shows the
+  thread's words and the note; the `ask_blip` line; a message Blip sent
+  shows "From Blip".
 - `project_live_test.exs`: `#project-thread-<id>-state`, including an
-  asking thread.
+  asking thread that moves to waiting when its question is passed on.
 - `context_file_live_test.exs`: `#file-meta` reads "by Blip"; the
   conflict banner says "Blip changed this file while you were editing."
   after a write with `"blip"`.
@@ -2440,7 +2459,11 @@ C14. The home page. After C5 and C13.
 C15. The thread and project pages. After C6 and C14 (`ThreadText`).
 - `apps/hub/lib/photon_web/live/thread_live.ex` (section 10.4: the state
   chip, Resolve, the asking line and composer note, the per-question
-  banners in the composer's place), `project_live.ex` (section 10.5).
+  banners in the composer's place, the "From Blip" line under a message
+  Blip sent), `project_live.ex` (section 10.5);
+  `components/conversation_components.ex` (the composer's `:above` and
+  `:footer` slots, `queued_messages/1`, the bubble for a `"blip"`
+  message).
 - Tests: `thread_live_test.exs`, `project_live_test.exs`.
 
 C16. Blip's panel. After C10 (and C8, C9, C11 for their labels, which
