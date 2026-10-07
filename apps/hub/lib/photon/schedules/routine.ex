@@ -25,14 +25,15 @@ defmodule Photon.Schedules.Routine do
   once and never after its schedule was edited or deleted.
 
   `on_fail/3` records a failed task on the row it still carries, so the
-  pages say the schedule stopped; it never retries, since a firing that
+  pages say the schedule stopped, and collects it for ambient mode's next
+  digest (`Photon.Signals.collect_tx/2`); it never retries, since a firing that
   crashed would crash the same way again, and saving the schedule arms a
   fresh task.
   """
 
   @behaviour Photon.Durable.TaskKind
 
-  alias Photon.{Durable, Repo, Schedules, Threads}
+  alias Photon.{Durable, Repo, Schedules, Signals, Threads}
   alias Photon.Durable.{Runtime, TaskRecord, Tx}
   alias Photon.Schedules.{Rules, Schedule}
 
@@ -82,11 +83,12 @@ defmodule Photon.Schedules.Routine do
   end
 
   @impl true
-  def on_fail(%TaskRecord{id: task_id, input: %{"schedule_id" => id}}, _reason, tx) do
+  def on_fail(%TaskRecord{id: task_id, input: %{"schedule_id" => id}}, reason, tx) do
     case Repo.get(Schedule, id) do
       %Schedule{task_id: ^task_id} = schedule ->
         schedule = schedule |> Ecto.Changeset.change(last_outcome: "failed") |> Repo.update!()
-        Schedules.announce(tx, schedule)
+        :ok = Schedules.announce(tx, schedule)
+        collect_stopped_tx(tx, schedule, task_id, reason)
 
       _replaced_or_gone ->
         :ok
@@ -95,6 +97,20 @@ defmodule Photon.Schedules.Routine do
 
   # Every routine task names its schedule; there is nothing to record otherwise.
   def on_fail(_task, _reason, _tx), do: :ok
+
+  # A schedule that stopped is news for the next digest while ambient mode
+  # is on (section 3.2 of `docs/plans/step-5-ambient-mode.md`);
+  # `Photon.Signals.collect_tx/2` reads the mode in this commit and does
+  # nothing in quiet mode.
+  defp collect_stopped_tx(tx, schedule, task_id, reason) do
+    Signals.collect_tx(tx, %{
+      key: "schedule:#{task_id}:failed",
+      kind: "schedule_stopped",
+      schedule_id: schedule.id,
+      project_id: schedule.project_id,
+      note: reason
+    })
+  end
 
   ## A firing
 

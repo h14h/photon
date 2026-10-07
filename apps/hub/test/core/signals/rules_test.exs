@@ -19,11 +19,14 @@ defmodule Photon.Signals.RulesTest do
     project: "Garden"
   }
 
-  defp update(outcome, sources, overrides \\ []) do
+  defp update(outcome, sources, overrides \\ [], mode \\ :quiet) do
     %{outcome: outcome, asked?: false, ended?: true, sources: sources}
     |> Map.merge(Map.new(overrides))
-    |> Rules.thread_update(:quiet)
+    |> Rules.thread_update(mode)
   end
+
+  defp ambient(outcome, sources, overrides \\ []),
+    do: update(outcome, sources, overrides, :ambient)
 
   describe "thread_update/2 in quiet mode" do
     test "Blip's work: finished, asking and failed reach Blip; a stop doesn't" do
@@ -57,8 +60,58 @@ defmodule Photon.Signals.RulesTest do
       assert Rules.thread_update(%{outcome: 5, sources: [@blip]}, :quiet) == nil
       assert Rules.thread_update(nil, :quiet) == nil
       assert Rules.thread_update("garbage", :quiet) == nil
-      assert Rules.thread_update(%{outcome: "failed", sources: []}, :ambient) == nil
+      assert Rules.thread_update(%{outcome: "failed", sources: []}, :loud) == nil
+      assert Rules.thread_update(%{outcome: "done"}, :ambient) == nil
+      assert Rules.thread_update(nil, :ambient) == nil
     end
+  end
+
+  describe "thread_update/2 in ambient mode" do
+    test "the owner's run that finishes without asking is a digest item" do
+      for sources <- [[@owner], [@owner_schedule], [@old_schedule], [nil], []] do
+        assert ambient("done", sources) == :digest
+      end
+    end
+
+    test "a run that goes on from the settle is nothing yet, so queued inputs make one item" do
+      for sources <- [[@owner], [@owner_schedule], []] do
+        assert ambient("done", sources, ended?: false) == nil
+        assert ambient("done", sources, asked?: true, ended?: false) == nil
+      end
+    end
+
+    test "every other cell is quiet mode's" do
+      for sources <- [[@owner], [@owner_schedule], [@old_schedule], [nil], []] do
+        assert ambient("done", sources, asked?: true) == :asking
+        assert ambient("failed", sources) == :failed
+        assert ambient("failed", sources, ended?: false) == :failed
+        assert ambient("stopped", sources) == nil
+        assert ambient("stopped", sources, ended?: false) == nil
+      end
+
+      for sources <- [[@blip], [@blip_schedule], [@owner, @blip]] do
+        assert ambient("done", sources) == :finished
+        assert ambient("done", sources, ended?: false) == :finished
+        assert ambient("done", sources, asked?: true) == :asking
+        assert ambient("failed", sources) == :failed
+        assert ambient("stopped", sources) == nil
+      end
+    end
+  end
+
+  test "ambient_kind/1 names a digest or review message, and nothing else" do
+    digest = %{"kind" => "signal", "signals" => [%{"kind" => "digest", "key" => "digest:t:0"}]}
+    review = %{"kind" => "signal", "signals" => [%{"kind" => "review", "key" => "review:t:0"}]}
+    update = %{"kind" => "signal", "signals" => [%{"kind" => "thread_update", "key" => "k"}]}
+
+    assert Rules.ambient_kind(digest) == "digest"
+    assert Rules.ambient_kind(review) == "review"
+    assert Rules.ambient_kind(update) == nil
+    assert Rules.ambient_kind(%{"kind" => "signal", "signals" => []}) == nil
+    assert Rules.ambient_kind(%{"kind" => "user", "signals" => [%{"kind" => "digest"}]}) == nil
+    assert Rules.ambient_kind(%{"kind" => "blip"}) == nil
+    assert Rules.ambient_kind(nil) == nil
+    assert Rules.ambient_kind("digest") == nil
   end
 
   test "blip_source?/1: Blip's messages and the schedules Blip made" do

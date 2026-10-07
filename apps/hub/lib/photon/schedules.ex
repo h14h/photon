@@ -64,6 +64,7 @@ defmodule Photon.Schedules do
       Photon.Projects,
       Photon.Repo,
       Photon.Settings,
+      Photon.Signals,
       Photon.Threads,
       PhotonCore,
       Ecto

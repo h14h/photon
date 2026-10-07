@@ -94,7 +94,9 @@ defmodule Photon.Threads do
   messages' sources: Blip's own messages, and firings of schedules Blip
   made, are Blip's, and Blip hears how they end; everything else is the
   owner's, and Blip hears only when it fails or ends asking the user
-  something. A stop is never a signal.
+  something. A stop is never a signal. While ambient mode is on, the
+  owner's run that finishes without asking is collected as a digest item
+  instead (`Photon.Signals.collect_tx/2`), in the same commit.
 
   There is no process here: the harness runs the conversations, and the
   rows hold the rest.
@@ -903,15 +905,29 @@ defmodule Photon.Threads do
   defp reopen_tx(_tx, _thread, _settled), do: :ok
 
   # Whether Blip hears about this settle is decided by
-  # `Photon.Signals.Rules` from the settled submissions' sources; the
-  # signal names the thread and project as they are now.
+  # `Photon.Signals.Rules` from the settled submissions' sources, in the
+  # mode read in this commit; the signal names the thread and project as
+  # they are now. In ambient mode the owner's finished run is a digest
+  # item instead, under the key its signal would have had.
   defp signal_tx(tx, thread, settled, text) do
-    with kind when kind != nil <-
-           SignalRules.thread_update(signal_facts(settled, text), Signals.mode()),
-         %Project{} = project <- Projects.get(thread.project_id) do
-      post_tx(tx, kind, settled, text, place(thread, project))
-    else
-      _no_signal_or_no_project -> :ok
+    case SignalRules.thread_update(signal_facts(settled, text), Signals.mode_tx(tx)) do
+      nil ->
+        :ok
+
+      :digest ->
+        Signals.collect_tx(tx, %{
+          key: settle_key(settled),
+          kind: "finished",
+          thread_id: thread.id,
+          project_id: thread.project_id,
+          note: State.note("done", text)
+        })
+
+      kind ->
+        case Projects.get(thread.project_id) do
+          %Project{} = project -> post_tx(tx, kind, settled, text, place(thread, project))
+          nil -> :ok
+        end
     end
   end
 
@@ -927,14 +943,18 @@ defmodule Photon.Threads do
   end
 
   defp post_tx(tx, kind, settled, text, place) do
-    ids = for %Submission{id: id} <- settled_submissions(settled), do: id
-    key = SignalRules.key({:settle, ids, settled_task_id(settled)})
+    key = settle_key(settled)
     ref = SignalRules.update_ref(kind, key, place)
     detail = if kind == :failed, do: text, else: State.note("done", text)
     # The signal's submission is written in this commit; the hook has
     # nothing to do with it, and `post_tx/2` returns no error.
     _carrier = Signals.post_tx(tx, %{key: key, text: SignalText.update(ref, detail), ref: ref})
     :ok
+  end
+
+  defp settle_key(settled) do
+    ids = for %Submission{id: id} <- settled_submissions(settled), do: id
+    SignalRules.key({:settle, ids, settled_task_id(settled)})
   end
 
   defp settled_submissions(settled), do: List.wrap(Map.get(settled, :submissions))

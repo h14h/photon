@@ -87,6 +87,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Threads.State",
                    "Photon.Signals.Rules",
                    "Photon.Signals.Text",
+                   "Photon.Signals.DigestItem",
                    "Photon.Questions.Question",
                    "Photon.Questions.Rules",
                    "Photon.Activity.Action",

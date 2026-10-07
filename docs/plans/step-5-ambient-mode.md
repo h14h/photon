@@ -345,7 +345,9 @@ What is still left out, and why:
 ### 3.2 Collecting
 
 A new table, `digest_items` (migration
-`apps/hub/priv/repo/migrations/20261010000000_ambient.exs`), schema
+`apps/hub/priv/repo/migrations/20261010010000_ambient.exs`; the
+`20261010000000` timestamp the first draft named was already taken by
+`machine_op_output`), schema
 `Photon.Signals.DigestItem`, behind `Photon.Signals`:
 
 | Column | Type | Notes |
@@ -1401,7 +1403,7 @@ so it can be tried with `PHOTON_MOCK_MODEL=1` when it lands. A task's
 tests use only what it or an earlier task adds.
 
 M1. The mode and the digest items. No dependencies.
-- Migration `apps/hub/priv/repo/migrations/20261010000000_ambient.exs`
+- Migration `apps/hub/priv/repo/migrations/20261010010000_ambient.exs`
   (`digest_items` with every column of section 3.2, `threads.reviewed_at`);
   `@tables` in `test/support/data_case.ex`.
 - New `apps/hub/lib/photon/signals/digest_item.ex`; `signals.ex` (the
