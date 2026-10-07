@@ -1664,8 +1664,23 @@ the `sm` width up). The row's `data-running` goes. It re-reads them on
   matches.").
 - On `{:activity_added, id}` it reads the row and, when it matches the
   filter, inserts it at the top (`stream_insert/4` with `at: 0`). Titles
-  for the origin and target links come from `Threads.titles/1` and
-  `Projects.list/0`, read with each page of rows.
+  for the origin and target links come from `Threads.places/1` (each
+  thread's title and project, since a thread's link needs its project's
+  slug; `Threads.titles/1` gives only titles), `Schedules.prompts/1`
+  (for "Schedule: <prompt>") and `Projects.list/0`, read with each page
+  of rows. A thread is linked only when the page found it and its
+  project; a project or thread that is gone is left out of where the row
+  acted, and a gone asker reads as Rules' plain "A thread" or "A
+  schedule".
+- The row's mark is the tool's icon from the conversation's action line
+  (`ConversationComponents.action_icon/1`, now public), on the line's
+  colours: green for a call that went through, red for a failure, grey
+  for a stop or a restart, the accent with a speech bubble for a
+  message. Its `title` says "Failed", "Stopped" or "Cut short by a
+  restart"; the summary already ends `: failed` or `: stopped`, so no
+  chip repeats it. IDs the plan didn't name: `#activity-<id>-mark`,
+  `-at`, `-origin-thread`, `-project` and `-thread`, and `data-status`
+  on the row.
 
 The words are `PhotonWeb.ActivityText` (pure) over `Activity.Rules`'
 labels.
@@ -1720,7 +1735,7 @@ No changes.
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Threads` | boundary (API and the `"thread"` profile, no process) | deps add `Photon.Questions`, `Photon.Signals`; `exports: [Thread, State]` | `board/1`, `state/1`, `needs_you_count/0`, `mark_seen/1`, `mark_all_seen/0`, `resolve/1`, `reopen/1`, `stop_tx/2`, `recent_entries/2`, `describe_files/2`, `read_file_text/3`; `on_settled/3` (`settled_tx/3`: facts, announcement, signal); `start_tx/4` sets `started_by`; `start_tx/4` and `send_tx/4` clear `resolved_at`; the tool list adds `Tools.AskBlip`. Moduledoc: the state facts, the hook, the signal filter. |
+| `Photon.Threads` | boundary (API and the `"thread"` profile, no process) | deps add `Photon.Questions`, `Photon.Signals`; `exports: [Thread, State]` | `board/1`, `state/1`, `needs_you_count/0`, `places/1` (titles and projects by ID, for the activity page), `mark_seen/1`, `mark_all_seen/0`, `resolve/1`, `reopen/1`, `stop_tx/2`, `recent_entries/2`, `describe_files/2`, `read_file_text/3`; `on_settled/3` (`settled_tx/3`: facts, announcement, signal); `start_tx/4` sets `started_by`; `start_tx/4` and `send_tx/4` clear `resolved_at`; the tool list adds `Tools.AskBlip`. Moduledoc: the state facts, the hook, the signal filter. |
 | `Photon.Threads.Thread` | data | unchanged | The seven new fields (section 2.1). |
 | `Photon.Threads.State` | core | `use Boundary, type: :strict, deps: []` | `of/3` (with `:asking`), `asks?/1`, `note/2`, `label/2`, `unseen?/1` (rule 7's test, which `mark_seen/1` shares), `last_activity/1` (rule 8's last activity, which the home page's quiet rows show), `sections/1` (section 2.2, 10.3). |
 | `Photon.Threads.Rules` | core | unchanged | `started_by/1`; the file listing and read header take the viewer (section 5.2). |
@@ -1757,7 +1772,7 @@ No changes.
 | Module | Change |
 |---|---|
 | `Photon.Projects` | `file_counts/0` (context files per project, one grouped query, for `list_projects`); `create_tx/2` public; `updated_by` may be `"blip"`; the file functions' errors name the writer (section 5.2). |
-| `Photon.Schedules` | `tool_schedule_tx/4` (its last argument is `%{asked_by, request_id, now}`; the tool passes `asked_by` in) replaces `blip_schedule_tx/5` and writes `asked_by`; `delete_tx/3` takes `:any`. |
+| `Photon.Schedules` | `tool_schedule_tx/4` (its last argument is `%{asked_by, request_id, now}`; the tool passes `asked_by` in) replaces `blip_schedule_tx/5` and writes `asked_by`; `delete_tx/3` takes `:any`; `prompts/1` (prompts by ID, for the activity page's "Schedule: <prompt>"). |
 | `Photon.Schedules.Rules` | `tool_thread/3`: the thread a project schedule from the tool wakes, or `c_123 isn't a thread in garden.` |
 | `Photon.Schedules.Schedule` | `asked_by` (section 5.4). |
 | `Photon.Schedules.Routine` | `"created_by"` and `"asked_by"` in every firing's source (sections 3.2, 5.4). |
@@ -1773,10 +1788,10 @@ No changes.
 | `PhotonWeb.Layouts` | boundary (UI) | `#nav-activity`, `#nav-home-count`, the thread marks; `active` takes `:activity`. |
 | `PhotonWeb.Shell` | boundary (LiveView hook) | `needs_you` in `@shell`; subscribes to `"questions"`. |
 | `PhotonWeb.HomeLive` | server (LiveView) | Section 10.3. Replaces `PhotonWeb.OverviewLive`, which is deleted with its test (the schedule tests move to `home_live_test.exs`). Talks to `Threads`, `Questions`, `Assistant`, `Schedules`. |
-| `PhotonWeb.ActivityLive` | server (LiveView) | Section 10.7. Talks to `Activity`, `Threads`, `Projects`. |
+| `PhotonWeb.ActivityLive` | server (LiveView) | Section 10.7. Talks to `Activity`, `Threads` (`places/1`), `Schedules` (`prompts/1`), `Projects`. |
 | `PhotonWeb.ThreadText` | functional core (web formatting) | State words, the summary, "and 4 more", the Mark all read flash, a quiet row's word, a question on one line. |
 | `PhotonWeb.CoreComponents` | boundary (UI components) | `state_mark/1` (a thread's state as a mark, section 10.3) and `dot/1`'s `:accent` status. |
-| `PhotonWeb.ActivityText` | functional core (web formatting) | The filter's options and a row's origin words. |
+| `PhotonWeb.ActivityText` | functional core (web formatting) | The filter's options, the form's params both ways (`filter/1`, `params/1`, `all/0`, `list_opts/1`), `matches?/2` for live inserts, the empty state's words, the IDs a page of rows names (`wanted/1`), a row as drawn (`row/2`: who asked with the thread to link, where it acted) and a status mark's words. |
 | `PhotonWeb.ProjectText` | functional core | `writer/2` names Blip (section 7). |
 | `PhotonWeb.ThreadLive` | server | Section 10.4. |
 | `PhotonWeb.ProjectLive` | server | Section 10.5. |
@@ -2514,7 +2529,9 @@ those tasks add).
 
 C17. The activity page. After C12 and C13.
 - `apps/hub/lib/photon_web/live/activity_live.ex` (section 10.7); new
-  `apps/hub/lib/photon_web/activity_text.ex`.
+  `apps/hub/lib/photon_web/activity_text.ex`; `Threads.places/1` and
+  `Schedules.prompts/1` for the names; `ConversationComponents.action_icon/1`
+  made public for the rows' marks.
 - `.credo.exs`: `PhotonWeb.ActivityText`.
 - Tests: `activity_live_test.exs`, `test/web/activity_text_test.exs`.
 

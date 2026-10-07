@@ -701,6 +701,24 @@ defmodule Photon.Threads do
     |> Map.new()
   end
 
+  @doc """
+  The titles and projects of threads `thread_ids`, by ID; an ID with no
+  thread is left out. The activity page names and links the threads its
+  rows mention with it, which needs each thread's project for the link.
+  """
+  @spec places([String.t()]) :: %{
+          optional(String.t()) => %{title: String.t(), project_id: String.t()}
+        }
+  def places([]), do: %{}
+
+  def places(thread_ids) do
+    Thread
+    |> where([t], t.id in ^thread_ids)
+    |> select([t], {t.id, %{title: t.title, project_id: t.project_id}})
+    |> Repo.all()
+    |> Map.new()
+  end
+
   ## Context files, as the file tools describe them
 
   @doc """

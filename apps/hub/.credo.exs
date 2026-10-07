@@ -105,6 +105,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Provision.Lines",
                    "Photon.InstallScript",
                    "Photon.Markdown",
+                   "PhotonWeb.ActivityText",
                    "PhotonWeb.ProjectText",
                    "PhotonWeb.ScheduleText",
                    "PhotonWeb.SkillText",

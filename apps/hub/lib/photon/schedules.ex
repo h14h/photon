@@ -171,6 +171,22 @@ defmodule Photon.Schedules do
     end
   end
 
+  @doc """
+  The prompts of schedules `ids`, by ID; an ID with no schedule (a
+  cancelled one is deleted) is left out. The activity page says which
+  schedule asked with it.
+  """
+  @spec prompts([String.t()]) :: %{optional(String.t()) => String.t()}
+  def prompts([]), do: %{}
+
+  def prompts(ids) do
+    Schedule
+    |> where([s], s.id in ^ids)
+    |> select([s], {s.id, s.prompt})
+    |> Repo.all()
+    |> Map.new()
+  end
+
   defp listed(schedule, task) do
     {next_at, state} = state(task)
     %{id: schedule.id, schedule: schedule, next_at: next_at, state: state}

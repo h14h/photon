@@ -899,32 +899,38 @@ defmodule PhotonWeb.ConversationComponents do
   defp file_verb("edit_context_file", :pending), do: "Editing"
   defp file_verb("edit_context_file", _status), do: "Edited"
 
-  defp action_icon("shell"), do: "hero-command-line-micro"
-  defp action_icon("view_image"), do: "hero-photo-micro"
-  defp action_icon("list_machines"), do: "hero-server-stack-micro"
-  defp action_icon("update_memory"), do: "hero-bookmark-micro"
-  defp action_icon("list_context_files"), do: "hero-document-duplicate-micro"
-  defp action_icon("read_context_file"), do: "hero-document-text-micro"
-  defp action_icon("write_context_file"), do: "hero-document-plus-micro"
-  defp action_icon("edit_context_file"), do: "hero-pencil-square-micro"
-  defp action_icon("load_skill"), do: "hero-book-open-micro"
-  defp action_icon("ask_blip"), do: "hero-chat-bubble-left-ellipsis-micro"
-  defp action_icon(name) when name in ~w(list_projects read_project), do: "hero-folder-micro"
-  defp action_icon("list_threads"), do: "hero-queue-list-micro"
-  defp action_icon("read_thread"), do: "hero-chat-bubble-left-right-micro"
-  defp action_icon("start_project"), do: "hero-folder-plus-micro"
-  defp action_icon("start_thread"), do: "hero-play-circle-micro"
-  defp action_icon("message_thread"), do: "hero-paper-airplane-micro"
-  defp action_icon("stop_thread"), do: "hero-stop-circle-micro"
-  defp action_icon("answer_question"), do: "hero-chat-bubble-bottom-center-text-micro"
-  defp action_icon("ask_owner"), do: "hero-question-mark-circle-micro"
-  defp action_icon("list_skills"), do: "hero-book-open-micro"
-  defp action_icon("set_project_skill"), do: "hero-adjustments-horizontal-micro"
+  @doc """
+  The icon a tool's call shows once it went through: in a conversation's
+  action line, and on the activity page's rows. A tool without one of its
+  own gets a check.
+  """
+  @spec action_icon(term()) :: String.t()
+  def action_icon("shell"), do: "hero-command-line-micro"
+  def action_icon("view_image"), do: "hero-photo-micro"
+  def action_icon("list_machines"), do: "hero-server-stack-micro"
+  def action_icon("update_memory"), do: "hero-bookmark-micro"
+  def action_icon("list_context_files"), do: "hero-document-duplicate-micro"
+  def action_icon("read_context_file"), do: "hero-document-text-micro"
+  def action_icon("write_context_file"), do: "hero-document-plus-micro"
+  def action_icon("edit_context_file"), do: "hero-pencil-square-micro"
+  def action_icon("load_skill"), do: "hero-book-open-micro"
+  def action_icon("ask_blip"), do: "hero-chat-bubble-left-ellipsis-micro"
+  def action_icon(name) when name in ~w(list_projects read_project), do: "hero-folder-micro"
+  def action_icon("list_threads"), do: "hero-queue-list-micro"
+  def action_icon("read_thread"), do: "hero-chat-bubble-left-right-micro"
+  def action_icon("start_project"), do: "hero-folder-plus-micro"
+  def action_icon("start_thread"), do: "hero-play-circle-micro"
+  def action_icon("message_thread"), do: "hero-paper-airplane-micro"
+  def action_icon("stop_thread"), do: "hero-stop-circle-micro"
+  def action_icon("answer_question"), do: "hero-chat-bubble-bottom-center-text-micro"
+  def action_icon("ask_owner"), do: "hero-question-mark-circle-micro"
+  def action_icon("list_skills"), do: "hero-book-open-micro"
+  def action_icon("set_project_skill"), do: "hero-adjustments-horizontal-micro"
 
-  defp action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
+  def action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
     do: "hero-clock-micro"
 
-  defp action_icon(_), do: "hero-check-micro"
+  def action_icon(_), do: "hero-check-micro"
 
   # One line of at most `limit` characters; anything that isn't text is nothing.
   defp truncate(text, limit \\ 90)
