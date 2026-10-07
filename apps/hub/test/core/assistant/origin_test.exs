@@ -154,6 +154,30 @@ defmodule Photon.Assistant.OriginTest do
     end
   end
 
+  describe "unattended_details/1" do
+    test "marks calls from runs the owner didn't type into, so only they count" do
+      assert Origin.unattended_details(Origin.of([@user])) == %{}
+      assert Origin.unattended_details(Origin.of([@user, carrying([update("c_1")])])) == %{}
+
+      for sources <- [[@answer], [routine("blip")], [carrying([update("c_1")])], []] do
+        assert Origin.unattended_details(Origin.of(sources)) == %{"unattended" => true}
+      end
+
+      assert Origin.unattended_details(nil) == %{"unattended" => true}
+    end
+  end
+
+  describe "schedule_work_ok?/1" do
+    test "only in a run the owner typed into" do
+      assert Origin.schedule_work_ok?(Origin.of([@user]))
+      assert Origin.schedule_work_ok?(Origin.of([@user, carrying([question("q_1", "c_1")])]))
+      refute Origin.schedule_work_ok?(Origin.of([@answer]))
+      refute Origin.schedule_work_ok?(Origin.of([routine("owner")]))
+      refute Origin.schedule_work_ok?(Origin.of([carrying([update("c_1")])]))
+      refute Origin.schedule_work_ok?(nil)
+    end
+  end
+
   describe "asked_by/1" do
     test "the owner when they typed into the run, else Blip" do
       assert Origin.asked_by(Origin.of([@user])) == "owner"
@@ -174,5 +198,9 @@ defmodule Photon.Assistant.OriginTest do
     assert Origin.unattended_message(10) ==
              "You've started or messaged threads 10 times since the user last wrote to you. " <>
                "Tell them what's going on and wait for them."
+
+    assert Origin.schedule_work_message() ==
+             "Only the user can set up work in a project on a schedule. Ask them, " <>
+               "or leave out project for a reminder to yourself."
   end
 end

@@ -59,7 +59,7 @@ defmodule Photon.Assistant.Tools.SetProjectSkill do
   def execute(_args, _api), do: {:error, "on must be true or false."}
 
   defp set(tx, api, project, name, on) do
-    with :ok <- Assistant.may_act_tx(tx, api.task, :change),
+    with {:ok, _origin} <- Assistant.may_act_tx(tx, api.task, :change),
          {:ok, skill} <- find_skill(name),
          :ok <- toggle(tx, skill, {:project, project.id}, on) do
       {:ok, Readout.skill_set(skill.name, project.slug, on),

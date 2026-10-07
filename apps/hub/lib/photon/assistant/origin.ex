@@ -22,7 +22,10 @@ defmodule Photon.Assistant.Origin do
   `unattended_ok?/3` bounds what Blip starts on its own: between two of
   the owner's messages, Blip can start or message threads at most the
   limit's number of times in runs the owner didn't type into, so a loop
-  between Blip and a thread stops in code (section 3.7).
+  between Blip and a thread stops in code (section 3.7). Only those
+  calls count: `unattended_details/1` marks them in their results.
+  `schedule_work_ok?/1` keeps project schedules, whose firings start
+  threads with no limit, to runs the owner typed into.
 
   These run on the harness's hook paths too (the activity log, C12), so
   they are total: any term in, a value out.
@@ -170,6 +173,33 @@ defmodule Photon.Assistant.Origin do
   @spec unattended_ok?(t(), non_neg_integer(), non_neg_integer()) :: boolean()
   def unattended_ok?(%{owner_wrote?: true}, _count, _limit), do: true
   def unattended_ok?(_origin, count, limit), do: count < limit
+
+  @doc """
+  What a `start_thread` or `message_thread` call in a run of `origin`
+  adds to its result's details: `%{"unattended" => true}` when the owner
+  didn't type into the run, so the call counts towards the unattended
+  limit, else nothing.
+  """
+  @spec unattended_details(t() | term()) :: %{optional(String.t()) => true}
+  def unattended_details(%{owner_wrote?: true}), do: %{}
+  def unattended_details(_origin), do: %{"unattended" => true}
+
+  @doc """
+  Whether Blip may make a project's schedule in a run of `origin`: only
+  when the owner typed into it. Each firing starts or wakes a thread,
+  with no limit, so Blip can't set one up on its own, nor because a
+  thread said so.
+  """
+  @spec schedule_work_ok?(t() | term()) :: boolean()
+  def schedule_work_ok?(%{owner_wrote?: true}), do: true
+  def schedule_work_ok?(_origin), do: false
+
+  @doc "What `schedule` says to a project's schedule in a run the owner didn't type into."
+  @spec schedule_work_message() :: String.t()
+  def schedule_work_message,
+    do:
+      "Only the user can set up work in a project on a schedule. Ask them, " <>
+        "or leave out project for a reminder to yourself."
 
   @doc "What a tool says when a thread's question limits the run (`restricted?`)."
   @spec restricted_message() :: String.t()

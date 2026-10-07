@@ -35,7 +35,7 @@ defmodule Photon.Assistant.Tools.CancelSchedule do
   def execute(%{"schedule_id" => id}, api), do: {:commit, &cancel(&1, api, String.trim(id))}
 
   defp cancel(tx, api, id) do
-    with :ok <- Assistant.may_act_tx(tx, api.task, :change),
+    with {:ok, _origin} <- Assistant.may_act_tx(tx, api.task, :change),
          %{schedule: schedule} <- Schedules.get(id) || {:error, :not_found},
          :ok <- Schedules.delete_tx(tx, id, :any) do
       cancelled(schedule, schedule.project_id && Projects.get(schedule.project_id))

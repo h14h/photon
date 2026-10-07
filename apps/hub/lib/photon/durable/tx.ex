@@ -373,14 +373,15 @@ defmodule Photon.Durable.Tx do
     do: Repo.all(Queries.queued(conversation_id, mode))
 
   @doc """
-  How many `"ok"` results of the tools in `names` the conversation has
-  after its last user entry whose source kind is one of `source_kinds`
-  (`Photon.Durable.Queries.count_tool_results_since/3`).
+  How many `"ok"` results of the tools in `names`, with `flag` true in
+  their details, the conversation has after its last user entry whose
+  source kind is one of `source_kinds`
+  (`Photon.Durable.Queries.count_tool_results_since/4`).
   """
-  @spec count_tool_results_since(t(), String.t(), [String.t()], [String.t()]) ::
+  @spec count_tool_results_since(t(), String.t(), [String.t()], [String.t()], String.t()) ::
           non_neg_integer()
-  def count_tool_results_since(%__MODULE__{}, conversation_id, names, source_kinds),
-    do: Repo.one(Queries.count_tool_results_since(conversation_id, names, source_kinds))
+  def count_tool_results_since(%__MODULE__{}, conversation_id, names, source_kinds, flag),
+    do: Repo.one(Queries.count_tool_results_since(conversation_id, names, source_kinds, flag))
 
   ## Signals
 

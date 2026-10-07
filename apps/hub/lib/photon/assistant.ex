@@ -41,10 +41,11 @@ defmodule Photon.Assistant do
   schedule, Blip's own follow-up on a thread update, or a thread's
   `ask_blip` question. A run that carries a question the owner hasn't
   written into can't start, wake, stop or schedule work or change a
-  project, and between two of the
-  owner's messages Blip can start or message threads only
-  `unattended_limit/0` times on its own (`may_act_tx/3`), so a loop
-  between Blip and a thread stops in code.
+  project. Between two of the owner's messages Blip can start or message
+  threads only `unattended_limit/0` times in runs the owner didn't type
+  into, and it sets up a project's schedule only in a run the owner typed
+  into (`may_act_tx/3`), so a loop between Blip and a thread stops in
+  code.
 
   Everything Blip does goes in the activity log (`Photon.Activity`), from
   the profile's two hooks: `on_tool_result/4` records each tool call's
@@ -356,15 +357,16 @@ defmodule Photon.Assistant do
   defp generation_tx(_tx, _task), do: nil
 
   @doc """
-  How many times Blip has started or messaged a thread (ok
-  `start_thread` and `message_thread` results) since the owner last
-  wrote to it (a message they typed, or their answer to a question),
-  inside the caller's commit. One query.
+  How many times Blip has started or messaged a thread on its own (ok
+  `start_thread` and `message_thread` results marked unattended, from
+  runs the owner didn't type into) since the owner last wrote to it (a
+  message they typed, or their answer to a question), inside the
+  caller's commit. One query.
   """
   @spec unattended_count_tx(Tx.t()) :: non_neg_integer()
   def unattended_count_tx(tx) do
     blip = Signals.blip_conversation_tx(tx)
-    Tx.count_tool_results_since(tx, blip, @unattended_tools, @owner_kinds)
+    Tx.count_tool_results_since(tx, blip, @unattended_tools, @owner_kinds, "unattended")
   end
 
   @doc """
@@ -378,13 +380,20 @@ defmodule Photon.Assistant do
 
   @doc """
   Whether Blip's tool call `task` may act, inside the commit that records
-  its result: `:change` for the tools that change a project or stop or
-  schedule work, which a thread's question forbids (`restricted?`);
-  `:start` for the tools that start or wake a thread, which the
-  unattended limit bounds too. `:ok`, or `{:error, message}` for the
-  model.
+  its result:
+
+    * `:change` for the tools that change a project or stop or schedule
+      work, which a thread's question forbids (`restricted?`)
+    * `:start` for the tools that start or wake a thread, which the
+      unattended limit bounds too
+    * `:schedule_work` for a project's schedule, which also needs the
+      owner to have typed into the run (`Origin.schedule_work_ok?/1`)
+
+  `{:ok, origin}`, the run's origin (`origin_tx/2`), or `{:error,
+  message}` for the model.
   """
-  @spec may_act_tx(Tx.t(), TaskRecord.t(), :change | :start) :: :ok | {:error, String.t()}
+  @spec may_act_tx(Tx.t(), TaskRecord.t(), :change | :start | :schedule_work) ::
+          {:ok, Origin.t()} | {:error, String.t()}
   def may_act_tx(tx, task, kind) do
     origin = origin_tx(tx, task)
 
@@ -392,12 +401,15 @@ defmodule Photon.Assistant do
       origin.restricted? ->
         {:error, Origin.restricted_message()}
 
+      kind == :schedule_work and not Origin.schedule_work_ok?(origin) ->
+        {:error, Origin.schedule_work_message()}
+
       kind == :start and
           not Origin.unattended_ok?(origin, unattended_count_tx(tx), unattended_limit()) ->
         {:error, Origin.unattended_message(unattended_limit())}
 
       true ->
-        :ok
+        {:ok, origin}
     end
   end
 

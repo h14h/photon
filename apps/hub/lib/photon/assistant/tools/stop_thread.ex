@@ -42,7 +42,7 @@ defmodule Photon.Assistant.Tools.StopThread do
   end
 
   defp stop(tx, api, thread) do
-    with :ok <- Assistant.may_act_tx(tx, api.task, :change) do
+    with {:ok, _origin} <- Assistant.may_act_tx(tx, api.task, :change) do
       details = %{
         "thread_id" => thread.id,
         "title" => thread.title,

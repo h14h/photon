@@ -47,7 +47,7 @@ defmodule Photon.Assistant.Tools.StartProject do
   def execute(args, api), do: {:commit, &start(&1, api, Map.take(args, ["purpose", "name"]))}
 
   defp start(tx, api, params) do
-    with :ok <- Assistant.may_act_tx(tx, api.task, :change),
+    with {:ok, _origin} <- Assistant.may_act_tx(tx, api.task, :change),
          {:ok, project} <- created(Projects.create_tx(tx, params)) do
       {:ok, "Started #{project.slug} (#{project.name}).",
        %{"project_id" => project.id, "slug" => project.slug, "name" => project.name}}

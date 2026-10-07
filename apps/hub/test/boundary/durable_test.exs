@@ -351,34 +351,43 @@ defmodule Photon.DurableTest do
     end
   end
 
-  describe "Tx.count_tool_results_since/4" do
+  describe "Tx.count_tool_results_since/5" do
     setup :conversation
 
-    test "counts ok results of the named tools after the last user entry of the given kinds",
+    test "counts flagged ok results of the named tools after the last user entry of the given kinds",
          %{conversation: c} do
       user = fn kind ->
         %{"message" => PhotonCore.Message.user("hi"), "source" => %{"kind" => kind}}
       end
 
-      result = fn name, status -> %{"name" => name, "status" => status} end
-      count = fn -> Durable.commit(&Tx.count_tool_results_since(&1, c, ~w(a b), ~w(user))) end
+      result = fn name, status, flag? ->
+        details = if flag?, do: %{"counted" => true}, else: %{}
+        %{"name" => name, "status" => status, "details" => details}
+      end
+
+      count = fn ->
+        Durable.commit(&Tx.count_tool_results_since(&1, c, ~w(a b), ~w(user), "counted"))
+      end
 
       # With no owner entry yet, it counts from the start.
       Durable.commit(fn tx ->
-        _a = Tx.append(tx, c, "tool_result", result.("a", "ok"))
-        Tx.append(tx, c, "tool_result", result.("b", "ok"))
+        _a = Tx.append(tx, c, "tool_result", result.("a", "ok", true))
+        Tx.append(tx, c, "tool_result", result.("b", "ok", true))
       end)
 
       assert count.() == 2
 
       Durable.commit(fn tx ->
         _user = Tx.append(tx, c, "user", user.("user"))
-        _a = Tx.append(tx, c, "tool_result", result.("a", "ok"))
-        _error = Tx.append(tx, c, "tool_result", result.("a", "error"))
-        _other = Tx.append(tx, c, "tool_result", result.("other", "ok"))
+        _a = Tx.append(tx, c, "tool_result", result.("a", "ok", true))
+        _error = Tx.append(tx, c, "tool_result", result.("a", "error", true))
+        _other = Tx.append(tx, c, "tool_result", result.("other", "ok", true))
+        # A result without the flag isn't counted.
+        _unflagged = Tx.append(tx, c, "tool_result", result.("a", "ok", false))
+        _no_details = Tx.append(tx, c, "tool_result", %{"name" => "a", "status" => "ok"})
         # A message from anyone else doesn't start the count again.
         _signal = Tx.append(tx, c, "user", user.("signal"))
-        Tx.append(tx, c, "tool_result", result.("b", "ok"))
+        Tx.append(tx, c, "tool_result", result.("b", "ok", true))
       end)
 
       assert count.() == 2

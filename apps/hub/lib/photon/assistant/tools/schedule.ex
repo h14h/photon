@@ -18,7 +18,9 @@ defmodule Photon.Assistant.Tools.Schedule do
   that run, Blip otherwise.
 
   A run that carries a thread's question, and that the owner hasn't
-  written into, can't schedule anything (`Photon.Assistant.may_act_tx/3`).
+  written into, can't schedule anything, and only a run the owner typed
+  into can make a project's schedule, since its firings start threads
+  with no limit (`Photon.Assistant.may_act_tx/3`).
   """
   @behaviour Photon.Durable.Tool
 
@@ -97,11 +99,10 @@ defmodule Photon.Assistant.Tools.Schedule do
   defp target(_args, api), do: {:ok, {:blip, api.conversation_id}, nil}
 
   defp schedule(tx, api, place, args, {request_id, now}) do
-    with :ok <- Assistant.may_act_tx(tx, api.task, :change),
-         asked_by = Origin.asked_by(Assistant.origin_tx(tx, api.task)),
+    with {:ok, origin} <- Assistant.may_act_tx(tx, api.task, kind(place.target)),
          {:ok, schedule} <-
            Schedules.tool_schedule_tx(tx, place.target, args, %{
-             asked_by: asked_by,
+             asked_by: Origin.asked_by(origin),
              request_id: request_id,
              now: now
            }) do
@@ -115,6 +116,10 @@ defmodule Photon.Assistant.Tools.Schedule do
       {:ok, text, details(schedule, place.project)}
     end
   end
+
+  # A project's schedule starts or wakes threads each time it fires.
+  defp kind({:project, _project_id, _thread_id}), do: :schedule_work
+  defp kind({:blip, _conversation_id}), do: :change
 
   defp readout_place(_schedule, nil), do: nil
 

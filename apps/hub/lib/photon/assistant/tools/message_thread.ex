@@ -5,7 +5,7 @@ defmodule Photon.Assistant.Tools.MessageThread do
   thread (`Photon.Threads.send_tx/4`, source `%{"kind" => "blip"}`, so
   Blip hears how the run it starts ends). A busy thread gets it after
   its current run (`follow_up`, the default) or after its current step
-  (`steer`). The message is sent inside the commit that records the
+  (`steer`); any other `when_busy` is a follow-up. The message is sent inside the commit that records the
   call's result, with the call's task ID in its request ID, so a rerun
   after a restart sends it once.
 
@@ -16,6 +16,7 @@ defmodule Photon.Assistant.Tools.MessageThread do
   @behaviour Photon.Durable.Tool
 
   alias Photon.{Assistant, Threads}
+  alias Photon.Assistant.Origin
   alias Photon.Durable.{Submission, ToolAPI}
 
   @impl true
@@ -53,7 +54,9 @@ defmodule Photon.Assistant.Tools.MessageThread do
 
   @impl true
   def execute(%{"thread" => id, "message" => message} = args, api) do
-    when_busy = args["when_busy"] || "follow_up"
+    # The schema's enum is only advice to the model: anything but steer
+    # is a follow-up, so a stray "reject" can't roll back the commit.
+    when_busy = if args["when_busy"] == "steer", do: "steer", else: "follow_up"
 
     with {:ok, thread} <- Assistant.find_thread(id),
          do: {:commit, &send_message(&1, api, thread, message, when_busy)}
@@ -66,10 +69,14 @@ defmodule Photon.Assistant.Tools.MessageThread do
       when_busy: when_busy
     ]
 
-    with :ok <- Assistant.may_act_tx(tx, api.task, :start),
+    with {:ok, origin} <- Assistant.may_act_tx(tx, api.task, :start),
          {:ok, submission} <- sent(Threads.send_tx(tx, thread.id, message, opts)) do
       {:ok, said(submission, ~s("#{thread.title}")),
-       %{"thread_id" => thread.id, "title" => thread.title, "project_id" => thread.project_id}}
+       Map.merge(Origin.unattended_details(origin), %{
+         "thread_id" => thread.id,
+         "title" => thread.title,
+         "project_id" => thread.project_id
+       })}
     end
   end
 

@@ -385,6 +385,17 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       assert text == ~s("#{busy.title}" will see it after its current step.)
       assert [_running, _queued, %{status: "queued", mode: "steer"}] = submissions(busy.id)
 
+      # Any other when_busy is a follow-up: "reject" would roll back the call's commit.
+      for {when_busy, n} <- [{"reject", "t_reject"}, {"now", "t_now"}] do
+        args = %{"thread" => busy.id, "message" => when_busy, "when_busy" => when_busy}
+        {:commit, fun} = Tools.MessageThread.execute(args, ToolAPI.new(%{task | id: n}))
+        assert {:ok, text, _details} = Durable.commit(fun)
+        assert text == ~s(Queued for "#{busy.title}", behind its current run.)
+      end
+
+      assert [_running, _queued, _steer, %{mode: "follow_up"}, %{mode: "follow_up"}] =
+               submissions(busy.id)
+
       :ok = Threads.stop(busy.id)
       :ok = idle!(busy.id)
     end
@@ -692,9 +703,18 @@ defmodule Photon.AssistantCoordinatorToolsTest do
     } do
       thread = ended!(garden, "files")
 
+      # What Blip does in a run the owner typed into doesn't count.
+      {_text, data} = tool!(blip, "tell #{thread.id}: files", "message_thread")
+      assert data["status"] == "ok"
+      refute Map.has_key?(data["details"], "unattended")
+      :ok = idle!(thread.id)
+      :ok = idle!(blip)
+
+      assert {_text, %{"status" => "ok", "details" => %{"unattended" => true}}} =
+               follow_up!(blip, thread)
+
       assert {_text, %{"status" => "ok"}} = follow_up!(blip, thread)
-      assert {_text, %{"status" => "ok"}} = follow_up!(blip, thread)
-      assert length(submissions(thread.id)) == 3
+      assert length(submissions(thread.id)) == 4
 
       {text, data} = follow_up!(blip, thread)
       assert data["status"] == "error"
@@ -703,7 +723,7 @@ defmodule Photon.AssistantCoordinatorToolsTest do
                "Error: You've started or messaged threads 2 times since the user last wrote " <>
                  "to you. Tell them what's going on and wait for them."
 
-      assert length(submissions(thread.id)) == 3
+      assert length(submissions(thread.id)) == 4
 
       # The owner's own runs are never refused, and their message starts
       # the count again.
@@ -713,7 +733,51 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       :ok = idle!(blip)
 
       assert {_text, %{"status" => "ok"}} = follow_up!(blip, thread)
-      assert length(submissions(thread.id)) == 5
+      assert length(submissions(thread.id)) == 6
+    end
+
+    test "an owner's run past the limit leaves Blip's follow-ups their own count", %{
+      garden: garden,
+      blip: blip
+    } do
+      thread = ended!(garden, "files")
+
+      for _round <- 1..3 do
+        {_text, data} = tool!(blip, "tell #{thread.id}: files", "message_thread")
+        assert data["status"] == "ok"
+        :ok = idle!(thread.id)
+        :ok = idle!(blip)
+      end
+
+      assert {_text, %{"status" => "ok"}} = follow_up!(blip, thread)
+    end
+  end
+
+  describe "a project's schedule" do
+    test "is refused in a run the owner didn't type into", %{garden: garden, blip: blip} do
+      {text, data} =
+        signal_tool!(blip, :update, "every 5 minutes in garden: files", "schedule", "c_done")
+
+      assert data["status"] == "error"
+
+      assert text ==
+               "Error: Only the user can set up work in a project on a schedule. Ask them, " <>
+                 "or leave out project for a reminder to yourself."
+
+      assert Schedules.list({:project, garden.id}) == []
+
+      # A reminder to itself is still fine.
+      {_text, data} = signal_tool!(blip, :update, "in 5 minutes: files", "schedule", "c_done")
+      assert data["status"] == "ok"
+      assert [%{schedule: %{asked_by: "blip"}}] = Schedules.list(:blip)
+    end
+
+    test "is made in a run the owner typed into, as the owner's", %{garden: garden, blip: blip} do
+      {_text, data} = tool!(blip, "every 5 minutes in garden: files", "schedule")
+      assert data["status"] == "ok"
+
+      assert [%{schedule: %{created_by: "blip", asked_by: "owner"}}] =
+               Schedules.list({:project, garden.id})
     end
   end
 end

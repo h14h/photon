@@ -145,7 +145,10 @@ assistant. Blip:
 >   them to carry out what you asked.
 > - Between two of your messages, Blip can start or message threads at
 >   most 10 times on its own (`unattended_limit`), so Blip and a thread
->   can't keep waking each other.
+>   can't keep waking each other. What it does in a run you typed into
+>   doesn't count.
+> - Blip sets up a project's schedule only when you ask in your message,
+>   since each firing starts or wakes a thread.
 >
 > The activity log is a table with one row per tool call Blip makes,
 > reads included, and one row for each message Blip sent you from a run

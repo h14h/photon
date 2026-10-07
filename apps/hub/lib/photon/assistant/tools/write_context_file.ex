@@ -65,7 +65,7 @@ defmodule Photon.Assistant.Tools.WriteContextFile do
   end
 
   defp write(tx, api, project, name, content) do
-    with :ok <- Assistant.may_act_tx(tx, api.task, :change),
+    with {:ok, _origin} <- Assistant.may_act_tx(tx, api.task, :change),
          {:ok, %{file: file, created?: created?}} <-
            Projects.write_file_tx(tx, project.id, name, content, "blip") do
       {:ok, Readout.file_written(file.name, project.slug, file.content, created?),

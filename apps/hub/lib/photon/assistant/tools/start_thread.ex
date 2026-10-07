@@ -15,6 +15,7 @@ defmodule Photon.Assistant.Tools.StartThread do
   @behaviour Photon.Durable.Tool
 
   alias Photon.{Assistant, Threads}
+  alias Photon.Assistant.Origin
   alias Photon.Durable.ToolAPI
 
   @impl true
@@ -57,17 +58,17 @@ defmodule Photon.Assistant.Tools.StartThread do
   defp start(tx, api, project, message) do
     opts = [source: %{"kind" => "blip"}, request_id: "blip:" <> ToolAPI.task_id(api)]
 
-    with :ok <- Assistant.may_act_tx(tx, api.task, :start),
+    with {:ok, origin} <- Assistant.may_act_tx(tx, api.task, :start),
          {:ok, thread} <- started(Threads.start_tx(tx, project.id, message, opts)) do
       {:ok,
        ~s(Started #{thread.id} "#{thread.title}" in #{project.slug}. ) <>
          "You'll get an update when its run ends.",
-       %{
+       Map.merge(Origin.unattended_details(origin), %{
          "thread_id" => thread.id,
          "title" => thread.title,
          "project_id" => project.id,
          "slug" => project.slug
-       }}
+       })}
     end
   end
 

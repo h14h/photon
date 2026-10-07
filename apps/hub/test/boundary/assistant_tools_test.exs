@@ -7,12 +7,13 @@ defmodule Photon.AssistantToolsTest do
 
   use Photon.DataCase, async: false
 
-  import Photon.Fixtures, only: [call: 2, tool_task: 2]
+  import Photon.Fixtures, only: [call: 2, task: 1, tool_task: 2]
 
   alias Photon.{Assistant, Projects, Schedules, Skills, Threads}
   alias Photon.Assistant.Tools
-  alias Photon.Durable.{ToolAPI, Tx}
+  alias Photon.Durable.{Submission, ToolAPI, Tx}
   alias Photon.Schedules.{Routine, Schedule}
+  alias PhotonCore.Message
 
   @moduletag :durable
 
@@ -180,13 +181,54 @@ defmodule Photon.AssistantToolsTest do
   describe "project schedules" do
     setup :conversation
 
-    setup do
+    setup %{conversation: c} do
       {:ok, garden} =
         Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
 
       {:ok, house} = Projects.create(%{"purpose" => "Fix things.", "name" => "House"})
       :ok = Schedules.subscribe()
+
+      # A finished run of Blip's that the owner typed into, for the calls
+      # below to belong to: only such a run may make a project's schedule.
+      _submission =
+        Repo.insert!(%Submission{
+          id: "s_owner",
+          conversation_id: c,
+          mode: "follow_up",
+          content: %{"parts" => Message.parts("schedule it"), "source" => %{"kind" => "user"}},
+          status: "done"
+        })
+
+      _run =
+        Repo.insert!(
+          task(
+            id: "t_owner_run",
+            conversation_id: c,
+            status: "done",
+            checkpoint: %{"submissions" => ["s_owner"]}
+          )
+        )
+
       %{garden: garden, house: house}
+    end
+
+    # A call in the owner's run above.
+    defp owner_schedule(%{conversation: c}, args, task_id) do
+      call = call("schedule", %{})
+      task = tool_task(call, id: task_id, conversation_id: c, owner_task_id: "t_owner_run")
+      run(Tools.Schedule, args, ToolAPI.new(task))
+    end
+
+    test "are refused in a run the owner didn't type into", %{garden: garden} = ctx do
+      args = %{"prompt" => "Water zone 2", "in_minutes" => 5, "project" => "garden"}
+
+      assert schedule(ctx, args, "t_unattended") ==
+               {:error,
+                "Only the user can set up work in a project on a schedule. Ask them, " <>
+                  "or leave out project for a reminder to yourself."}
+
+      assert Schedules.list({:project, garden.id}) == []
+      refute_received {:schedules_changed, _}
     end
 
     test "start a new thread each time, as Blip's, outside any run Blip's own",
@@ -200,7 +242,7 @@ defmodule Photon.AssistantToolsTest do
         "project" => "garden"
       }
 
-      assert {:ok, text, details} = schedule(ctx, args, "t_p1")
+      assert {:ok, text, details} = owner_schedule(ctx, args, "t_p1")
       assert_receive {:schedules_changed, garden_id} when garden_id == garden.id
 
       assert text =~
@@ -212,21 +254,20 @@ defmodule Photon.AssistantToolsTest do
 
       assert %{state: :waiting, schedule: row} = Schedules.get(id)
 
-      # The fixture's call has no run behind it, so the owner didn't ask.
       assert %Schedule{
                project_id: ^project_id,
                conversation_id: nil,
                prompt: "Water zone 2",
                every_minutes: 1440,
                created_by: "blip",
-               asked_by: "blip"
+               asked_by: "owner"
              } = row
 
       assert [%{id: ^id}] = Schedules.list({:project, garden.id})
       assert Schedules.list(:blip) == []
 
       # A rerun of the call makes nothing new.
-      assert {:ok, ^text, ^details} = schedule(ctx, args, "t_p1")
+      assert {:ok, ^text, ^details} = owner_schedule(ctx, args, "t_p1")
       assert [_one] = Schedules.list({:project, garden.id})
     end
 
@@ -240,7 +281,9 @@ defmodule Photon.AssistantToolsTest do
         "thread" => " #{thread.id} "
       }
 
-      assert {:ok, text, %{"thread_id" => thread_id} = details} = schedule(ctx, args, "t_p2")
+      assert {:ok, text, %{"thread_id" => thread_id} = details} =
+               owner_schedule(ctx, args, "t_p2")
+
       assert thread_id == thread.id
       assert details["slug"] == "garden"
       assert text =~ ~s(, in garden, waking #{thread.id} "#{thread.title}".)
@@ -256,7 +299,7 @@ defmodule Photon.AssistantToolsTest do
          %{house: house} = ctx do
       theirs = idle_thread!(house)
 
-      assert schedule(
+      assert owner_schedule(
                ctx,
                %{
                  "prompt" => "p",
@@ -267,13 +310,21 @@ defmodule Photon.AssistantToolsTest do
                "t_bad"
              ) == {:error, "#{theirs.id} isn't a thread in garden."}
 
-      assert schedule(ctx, %{"prompt" => "p", "in_minutes" => 5, "thread" => theirs.id}, "t_bad") ==
+      assert owner_schedule(
+               ctx,
+               %{"prompt" => "p", "in_minutes" => 5, "thread" => theirs.id},
+               "t_bad"
+             ) ==
                {:error, "Give project too: the slug of the project #{theirs.id} is in."}
 
-      assert schedule(ctx, %{"prompt" => "p", "in_minutes" => 5, "project" => "gardn"}, "t_bad") ==
+      assert owner_schedule(
+               ctx,
+               %{"prompt" => "p", "in_minutes" => 5, "project" => "gardn"},
+               "t_bad"
+             ) ==
                {:error, "There's no project called gardn. Projects: garden, house."}
 
-      assert schedule(ctx, %{"prompt" => "p", "project" => "garden"}, "t_bad") ==
+      assert owner_schedule(ctx, %{"prompt" => "p", "project" => "garden"}, "t_bad") ==
                {:error, "Give in_minutes or at."}
 
       assert Schedules.list({:project, house.id}) == []
@@ -290,10 +341,14 @@ defmodule Photon.AssistantToolsTest do
       thread = idle_thread!(garden)
 
       {:ok, _, %{"schedule_id" => new}} =
-        schedule(ctx, %{"prompt" => "Water", "in_minutes" => 5, "project" => "garden"}, "t_l1")
+        owner_schedule(
+          ctx,
+          %{"prompt" => "Water", "in_minutes" => 5, "project" => "garden"},
+          "t_l1"
+        )
 
       {:ok, _, %{"schedule_id" => woken}} =
-        schedule(
+        owner_schedule(
           ctx,
           %{
             "prompt" => "Pump",
@@ -327,7 +382,7 @@ defmodule Photon.AssistantToolsTest do
       assert [%{id: ^woken}] = Schedules.list({:project, garden.id})
     end
 
-    test "made in a run the owner wrote to are asked by the owner; in a scheduled run, by Blip",
+    test "made in a run the owner wrote to are asked by the owner; a reminder in a scheduled run, by Blip",
          %{conversation: c, garden: garden} do
       :ok = Durable.subscribe(c)
       {:ok, s} = Assistant.send("every 60 minutes in garden: Water zone 2")
@@ -338,11 +393,12 @@ defmodule Photon.AssistantToolsTest do
 
       assert {owners.created_by, owners.asked_by} == {"blip", "owner"}
 
-      # One of Blip's own schedules fires a prompt that makes another.
+      # One of Blip's own schedules fires a prompt that makes another of
+      # its own (a project's would be refused there).
       Repo.insert!(%Schedule{
         id: "sc_morning",
         conversation_id: c,
-        prompt: "in 30 minutes in garden: Check the pump",
+        prompt: "in 30 minutes: Check the pump",
         first_at: DateTime.utc_now() |> DateTime.add(1, :day),
         version: 1,
         created_by: "blip",
@@ -359,7 +415,7 @@ defmodule Photon.AssistantToolsTest do
 
       if Durable.busy?(c), do: await_change(c, fn _changes -> not Durable.busy?(c) end)
 
-      assert %Schedule{asked_by: "blip", created_by: "blip"} =
+      assert %Schedule{asked_by: "blip", created_by: "blip", project_id: nil} =
                Repo.get_by!(Schedule, prompt: "Check the pump")
     end
   end

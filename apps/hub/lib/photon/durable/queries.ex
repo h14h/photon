@@ -58,12 +58,14 @@ defmodule Photon.Durable.Queries do
 
   @doc """
   How many of a conversation's `"tool_result"` entries with status `"ok"`
-  are of a tool in `names` and come after its last `"user"` entry whose
-  source kind is one of `source_kinds` (after its start when it has none).
-  One query, which selects the count.
+  and `flag` true in their details are of a tool in `names` and come
+  after its last `"user"` entry whose source kind is one of
+  `source_kinds` (after its start when it has none). One query, which
+  selects the count.
   """
-  @spec count_tool_results_since(String.t(), [String.t()], [String.t()]) :: Ecto.Query.t()
-  def count_tool_results_since(conversation_id, names, source_kinds) do
+  @spec count_tool_results_since(String.t(), [String.t()], [String.t()], String.t()) ::
+          Ecto.Query.t()
+  def count_tool_results_since(conversation_id, names, source_kinds, flag) do
     since =
       from(u in Entry,
         where:
@@ -76,7 +78,7 @@ defmodule Photon.Durable.Queries do
       where:
         e.conversation_id == ^conversation_id and e.kind == "tool_result" and
           e.data["status"] == "ok" and e.data["name"] in ^names and
-          e.seq > coalesce(subquery(since), 0),
+          e.data["details"][^flag] == true and e.seq > coalesce(subquery(since), 0),
       select: count(e.id)
     )
   end

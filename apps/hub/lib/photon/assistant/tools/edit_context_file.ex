@@ -64,7 +64,7 @@ defmodule Photon.Assistant.Tools.EditContextFile do
   end
 
   defp edit(tx, api, project, name, {old_text, new_text}) do
-    with :ok <- Assistant.may_act_tx(tx, api.task, :change),
+    with {:ok, _origin} <- Assistant.may_act_tx(tx, api.task, :change),
          {:ok, file} <- Projects.edit_file_tx(tx, project.id, name, old_text, new_text, "blip") do
       {:ok, Readout.file_edited(file.name, project.slug),
        %{
