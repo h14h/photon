@@ -1153,7 +1153,20 @@ defmodule PhotonWeb.ConversationComponents do
               this.el.value = text
               grow()
             })
+            // Measured while Blip's panel is closed (as narrow as Blip), the
+            // placeholder wraps a word a line and the box mounts at its
+            // tallest; it measures again when its width changes.
+            let width = this.el.clientWidth
+            this.resized = new ResizeObserver(() => {
+              if (this.el.clientWidth === width) return
+              width = this.el.clientWidth
+              grow()
+            })
+            this.resized.observe(this.el)
             grow()
+          },
+          destroyed() {
+            if (this.resized) this.resized.disconnect()
           }
         }
       </script>
