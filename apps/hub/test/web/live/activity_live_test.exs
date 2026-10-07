@@ -126,7 +126,8 @@ defmodule PhotonWeb.ActivityLiveTest do
     refute has_element?(view, "#activity-a_1-target")
     assert has_element?(view, "#activity-a_1-at")
 
-    # A thread who asked, linked; where the call acted, linked.
+    # A thread who asked, linked; where the call acted, linked: the
+    # project, since the thread it acted on is the one who asked.
     assert has_element?(
              view,
              "#activity-a_2-origin-thread[href='/projects/garden/threads/c_pump']",
@@ -134,12 +135,7 @@ defmodule PhotonWeb.ActivityLiveTest do
            )
 
     assert has_element?(view, "#activity-a_2-project[href='/projects/garden']", "Garden")
-
-    assert has_element?(
-             view,
-             "#activity-a_2-thread[href='/projects/garden/threads/c_pump']",
-             "Fix the pump"
-           )
+    refute has_element?(view, "#activity-a_2-thread")
 
     # A schedule by its prompt; a failed call marked.
     assert has_element?(view, "#activity-a_3-origin", "Schedule: check my disks")
@@ -156,7 +152,7 @@ defmodule PhotonWeb.ActivityLiveTest do
     refute has_element?(view, "#activity-a_5-origin a")
   end
 
-  test "a thread named or renamed since shows its new title", %{
+  test "a thread named or renamed since shows its new title, once per row", %{
     conn: conn,
     garden: garden
   } do
@@ -180,7 +176,10 @@ defmodule PhotonWeb.ActivityLiveTest do
     assert has_element?(view, "#activity-a_1-summary", ~s(Started "Fix the pump" in garden))
     assert has_element?(view, "#activity-a_1-thread", "Fix the pump")
 
+    # Asked by the thread it answered: named once, as the asker.
     assert has_element?(view, "#activity-a_2-origin-thread", "Fix the pump")
+    assert has_element?(view, "#activity-a_2-project", "Garden")
+    refute has_element?(view, "#activity-a_2-thread")
 
     {:ok, _thread} = Photon.Threads.rename("c_pump", "Pump repair")
 

@@ -12,7 +12,8 @@ defmodule PhotonWeb.ActivityText do
   were when the row was written: a thread is named after its first run
   ends, and the owner may rename it. A call on one thread has its summary
   worded again with the thread's title now
-  (`Photon.Activity.Rules.thread_summary/4`).
+  (`Photon.Activity.Rules.thread_summary/4`). A row whose asker is the
+  thread it acted on names that thread once, as the asker.
 
   Pure: the page reads the titles, prompts and projects (the `lookup`)
   and passes them in, and renders times with
@@ -154,7 +155,8 @@ defmodule PhotonWeb.ActivityText do
   (see `t:row/0`). A thread who asked is linked when the page found it
   and its project; a follow-up names and links the thread it was about
   the same way. Where it acted is the row's project and thread, each
-  only when the page found it. A call on one thread the page found says the thread's
+  only when the page found it, and the thread only when it isn't the
+  one who asked. A call on one thread the page found says the thread's
   title now in its summary.
   """
   @spec row(Action.t(), lookup()) :: row()
@@ -171,7 +173,7 @@ defmodule PhotonWeb.ActivityText do
       status: status(action.status),
       origin: origin,
       project: project(action.project_id, action.thread_id, lookup),
-      thread: thread
+      thread: target(thread, origin)
     }
   end
 
@@ -181,6 +183,11 @@ defmodule PhotonWeb.ActivityText do
     do: Rules.thread_summary(action.tool, action.status, title, slug) || action.summary
 
   defp summary(action, _thread), do: action.summary
+
+  # Where it acted names the thread unless the asker already did: the
+  # project is enough when a thread's question led to a call on itself.
+  defp target(%{id: id}, %{thread: %{id: id}}), do: nil
+  defp target(thread, _origin), do: thread
 
   @doc ~S"""
   A status mark's words: "Failed", "Stopped", "Cut short by a restart",

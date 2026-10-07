@@ -210,6 +210,39 @@ defmodule PhotonWeb.ActivityTextTest do
 
       assert ActivityText.row(answered, @lookup).summary == "Answered: staging"
     end
+
+    test "a thread's question that led to a call on itself names the thread once" do
+      row =
+        ActivityText.row(
+          action(
+            tool: "answer_question",
+            summary: "Answered: staging",
+            origin: "thread",
+            origin_id: "c_pump",
+            project_id: "p_garden",
+            thread_id: "c_pump"
+          ),
+          @lookup
+        )
+
+      assert row.origin == %{by: "thread", lead: "", thread: @pump}
+      assert row.project == %{name: "Garden", slug: "garden"}
+      assert row.thread == nil
+
+      # A thread asking about another names both.
+      other = %{
+        @lookup
+        | places: Map.put(@lookup.places, "c_beds", %{title: "Beds", project_id: "p_garden"})
+      }
+
+      row =
+        ActivityText.row(
+          action(origin: "thread", origin_id: "c_beds", thread_id: "c_pump"),
+          other
+        )
+
+      assert row.thread == @pump
+    end
   end
 
   test "status_text/1 names a mark for failures and stops only" do
