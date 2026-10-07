@@ -78,8 +78,21 @@ defmodule Photon.Signals do
   @typedoc """
   A signal: its `key` (`Photon.Signals.Rules.key/1`), the `text` the model
   reads (`Photon.Signals.Text`), and the `ref` the panel draws it from.
+  A digest or review also carries `older`, what Blip's later requests send
+  in its place (`Photon.Durable.Context`).
   """
-  @type t :: %{key: String.t(), text: String.t(), ref: Rules.ref()}
+  @type t :: %{
+          required(:key) => String.t(),
+          required(:text) => String.t(),
+          required(:ref) => Rules.ref(),
+          optional(:older) => older()
+        }
+
+  @typedoc """
+  The stub a message is sent as once Blip has moved on (`"text"`), and the
+  answer that leaves its run out of later requests (`"drop_if_answer"`).
+  """
+  @type older :: %{optional(String.t()) => String.t()}
 
   @typedoc """
   An `ask_blip` question, as `Photon.Questions.Question` holds it: its ID,
@@ -290,9 +303,14 @@ defmodule Photon.Signals do
        takes it, as one more text part and ref
     3. otherwise it is a message of its own, which starts a run when Blip
        is idle and waits as a follow-up when Blip is busy
+
+  A signal's `older` stub goes in the source of the message it starts,
+  next to `"signals"`; a signal that joins a queued message adds none.
+  Only digests and reviews carry one, and `Photon.Signals.Rules.merges?/2`
+  keeps them out of messages of other kinds.
   """
   @spec post_tx(Tx.t(), t()) :: Submission.t()
-  def post_tx(tx, %{key: key, text: text, ref: ref}) do
+  def post_tx(tx, %{key: key, text: text, ref: ref} = signal) do
     blip = blip_conversation_tx(tx)
     request_id = "signal:" <> key
 
@@ -300,17 +318,20 @@ defmodule Photon.Signals do
          queued = Tx.queued(tx, blip),
          nil <- Enum.find(queued, &Rules.carries?(source(&1), key)) do
       case Enum.find(queued, &Rules.merges?(source(&1), ref)) do
-        nil -> submit_tx(tx, blip, text, ref, request_id)
+        nil -> submit_tx(tx, blip, signal, request_id)
         carrier -> merge_tx(tx, carrier, text, ref)
       end
     end
   end
 
-  defp submit_tx(tx, blip, text, ref, request_id) do
-    Durable.submit_tx(tx, blip, text,
-      source: %{"kind" => "signal", "signals" => [ref]},
-      request_id: request_id
-    )
+  defp submit_tx(tx, blip, %{text: text, ref: ref} = signal, request_id) do
+    source =
+      case signal do
+        %{older: %{} = older} -> %{"kind" => "signal", "signals" => [ref], "older" => older}
+        _no_stub -> %{"kind" => "signal", "signals" => [ref]}
+      end
+
+    Durable.submit_tx(tx, blip, text, source: source, request_id: request_id)
   end
 
   defp merge_tx(tx, carrier, text, ref) do

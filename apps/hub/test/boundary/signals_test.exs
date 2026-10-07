@@ -337,6 +337,24 @@ defmodule Photon.SignalsTest do
       unpark_blip!(blip, parked)
     end
 
+    test "an older: stub goes in the source of the message it starts", %{blip: blip} do
+      older = %{"text" => "[Digest delivered]", "drop_if_answer" => "[nothing to tell]"}
+      ref = %{"kind" => "digest", "key" => "digest:t_1:0", "items" => [], "more" => 0}
+      digest = post!(%{key: "digest:t_1:0", text: "[Digest] Since...", ref: ref, older: older})
+
+      assert digest.content["source"] ==
+               %{"kind" => "signal", "signals" => [ref], "older" => older}
+
+      assert %{status: "done"} = await_settled(blip, digest.id)
+
+      assert [user | _] = Durable.entries(blip)
+      assert {user.kind, user.data["source"]["older"]} == {"user", older}
+
+      update = post!(signal("k1", "one"))
+      refute Map.has_key?(update.content["source"], "older")
+      assert %{status: "done"} = await_settled(blip, update.id)
+    end
+
     test "unpost_tx/2 leaves a placed signal alone", %{blip: blip} do
       placed = post!(signal("k1", "one"))
       assert placed.status == "placed"

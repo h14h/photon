@@ -24,6 +24,24 @@ defmodule Photon.Durable.Context do
   when a new run starts, so the requests within a run share a stable
   prefix for prompt caching. The rule applies to every tool's results and
   takes nothing from the profile.
+
+  An earlier run can also ask to shrink further. When its first user
+  entry's source has an `"older"` map (`%{"text" => stub,
+  "drop_if_answer" => answer}`, both optional but the stub), the run is
+  sent smaller once a later run has started:
+
+    * when no other user entry joined it (no steer) and its final answer,
+      trimmed, lowercased and without a trailing `.`, equals
+      `"drop_if_answer"` treated the same way, the whole run is left out:
+      the user entry, its tool calls and results, and the answer
+    * otherwise the user entry is sent as the stub, and the run's text
+      results are cut to 500 code points instead of 4,000, with the same
+      head-and-tail cut and marker
+
+  Blip's digests and reviews use it (section 5.3 of
+  `docs/plans/step-5-ambient-mode.md`), so a day of them doesn't fill
+  every later request; nothing here knows what a digest is. The current
+  run is never touched, and an entry without `"older"` is sent as above.
   """
 
   # Functional core: no processes, no I/O.
@@ -34,17 +52,24 @@ defmodule Photon.Durable.Context do
 
   # Code points an older text part keeps: half from its start, half from its end.
   @older_text_limit 4_000
+  # The same, in a run whose user entry asked to shrink (`"older"`).
+  @stub_text_limit 500
   @image_gone "(image no longer shown; call view_image again to see it)"
 
   @spec messages([Entry.t()]) :: [Message.t()]
   def messages(entries) do
-    {earlier, current} = entries |> since_reset() |> split_at_run()
+    case entries |> since_reset() |> runs() |> Enum.reverse() do
+      [] ->
+        []
 
-    earlier
-    |> Enum.map(&shorten/1)
-    |> Enum.concat(current)
-    |> Enum.flat_map(&message/1)
-    |> pair_tool_results()
+      [current | earlier] ->
+        earlier
+        |> Enum.reverse()
+        |> Enum.flat_map(&older/1)
+        |> Enum.concat(current)
+        |> Enum.flat_map(&message/1)
+        |> pair_tool_results()
+    end
   end
 
   defp since_reset(entries) do
@@ -54,23 +79,23 @@ defmodule Photon.Durable.Context do
     end
   end
 
-  # Entries before the current run's first user entry belong to earlier
-  # runs. A user entry starts a run when it is the first one, or the first
-  # after an entry that ended a run; later ones are steers placed mid-run.
-  defp split_at_run(entries) do
-    {start, _open} =
-      entries
-      |> Enum.with_index()
-      |> Enum.reduce({nil, true}, fn
-        {%Entry{kind: "user"}, index}, {_start, true} -> {index, false}
-        {entry, _index}, {start, open} -> {start, open or run_end?(entry)}
+  # The entries in runs, oldest first; the last is the current run. A user
+  # entry starts a run when it is the first one, or the first after an
+  # entry that ended a run; later ones are steers placed mid-run and stay
+  # in theirs. Entries before the first user entry (a reset) are a run of
+  # their own, so with no user entry at all everything is the current run.
+  defp runs(entries) do
+    {runs, run, _open} =
+      Enum.reduce(entries, {[], [], true}, fn
+        %Entry{kind: "user"} = entry, {runs, run, true} -> {push(runs, run), [entry], false}
+        entry, {runs, run, open} -> {runs, [entry | run], open or run_end?(entry)}
       end)
 
-    case start do
-      nil -> {[], entries}
-      index -> Enum.split(entries, index)
-    end
+    runs |> push(run) |> Enum.reverse()
   end
+
+  defp push(runs, []), do: runs
+  defp push(runs, run), do: [Enum.reverse(run) | runs]
 
   defp run_end?(%Entry{kind: "assistant", data: %{"message" => message}}),
     do: Message.tool_calls(message) == []
@@ -89,38 +114,81 @@ defmodule Photon.Durable.Context do
     end
   end
 
-  defp shorten(%Entry{kind: "tool_result", data: %{"message" => %{"content" => parts}}} = entry)
+  # An earlier run, as the model sees it: left out, as its stub, or with
+  # its tool results shortened.
+  defp older([%Entry{kind: "user", data: %{"source" => source}} = first | rest] = run) do
+    case source do
+      %{"older" => %{"text" => text} = asked} when is_binary(text) ->
+        if dropped?(rest, asked["drop_if_answer"]),
+          do: [],
+          else: [
+            put_in(first.data["message"], Message.user(text))
+            | shorten_all(rest, @stub_text_limit)
+          ]
+
+      _no_stub ->
+        shorten_all(run, @older_text_limit)
+    end
+  end
+
+  defp older(run), do: shorten_all(run, @older_text_limit)
+
+  defp shorten_all(entries, limit), do: Enum.map(entries, &shorten(&1, limit))
+
+  # A run (after its user entry) is left out when nobody steered it and it
+  # answered what its user entry said it would answer when there was
+  # nothing to say.
+  defp dropped?(rest, drop_if) when is_binary(drop_if) do
+    not Enum.any?(rest, &(&1.kind == "user")) and
+      case Enum.find(rest, &run_end?/1) do
+        %Entry{kind: "assistant", data: %{"message" => answer}} ->
+          plain(Message.text_of(answer)) == plain(drop_if)
+
+        _no_answer ->
+          false
+      end
+  end
+
+  defp dropped?(_rest, _drop_if), do: false
+
+  defp plain(text),
+    do: text |> String.trim() |> String.downcase() |> String.replace_suffix(".", "")
+
+  defp shorten(
+         %Entry{kind: "tool_result", data: %{"message" => %{"content" => parts}}} = entry,
+         limit
+       )
        when is_list(parts) do
     hint = full_output(entry.data["details"])
-    shortened = Enum.map(parts, &shorten_part(&1, hint))
+    shortened = Enum.map(parts, &shorten_part(&1, hint, limit))
     %{entry | data: put_in(entry.data, ["message", "content"], shortened)}
   end
 
-  defp shorten(entry), do: entry
+  defp shorten(entry, _limit), do: entry
 
   defp full_output(%{"full_output" => hint}) when is_binary(hint) and hint != "", do: hint
   defp full_output(_details), do: nil
 
-  defp shorten_part(%{"type" => "image"}, _hint), do: Message.text(@image_gone)
+  defp shorten_part(%{"type" => "image"}, _hint, _limit), do: Message.text(@image_gone)
 
   # A text no longer in bytes than the limit can't be over it in code points.
-  defp shorten_part(%{"type" => "text", "text" => text} = part, hint)
-       when is_binary(text) and byte_size(text) > @older_text_limit do
+  defp shorten_part(%{"type" => "text", "text" => text} = part, hint, limit)
+       when is_binary(text) and byte_size(text) > limit do
     codepoints = text |> Output.sanitize() |> String.to_charlist()
     count = length(codepoints)
 
-    if count > @older_text_limit,
-      do: %{part | "text" => cut(codepoints, count, hint)},
+    if count > limit,
+      do: %{part | "text" => cut(codepoints, count, hint, limit)},
       else: part
   end
 
-  defp shorten_part(part, _hint), do: part
+  defp shorten_part(part, _hint, _limit), do: part
 
-  defp cut(codepoints, count, hint) do
-    half = div(@older_text_limit, 2)
+  defp cut(codepoints, count, hint, limit) do
+    half = div(limit, 2)
     {head, rest} = Enum.split(codepoints, half)
     tail = Enum.drop(rest, length(rest) - half)
-    List.to_string(head) <> marker(count - @older_text_limit, hint) <> List.to_string(tail)
+    List.to_string(head) <> marker(count - limit, hint) <> List.to_string(tail)
   end
 
   defp marker(left_out, nil),
