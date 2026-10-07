@@ -10,7 +10,7 @@ defmodule Photon.Assistant.MockAmbient do
   out: a line that contains one, ignoring case, isn't told.
 
     * A digest: each line under "New to the user:" left after the filter
-      becomes a paragraph of the reply, `Fix the pump in Garden finished: Replaced the
+      becomes a reply line (one line alone, more as a list), `Fix the pump in Garden finished: Replaced the
       fuse.` or `The schedule "check the gutters" in Garden stopped after
       an error.` Lines under "Already seen" are left out.
     * A review: the lines left after the filter become `These have sat
@@ -68,16 +68,18 @@ defmodule Photon.Assistant.MockAmbient do
     end
   end
 
-  # Markdown paragraphs, a blank line apart, so the panel and the bubble
-  # draw each one on its own and not run together into one.
+  # Markdown blocks, a blank line apart, so the panel draws each on its
+  # own (it has no hard line breaks) and the bubble, which shows the first
+  # block, shows the whole list.
   defp reply([]), do: Message.assistant(@nothing_to_tell)
   defp reply(blocks), do: blocks |> Enum.join("\n\n") |> Message.assistant()
 
   defp reply_blocks("[Digest]" <> _rest = text, ignored) do
-    text
-    |> block("New to the user:")
-    |> kept(ignored)
-    |> Enum.map(&digest_line/1)
+    case text |> block("New to the user:") |> kept(ignored) |> Enum.map(&digest_line/1) do
+      [] -> []
+      [line] -> [line]
+      lines -> [Enum.map_join(lines, "\n", &("- " <> &1))]
+    end
   end
 
   defp reply_blocks("[Daily review]" <> _rest = text, ignored) do

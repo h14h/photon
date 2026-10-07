@@ -8,7 +8,7 @@ defmodule Photon.Assistant.MockAmbientTest do
   use Photon.Case, async: true
 
   alias Photon.Ambient.Text
-  alias Photon.Assistant.{MockAmbient, MockCoordinator, MockScript}
+  alias Photon.Assistant.{MockAmbient, MockCoordinator, MockScript, Notice}
 
   @now ~U[2026-10-07 15:00:00.000000Z]
 
@@ -121,15 +121,18 @@ defmodule Photon.Assistant.MockAmbientTest do
   end
 
   describe "a digest" do
-    test "each new line becomes a paragraph of the reply, and no tool is called" do
+    test "the new lines become a list, and no tool is called" do
       text = digest([pump(), gutters()], [seeds()])
       message = reply(text)
 
       assert Message.tool_calls(message) == []
 
       assert Message.text_of(message) ==
-               "Fix the pump in Garden finished: Replaced the fuse and the pump runs again.\n\n" <>
-                 ~s{The schedule "check the gutters" in Garden stopped after an error.}
+               "- Fix the pump in Garden finished: Replaced the fuse and the pump runs again.\n" <>
+                 ~s{- The schedule "check the gutters" in Garden stopped after an error.}
+
+      # One block, so the bubble (its first block) shows every line.
+      assert Notice.paragraph(Message.text_of(message)) == Message.text_of(message)
     end
 
     test "a finished thread with no note, and Blip's own schedule" do
@@ -137,8 +140,8 @@ defmodule Photon.Assistant.MockAmbientTest do
       quiet = %{pump() | note: nil}
 
       assert Message.text_of(reply(digest([quiet, own], []))) ==
-               "Fix the pump in Garden finished.\n\n" <>
-                 ~s{Your schedule "water" stopped after an error.}
+               "- Fix the pump in Garden finished.\n" <>
+                 ~s{- Your schedule "water" stopped after an error.}
     end
 
     test "a line with a word to ignore is left out, ignoring case" do
@@ -173,10 +176,11 @@ defmodule Photon.Assistant.MockAmbientTest do
              """
     end
 
-    test "draws the closing sentence as its own paragraph, not part of the last item" do
+    test "draws the list whole in the bubble, and the closing sentence as its own paragraph, not part of the last item" do
       html = review() |> reply() |> Message.text_of() |> Photon.Markdown.to_html()
 
       assert html =~ ~r{</ul>\s*<p>Say }
+      assert Notice.paragraph(Message.text_of(reply(review()))) =~ "waiting on you for 3 days."
       refute html =~ ~r{days\.\s*Say }
     end
 

@@ -1076,9 +1076,9 @@ Messages the owner didn't type (the last user message's text parts):
 - A `[Digest]` part: the memory lines `- ignore: <word>` (from the
   request's system text, as the question script reads memory) name words
   to ignore. Each line under "New to the user:" that contains none of
-  them, ignoring case, becomes a paragraph of the reply (a blank line
-  apart, since the panel's Markdown would run single lines together):
-  `Fix the pump in Garden
+  them, ignoring case, becomes a reply line (one alone; more as a
+  Markdown list, since the panel's Markdown would run single lines
+  together and the bubble shows only the first block): `Fix the pump in Garden
   finished: Replaced the fuse...` or `The schedule "check the gutters" in
   Garden stopped after an error.` Lines under "Already seen" are left
   out. No lines left: `[nothing to tell]`.
