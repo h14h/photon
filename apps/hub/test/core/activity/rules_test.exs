@@ -272,6 +272,15 @@ defmodule Photon.Activity.RulesTest do
       assert label("follow_up", "sc_1") == "Blip's follow-up"
     end
 
+    test "a follow-up on ambient mode's digest or daily review" do
+      assert label("follow_up", "digest") == "Blip's follow-up on the digest"
+      assert label("follow_up", "review") == "Blip's follow-up on the daily review"
+
+      # Only a follow-up names them.
+      assert label("schedule", "digest") == "A schedule"
+      assert label("thread", "review") == "A thread"
+    end
+
     test "anything else is Blip" do
       assert label("unknown", nil) == "Blip"
       assert label("comet", "c_1") == "Blip"

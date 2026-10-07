@@ -13,7 +13,14 @@ defmodule Photon.Assistant.Notice do
   reply to it is, as any answer is, except in a run that only handles
   threads' questions (`Photon.Assistant.Origin`'s `quiet?`): there Blip
   answers to the threads, so the owner hears only the questions it
-  passes on. `scan/2` follows the runs across batches for that.
+  passes on. `scan/2` follows the runs across batches for that. An
+  answer of `[nothing to tell]` (`Photon.Transcript.nothing_to_tell?/1`,
+  Blip's reply to a digest or daily review with nothing worth saying)
+  is never a notice either: silence is the point. In a run that only
+  reports on a digest or review (`Origin`'s `report_only?`), only Blip's
+  final answer can be one: what it says on the way, next to its tool
+  calls ("Let me check the pump thread."), isn't for the owner, and the
+  answer may yet be `[nothing to tell]`.
 
   A question's notice names its thread by the title the conversation
   recorded, and keeps the thread's ID: `text/2` says it with the
@@ -69,7 +76,7 @@ defmodule Photon.Assistant.Notice do
   def scan(entries, state) do
     Enum.flat_map_reduce(entries, state, fn entry, state ->
       state = follow(state, entry)
-      {entry |> of_entry(quiet?(state)) |> List.wrap(), ended(state, entry)}
+      {entry |> of_entry(origin(state)) |> List.wrap(), ended(state, entry)}
     end)
   end
 
@@ -92,16 +99,19 @@ defmodule Photon.Assistant.Notice do
   defp ended(state, %{kind: "error"}), do: %{state | ended?: true}
   defp ended(state, _entry), do: state
 
-  defp quiet?(%{sources: sources}), do: Origin.of(sources).quiet?
+  defp origin(%{sources: sources}), do: Origin.of(sources)
 
-  defp of_entry(%{kind: "assistant"}, true = _quiet), do: nil
-  defp of_entry(entry, _quiet), do: of_entry(entry)
+  defp of_entry(%{kind: "assistant"}, %{quiet?: true}), do: nil
+
+  defp of_entry(%{kind: "assistant", data: data} = entry, %{report_only?: true}) do
+    if Message.tool_calls(data["message"]) == [], do: of_entry(entry), else: nil
+  end
+
+  defp of_entry(entry, _origin), do: of_entry(entry)
 
   defp of_entry(%{kind: "assistant", data: data}) do
-    case data["message"] |> Message.text_of() |> paragraph() do
-      "" -> nil
-      text -> %{kind: :reply, text: text}
-    end
+    text = Message.text_of(data["message"])
+    if Transcript.nothing_to_tell?(text), do: nil, else: reply(paragraph(text))
   end
 
   defp of_entry(%{kind: "tool_result", data: data}) do
@@ -126,6 +136,9 @@ defmodule Photon.Assistant.Notice do
   end
 
   defp of_entry(_entry), do: nil
+
+  defp reply(""), do: nil
+  defp reply(text), do: %{kind: :reply, text: text}
 
   # `"Fix the pump" asks: <the question>`, the question on one line and
   # cut to what a bubble holds.

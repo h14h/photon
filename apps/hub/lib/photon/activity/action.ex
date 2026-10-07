@@ -16,8 +16,9 @@ defmodule Photon.Activity.Action do
       (`Photon.Activity.Rules.changes?/1`); false for reads and messages
     * `origin` and `origin_id` - who asked: `"owner"`, `"thread"` (the
       thread whose question it was), `"schedule"` (the schedule),
-      `"follow_up"` (the thread it followed up on, or the schedule Blip
-      made for itself, or nil) or `"unknown"`
+      `"follow_up"` (the thread it followed up on, the schedule Blip
+      made for itself, `"digest"` or `"review"` for ambient mode's
+      digest and daily review, or nil) or `"unknown"`
     * `project_id`, `thread_id` - what the call acted on, from its result's
       details; nil when it named none
     * `entry_id` - the `"tool_result"` entry, or for a message the answer

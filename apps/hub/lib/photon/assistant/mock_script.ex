@@ -29,9 +29,10 @@ defmodule Photon.Assistant.MockScript do
   It reads the last text part of the user's message, which is what the
   user typed: a message sent from a page has the page's note in front of
   it, as a part of its own. A message the user didn't type (a thread's
-  question or update, or the user's answer to a question going by) is
+  question or update, a digest or daily review of ambient mode, or the
+  user's answer to a question going by) is
   `Photon.Assistant.MockCoordinator.unasked/2`'s, which reads every text
-  part.
+  part and tries `Photon.Assistant.MockAmbient` first.
 
   After a tool result it relays the result. An image result gets "Here it
   is." and its dimensions line. A result of its tools over threads is
@@ -51,6 +52,7 @@ defmodule Photon.Assistant.MockScript do
     deps: [
       PhotonCore,
       PhotonCore.LLM,
+      Photon.Assistant.MockAmbient,
       Photon.Assistant.MockCoordinator,
       Photon.MachineTools,
       Photon.Skills
@@ -58,7 +60,7 @@ defmodule Photon.Assistant.MockScript do
 
   @behaviour PhotonCore.LLM.Mock
 
-  alias Photon.Assistant.MockCoordinator
+  alias Photon.Assistant.{MockAmbient, MockCoordinator}
   alias Photon.MachineTools.MockPhrases
   alias Photon.Skills.MockPhrases, as: SkillPhrases
   alias PhotonCore.LLM.Mock
@@ -76,7 +78,7 @@ defmodule Photon.Assistant.MockScript do
   - `here` tells you which page you're on, as I see it
   - `skills` lists the skills turned on for me
   - `load skill <name>` loads one, like `load skill pdf-forms`
-  #{MockCoordinator.help()}
+  #{MockCoordinator.help()}#{MockAmbient.help()}
   Sign in with ChatGPT and I can do the rest.
   """
 

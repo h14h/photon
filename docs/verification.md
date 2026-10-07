@@ -220,6 +220,61 @@ done
 
 ## Results
 
+### Step 5: ambient mode, no spec change (2026-10-07)
+
+Step 5 adds ambient mode (`docs/plans/step-5-ambient-mode.md`): two
+durable timers, a digest every few hours and a daily review, each
+posting at most one message into Blip's conversation, and digest items
+collected while the setting is on. No spec changed and TLC wasn't run.
+Section 13 of the plan gives the reasons, and `specs/tla/Durable.md`
+("What changed in build step 5") repeats them against the spec: an
+ambient timer is a routine, which `Durable.tla` already models with its
+edits and deletes (`RoutineFire`, `OwnerEdit`, `OwnerDelete`, and
+`NoFireAfterRetire`, `FireOncePerSlot`, `RetiredEnds`); nothing commits
+outside a step's fence on a task's behalf, as step 4's ask did; and an
+item from a settle is written in the settle hook's commit, which
+`HookOnce` covers.
+
+What step 5 claims beyond that is each one commit's work, true by the
+serial commit line and checked by boundary tests instead:
+
+- A digest posts its message and marks every item it read as carried in
+  one commit, so no item is reported twice; the commit that settles
+  Blip's run on it deletes them, or gives them back when the run failed,
+  so none is lost (`test/boundary/ambient_test.exs`: "posts what is new
+  with the smaller changes, and uses up every item once Blip answers",
+  "a digest whose run fails gives its items back for the next one", "a
+  review whose run fails clears its threads' marks"; a second digest
+  while the first waits skips and keeps the items).
+- Turning ambient mode off retires both timers, deletes the items,
+  withdraws a queued digest or review and clears that review's marks in
+  one commit ("turning it off retires both timers, deletes the items and
+  withdraws a queued digest", "turning it off withdraws a queued review
+  and clears its threads' marks").
+- A firing step of a retired timer commits nothing ("a firing step of a
+  timer replaced meanwhile commits nothing", "a firing step after
+  ambient mode was turned off commits nothing"), and a timer waiting for
+  its time still waits after a restart.
+- Every collector reads the mode in its own commit, so nothing is
+  collected while it is off (the cases with ambient mode off in
+  `signals_test.exs`, `threads_test.exs`, `projects_test.exs` and
+  `schedules_test.exs`), and a settle makes one item per thread, at the
+  run's end ("a run that answers two queued inputs makes one item, at
+  its end"). Every item is keyed by its subject, so the table holds at
+  most one row per subject ("collect_tx/2 keeps one row per subject").
+- `collect_tx/2` and the timer's `on_fail/3` run on the harness's hook
+  paths and are total ("collect_tx/2 makes one row per key, announces
+  each insert, and is total"; "on_fail/3 for a task the doc no longer
+  names writes nothing"; "a firing that raises stops the timer and says
+  so, until the next save").
+
+The one change to the harness, `Durable.Context`'s rule for earlier
+runs that carry an `"older"` stub, is in a pure function and covered by
+`test/core/durable/context_test.exs`. The end-to-end test
+(`test/integration/machine_tools_e2e_test.exs`) walks a digest, a second
+one with nothing new, the review and turning the mode off against a real
+node.
+
 ### Step 4: `ask_blip` and the settle hook in `Durable.tla` (2026-10-06)
 
 Step 4 lets a thread ask Blip a question with `ask_blip` and wait,

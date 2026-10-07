@@ -32,6 +32,9 @@ defmodule Photon.Assistant.OriginTest do
 
   defp carrying(refs), do: %{"kind" => "signal", "signals" => refs}
 
+  # A digest's or a daily review's ref, as `Photon.Ambient` posts it.
+  defp ambient(kind), do: %{"kind" => kind, "key" => "#{kind}:t_1:1", "items" => []}
+
   defp by(sources), do: sources |> Origin.of() |> Map.take([:by, :id])
 
   describe "of/1: who asked" do
@@ -130,6 +133,51 @@ defmodule Photon.Assistant.OriginTest do
     end
   end
 
+  describe "of/1: a digest or a daily review" do
+    test "is Blip's follow-up on it, and only reports" do
+      for kind <- ["digest", "review"] do
+        origin = Origin.of([carrying([ambient(kind)])])
+        assert %{by: "follow_up", id: ^kind, report_only?: true} = origin
+        refute origin.owner_wrote?
+        refute origin.restricted?
+        refute origin.quiet?
+      end
+    end
+
+    test "an owner's steer makes it the owner's, and lifts report-only" do
+      for kind <- ["digest", "review"] do
+        steered = Origin.of([carrying([ambient(kind)]), @user])
+        assert %{by: "owner", id: nil, owner_wrote?: true, report_only?: false} = steered
+      end
+    end
+
+    test "an answer to a question is the owner asking, but still only reports" do
+      answered = Origin.of([carrying([ambient("digest")]), @answer])
+      assert %{by: "owner", owner_wrote?: false, report_only?: true} = answered
+    end
+
+    test "no other run only reports" do
+      for sources <- [
+            [carrying([update("c_1")])],
+            [carrying([question("q_1", "c_1")])],
+            [routine("blip")],
+            [routine("owner")],
+            [@user],
+            [@answer],
+            [],
+            nil
+          ] do
+        refute Origin.of(sources).report_only?, inspect(sources)
+      end
+    end
+
+    test "calls in it are credited to the follow-up" do
+      origin = Origin.of([carrying([ambient("review")])])
+      assert Origin.for_call(origin, "read_thread", %{}) == %{by: "follow_up", id: "review"}
+      assert Origin.for_call(origin, "ask_owner", %{}) == %{by: "follow_up", id: "review"}
+    end
+  end
+
   describe "for_call/3" do
     setup do
       %{origin: Origin.of([carrying([question("q_1", "c_1"), question("q_2", "c_2")])])}
@@ -217,6 +265,10 @@ defmodule Photon.Assistant.OriginTest do
     assert Origin.unattended_message(10) ==
              "You've started or messaged threads 10 times since the user last wrote to you. " <>
                "Tell them what's going on and wait for them."
+
+    assert Origin.report_only_message() ==
+             "A digest or review run only reports. " <>
+               "Tell the user what you'd do, and do it when they say so."
 
     assert Origin.schedule_work_message() ==
              "Only the user can set up work in a project on a schedule. Ask them, " <>

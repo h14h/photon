@@ -11,8 +11,9 @@ defmodule Photon.ThreadsTest do
 
   @moduletag :durable
 
-  alias Photon.{Assistant, Projects, Settings, Threads}
+  alias Photon.{Assistant, Projects, Settings, Signals, Threads}
   alias Photon.Durable.{Conversation, Submission}
+  alias Photon.Signals.DigestItem
   alias Photon.Threads.Thread
 
   import Ecto.Query, only: [from: 2]
@@ -486,6 +487,102 @@ defmodule Photon.ThreadsTest do
       assert Threads.image(thread.id, entry.id, 0) == :error
       assert Threads.image(Assistant.conversation_id(), entry.id, 0) == :error
       assert Threads.image("c_missing", entry.id, 0) == :error
+    end
+  end
+
+  describe "digest items" do
+    defp ambient!(on?) do
+      _doc = Durable.commit(&Signals.put_ambient_doc_tx(&1, %{"on" => on?}))
+      :ok
+    end
+
+    # The items of `kinds`, oldest first, as {kind, thread, project}.
+    defp items(kinds) do
+      query =
+        from(i in DigestItem, where: i.kind in ^kinds, order_by: [asc: i.inserted_at, asc: i.id])
+
+      for item <- Repo.all(query), do: {item.kind, item.thread_id, item.project_id}
+    end
+
+    test "with ambient mode on, the owner's start and Resolve collect one per thread", %{
+      project: project
+    } do
+      ambient!(true)
+      id = idle_thread!(project, "hello")
+      assert [{"thread_started", id, project.id}] == items(["thread_started", "resolved"])
+
+      assert Threads.resolve(id) == :ok
+      assert Threads.reopen(id) == :ok
+      assert Threads.resolve(id) == :ok
+
+      # The second Resolve replaces the first.
+      assert [
+               {"thread_started", id, project.id},
+               {"resolved", id, project.id}
+             ] == items(["thread_started", "resolved"])
+
+      other = idle_thread!(project, "hello again")
+      assert Threads.resolve(other) == :ok
+      assert length(items(["thread_started", "resolved"])) == 4
+    end
+
+    test "a refused start or Resolve, and a schedule's start, collect nothing", %{
+      project: project
+    } do
+      ambient!(true)
+      assert Threads.start(project.id, " ") == {:error, :blank}
+      assert Threads.start("p_missing", "hello") == {:error, :not_found}
+      assert Threads.resolve("c_missing") == {:error, :not_found}
+
+      source = %{"kind" => "routine", "schedule_id" => "sc_backups"}
+
+      {:ok, thread} =
+        Durable.commit(&Threads.start_tx(&1, project.id, "[Scheduled] Backups", source: source))
+
+      idle!(thread.id)
+      assert items(["thread_started", "resolved"]) == []
+    end
+
+    test "with ambient mode off, nothing is collected", %{project: project} do
+      ambient!(false)
+      id = idle_thread!(project, "hello")
+      assert Threads.resolve(id) == :ok
+      assert Repo.all(DigestItem) == []
+    end
+  end
+
+  describe "review marks" do
+    test "mark_reviewed_tx/3 and unmark_reviewed_tx/2 set and clear the column, and announce once per project",
+         %{project: project} do
+      {:ok, other} = Projects.create(%{"purpose" => "Paint the house.", "name" => "House"})
+      one = idle_thread!(project, "hello")
+      two = idle_thread!(project, "files")
+      three = idle_thread!(other, "hello")
+      untouched = idle_thread!(project, "hello again")
+      # The Store announces a commit before the next one runs, so after
+      # this one the runs' own announcements are out of the way.
+      :ok = Durable.commit(fn _tx -> :ok end)
+      :ok = Projects.subscribe()
+      now = DateTime.utc_now()
+
+      assert Durable.commit(&Threads.mark_reviewed_tx(&1, [one, two, three], now)) == :ok
+      assert_receive {:projects_changed, project_id}
+      assert_receive {:projects_changed, other_id}
+      refute_receive {:projects_changed, _}, 50
+      assert Enum.sort([project_id, other_id]) == Enum.sort([project.id, other.id])
+
+      assert Enum.map([one, two, three], &Threads.get(&1).reviewed_at) == [now, now, now]
+      assert Threads.get(untouched).reviewed_at == nil
+      assert Threads.state(one).thread.reviewed_at == now
+
+      assert Durable.commit(&Threads.unmark_reviewed_tx(&1, [one, two])) == :ok
+      assert_receive {:projects_changed, project_id}
+      refute_receive {:projects_changed, _}, 50
+      assert project_id == project.id
+      assert Enum.map([one, two, three], &Threads.get(&1).reviewed_at) == [nil, nil, now]
+
+      assert Durable.commit(&Threads.unmark_reviewed_tx(&1, [])) == :ok
+      refute_receive {:projects_changed, _}, 50
     end
   end
 end

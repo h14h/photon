@@ -94,7 +94,14 @@ defmodule Photon.Threads do
   messages' sources: Blip's own messages, and firings of schedules Blip
   made, are Blip's, and Blip hears how they end; everything else is the
   owner's, and Blip hears only when it fails or ends asking the user
-  something. A stop is never a signal.
+  something. A stop is never a signal. While ambient mode is on, the
+  owner's run that finishes without asking is collected as a digest item
+  instead (`Photon.Signals.collect_tx/2`), in the same commit, and so are
+  a thread the owner starts (`start/2`, not `start_tx/4`, which Blip's
+  tools and schedules use) and the owner's Resolve (`resolve/1`).
+  Ambient mode's daily review records when it listed a thread
+  (`mark_reviewed_tx/3`, `reviewed_at`), a fact Home and the next review
+  read and the thread's state doesn't.
 
   There is no process here: the harness runs the conversations, and the
   rows hold the rest.
@@ -195,9 +202,18 @@ defmodule Photon.Threads do
   from the message, and `started_by` from its source
   (`Photon.Threads.Rules.started_by/1`). Errors: `:blank` when the message has no
   text, `:not_found` when the project doesn't exist; either makes nothing.
+  In ambient mode a thread the owner starts is collected for the next
+  digest (`"thread_started"`), in the same commit.
   """
   @spec start(String.t(), String.t()) :: {:ok, Thread.t()} | {:error, :blank | :not_found}
-  def start(project_id, text), do: Durable.commit(&start_tx(&1, project_id, text, []))
+  def start(project_id, text), do: Durable.commit(&owner_start_tx(&1, project_id, text))
+
+  defp owner_start_tx(tx, project_id, text) do
+    with {:ok, thread} <- start_tx(tx, project_id, text, []) do
+      :ok = collect_tx(tx, "thread_started", thread)
+      {:ok, thread}
+    end
+  end
 
   @doc """
   `start/2` inside the caller's commit, for `Photon.Schedules` to start a
@@ -588,13 +604,21 @@ defmodule Photon.Threads do
     end
   end
 
-  defp state_opts do
-    hours =
-      :photon
-      |> Application.get_env(__MODULE__, [])
-      |> Keyword.get(:quiet_after_hours, @quiet_after_hours)
+  defp state_opts, do: %{quiet_after: quiet_after()}
 
-    %{quiet_after: hours * 3600}
+  @doc """
+  How long, in seconds, a stopped thread is left alone before it reads as
+  quiet (`config :photon, Photon.Threads, quiet_after_hours:`, 72 by
+  default). Ambient mode's daily review uses it too, so it covers the
+  threads Home lists as gone quiet.
+  """
+  @spec quiet_after() :: non_neg_integer()
+  def quiet_after do
+    case :photon |> Application.get_env(__MODULE__, []) |> Keyword.get(:quiet_after_hours) do
+      hours when is_integer(hours) and hours >= 0 -> hours * 3600
+      # Unset, or not a whole number of hours: the default.
+      _other -> @quiet_after_hours * 3600
+    end
   end
 
   @doc """
@@ -650,10 +674,22 @@ defmodule Photon.Threads do
   its next message, whatever its last run did. A running thread can be
   resolved; its state changes once the run ends. Input already queued
   for it starts a new run afterwards, which clears the mark again.
-  Announces it.
+  Announces it. In ambient mode it is collected for the next digest
+  (`"resolved"`), in the same commit.
   """
   @spec resolve(String.t()) :: :ok | {:error, :not_found}
-  def resolve(thread_id), do: Durable.commit(&resolved_tx(&1, thread_id, DateTime.utc_now()))
+  def resolve(thread_id), do: Durable.commit(&owner_resolve_tx(&1, thread_id))
+
+  defp owner_resolve_tx(tx, thread_id) do
+    case get(thread_id) do
+      %Thread{} = thread ->
+        :ok = set_resolved_tx(tx, thread, DateTime.utc_now())
+        collect_tx(tx, "resolved", thread)
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
 
   @doc "Takes back `resolve/1`, and announces it."
   @spec reopen(String.t()) :: :ok | {:error, :not_found}
@@ -661,13 +697,56 @@ defmodule Photon.Threads do
 
   defp resolved_tx(tx, thread_id, resolved_at) do
     case get(thread_id) do
-      %Thread{} = thread ->
-        _thread = Repo.update!(Ecto.Changeset.change(thread, resolved_at: resolved_at))
-        Projects.threads_changed_tx(tx, thread.project_id)
-
-      nil ->
-        {:error, :not_found}
+      %Thread{} = thread -> set_resolved_tx(tx, thread, resolved_at)
+      nil -> {:error, :not_found}
     end
+  end
+
+  defp set_resolved_tx(tx, thread, resolved_at) do
+    _thread = Repo.update!(Ecto.Changeset.change(thread, resolved_at: resolved_at))
+    Projects.threads_changed_tx(tx, thread.project_id)
+  end
+
+  # An owner's start or Resolve, collected for the next digest while
+  # ambient mode is on (`Photon.Signals.collect_tx/2` reads the mode in
+  # this commit). One row per thread and kind: a second Resolve replaces
+  # the first.
+  defp collect_tx(tx, kind, thread) do
+    Signals.collect_tx(tx, %{
+      kind: kind,
+      thread_id: thread.id,
+      project_id: thread.project_id
+    })
+  end
+
+  ## Ambient mode's review marks
+
+  @doc """
+  Records, inside the caller's commit, that ambient mode's daily review
+  listed threads `thread_ids` at `now` (`reviewed_at`, section 4.2 of
+  `docs/plans/step-5-ambient-mode.md`), and announces
+  `{:projects_changed, project_id}` once per project. The mark is a fact
+  the next review and Home read; a thread's state doesn't.
+  """
+  @spec mark_reviewed_tx(Tx.t(), [String.t()], DateTime.t()) :: :ok
+  def mark_reviewed_tx(tx, thread_ids, %DateTime{} = now),
+    do: set_reviewed_tx(tx, thread_ids, now)
+
+  @doc """
+  Clears the review marks of threads `thread_ids` inside the caller's
+  commit, and announces once per project: for a review withdrawn before
+  Blip read it, when ambient mode is turned off.
+  """
+  @spec unmark_reviewed_tx(Tx.t(), [String.t()]) :: :ok
+  def unmark_reviewed_tx(tx, thread_ids), do: set_reviewed_tx(tx, thread_ids, nil)
+
+  defp set_reviewed_tx(_tx, [], _reviewed_at), do: :ok
+
+  defp set_reviewed_tx(tx, thread_ids, reviewed_at) when is_list(thread_ids) do
+    threads = where(Thread, [t], t.id in ^thread_ids)
+    project_ids = threads |> select([t], t.project_id) |> distinct(true) |> Repo.all()
+    {_count, _rows} = Repo.update_all(threads, set: [reviewed_at: reviewed_at])
+    Enum.each(project_ids, &(:ok = Projects.threads_changed_tx(tx, &1)))
   end
 
   @doc "Which of `thread_ids` are running."
@@ -903,15 +982,28 @@ defmodule Photon.Threads do
   defp reopen_tx(_tx, _thread, _settled), do: :ok
 
   # Whether Blip hears about this settle is decided by
-  # `Photon.Signals.Rules` from the settled submissions' sources; the
-  # signal names the thread and project as they are now.
+  # `Photon.Signals.Rules` from the settled submissions' sources, in the
+  # mode read in this commit; the signal names the thread and project as
+  # they are now. In ambient mode the owner's finished run is a digest
+  # item instead, which replaces an earlier finish of the same thread.
   defp signal_tx(tx, thread, settled, text) do
-    with kind when kind != nil <-
-           SignalRules.thread_update(signal_facts(settled, text), Signals.mode()),
-         %Project{} = project <- Projects.get(thread.project_id) do
-      post_tx(tx, kind, settled, text, place(thread, project))
-    else
-      _no_signal_or_no_project -> :ok
+    case SignalRules.thread_update(signal_facts(settled, text), Signals.mode_tx(tx)) do
+      nil ->
+        :ok
+
+      :digest ->
+        Signals.collect_tx(tx, %{
+          kind: "finished",
+          thread_id: thread.id,
+          project_id: thread.project_id,
+          note: State.note("done", text)
+        })
+
+      kind ->
+        case Projects.get(thread.project_id) do
+          %Project{} = project -> post_tx(tx, kind, settled, text, place(thread, project))
+          nil -> :ok
+        end
     end
   end
 
@@ -927,14 +1019,18 @@ defmodule Photon.Threads do
   end
 
   defp post_tx(tx, kind, settled, text, place) do
-    ids = for %Submission{id: id} <- settled_submissions(settled), do: id
-    key = SignalRules.key({:settle, ids, settled_task_id(settled)})
+    key = settle_key(settled)
     ref = SignalRules.update_ref(kind, key, place)
     detail = if kind == :failed, do: text, else: State.note("done", text)
     # The signal's submission is written in this commit; the hook has
     # nothing to do with it, and `post_tx/2` returns no error.
     _carrier = Signals.post_tx(tx, %{key: key, text: SignalText.update(ref, detail), ref: ref})
     :ok
+  end
+
+  defp settle_key(settled) do
+    ids = for %Submission{id: id} <- settled_submissions(settled), do: id
+    SignalRules.key({:settle, ids, settled_task_id(settled)})
   end
 
   defp settled_submissions(settled), do: List.wrap(Map.get(settled, :submissions))

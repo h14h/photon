@@ -26,7 +26,8 @@ machine call in its place (see "What changed in build step 1"). Build
 step 3 added repeating routines and the owner's edits and deletes (see
 "What changed in build step 3"), and step 4 the `ask_blip` call and the
 settle hook (see "What changed in build step 4"); in both, TLC found no
-problem in the plan's rules. Every config is expected to finish with no
+problem in the plan's rules. Build step 5 (ambient mode) changed nothing
+in the spec (see "What changed in build step 5"). Every config is expected to finish with no
 error, except the four `Durable-bug-*` configs, which put a defect back
 and must fail.
 `docs/verification.md` lists the ExUnit regression test for each
@@ -581,6 +582,59 @@ right; section 14 said `{:commit, ...}`).
 |---|---|---|
 | `Durable-bug-ask-unfenced.cfg` | `Questions.ask/1` inserts the question whatever the task's state (no `Rules.askable?/1` in its commit) | `NoOpenQuestionAfterCall`, 9 states (`-workers 1`): the thread's run makes the call and its step starts, the owner presses Stop, the Scheduler crashes and leaves the step running, the call is aborted (its `on_interrupt/2` finds no question), then the orphaned step's ask commit inserts a question for a call that has ended. Without the Scheduler crash a Stop can't land between the ask and the end of the call without the withdraw seeing the question: the abort commit waits for the step to be killed |
 | `Durable-bug-answer-twice.cfg` | the owner's answer skips `Rules.step/2`'s status check | `AnswerOnce`, 8 states: the call asks, Blip answers, and the owner's answer lands on the answered question. With the call stopped first, the same defect fails `NoAnswerAfterWithdraw` |
+
+## What changed in build step 5
+
+Nothing in the spec. Step 5 adds ambient mode
+(`docs/plans/step-5-ambient-mode.md`): a setting that arms two timers,
+a digest every few hours and a daily review, each posting at most one
+message into Blip's conversation, and digest items collected while it
+is on. Section 13 of the plan asked whether the spec needed to change
+before the code, as it did for steps 3 and 4, and the answer was no. No
+config was rerun, and the counts under "Results" stand.
+
+* The timers are routines. An `"ambient"` task (`ambient/timer.ex`)
+  waits, fires in one fenced commit (`Runtime.commit/2`), and waits
+  again, and `Photon.Ambient.configure/1` retires it with
+  `Tx.request_abort/3` in the commit that changes the setting. That is
+  `RoutineFire`, and the fence's argument is checked by
+  `NoFireAfterRetire`, `FireOncePerSlot` and `RetiredEnds`
+  (`Durable-routine`, `-schedule`, `-schedcrash`,
+  `-schedule-retire-live`). Turning ambient mode off is `OwnerDelete`;
+  changing the interval or the UTC offset is `OwnerEdit`. What a firing
+  writes (a signal into Blip's conversation and deleted items, instead
+  of a submission or a thread) doesn't change that argument, and the
+  signal's key is the task and its run count, as a routine's is.
+* Nothing commits outside a fence on a task's behalf. Step 4 needed the
+  spec because `Questions.ask/1` committed outside the step's fence and
+  three writers raced on one row. In step 5, every read and write of a
+  firing is inside the step's one commit; `configure/1`, `digest_now/0`
+  and `review_now/0` are single commits of their own over rows the Store
+  serializes; an item from a settle is written in the settle hook's
+  commit, which `HookOnce` already checks runs once per settle; and the
+  other items are written inside the owner's or the file tool's existing
+  commit.
+* The new claims are each about one commit. A digest posts and marks
+  the items it carries together, so no item is reported twice; the
+  commit that settles Blip's run on it deletes them, or gives them back
+  when the run failed, so none is lost. That commit is the settle hook's
+  (`Ambient.settled_tx/2` from Blip's `on_settled/3`), which `HookOnce`
+  covers, and withdrawing a queued digest or review is the withdraw's
+  own single commit.
+  The off commit retires both timers, deletes the items, withdraws a
+  queued digest or review and clears the withdrawn review's marks
+  together, and every collector reads the mode in its own commit, so
+  nothing is collected or posted after it. The serial commit line makes
+  these true by construction; boundary tests in
+  `test/boundary/ambient_test.exs` and `signals_test.exs` check them.
+* The `Durable.Context` change (earlier digests sent as a stub, or left
+  out) is in the pure function that builds the model's input. It changes
+  what a request contains, not which commits happen or in what order.
+
+What would change this: a firing split over two commits, a write a
+firing makes outside its step's commit, or a timer that posts and then
+waits on Blip's answer. Any of those should go into `Durable.tla` first,
+as the routine did in step 3.
 
 ## What changed in build step 1
 

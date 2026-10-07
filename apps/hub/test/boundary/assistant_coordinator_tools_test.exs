@@ -74,19 +74,29 @@ defmodule Photon.AssistantCoordinatorToolsTest do
 
   # Posts a signal into Blip's conversation whose text is one of the
   # scripted Blip's phrasings, so the run it starts calls a tool as a run
-  # started by a thread update or a thread's question would. The scripted
-  # Blip reads the message's text and nothing else, and who asked comes
-  # from the ref's kind alone (`Photon.Assistant.Origin`).
+  # started by a thread update, a thread's question, a digest or a daily
+  # review would. The scripted Blip reads the message's text and nothing
+  # else, and who asked comes from the ref's kind alone
+  # (`Photon.Assistant.Origin`).
   defp post!(kind, text, thread_id) do
     key = "test:#{System.unique_integer([:positive])}"
 
     ref =
       case kind do
-        :update -> %{"kind" => "thread_update", "status" => "finished"}
-        :question -> %{"kind" => "question", "question_id" => "q_" <> key}
+        :update ->
+          %{"kind" => "thread_update", "status" => "finished", "thread_id" => thread_id}
+
+        :question ->
+          %{"kind" => "question", "question_id" => "q_" <> key, "thread_id" => thread_id}
+
+        :digest ->
+          %{"kind" => "digest", "items" => [], "more" => 0, "more_smaller" => 0}
+
+        :review ->
+          %{"kind" => "review", "items" => [], "more" => 0}
       end
 
-    ref = Map.merge(ref, %{"key" => key, "thread_id" => thread_id})
+    ref = Map.put(ref, "key", key)
     Durable.commit(&Signals.post_tx(&1, %{key: key, text: text, ref: ref}))
   end
 
@@ -676,6 +686,102 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       {text, _data} = last_result!(blip, "start_thread")
       assert text == @refused
       assert Threads.list(garden.id) == []
+    end
+  end
+
+  describe "a digest or a daily review" do
+    @report_only "Error: A digest or review run only reports. " <>
+                   "Tell the user what you'd do, and do it when they say so."
+
+    test "only reports: what starts or changes work refuses, while reading and memory work", %{
+      garden: garden,
+      blip: blip
+    } do
+      busy = parked_thread!(garden)
+      idle = ended!(garden, "files")
+      projects = length(Projects.list())
+      {:ok, _plan} = Projects.create_file(garden.id, %{"name" => "plan.md", "content" => "beds"})
+
+      {:ok, schedule} =
+        Schedules.create(
+          {:project, garden.id},
+          Map.put(Schedules.new_params(DateTime.utc_now()), "prompt", "check the beds")
+        )
+
+      {:ok, _skill} =
+        Skills.create(%{
+          "name" => "pdf-forms",
+          "description" => "Fill in PDF forms.",
+          "instructions" => "# PDF forms"
+        })
+
+      refusals = [
+        {"start project: Keep the bees healthy.", "start_project"},
+        {"start thread in garden: files", "start_thread"},
+        {"tell #{idle.id}: files", "message_thread"},
+        {"stop thread #{busy.id}", "stop_thread"},
+        {"write garden/notes.md: hello", "write_context_file"},
+        {"edit garden/plan.md: beds => pots", "edit_context_file"},
+        {"in 5 minutes in garden: files", "schedule"},
+        {"in 5 minutes: files", "schedule"},
+        {"cancel schedule #{schedule.id}", "cancel_schedule"},
+        {"turn on pdf-forms in garden", "set_project_skill"}
+      ]
+
+      for kind <- [:digest, :review], {text, name} <- refusals do
+        {result, data} = signal_tool!(blip, kind, text, name)
+        assert {data["status"], result} == {"error", @report_only}, "#{kind}: #{name}"
+      end
+
+      assert [%{id: schedule_id}] = Schedules.list({:project, garden.id})
+      assert schedule_id == schedule.id
+      assert Schedules.list(:blip) == []
+      assert Skills.enabled({:project, garden.id}) == []
+      assert length(Projects.list()) == projects
+
+      assert [%ContextFile{name: "plan.md", content: "beds", version: 1}] =
+               Projects.list_files(garden.id)
+
+      assert [_busy, _idle] = Threads.list(garden.id)
+      assert [_first] = submissions(idle.id)
+      assert Durable.busy?(busy.id)
+
+      for kind <- [:digest, :review],
+          {text, name} <- [
+            {"read thread #{idle.id}", "read_thread"},
+            {"project garden", "read_project"},
+            {"read garden/plan.md", "read_context_file"},
+            {"schedules in garden", "list_schedules"},
+            {"remember the pump is in the shed", "update_memory"}
+          ] do
+        {_text, data} = signal_tool!(blip, kind, text, name)
+        assert data["status"] == "ok", "#{kind}: #{name}"
+      end
+
+      assert Assistant.memory() =~ "the pump is in the shed"
+
+      :ok = Threads.stop(busy.id)
+      :ok = idle!(busy.id)
+    end
+
+    test "the owner's steer in the same run lifts it", %{garden: garden, blip: blip} do
+      idle = ended!(garden, "files")
+      fake_machine("box")
+      :ok = idle!(blip)
+      _digest = post!(:digest, "on box: $ sleep 1000", nil)
+      await_entry(blip, &(&1.kind == "assistant"))
+
+      {:ok, steer} = Assistant.send("tell #{idle.id}: files", when_busy: "steer")
+
+      # The steer is placed after the tool round, which ends when its call is stopped.
+      shell = tool_task!(blip, "shell")
+      _aborted = Durable.abort_task(shell.id)
+      await_settled(blip, steer.id)
+
+      {_text, data} = last_result!(blip, "message_thread")
+      assert data["status"] == "ok"
+      assert [_first, _blips] = submissions(idle.id)
+      :ok = idle!(idle.id)
     end
   end
 

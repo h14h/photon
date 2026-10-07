@@ -6,9 +6,12 @@ defmodule Photon.ProjectsTest do
 
   use Photon.DataCase, async: false
 
+  import Ecto.Query, only: [from: 2]
+
   alias Photon.Durable.Tx
-  alias Photon.Projects
+  alias Photon.{Projects, Signals}
   alias Photon.Projects.{ContextFile, Project}
+  alias Photon.Signals.DigestItem
 
   # Writes go through the Store's commit line.
   @moduletag :durable
@@ -281,6 +284,106 @@ defmodule Photon.ProjectsTest do
 
       assert edit(empty.id, "notes", "a", "b") ==
                {:error, "There's no notes.md. This project has no context files yet."}
+    end
+  end
+
+  describe "digest items" do
+    defp ambient!(on?) do
+      _doc = Durable.commit(&Signals.put_ambient_doc_tx(&1, %{"on" => on?}))
+      :ok
+    end
+
+    defp items do
+      query = from(i in DigestItem, order_by: [asc: i.inserted_at, asc: i.id])
+      for i <- Repo.all(query), do: {i.kind, i.project_id, i.name, i.writer, i.note}
+    end
+
+    test "with ambient mode on, the owner's project and file changes collect one per subject" do
+      ambient!(true)
+      p = project!()
+      assert [{"project_created", p.id, nil, nil, nil}] == items()
+
+      {:ok, _project} = Projects.update(p.id, %{"purpose" => "Keep the garden green."})
+      {:ok, _file} = Projects.create_file(p.id, %{"name" => "notes", "content" => "a"})
+      assert length(items()) == 3
+
+      # The same file saved and deleted: its row is replaced by the newest
+      # change, so the table holds one row for it however often it changes.
+      {:ok, _file} = Projects.save_file(p.id, "notes.md", "b", 1)
+      assert Projects.delete_file(p.id, "notes") == :ok
+
+      assert [
+               {"project_created", p.id, nil, nil, nil},
+               {"purpose_changed", p.id, nil, nil, nil},
+               {"file_written", p.id, "notes.md", "user", "deleted"}
+             ] == items()
+
+      keys = Repo.all(from(i in DigestItem, select: i.key))
+
+      assert Enum.sort(keys) ==
+               Enum.sort([
+                 "project_created:" <> p.id,
+                 "purpose_changed:" <> p.id,
+                 "file_written:#{p.id}:notes.md"
+               ])
+    end
+
+    test "an update that changes nothing, and a refused change, collect nothing" do
+      p = project!()
+      ambient!(true)
+
+      {:ok, _project} = Projects.update(p.id, %{"purpose" => @purpose, "name" => "Garden"})
+      assert {:error, %{purpose: _}} = Projects.update(p.id, %{"purpose" => " "})
+      assert {:error, %{}} = Projects.create(%{"purpose" => ""})
+      {:ok, _file} = Projects.create_file(p.id, %{"name" => "notes", "content" => "a"})
+
+      assert Projects.create_file(p.id, %{"name" => "notes", "content" => "b"}) ==
+               {:error, :exists}
+
+      assert Projects.save_file(p.id, "notes", "c", 7) == {:error, :stale}
+      assert Projects.delete_file(p.id, "missing") == {:error, :not_found}
+
+      assert [{"file_written", p.id, "notes.md", "user", nil}] == items()
+    end
+
+    test "a thread's writes and edits to one file collect one row, under the thread's ID" do
+      p = project!()
+      ambient!(true)
+
+      {:ok, _written} = write(p.id, "notes", "zone 2")
+      assert [{"file_written", p.id, "notes.md", "c_thread", nil}] == items()
+
+      for n <- 3..20, do: {:ok, _edited} = edit(p.id, "notes", "#{n - 1}", "#{n}")
+      {:error, _message} = edit(p.id, "notes", "nowhere", "x")
+
+      assert [{"file_written", p.id, "notes.md", "c_thread", nil}] == items()
+    end
+
+    test "Blip's writes and projects collect nothing" do
+      p = project!(%{"purpose" => "x", "name" => "Shed"})
+      ambient!(true)
+
+      {:ok, _written} =
+        Durable.commit(&Projects.write_file_tx(&1, p.id, "notes", "zone 2", "blip"))
+
+      {:ok, _edited} =
+        Durable.commit(&Projects.edit_file_tx(&1, p.id, "notes", "2", "3", "blip"))
+
+      {:ok, _project} = Durable.commit(&Projects.create_tx(&1, %{"purpose" => @purpose}))
+
+      assert items() == []
+    end
+
+    test "with ambient mode off, nothing is collected" do
+      ambient!(false)
+      p = project!()
+      {:ok, _project} = Projects.update(p.id, %{"name" => "Garden beds"})
+      {:ok, _file} = Projects.create_file(p.id, %{"name" => "notes", "content" => "a"})
+      {:ok, _written} = write(p.id, "notes", "zone 2")
+      {:ok, _edited} = edit(p.id, "notes", "2", "3")
+      assert Projects.delete_file(p.id, "notes") == :ok
+
+      assert items() == []
     end
   end
 end

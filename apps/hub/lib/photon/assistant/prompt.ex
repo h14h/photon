@@ -8,14 +8,17 @@ defmodule Photon.Assistant.Prompt do
   the hub works (including the note of the page the user has open that a
   message may start with, `Photon.Assistant.Page`), how Blip works with
   projects and threads (their updates and `ask_blip` questions, and the
-  limits on what it starts on its own), Blip's skills
+  limits on what it starts on its own), how it handles ambient mode's
+  digests and daily reviews (only while ambient mode is on), Blip's skills
   (`Photon.Skills.Prompt.section/1`, left out when none are on), the
   memory, and the time. The lines about how a `shell`
   call behaves are `Photon.MachineTools.Guide.shell/1`'s, shared with a
   thread's prompt.
 
   The prompt names the time only to the hour, so it stays the same between
-  requests and provider prompt caches stay warm.
+  requests and provider prompt caches stay warm. Ambient mode is a
+  setting that changes rarely, so its section doesn't disturb the cache
+  either.
   """
 
   # Functional core: no processes, no I/O.
@@ -26,11 +29,14 @@ defmodule Photon.Assistant.Prompt do
   alias Photon.Skills.Prompt, as: SkillsPrompt
 
   @doc """
-  The system prompt for `settings`, `memory`, the time `now` and `skills`,
-  the skills turned on for Blip, by name.
+  The system prompt for `settings`, `memory`, the time `now`, `skills`,
+  the skills turned on for Blip, by name, and `ambient?`, whether ambient
+  mode is on. With `ambient?` false the prompt has no Ambient mode
+  section, and is step 4's.
   """
-  @spec system_prompt(map(), String.t(), DateTime.t(), [SkillsPrompt.listed()]) :: String.t()
-  def system_prompt(settings, memory, now, skills) do
+  @spec system_prompt(map(), String.t(), DateTime.t(), [SkillsPrompt.listed()], boolean()) ::
+          String.t()
+  def system_prompt(settings, memory, now, skills, ambient? \\ false) do
     """
     #{voice(owner(settings))}
 
@@ -48,7 +54,7 @@ defmodule Photon.Assistant.Prompt do
 
     #{projects_section()}
 
-    #{skills_section(skills)}## Memory
+    #{ambient_section(ambient?)}#{skills_section(skills)}## Memory
 
     #{Memory.shown(memory)}
 
@@ -79,6 +85,25 @@ defmodule Photon.Assistant.Prompt do
     - When you talk to the user, name projects by name and threads by title. IDs like c_... and q_... are for your tools only.
     """
     |> String.trim()
+  end
+
+  # The Ambient mode section and the blank line after it, or nothing while
+  # ambient mode is off: how Blip reads a digest and a daily review, what
+  # it may do in their runs, and when to answer [nothing to tell] (section
+  # 5.5 of docs/plans/step-5-ambient-mode.md).
+  defp ambient_section(false), do: ""
+
+  defp ambient_section(true) do
+    """
+    ## Ambient mode
+
+    - The user turned on ambient mode: you follow along with their projects and speak up on your own.
+    - A message starting with "[Digest]" lists what changed since the last digest. "New to the user" is work that finished while they weren't looking and schedules that stopped. "Already seen by the user, or done by them" is for you to keep track of; mention it only when it matters to something new. Tell them what's worth their attention in a few lines, by project and thread, and leave out what isn't. If nothing is, answer with just [nothing to tell] and they won't be disturbed.
+    - A message starting with "[Daily review]" lists threads left stopped, failed or waiting on the user for days. Say in a few lines which look worth picking up and which look finished with. Offer to pick up the first kind; for the second, tell them they can press Resolve on the thread on Home or on its page. If none needs anything, answer with just [nothing to tell].
+    - In a run started by a digest or a review you can read anything and check machines, but you can't start, message or stop threads, or change projects or schedules; the tools refuse. Do what the user asks once they answer.
+    - Earlier digests and reviews show as one-line notes, and ones you had nothing to tell about are left out.
+
+    """
   end
 
   # The Skills section and the blank line after it, or nothing.

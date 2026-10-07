@@ -15,9 +15,9 @@ defmodule Photon.Application do
     * `Photon.ChatGPT`: the ChatGPT account (Sign in with ChatGPT), which
       holds the tokens and refreshes them one at a time
     * `Photon.Durable.Supervisor`: the durable harness Blip and threads
-      run on, and whose waiting tasks are the schedules' timers (left out
-      with `config :photon, start_durable: false`, as in tests); see its
-      moduledoc for its own plan
+      run on, and whose waiting tasks are the schedules' and ambient
+      mode's timers (left out with `config :photon, start_durable: false`,
+      as in tests); see its moduledoc for its own plan
     * `PhotonWeb.Endpoint`: HTTP, LiveViews and the node websocket. It
       starts after everything pages and channels call, and stops first.
     * `PhotonNode` (with `config :photon, local_node: true`): a node inside
@@ -34,12 +34,14 @@ defmodule Photon.Application do
   reverse: the local node and the endpoint stop before the durable harness,
   so nothing new arrives while it stops.
 
-  Projects, threads, skills, schedules, questions, signals and the
-  activity log add no process here: they are rows behind their contexts'
-  APIs, threads run on the durable harness, a schedule waits as a durable
-  task, a thread waiting on Blip's answer is its parked tool task, and a
-  signal is a message in Blip's conversation. So a hub restart finds
-  every schedule and every open question where it was.
+  Projects, threads, skills, schedules, questions, signals, ambient mode
+  and the activity log add no process here: they are rows behind their
+  contexts' APIs, threads run on the durable harness, a schedule and each
+  of ambient mode's two timers wait as durable tasks, a thread waiting on
+  Blip's answer is its parked tool task, and a signal (a digest or a
+  daily review included) is a message in Blip's conversation. So a hub
+  restart finds every schedule, timer, pending digest item and open
+  question where it was.
   """
 
   use Boundary, top_level?: true, deps: [Photon, PhotonWeb, PhotonNode]

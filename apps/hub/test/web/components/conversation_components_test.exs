@@ -485,5 +485,150 @@ defmodule PhotonWeb.ConversationComponentsTest do
       assert text.("s_2") == ~s(Next Question from "Plant list")
       assert text.("s_3") == "Next hello"
     end
+
+    test "a queued digest or daily review says what it holds, and names no thread" do
+      digest = %{
+        "kind" => "digest",
+        "items" => [
+          %{"kind" => "finished", "new" => true, "thread_id" => "c_1", "title" => "Pump"},
+          %{"kind" => "resolved", "new" => false, "thread_id" => "c_2", "title" => "Gate"}
+        ],
+        "more" => 2,
+        "more_smaller" => 0
+      }
+
+      review = %{"kind" => "review", "items" => [%{"thread_id" => "c_1"}], "more" => 1}
+
+      queued =
+        for {id, ref} <- [{"s_1", digest}, {"s_2", review}],
+            do:
+              submission(
+                id: id,
+                content: %{
+                  "parts" => [Message.text("[Digest] ...")],
+                  "source" => %{"kind" => "signal", "signals" => [ref], "older" => %{}}
+                }
+              )
+
+      html =
+        LazyHTML.from_fragment(
+          render_component(&ConversationComponents.queued_messages/1,
+            queued: queued,
+            titles: %{"c_1" => "Fix the pump"}
+          )
+        )
+
+      text = fn id -> html |> LazyHTML.query("#queued-#{id}") |> LazyHTML.text() |> squish() end
+      assert text.("s_1") == "Next Digest: 3 new changes"
+      assert text.("s_2") == "Next Daily review: 2 threads"
+    end
+  end
+
+  describe "ambient mode in Blip's conversation" do
+    defp entry_html(entry, assigns \\ []) do
+      assigns = [entry: entry, results: %{}, image_path: &image_path/2] ++ assigns
+      LazyHTML.from_fragment(render_component(&ConversationComponents.entry/1, assigns))
+    end
+
+    test "a digest is one collapsed line, opening to its items, the new ones first" do
+      digest = %{
+        "kind" => "digest",
+        "items" => [
+          %{
+            "kind" => "finished",
+            "new" => true,
+            "thread_id" => "c_1",
+            "title" => "pump",
+            "slug" => "garden",
+            "project" => "Garden"
+          },
+          %{
+            "kind" => "file_written",
+            "new" => false,
+            "slug" => "garden",
+            "project" => "Garden",
+            "name" => "notes.md",
+            "writer" => "user"
+          }
+        ],
+        "more" => 0,
+        "more_smaller" => 1
+      }
+
+      entry =
+        Photon.Fixtures.entry("user", %{
+          "message" => Message.user("[Digest] Since ..."),
+          "source" => %{"kind" => "signal", "signals" => [digest]}
+        })
+
+      html = entry_html(entry, titles: %{"c_1" => "Fix the pump"})
+      text = fn selector -> html |> LazyHTML.query(selector) |> LazyHTML.text() |> squish() end
+
+      assert text.("#message-e_1-heading") == "Digest: 1 new, 2 you've seen"
+      assert [_details] = Enum.to_list(LazyHTML.query(html, "#message-e_1 details"))
+      assert text.("#message-e_1-item-0") == "Garden / Fix the pump finished"
+
+      assert [_link] =
+               Enum.to_list(
+                 LazyHTML.query(
+                   html,
+                   "#message-e_1-item-0 a[href='/projects/garden/threads/c_1']"
+                 )
+               )
+
+      assert text.("#message-e_1-item-1") == "Garden / context file notes.md written by you"
+      assert [_seen] = Enum.to_list(LazyHTML.query(html, "#message-e_1-item-1[data-new=false]"))
+      assert text.("#message-e_1-more") == "And 1 more."
+      # Not the raw digest, and not the threads' signal lines.
+      refute text.("#message-e_1") =~ "[Digest]"
+      assert [] = Enum.to_list(LazyHTML.query(html, "[id$=-signal-0]"))
+    end
+
+    test "a daily review's line, with how long each thread had sat" do
+      review = %{
+        "kind" => "review",
+        "items" => [
+          %{
+            "thread_id" => "c_1",
+            "title" => "Fix the pump",
+            "slug" => "garden",
+            "project" => "Garden",
+            "state" => "failed",
+            "since" => "2026-01-01T00:00:00Z"
+          }
+        ],
+        "more" => 0
+      }
+
+      entry =
+        Photon.Fixtures.entry(
+          "user",
+          %{
+            "message" => Message.user("[Daily review] ..."),
+            "source" => %{"kind" => "signal", "signals" => [review]}
+          },
+          inserted_at: ~U[2026-01-03 01:00:00Z]
+        )
+
+      html = entry_html(entry)
+      text = fn selector -> html |> LazyHTML.query(selector) |> LazyHTML.text() |> squish() end
+      assert text.("#message-e_1-heading") == "Daily review: 1 thread"
+      assert text.("#message-e_1-item-0") == "Garden / Fix the pump failed 2 days ago"
+    end
+
+    test "Blip's [nothing to tell] draws nothing in its panel, and shows elsewhere" do
+      entry = Photon.Fixtures.assistant_entry("[Nothing to tell].")
+
+      html = entry_html(entry, hide_untold: true)
+      assert [hidden] = Enum.to_list(LazyHTML.query(html, "#message-e_1.hidden"))
+      assert LazyHTML.text(hidden) == ""
+
+      shown = entry_html(entry)
+      assert [] = Enum.to_list(LazyHTML.query(shown, "#message-e_1"))
+      assert shown |> LazyHTML.text() |> squish() == "[Nothing to tell]."
+
+      told = entry_html(Photon.Fixtures.assistant_entry("The pump runs."), hide_untold: true)
+      assert told |> LazyHTML.text() |> squish() == "The pump runs."
+    end
   end
 end

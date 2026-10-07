@@ -58,6 +58,15 @@ if config_env() == :dev do
     config :photon, :mock_model, true
   end
 
+  # PHOTON_QUIET_AFTER_HOURS=<n> makes a stopped or failed thread count as
+  # untouched after n hours instead of 72, so a demo's daily review has
+  # something to show (0: after a second). A whole number, 0 or more;
+  # anything else is ignored. Development only.
+  with hours when is_binary(hours) <- System.get_env("PHOTON_QUIET_AFTER_HOURS"),
+       {hours, ""} when hours >= 0 <- Integer.parse(String.trim(hours)) do
+    config :photon, Photon.Threads, quiet_after_hours: hours
+  end
+
   # Reload browser tabs when matching files change.
   config :photon, PhotonWeb.Endpoint,
     live_reload: [

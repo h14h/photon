@@ -12,6 +12,10 @@ defmodule PhotonWeb.HomeLiveTest do
   it on with `Photon.Questions.pass_tx/4`, as Blip's `ask_owner` does.
   Facts that need days to pass (a thread gone quiet, one read long ago)
   are written onto the thread's row before the page mounts.
+
+  Ambient mode is turned on with `Photon.Ambient.configure/1`, as a
+  Settings save does; a firing skipped for consent is made with
+  `Photon.Ambient.fire_tx/3`, and a stopped timer with its `on_fail/3`.
   """
 
   use PhotonWeb.ConnCase, async: false
@@ -19,7 +23,22 @@ defmodule PhotonWeb.HomeLiveTest do
   import Ecto.Query, only: [from: 2]
   import Phoenix.LiveViewTest
 
-  alias Photon.{Assistant, Durable, Machines, Projects, Questions, Repo, Schedules, Threads}
+  alias Photon.{
+    Ambient,
+    Assistant,
+    ChatGPT,
+    Durable,
+    Machines,
+    Projects,
+    Questions,
+    Repo,
+    Schedules,
+    Settings,
+    Signals,
+    Threads
+  }
+
+  alias Photon.Ambient.Timer
   alias Photon.Durable.Tx
   alias Photon.Schedules.Routine
   alias Photon.Threads.Thread
@@ -70,6 +89,18 @@ defmodule PhotonWeb.HomeLiveTest do
       do: await_change(thread_id, fn _changes -> not Threads.busy?(thread_id) end)
 
     thread_id
+  end
+
+  # Waits until Blip has nothing running, so what is posted next starts
+  # its run rather than queueing.
+  defp blip_idle! do
+    blip = Assistant.conversation_id()
+    :ok = Durable.subscribe(blip)
+
+    if Durable.busy?(blip),
+      do: await_change(blip, fn _changes -> not Durable.busy?(blip) end)
+
+    :ok
   end
 
   # Starts a thread whose run waits on a shell call on `box`; returns its ID.
@@ -546,6 +577,150 @@ defmodule PhotonWeb.HomeLiveTest do
 
       iso = ran_at |> DateTime.truncate(:second) |> DateTime.to_iso8601()
       assert has_element?(view, ~s(#schedule-#{schedule.id}-last time[datetime="#{iso}"]))
+    end
+  end
+
+  describe "ambient mode" do
+    defp ambient_on!, do: :ok = Ambient.configure(%{"ambient" => "true"})
+
+    test "says nothing while it is on and healthy", %{conn: conn} do
+      _project = project!()
+      ambient_on!()
+      view = home(conn)
+
+      refute has_element?(view, "#ambient-consent")
+      refute has_element?(view, "#ambient-stopped")
+      refute has_element?(view, "#ambient-settings")
+    end
+
+    test "warns when a timer stopped, until Settings is saved", %{conn: conn} do
+      ambient_on!()
+      view = home(conn)
+      refute has_element?(view, "#ambient-stopped")
+
+      # As the Scheduler fails a timer whose step raised.
+      task = Durable.task(Signals.ambient_doc()["digest_task_id"])
+
+      :ok =
+        Durable.commit(fn tx ->
+          _failed = Tx.finish(tx, task, "failed", %{"status" => "failed", "reason" => "boom"})
+          Timer.on_fail(task, "boom", tx)
+        end)
+
+      _ = render(view)
+
+      assert has_element?(
+               view,
+               "#ambient-stopped",
+               "Ambient mode stopped after an error. Save settings to start it again."
+             )
+
+      assert has_element?(view, "#ambient-settings[href='/settings']", "Settings")
+      refute has_element?(view, "#ambient-consent")
+
+      # A Save arms a new timer, which clears it.
+      :ok = Ambient.configure(%{})
+      _ = render(view)
+      refute has_element?(view, "#ambient-stopped")
+    end
+
+    test "warns when a firing skipped for consent, until schedules may use the plan", %{
+      conn: conn
+    } do
+      ambient_on!()
+      view = home(conn)
+
+      firing = %{
+        thinks?: true,
+        allowed?: false,
+        key: "digest:test:0",
+        now: System.system_time(:millisecond)
+      }
+
+      assert %{outcome: "skipped_consent"} =
+               Durable.commit(&Ambient.fire_tx(&1, "digest", firing))
+
+      _ = render(view)
+
+      assert has_element?(
+               view,
+               "#ambient-consent",
+               "Digests and reviews are skipping: schedules can't use your plan while you're away."
+             )
+
+      assert has_element?(view, "#ambient-settings[href='/settings']")
+
+      # The Settings page's Save writes the file first, which announces
+      # the change; the warning goes with it.
+      _settings = Settings.save(%{"scheduled_work" => "true"})
+      _ = render(view)
+      refute has_element?(view, "#ambient-consent")
+    end
+
+    test "warns while digests skip because Blip isn't signed in, until it is again", %{
+      conn: conn
+    } do
+      ambient_on!()
+      Application.put_env(:photon, :mock_model, false)
+      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+      view = home(conn)
+
+      assert %{outcome: "skipped_model"} = Ambient.digest_now()
+      _ = render(view)
+
+      assert has_element?(
+               view,
+               "#ambient-signed-out",
+               "Digests and reviews are skipping: Blip isn't signed in to ChatGPT."
+             )
+
+      assert has_element?(view, "#ambient-settings[href='/settings']")
+      refute has_element?(view, "#ambient-consent")
+
+      # Blip can think again (here, the scripted model): the next ChatGPT
+      # change the page hears takes the warning down.
+      Application.put_env(:photon, :mock_model, true)
+      send(view.pid, {:chatgpt_changed, ChatGPT.status()})
+      _ = render(view)
+      refute has_element?(view, "#ambient-signed-out")
+    end
+
+    test "a row raised in Blip's review says so, and not before", %{conn: conn} do
+      fake_machine("box")
+      project = project!()
+      ambient_on!()
+
+      stopped = running!(project)
+      :ok = Threads.stop(stopped)
+      idle!(stopped)
+      failed = ended!(project, "fail: the pump is unplugged")
+      waiting = ended!(project, "ask me: which zone should I water first")
+      unread = ended!(project, "files")
+
+      for id <- [stopped, failed, waiting, unread],
+          do: :ok = age!(id, [:active_at, :last_run_ended_at])
+
+      view = home(conn)
+      assert has_element?(view, "#quiet-#{stopped}")
+      assert has_element?(view, "#failed-#{failed}")
+      assert has_element?(view, "#waiting-#{waiting}")
+      refute has_element?(view, "[id$='-reviewed']")
+
+      # The failure and the question reached Blip as updates; the review
+      # is sent once Blip is done with them, not queued behind them.
+      blip_idle!()
+      assert %{outcome: "sent", count: 3} = Ambient.review_now()
+      %Thread{reviewed_at: reviewed_at} = Threads.get(stopped)
+      _ = settled(view)
+
+      for row <- ["quiet-#{stopped}", "failed-#{failed}", "waiting-#{waiting}"] do
+        assert has_element?(view, "##{row}-reviewed", "In Blip's review")
+        iso = reviewed_at |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+        assert has_element?(view, ~s(##{row}-reviewed-at[datetime="#{iso}"]))
+      end
+
+      # Unread work isn't in a review; it is the digest's.
+      refute has_element?(view, "#unread-#{unread}-reviewed")
     end
   end
 end

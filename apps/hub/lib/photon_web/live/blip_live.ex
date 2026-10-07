@@ -55,6 +55,13 @@ defmodule PhotonWeb.BlipLive do
   and bubbles that name a thread re-render with its new title
   (`@titles`, see `PhotonWeb.ConversationView`).
 
+  A digest or daily review (ambient mode) shows as one collapsed line
+  that opens to its items, and Blip's `[nothing to tell]` answer to one
+  draws nothing (`hide_untold`), and nor do the answers that run made on
+  the way (`@hidden`, from `Photon.Transcript.untold_run/2`, re-rendered
+  when the run's last answer comes), so a quiet digest leaves only its
+  line.
+
   The conversation is shared with a project's thread page.
   `PhotonWeb.ConversationComponents` renders it: the entries, each tool
   call inside the answer that made it, a running call's output tail, the
@@ -102,6 +109,7 @@ defmodule PhotonWeb.BlipLive do
     # Where the conversation's runs stand, so a reply in a run already
     # under way is judged by who asked for that run.
     {_said, notice_state} = Notice.scan(entries, Notice.initial())
+    {hidden, untold_state} = Transcript.untold_run(entries, Transcript.untold_initial())
     named = (entries ++ queued) |> Enum.flat_map(&Transcript.thread_ids/1) |> Enum.uniq()
 
     socket =
@@ -118,7 +126,9 @@ defmodule PhotonWeb.BlipLive do
         page_dismissed: false,
         reply: nil,
         reply_error: nil,
-        notice_state: notice_state
+        notice_state: notice_state,
+        hidden: MapSet.new(hidden),
+        untold_state: untold_state
       )
       |> ConversationView.mount_conversation(entries,
         busy: Assistant.busy?(conversation),
@@ -247,16 +257,15 @@ defmodule PhotonWeb.BlipLive do
     was_busy = socket.assigns.busy
     busy = Assistant.busy?(conversation)
     queued = Assistant.queued(conversation)
-    {notices, notice_state} = Notice.scan(changes.entries, socket.assigns.notice_state)
 
     socket =
       socket
       |> title_new(changes.entries ++ queued)
+      |> hide_untold(changes.entries)
       |> ConversationView.apply_changes(changes, busy, queued)
       |> keep_reply()
       |> hold(Transcript.outcome(changes.entries, was_busy, busy))
-      |> assign(notice_state: notice_state)
-      |> notify(notices)
+      |> speak(changes.entries)
 
     {:noreply, socket}
   end
@@ -297,6 +306,36 @@ defmodule PhotonWeb.BlipLive do
     do: {:noreply, assign(socket, outcome: nil, outcome_ref: nil)}
 
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  # Hides what a quiet digest's run said on the way, once it ends untold
+  # (`Transcript.untold_run/2`), before the batch is drawn: its answers in
+  # this batch are drawn hidden, and those from earlier batches, which the
+  # page keeps by call, are drawn again.
+  defp hide_untold(socket, entries) do
+    {hide, untold_state} = Transcript.untold_run(entries, socket.assigns.untold_state)
+    socket = assign(socket, untold_state: untold_state)
+
+    case hide do
+      [] ->
+        socket
+
+      ids ->
+        socket.assigns.calls
+        |> Map.values()
+        |> Enum.filter(&(&1.id in ids))
+        |> Enum.uniq_by(& &1.id)
+        |> Enum.reduce(
+          update(socket, :hidden, &MapSet.union(&1, MapSet.new(ids))),
+          &stream_insert(&2, :entries, &1)
+        )
+    end
+  end
+
+  # What a batch is worth saying (`Notice.scan/2`), said.
+  defp speak(socket, entries) do
+    {notices, notice_state} = Notice.scan(entries, socket.assigns.notice_state)
+    socket |> assign(notice_state: notice_state) |> notify(notices)
+  end
 
   # Shows an outcome for a moment; a later one replaces it, except that a
   # finish doesn't cover a failure still being shown.
@@ -428,11 +467,15 @@ defmodule PhotonWeb.BlipLive do
             <.empty_state :if={@empty?} shell={@shell} />
 
             <div id="entries" phx-update="stream" class="space-y-5">
-              <%!-- An answer arrives already shown, streamed in: no rise. --%>
+              <%!-- An answer arrives already shown, streamed in: no rise. Blip's
+                [nothing to tell] takes no room. --%>
               <div
                 :for={{dom_id, entry} <- @streams.entries}
                 id={dom_id}
-                class={entry.kind != "assistant" && "animate-rise"}
+                class={[
+                  entry.kind != "assistant" && "animate-rise",
+                  (Transcript.untold?(entry) or MapSet.member?(@hidden, entry.id)) && "hidden"
+                ]}
               >
                 <.entry
                   entry={entry}
@@ -441,6 +484,7 @@ defmodule PhotonWeb.BlipLive do
                   questions={@questions}
                   titles={@titles}
                   image_path={&image_path/2}
+                  hide_untold
                 />
               </div>
             </div>

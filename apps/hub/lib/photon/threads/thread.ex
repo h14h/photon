@@ -25,6 +25,9 @@ defmodule Photon.Threads.Thread do
       run ended
     * `resolved_at` - when the owner marked it resolved; a new message
       clears it
+    * `reviewed_at` - when ambient mode's daily review last listed it
+      (section 4.2 of `docs/plans/step-5-ambient-mode.md`); a fact the
+      review reads, never part of the thread's state
   """
 
   # Data: an Ecto schema, no behaviour of its own.
@@ -44,6 +47,7 @@ defmodule Photon.Threads.Thread do
           last_run_note: String.t() | nil,
           seen_at: DateTime.t() | nil,
           resolved_at: DateTime.t() | nil,
+          reviewed_at: DateTime.t() | nil,
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
         }
@@ -60,6 +64,7 @@ defmodule Photon.Threads.Thread do
     field(:last_run_note, :string)
     field(:seen_at, :utc_datetime_usec)
     field(:resolved_at, :utc_datetime_usec)
+    field(:reviewed_at, :utc_datetime_usec)
     timestamps(type: :utc_datetime_usec)
   end
 end

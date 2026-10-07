@@ -28,12 +28,19 @@ defmodule Photon do
       own follow-up), one row per tool call or unasked message
     * `Photon.Signals`: what reaches Blip unasked, such as how the threads
       it started end and the questions they ask, posted into Blip's
-      conversation by code; used by the other contexts, not the web layer
+      conversation by code, and the changes ambient mode collects for the
+      next digest; used by the other contexts, not the web layer
     * `Photon.Skills`: skills, the instructions an agent loads when a task
       calls for them, written or installed by the user and turned on for
       Blip or per project
     * `Photon.Schedules`: schedules, prompts that fire at set times: a
       project's start or wake its threads, and Blip's post to Blip
+    * `Photon.Ambient`: ambient mode, a setting (off by default) that
+      lets Blip follow along: a digest of what changed every few hours
+      and a daily review of threads left alone, each posted into Blip's
+      conversation by a durable timer, and each skipped while Settings
+      doesn't let schedules use the owner's plan. A run either one
+      starts only reports until the owner answers
     * `Photon.Durable`: the durable agent harness Blip and threads run on
     * `Photon.Machines`: the machines the hub knows, which are connected,
       and the operations (shell commands, image reads) it runs on them;
@@ -48,32 +55,33 @@ defmodule Photon do
 
   None of them adds a process for a project, a thread, a skill, a
   schedule, a signal, a question or an operation: projects, context
-  files, skills, questions and activity are rows, a thread is a
-  conversation in the durable harness, a signal is a message in Blip's,
-  a schedule is a row and a durable task waiting for its time, and an
-  operation or a question is a row its tool call waits on. A thread's
-  state is never stored: `Photon.Threads.State` derives it from facts on
-  the thread's row when it is read.
+  files, skills, questions, digest items and activity are rows, a thread
+  is a conversation in the durable harness, a signal is a message in
+  Blip's, a schedule is a row and a durable task waiting for its time (as
+  are ambient mode's two timers), and an operation or a question is a row
+  its tool call waits on. A thread's state is never stored:
+  `Photon.Threads.State` derives it from facts on the thread's row when
+  it is read.
 
   Layers, after *Designing Elixir Systems with OTP*: each context's
   moduledoc names its pure core and its processes. The pure modules are
   `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall,
   Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Page,
-  Origin, Readout, MockScript, MockCoordinator}`, `Photon.Transcript`
-  (what a conversation page shows), `Photon.Projects.Rules`,
-  `Photon.Threads.{Rules, State, Prompt, MockScript, MockTitle}`,
-  `Photon.Signals.{Rules, Text}`, `Photon.Questions.Rules`,
-  `Photon.Activity.Rules`,
-  `Photon.Skills.{Rules, SkillMd, Source, Prompt, MockPhrases}`,
-  `Photon.Schedules.Rules`,
-  `Photon.Machines.{Rules, Roster}`,
-  `Photon.MachineTools.{Translate, Wait, Guide, MockPhrases}`,
-  `Photon.Provision.{Jobs, Script}`, and `Photon.Markdown`.
+  Origin, Readout, MockScript, MockCoordinator, MockAmbient}`,
+  `Photon.Transcript` (what a conversation page shows),
+  `Photon.Projects.Rules`, `Photon.Threads.{Rules, State, Prompt,
+  MockScript, MockTitle}`, `Photon.Signals.{Rules, Text}`,
+  `Photon.Ambient.{Rules, Text}`, `Photon.Questions.Rules`,
+  `Photon.Activity.Rules`, `Photon.Skills.{Rules, SkillMd, Source,
+  Prompt, MockPhrases}`, `Photon.Schedules.Rules`,
+  `Photon.Machines.{Rules, Roster}`, `Photon.MachineTools.{Translate,
+  Wait, Guide, MockPhrases}`, `Photon.Provision.{Jobs, Script}`, and
+  `Photon.Markdown`.
   `Photon.Application` holds the lifecycle plan. `PhotonWeb` is the
   boundary for browsers and nodes: its LiveViews, channel and controllers
   call the contexts above and hold no business logic; its pure
   `PhotonWeb.{ProjectText, ScheduleText, SkillText, ThreadText,
-  ActivityText}` only put the pages' words together.
+  ActivityText, AmbientText}` only put the pages' words together.
   """
 
   # The hub's contexts, each a boundary of its own; this root exports
@@ -86,6 +94,7 @@ defmodule Photon do
       Activity,
       Activity.Action,
       Activity.Rules,
+      Ambient,
       Assistant,
       Assistant.Notice,
       Auth,

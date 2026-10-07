@@ -74,6 +74,9 @@ defmodule PhotonWeb.ActivityText do
 
   @follow_up_on "Blip's follow-up on "
 
+  # A follow-up's origin_id for a digest or the daily review (ambient mode).
+  @ambient_origins ~w(digest review)
+
   @doc "The filter with nothing chosen: everyone, every row."
   @spec all() :: filter()
   def all, do: %{origin: nil, changes_only: false}
@@ -132,7 +135,8 @@ defmodule PhotonWeb.ActivityText do
   The threads and schedules a page of rows names, for the page to read:
   threads who asked, threads a follow-up was about and threads a call
   acted on; schedules who asked, and those Blip made for itself a
-  follow-up came from.
+  follow-up came from. A follow-up on a digest or the daily review
+  (`origin_id` `"digest"` or `"review"`) names neither.
   """
   @spec wanted([Action.t()]) :: %{threads: [String.t()], schedules: [String.t()]}
   def wanted(actions) do
@@ -143,7 +147,7 @@ defmodule PhotonWeb.ActivityText do
       schedules:
         for(
           %Action{origin: origin, origin_id: id} <- actions,
-          origin in ["schedule", "follow_up"] and is_binary(id) and not thread_id?(id),
+          schedule?(origin, id),
           uniq: true,
           do: id
         )
@@ -205,6 +209,15 @@ defmodule PhotonWeb.ActivityText do
   defp status(_status), do: :ok
 
   defp thread_id?(id), do: is_binary(id) and String.starts_with?(id, "c_")
+
+  # Whether who asked is a schedule: a schedule's own row, or a follow-up
+  # from a schedule Blip made (not a thread's, a digest's or a review's).
+  defp schedule?("schedule", id), do: is_binary(id) and not thread_id?(id)
+
+  defp schedule?("follow_up", id),
+    do: is_binary(id) and not thread_id?(id) and id not in @ambient_origins
+
+  defp schedule?(_origin, _id), do: false
 
   # Who asked: Rules' label, with the thread split out to link when there
   # is one the page can link to.

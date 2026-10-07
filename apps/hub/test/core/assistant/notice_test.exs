@@ -18,6 +18,68 @@ defmodule Photon.Assistant.NoticeTest do
              ]
     end
 
+    test "[nothing to tell] is nothing to say, however it is written; other answers speak" do
+      digest =
+        entry("user", %{
+          "message" => Message.user("[Digest] Since the last digest ..."),
+          "source" => %{"kind" => "signal", "signals" => [%{"kind" => "digest"}]}
+        })
+
+      for answer <- ["[nothing to tell]", "[Nothing to tell].", "  [NOTHING TO TELL]\n"] do
+        assert Notice.from_entries([digest, assistant_entry(answer)]) == [], answer
+      end
+
+      for answer <- ["[nothing to tell] except the pump", "Nothing to tell.", "Pump fixed."] do
+        assert Notice.from_entries([digest, assistant_entry(answer)]) == [
+                 %{kind: :reply, text: answer}
+               ]
+      end
+    end
+
+    test "in a digest's or review's run, only Blip's final answer can speak" do
+      for kind <- ["digest", "review"] do
+        signal =
+          entry("user", %{
+            "message" => Message.user("[Digest] Since the last digest ..."),
+            "source" => %{"kind" => "signal", "signals" => [%{"kind" => kind}]}
+          })
+
+        on_the_way =
+          assistant_entry("Let me check the pump thread.", [call("read_thread", %{}, "c1")])
+
+        # Over two batches, as the run's commits come: nothing on the way,
+        # and nothing at all when the answer is [nothing to tell].
+        {first, state} = Notice.scan([signal, on_the_way], Notice.initial())
+
+        {second, _state} =
+          Notice.scan(
+            [tool_result_entry("c1", "..."), assistant_entry("[nothing to tell]")],
+            state
+          )
+
+        assert {first, second} == {[], []}
+
+        {_first, state} = Notice.scan([signal, on_the_way], Notice.initial())
+        {said, _state} = Notice.scan([assistant_entry("The pump runs again.")], state)
+        assert said == [%{kind: :reply, text: "The pump runs again."}]
+      end
+
+      # Once the owner writes into the run, it is theirs, and speaks as any.
+      digest =
+        entry("user", %{
+          "message" => Message.user("[Digest] ..."),
+          "source" => %{"kind" => "signal", "signals" => [%{"kind" => "digest"}]}
+        })
+
+      entries = [
+        digest,
+        user_entry("and the pump?"),
+        assistant_entry("Checking the pump.", [call("read_thread", %{}, "c1")])
+      ]
+
+      assert Notice.from_entries(entries) == [%{kind: :reply, text: "Checking the pump."}]
+    end
+
     test "a stopped run or a notice is nothing to say" do
       assert Notice.from_entries([
                entry("error", %{"message" => "Stopped.", "stopped" => true}),

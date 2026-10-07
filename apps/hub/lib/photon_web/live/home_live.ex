@@ -35,8 +35,19 @@ defmodule PhotonWeb.HomeLive do
   `{:schedules_changed, nil}` (`Photon.Schedules.subscribe/0`). A
   project's schedules are on its page, and their announcements carry the
   project's ID, so they don't reload this list. Times are shown in the
-  owner's time zone (`PhotonWeb.TimeComponents.local_time/1`). Everything
-  else the shell passes on is ignored.
+  owner's time zone (`PhotonWeb.TimeComponents.local_time/1`).
+
+  Ambient mode (section 7.3 of `docs/plans/step-5-ambient-mode.md`) adds
+  only warnings and marks. Under the header, one line with a link to
+  Settings says when a timer stopped after an error or, failing that,
+  when digests and reviews are skipping because Blip isn't signed in to
+  ChatGPT or schedules can't use the owner's plan. A Failed, Waiting on you or Gone quiet thread row raised
+  in Blip's daily review since it was last touched says so
+  (`PhotonWeb.AmbientText.reviewed?/1`). `Photon.Ambient.brief/0`, which
+  reads no items or board, is read on mount and on `{:ambient_changed}` (`Photon.Ambient.subscribe/0`),
+  `{:chatgpt_changed, _}` and `{:settings_changed, _}`; the
+  marks come with the board, so its re-reads cover them. Everything else
+  the shell passes on is ignored.
   """
 
   use PhotonWeb, :live_view
@@ -44,9 +55,9 @@ defmodule PhotonWeb.HomeLive do
   import PhotonWeb.ConversationComponents, only: [answer_box: 1]
   import PhotonWeb.ScheduleComponents
 
-  alias Photon.{Assistant, Questions, Schedules, Threads}
+  alias Photon.{Ambient, Assistant, Questions, Schedules, Threads}
   alias Photon.Threads.State
-  alias PhotonWeb.ThreadText
+  alias PhotonWeb.{AmbientText, ThreadText}
 
   # The rows move between sections with time (Gone quiet), so the board
   # is read again once a minute.
@@ -56,6 +67,7 @@ defmodule PhotonWeb.HomeLive do
   def mount(_params, _session, socket) do
     if connected?(socket) do
       :ok = Schedules.subscribe()
+      :ok = Ambient.subscribe()
       tick()
     end
 
@@ -69,7 +81,8 @@ defmodule PhotonWeb.HomeLive do
      |> stream_configure(:quiet, dom_id: &"quiet-#{&1.thread.id}")
      |> stream_configure(:schedules, dom_id: &"schedule-#{&1.id}")
      |> load_board()
-     |> load_schedules()}
+     |> load_schedules()
+     |> load_ambient()}
   end
 
   defp waiting_dom_id(%{kind: :question, id: id}), do: "question-#{id}"
@@ -131,6 +144,12 @@ defmodule PhotonWeb.HomeLive do
   def handle_info({:projects_changed, _project_id}, socket), do: {:noreply, load_board(socket)}
   def handle_info({:questions_changed, _thread_id}, socket), do: {:noreply, load_board(socket)}
   def handle_info({:schedules_changed, nil}, socket), do: {:noreply, load_schedules(socket)}
+  def handle_info({:ambient_changed}, socket), do: {:noreply, load_ambient(socket)}
+
+  # Signing in to ChatGPT again, or giving consent, ends a skipping
+  # warning (through PhotonWeb.Shell's subscriptions).
+  def handle_info({:chatgpt_changed, _status}, socket), do: {:noreply, load_ambient(socket)}
+  def handle_info({:settings_changed, _settings}, socket), do: {:noreply, load_ambient(socket)}
 
   def handle_info(:tick, socket) do
     tick()
@@ -183,6 +202,20 @@ defmodule PhotonWeb.HomeLive do
 
   defp load_schedules(socket), do: stream(socket, :schedules, Assistant.schedules(), reset: true)
 
+  # Only the warning reads ambient mode; the review marks come with the
+  # board. A stopped timer goes first: saving Settings, which it asks for,
+  # then shows the consent warning if that still applies.
+  defp load_ambient(socket) do
+    ambient = Ambient.brief()
+
+    warning =
+      if AmbientText.home_stopped?(ambient),
+        do: :stopped,
+        else: AmbientText.skipping(ambient)
+
+    assign(socket, ambient_warning: warning)
+  end
+
   defp stopped?(%{state: state}), do: match?({:stopped, _reason}, state)
 
   ## Rendering
@@ -199,6 +232,20 @@ defmodule PhotonWeb.HomeLive do
               <span id="home-summary">{ThreadText.summary(@needs_you)}</span>
             </:subtitle>
           </.header>
+
+          <.ambient_warning :if={@ambient_warning == :consent} id="ambient-consent" tone="warn">
+            {AmbientText.skipping_text(:consent)}
+          </.ambient_warning>
+          <.ambient_warning
+            :if={@ambient_warning == :signed_out}
+            id="ambient-signed-out"
+            tone="warn"
+          >
+            {AmbientText.skipping_text(:signed_out)}
+          </.ambient_warning>
+          <.ambient_warning :if={@ambient_warning == :stopped} id="ambient-stopped" tone="bad">
+            {AmbientText.home_stopped()}
+          </.ambient_warning>
 
           <section
             :if={@shell.projects == []}
@@ -255,7 +302,12 @@ defmodule PhotonWeb.HomeLive do
             <div :if={@counts.failed > 0} id="failed" class="mt-6">
               <.subhead title="Failed" count={@counts.failed} state={:failed} />
               <div id="failed-list" phx-update="stream" class="mt-2 space-y-2">
-                <.thread_row :for={{dom_id, entry} <- @streams.failed} id={dom_id} entry={entry}>
+                <.thread_row
+                  :for={{dom_id, entry} <- @streams.failed}
+                  id={dom_id}
+                  entry={entry}
+                  review
+                >
                   <:detail>
                     <span class="text-bad/90">{entry.thread.last_run_note || "Failed"}</span>
                   </:detail>
@@ -319,7 +371,12 @@ defmodule PhotonWeb.HomeLive do
           <section :if={@shell.projects != [] and @counts.quiet > 0} id="quiet" class="mt-9">
             <.section_title>Gone quiet</.section_title>
             <div id="quiet-list" phx-update="stream" class="mt-3 space-y-2">
-              <.thread_row :for={{dom_id, entry} <- @streams.quiet} id={dom_id} entry={entry}>
+              <.thread_row
+                :for={{dom_id, entry} <- @streams.quiet}
+                id={dom_id}
+                entry={entry}
+                review
+              >
                 <:detail>{ThreadText.quiet(entry.thread)}</:detail>
                 <:at :if={State.last_activity(entry.thread)}>
                   last active
@@ -461,6 +518,7 @@ defmodule PhotonWeb.HomeLive do
 
   attr :id, :string, required: true
   attr :entry, :map, required: true
+  attr :review, :boolean, default: false, doc: "whether the row says it was in Blip's review"
   attr :rest, :global
   slot :detail
   slot :at
@@ -493,6 +551,7 @@ defmodule PhotonWeb.HomeLive do
         >
           {render_slot(detail)}
         </p>
+        <.reviewed :if={@review} id={@id} entry={@entry} />
       </div>
       <div
         :if={@at != [] or @actions != []}
@@ -506,6 +565,62 @@ defmodule PhotonWeb.HomeLive do
         </div>
       </div>
     </div>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :tone, :string, values: ~w(warn bad), required: true
+  slot :inner_block, required: true
+
+  # A line under the header about ambient mode, with the way to Settings.
+  # At most one shows, so the link's ID is unique.
+  defp ambient_warning(assigns) do
+    ~H"""
+    <div
+      id={@id}
+      role="status"
+      class={[
+        "mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border px-4 py-3",
+        @tone == "warn" && "border-warn/30 bg-warn-soft",
+        @tone == "bad" && "border-bad/30 bg-bad-soft"
+      ]}
+    >
+      <p class="flex min-w-0 flex-1 basis-60 items-start gap-2.5 text-[13.5px] leading-relaxed text-ink">
+        <.icon
+          name={if(@tone == "bad", do: "hero-exclamation-triangle", else: "hero-pause-circle")}
+          class={[
+            "mt-0.5 size-4 shrink-0",
+            if(@tone == "bad", do: "text-bad", else: "text-warn")
+          ]}
+        />
+        <span>{render_slot(@inner_block)}</span>
+      </p>
+      <.link
+        navigate={~p"/settings"}
+        id="ambient-settings"
+        class="inline-flex shrink-0 items-center gap-1 text-[13px] font-medium text-accent-strong transition hover:text-ink"
+      >
+        Settings <.icon name="hero-arrow-right-micro" class="size-4" />
+      </.link>
+    </div>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :entry, :map, required: true
+
+  # A thread row's mark that Blip's daily review raised it since it was
+  # last touched.
+  defp reviewed(assigns) do
+    ~H"""
+    <p
+      :if={AmbientText.reviewed?(@entry)}
+      id={"#{@id}-reviewed"}
+      class="mt-1 flex items-center gap-1.5 text-[12px] text-ink-faint"
+    >
+      <.icon name="hero-eye-micro" class="size-3.5 shrink-0 text-accent-strong" />
+      <span phx-no-format>In Blip's review <.local_time id={"#{@id}-reviewed-at"} at={@entry.thread.reviewed_at} /></span>
+    </p>
     """
   end
 
@@ -549,6 +664,7 @@ defmodule PhotonWeb.HomeLive do
         >
           {@entry.thread.last_run_note}
         </p>
+        <.reviewed id={@id} entry={@entry} />
       </div>
       <div class="ml-auto flex shrink-0 items-center gap-1.5">
         <.button navigate={thread_path(@entry)} id={"#{@id}-open"} size="sm">Open</.button>

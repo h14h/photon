@@ -18,9 +18,10 @@ defmodule Photon.SchedulesTest do
   import Ecto.Query, only: [from: 2]
   import Photon.Eventually
 
-  alias Photon.{Assistant, MachineOps, Projects, Schedules, Settings, Threads}
+  alias Photon.{Assistant, MachineOps, Projects, Schedules, Settings, Signals, Threads}
   alias Photon.Durable.{Runtime, Scheduler, Submission, TaskRecord, Tx}
   alias Photon.Schedules.{Routine, Schedule}
+  alias Photon.Signals.DigestItem
 
   @hour 3_600_000
 
@@ -535,6 +536,35 @@ defmodule Photon.SchedulesTest do
       assert {:ok, %Schedule{task_id: new_id}} = Schedules.update(schedule.id, params(form), 1)
       refute new_id == schedule.task_id
       assert %{state: :waiting, next_at: %DateTime{}} = Schedules.get(schedule.id)
+    end
+
+    test "is collected for ambient mode's next digest while it is on, and not while off", %{
+      project: project
+    } do
+      schedule = create!(project, %{"repeat" => "every", "every" => "1", "unit" => "days"})
+      assert fail!(Durable.task(schedule.task_id), "boom") == :ok
+      assert Repo.all(DigestItem) == []
+
+      _doc = Durable.commit(&Signals.put_ambient_doc_tx(&1, %{"on" => true}))
+      :ok = Photon.Events.subscribe(Signals.ambient_topic())
+      form = %{"repeat" => "every", "every" => "1", "unit" => "days"}
+      {:ok, saved} = Schedules.update(schedule.id, params(form), 1)
+      assert fail!(Durable.task(saved.task_id), "the project no longer exists") == :ok
+      assert_receive {:ambient_changed}
+
+      assert [%DigestItem{kind: "schedule_stopped"} = item] = Repo.all(DigestItem)
+
+      assert {item.key, item.schedule_id, item.task_id, item.project_id, item.note} ==
+               {"schedule_stopped:" <> schedule.id, schedule.id, saved.task_id, project.id,
+                "the project no longer exists"}
+
+      # The digest asks which task each schedule has now, to tell a
+      # schedule saved again since.
+      assert Schedules.lookup([schedule.id, "sc_missing"]) == %{
+               schedule.id => %{prompt: saved.prompt, task_id: saved.task_id}
+             }
+
+      assert Schedules.lookup([]) == %{}
     end
 
     test "changes nothing for a task the row no longer names", %{project: project} do

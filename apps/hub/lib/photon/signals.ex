@@ -14,8 +14,8 @@ defmodule Photon.Signals do
   Which settles become signals is decided in code, never by a model:
   `Photon.Threads`' settle hook asks `Photon.Signals.Rules.thread_update/2`
   in the mode `mode/0` gives, and writes the text with
-  `Photon.Signals.Text`. Quiet mode is the only mode for now: Blip hears
-  about work it started, and about failures and questions in the owner's
+  `Photon.Signals.Text`. In quiet mode, the default, Blip hears about
+  work it started, and about failures and questions in the owner's
   threads.
 
   ## The merge
@@ -29,29 +29,91 @@ defmodule Photon.Signals do
   A signal's key makes it once, whether it started a message or joined
   one. `unpost_tx/2` takes one back while it is still queued.
 
-  ## Room for ambient mode
+  ## Ambient mode
 
-  Step 5's ambient mode adds a mode to `Photon.Signals.Rules.thread_update/2`
-  (Blip hears about the owner's finished threads too, collected into a
-  digest). `mode/0` is the one place the setting will be read; every
-  decision already takes the mode as an argument.
+  Ambient mode (`docs/plans/step-5-ambient-mode.md`) is a setting, off by
+  default. Its settings are the durable doc `global/ambient`, which this
+  module reads and writes (`ambient_doc/0`, `ambient_doc_tx/1`,
+  `put_ambient_doc_tx/2`) because the threads' settle hook reads it inside
+  its commit and can't depend on `Photon.Ambient`, which depends on
+  `Photon.Threads`. What the doc holds is `Photon.Ambient`'s, which writes
+  it in the commit that arms or retires its timers; here only `"on"` is
+  read: `mode/0` and `mode_tx/1` are `:ambient` when it is true, else
+  `:quiet`.
+
+  While it is on, the changes Blip doesn't hear about at once are
+  collected as digest items (`Photon.Signals.DigestItem`, section 3.2):
+  `collect_tx/2` runs inside the commit that makes each change, reads the
+  mode there, and writes nothing in quiet mode, so turning ambient mode
+  off in one commit stops collection from the next. An item's key is its
+  subject (`Photon.Signals.Rules.item_key/1`), and a newer change to the
+  same subject replaces the row, so the table holds at most one row per
+  thread, schedule, project or file however long digests skip (rule 73).
+  A digest reads the items waiting (`pending_tx/1`) and marks those it
+  carries with its key (`carry_items_tx/3`) in the commit that posts it;
+  when Blip's run on it settles they are deleted (`drop_carried_tx/2`),
+  or wait again if the run failed (`release_items_tx/2`).
+  `queued_ambient?/2` says whether a digest or review still waits in
+  Blip's inbox, and `withdraw_ambient_tx/1` takes them back when ambient
+  mode is turned off. Every write announces `{:ambient_changed}` on
+  `ambient_topic/0`.
 
   There is no process here: signals are submissions in Blip's
-  conversation, and the harness runs them.
+  conversation, the items are rows, and the harness runs them.
   """
 
-  use Boundary, deps: [Photon.Durable, PhotonCore], exports: [Rules, Text]
+  use Boundary,
+    deps: [Photon.Durable, Photon.Repo, PhotonCore, Ecto],
+    exports: [DigestItem, Rules, Text]
 
-  alias Photon.Durable
+  import Ecto.Query
+
+  alias Photon.{Durable, Repo}
   alias Photon.Durable.{Submission, Tx}
-  alias Photon.Signals.{Rules, Text}
+  alias Photon.Signals.{DigestItem, Rules, Text}
   alias PhotonCore.Message
+
+  @ambient_topic "ambient"
+
+  @item_kinds ~w(finished schedule_stopped file_written project_created purpose_changed thread_started resolved)
+
+  @item_fields [:thread_id, :project_id, :schedule_id, :task_id, :name, :writer]
+
+  # What a newer change to the same subject replaces: everything but the
+  # row's ID and key.
+  @replaced [
+    :kind,
+    :thread_id,
+    :project_id,
+    :schedule_id,
+    :task_id,
+    :name,
+    :writer,
+    :note,
+    :digest_key,
+    :inserted_at
+  ]
+
+  @note_limit 600
 
   @typedoc """
   A signal: its `key` (`Photon.Signals.Rules.key/1`), the `text` the model
   reads (`Photon.Signals.Text`), and the `ref` the panel draws it from.
+  A digest or review also carries `older`, what Blip's later requests send
+  in its place (`Photon.Durable.Context`).
   """
-  @type t :: %{key: String.t(), text: String.t(), ref: Rules.ref()}
+  @type t :: %{
+          required(:key) => String.t(),
+          required(:text) => String.t(),
+          required(:ref) => Rules.ref(),
+          optional(:older) => older()
+        }
+
+  @typedoc """
+  The stub a message is sent as once Blip has moved on (`"text"`), and the
+  answer that leaves its run out of later requests (`"drop_if_answer"`).
+  """
+  @type older :: %{optional(String.t()) => String.t()}
 
   @typedoc """
   An `ask_blip` question, as `Photon.Questions.Question` holds it: its ID,
@@ -67,9 +129,220 @@ defmodule Photon.Signals do
           optional(atom()) => term()
         }
 
-  @doc "Which signals reach Blip. Quiet mode is the only mode until step 5 adds the setting."
+  @typedoc """
+  A digest item to collect (section 3.2 of
+  `docs/plans/step-5-ambient-mode.md`): its `kind`, and what it names;
+  missing fields are nil. Its key is worked out from them
+  (`Photon.Signals.Rules.item_key/1`).
+  """
+  @type item :: %{
+          required(:kind) => String.t(),
+          optional(:thread_id) => String.t() | nil,
+          optional(:project_id) => String.t() | nil,
+          optional(:schedule_id) => String.t() | nil,
+          optional(:task_id) => String.t() | nil,
+          optional(:name) => String.t() | nil,
+          optional(:writer) => String.t() | nil,
+          optional(:note) => String.t() | nil
+        }
+
+  ## The mode
+
+  @doc "Which signals reach Blip: `:ambient` while ambient mode is on, else `:quiet`."
   @spec mode() :: Rules.mode()
-  def mode, do: :quiet
+  def mode, do: mode_of(ambient_doc())
+
+  @doc "`mode/0` inside the caller's commit, so a collector reads it in its own commit."
+  @spec mode_tx(Tx.t()) :: Rules.mode()
+  def mode_tx(tx), do: mode_of(ambient_doc_tx(tx))
+
+  defp mode_of(%{"on" => true}), do: :ambient
+  defp mode_of(_doc), do: :quiet
+
+  @doc """
+  Ambient mode's doc (`global/ambient`), or an empty map before it was
+  first saved. Its contents are `Photon.Ambient`'s.
+  """
+  @spec ambient_doc() :: map()
+  def ambient_doc, do: Durable.doc("global", "ambient")
+
+  @doc "`ambient_doc/0` inside the caller's commit."
+  @spec ambient_doc_tx(Tx.t()) :: map()
+  def ambient_doc_tx(tx), do: Tx.get_doc(tx, "global", "ambient")
+
+  @doc "Writes ambient mode's doc in the caller's commit; returns it."
+  @spec put_ambient_doc_tx(Tx.t(), map()) :: map()
+  def put_ambient_doc_tx(tx, doc) when is_map(doc), do: Tx.put_doc(tx, "global", "ambient", doc)
+
+  @doc "The topic `{:ambient_changed}` is announced on."
+  @spec ambient_topic() :: String.t()
+  def ambient_topic, do: @ambient_topic
+
+  ## Digest items
+
+  @doc """
+  Collects `item` for the next digest, inside the caller's commit, while
+  ambient mode is on (read in this commit), and then announces
+  `{:ambient_changed}`; does nothing otherwise. Its key is its subject
+  (`Photon.Signals.Rules.item_key/1`): a row already there for the same
+  subject, waiting or carried by a digest Blip is still reading, is
+  replaced by this one, which waits for the next digest. It runs on the
+  harness's hook paths (the settle hook in the Scheduler's abort and
+  fail commits, a routine's `on_fail/3`), so it is total: a missing or
+  non-text field is nil, a note longer than 600 characters is cut, an
+  item with an unknown kind or without its subject collects nothing, and
+  it never raises.
+  """
+  @spec collect_tx(Tx.t(), item() | term()) :: :ok
+  def collect_tx(tx, item) do
+    with %{key: _key} = fields <- item_fields(item),
+         :ambient <- mode_tx(tx) do
+      # Repo.insert!/2 raises on a failed write, which rolls the commit
+      # back; a row with the same subject is replaced, not doubled.
+      _item =
+        DigestItem
+        |> struct!(Map.put(fields, :id, PhotonCore.ID.new("di_")))
+        |> Repo.insert!(on_conflict: {:replace, @replaced}, conflict_target: [:key])
+
+      Tx.announce(tx, @ambient_topic, {:ambient_changed})
+    else
+      _invalid_or_quiet -> :ok
+    end
+  end
+
+  defp item_fields(%{kind: kind} = item) when kind in @item_kinds do
+    fields = @item_fields |> Map.new(&{&1, text(Map.get(item, &1))}) |> Map.put(:kind, kind)
+
+    case Rules.item_key(fields) do
+      nil ->
+        nil
+
+      key ->
+        Map.merge(fields, %{
+          key: key,
+          note: note(Map.get(item, :note)),
+          digest_key: nil,
+          inserted_at: DateTime.utc_now()
+        })
+    end
+  end
+
+  defp item_fields(_item), do: nil
+
+  defp text(value) when is_binary(value) and value != "", do: value
+  defp text(_value), do: nil
+
+  defp note(value) when is_binary(value) and value != "", do: String.slice(value, 0, @note_limit)
+  defp note(_value), do: nil
+
+  @doc """
+  The digest items waiting, oldest first, inside the caller's commit: not
+  those a posted digest carries.
+  """
+  @spec pending_tx(Tx.t()) :: [DigestItem.t()]
+  def pending_tx(%Tx{}), do: pending()
+
+  @doc "The digest items waiting, oldest first."
+  @spec pending() :: [DigestItem.t()]
+  def pending do
+    DigestItem
+    |> where([i], is_nil(i.digest_key))
+    |> order_by([i], asc: i.inserted_at, asc: i.id)
+    |> Repo.all()
+  end
+
+  @doc """
+  Deletes digest items inside the caller's commit: those with the given
+  IDs, or every one (`:all`), carried or not.
+  """
+  @spec drop_items_tx(Tx.t(), [String.t()] | :all) :: :ok
+  def drop_items_tx(%Tx{}, :all) do
+    {_count, _rows} = Repo.delete_all(DigestItem)
+    :ok
+  end
+
+  def drop_items_tx(%Tx{}, []), do: :ok
+
+  def drop_items_tx(%Tx{}, ids) when is_list(ids) do
+    {_count, _rows} = DigestItem |> where([i], i.id in ^ids) |> Repo.delete_all()
+    :ok
+  end
+
+  @doc """
+  Marks the items with the given IDs as carried by the digest with key
+  `digest_key`, inside the commit that posts it: they no longer wait,
+  and go when Blip's run on that digest settles.
+  """
+  @spec carry_items_tx(Tx.t(), [String.t()], String.t()) :: :ok
+  def carry_items_tx(%Tx{}, [], _digest_key), do: :ok
+
+  def carry_items_tx(%Tx{}, ids, digest_key) when is_list(ids) and is_binary(digest_key) do
+    query = where(DigestItem, [i], i.id in ^ids)
+    {_count, _rows} = Repo.update_all(query, set: [digest_key: digest_key])
+    :ok
+  end
+
+  @doc """
+  Deletes the items the digest with key `digest_key` carries, inside the
+  commit that settles Blip's run on it: Blip read them.
+  """
+  @spec drop_carried_tx(Tx.t(), String.t()) :: :ok
+  def drop_carried_tx(%Tx{}, digest_key) when is_binary(digest_key) do
+    {_count, _rows} = DigestItem |> where([i], i.digest_key == ^digest_key) |> Repo.delete_all()
+    :ok
+  end
+
+  @doc """
+  Puts the items the digest with key `digest_key` carries back to wait
+  for the next digest, inside the commit that settles Blip's run on it
+  without an answer, and announces `{:ambient_changed}` when there were
+  any: Blip never told the owner about them.
+  """
+  @spec release_items_tx(Tx.t(), String.t()) :: :ok
+  def release_items_tx(tx, digest_key) when is_binary(digest_key) do
+    query = where(DigestItem, [i], i.digest_key == ^digest_key)
+
+    case Repo.update_all(query, set: [digest_key: nil]) do
+      {0, _rows} -> :ok
+      {_count, _rows} -> Tx.announce(tx, @ambient_topic, {:ambient_changed})
+    end
+  end
+
+  @doc """
+  Whether a digest or review message (`kind`, `"digest"` or `"review"`)
+  still waits, queued, in Blip's inbox.
+  """
+  @spec queued_ambient?(Tx.t(), String.t()) :: boolean()
+  def queued_ambient?(tx, kind),
+    do: tx |> queued_ambient() |> Enum.any?(&(Rules.ambient_kind(source(&1)) == kind))
+
+  @doc """
+  Withdraws every digest and review message still queued in Blip's inbox,
+  inside the caller's commit, and returns their refs. One already placed
+  is Blip's run in progress, and stays.
+  """
+  @spec withdraw_ambient_tx(Tx.t()) :: [Rules.ref()]
+  def withdraw_ambient_tx(tx) do
+    Enum.flat_map(queued_ambient(tx), fn carrier ->
+      :ok = unpost_carrier_tx(tx, carrier, :withdraw)
+      %{"signals" => refs} = source(carrier)
+      refs
+    end)
+  end
+
+  # Blip's queued digest and review messages; none before Blip's
+  # conversation exists.
+  defp queued_ambient(tx) do
+    case Tx.get_doc(tx, "global", "assistant") do
+      %{"conversation_id" => blip} ->
+        tx |> Tx.queued(blip) |> Enum.filter(&(Rules.ambient_kind(source(&1)) != nil))
+
+      _no_blip ->
+        []
+    end
+  end
+
+  ## Signals
 
   @doc "Blip's conversation, created on first use."
   @spec blip_conversation_id() :: String.t()
@@ -107,9 +380,14 @@ defmodule Photon.Signals do
        takes it, as one more text part and ref
     3. otherwise it is a message of its own, which starts a run when Blip
        is idle and waits as a follow-up when Blip is busy
+
+  A signal's `older` stub goes in the source of the message it starts,
+  next to `"signals"`; a signal that joins a queued message adds none.
+  Only digests and reviews carry one, and `Photon.Signals.Rules.merges?/2`
+  keeps them out of messages of other kinds.
   """
   @spec post_tx(Tx.t(), t()) :: Submission.t()
-  def post_tx(tx, %{key: key, text: text, ref: ref}) do
+  def post_tx(tx, %{key: key, text: text, ref: ref} = signal) do
     blip = blip_conversation_tx(tx)
     request_id = "signal:" <> key
 
@@ -117,17 +395,20 @@ defmodule Photon.Signals do
          queued = Tx.queued(tx, blip),
          nil <- Enum.find(queued, &Rules.carries?(source(&1), key)) do
       case Enum.find(queued, &Rules.merges?(source(&1), ref)) do
-        nil -> submit_tx(tx, blip, text, ref, request_id)
+        nil -> submit_tx(tx, blip, signal, request_id)
         carrier -> merge_tx(tx, carrier, text, ref)
       end
     end
   end
 
-  defp submit_tx(tx, blip, text, ref, request_id) do
-    Durable.submit_tx(tx, blip, text,
-      source: %{"kind" => "signal", "signals" => [ref]},
-      request_id: request_id
-    )
+  defp submit_tx(tx, blip, %{text: text, ref: ref} = signal, request_id) do
+    source =
+      case signal do
+        %{older: %{} = older} -> %{"kind" => "signal", "signals" => [ref], "older" => older}
+        _no_stub -> %{"kind" => "signal", "signals" => [ref]}
+      end
+
+    Durable.submit_tx(tx, blip, text, source: source, request_id: request_id)
   end
 
   defp merge_tx(tx, carrier, text, ref) do

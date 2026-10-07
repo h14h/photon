@@ -1,8 +1,27 @@
 defmodule PhotonWeb.SettingsLive do
   @moduledoc """
-  Sign in with ChatGPT, the model and effort Blip uses on the user's plan, and what Blip should know about the user. Signing in is
+  Sign in with ChatGPT, the model and effort Blip uses on the user's plan,
+  ambient mode, and what Blip should know about the user. Signing in is
   `Photon.ChatGPT`'s (the page shows its steps); the rest is a form that
   changes nothing until it is saved (`Photon.Settings.save/1`).
+
+  Ambient mode (`docs/plans/step-5-ambient-mode.md`, sections 2.2 and 7.2)
+  is part of the same form but saved by `Photon.Ambient.configure/1`,
+  after the settings file: its setting is a durable doc, written in the
+  commit that arms or retires its timers. The section shows whenever Blip
+  can think, and while ambient mode is on even when it can't (signed out
+  of ChatGPT, or plan use not allowed), so it can always be turned off:
+  then it shows only the switch, its status and a warning that digests
+  and reviews skip. When it doesn't show, the form carries none of its
+  fields and a Save leaves it as it was. The form starts from the saved settings merged
+  with the setting's values (`PhotonWeb.AmbientText.form_values/1`), on
+  mount and after every Save, so a Save sends the switch back as it is. A
+  colocated hook fills in the browser's UTC offset, which the review's
+  09:00 follows. While it is on, a status block says when the next digest
+  and review come, what is waiting and what the last ones did, re-read on
+  `{:ambient_changed}` and `{:projects_changed, _}`. With the scripted
+  model only, two buttons send a digest or run the review now, for trying
+  it; with a real sign-in nothing here spends the plan.
 
   Below the form, what Blip remembers (`Photon.Assistant.memory/0`), which
   Blip keeps up itself and the user can edit, and a fresh start for the
@@ -11,20 +30,23 @@ defmodule PhotonWeb.SettingsLive do
 
   use PhotonWeb, :live_view
 
-  alias Photon.{Assistant, ChatGPT, Settings}
+  alias Photon.{Ambient, Assistant, ChatGPT, Projects, Settings}
+  alias PhotonWeb.AmbientText
 
   @impl true
   def mount(_params, _session, socket) do
-    if connected?(socket), do: ChatGPT.subscribe()
+    if connected?(socket), do: subscribe()
     settings = Settings.load()
     status = ChatGPT.status()
+    ambient = Ambient.status()
 
     {:ok,
      socket
      |> assign(
        page_title: "Settings",
        settings: settings,
-       form: to_form(settings, as: :settings),
+       ambient: ambient,
+       form: settings_form(settings, ambient),
        chatgpt: status,
        sign_in_url: nil,
        sign_in_form: to_form(%{"address" => ""}, as: :sign_in),
@@ -36,6 +58,17 @@ defmodule PhotonWeb.SettingsLive do
      )
      |> load_models(status)}
   end
+
+  defp subscribe do
+    :ok = ChatGPT.subscribe()
+    :ok = Ambient.subscribe()
+    :ok = Projects.subscribe()
+  end
+
+  # The form starts from the saved settings and ambient mode's saved values,
+  # which live in a durable doc, not the settings file.
+  defp settings_form(settings, ambient),
+    do: to_form(Map.merge(settings, AmbientText.form_values(ambient)), as: :settings)
 
   # The model list needs the account's token, so it loads after sign-in, in
   # the background.
@@ -126,18 +159,44 @@ defmodule PhotonWeb.SettingsLive do
   def handle_event("change", %{"settings" => params}, socket),
     do: {:noreply, assign(socket, form: to_form(params, as: :settings))}
 
+  # Two writes, each whole: the settings file, then ambient mode's doc and
+  # its timers in one commit. The form is rebuilt from both, so the switch
+  # stays as saved.
   def handle_event("save", %{"settings" => params}, socket) do
     settings = Settings.save(params)
+    :ok = Ambient.configure(params)
+    ambient = Ambient.status()
 
     {:noreply,
      socket
-     |> assign(settings: settings, form: to_form(settings, as: :settings))
+     |> assign(settings: settings, ambient: ambient, form: settings_form(settings, ambient))
      |> put_flash(:info, "Saved. The next message uses these settings.")}
+  end
+
+  ## Ambient mode's run-now buttons (scripted model only)
+
+  def handle_event("digest_now", _params, socket), do: run_now(socket, "digest")
+  def handle_event("review_now", _params, socket), do: run_now(socket, "review")
+
+  defp run_now(socket, job) do
+    if socket.assigns.ambient.scripted? do
+      result = if job == "digest", do: Ambient.digest_now(), else: Ambient.review_now()
+
+      {:noreply,
+       socket
+       |> assign(ambient: Ambient.status())
+       |> put_flash(AmbientText.ran_kind(result), AmbientText.ran(job, result))}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
   def handle_info({:chatgpt_changed, status}, socket) do
-    {:noreply, socket |> assign(chatgpt: status) |> load_models(status)}
+    {:noreply,
+     socket
+     |> assign(chatgpt: status, ambient: Ambient.status())
+     |> load_models(status)}
   end
 
   def handle_info({:durable, "global", changes}, socket) do
@@ -145,6 +204,14 @@ defmodule PhotonWeb.SettingsLive do
       do: {:noreply, assign(socket, memory: Assistant.memory())},
       else: {:noreply, socket}
   end
+
+  # A save, a firing, a collected item, or a thread opened or resolved
+  # (which changes what is new to the owner): the status follows along.
+  def handle_info({:ambient_changed}, socket),
+    do: {:noreply, assign(socket, ambient: Ambient.status())}
+
+  def handle_info({:projects_changed, _project_id}, socket),
+    do: {:noreply, assign(socket, ambient: Ambient.status())}
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
@@ -160,7 +227,11 @@ defmodule PhotonWeb.SettingsLive do
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, model: Settings.model(assigns.settings))
+    assigns =
+      assign(assigns,
+        model: Settings.model(assigns.settings),
+        thinks?: ChatGPT.ready?(assigns.chatgpt)
+      )
 
     ~H"""
     <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={:settings}>
@@ -247,6 +318,13 @@ defmodule PhotonWeb.SettingsLive do
               </div>
             </section>
 
+            <.ambient_section
+              :if={@thinks? or @ambient.on?}
+              form={@form}
+              ambient={@ambient}
+              thinks?={@thinks?}
+            />
+
             <section class="space-y-5 rounded-2xl border border-line bg-surface p-5 shadow-xs">
               <h2 class="text-[13px] font-semibold text-ink">Blip</h2>
               <.input
@@ -329,6 +407,143 @@ defmodule PhotonWeb.SettingsLive do
         </div>
       </div>
     </Layouts.app>
+    """
+  end
+
+  attr :form, :any, required: true
+  attr :ambient, :map, required: true
+  attr :thinks?, :boolean, required: true
+
+  # Without a model, only the switch, the warning and the status: the
+  # interval, the offset and the run-now buttons keep what was saved.
+  defp ambient_section(assigns) do
+    ~H"""
+    <section id="ambient" class="space-y-5 rounded-2xl border border-line bg-surface p-5 shadow-xs">
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="text-[13px] font-semibold text-ink">Ambient mode</h2>
+        <span :if={@ambient.on?} id="ambient-on" class="flex items-center gap-1.5 text-[12px] text-ok">
+          <.icon name="hero-signal-micro" class="size-4" /> On
+        </span>
+      </div>
+      <div>
+        <.input field={@form[:ambient]} type="checkbox" label="Let Blip follow along and speak up" />
+        <p id="ambient-hint" class="mt-1 pl-6.5 text-[12px] leading-relaxed text-ink-faint">
+          {AmbientText.hint()}
+        </p>
+      </div>
+      <p
+        :if={!@thinks?}
+        id="ambient-needs-model"
+        class="rounded-lg bg-warn-soft px-3 py-2 text-[13px] leading-relaxed text-ink"
+      >
+        {AmbientText.needs_model()}
+      </p>
+      <.input
+        :if={@thinks?}
+        field={@form[:ambient_every]}
+        type="select"
+        label="Digest"
+        options={AmbientText.every_options(Ambient.every_options())}
+      />
+      <%!-- The browser's UTC offset, which the review's 09:00 follows. Empty
+      until the hook runs, and an empty one keeps what was saved. --%>
+      <input
+        :if={@thinks?}
+        type="hidden"
+        id="settings_utc_offset"
+        name="settings[utc_offset]"
+        value=""
+        phx-hook=".UtcOffset"
+        phx-update="ignore"
+      />
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".UtcOffset">
+        // Minutes east of UTC, as the server counts them (getTimezoneOffset
+        // counts west).
+        export default {
+          mounted() { this.el.value = String(-new Date().getTimezoneOffset()) }
+        }
+      </script>
+      <p
+        :if={@thinks? and AmbientText.needs_consent?(@ambient)}
+        id="ambient-needs-consent"
+        class="rounded-lg bg-warn-soft px-3 py-2 text-[13px] leading-relaxed text-ink"
+      >
+        {AmbientText.needs_consent()}
+      </p>
+      <.ambient_state :if={@ambient.on?} ambient={@ambient} />
+      <div
+        :if={@thinks? and @ambient.scripted?}
+        id="ambient-try"
+        class="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4"
+      >
+        <p class="text-[12.5px] leading-relaxed text-ink-faint">
+          On the scripted model, try it without waiting for the timers.
+        </p>
+        <div class="flex items-center gap-1">
+          <.button
+            type="button"
+            id="ambient-digest-now"
+            size="sm"
+            variant="ghost"
+            phx-click="digest_now"
+          >
+            <.icon name="hero-newspaper-micro" class="size-4" /> Send a digest now
+          </.button>
+          <.button
+            type="button"
+            id="ambient-review-now"
+            size="sm"
+            variant="ghost"
+            phx-click="review_now"
+          >
+            <.icon name="hero-sun-micro" class="size-4" /> Run the review now
+          </.button>
+        </div>
+      </div>
+    </section>
+    """
+  end
+
+  attr :ambient, :map, required: true
+
+  defp ambient_state(assigns) do
+    assigns = assign(assigns, next: AmbientText.next(assigns.ambient))
+
+    ~H"""
+    <div
+      id="ambient-state"
+      class="space-y-2 rounded-lg bg-sunken px-3.5 py-3 text-[13px] leading-relaxed text-ink-soft"
+    >
+      <p :if={@next} id="ambient-next" class="flex items-start gap-2">
+        <.icon name="hero-clock-micro" class="mt-0.5 size-4 shrink-0 text-ink-faint" />
+        <span phx-no-format><%= for part <- @next do %><%= case part do %><% {:time, suffix, at} -> %><.local_time id={"ambient-next-" <> suffix} at={at} class="text-ink" /><% words -> %>{words}<% end %><% end %></span>
+      </p>
+      <p id="ambient-pending" class="flex items-start gap-2">
+        <.icon name="hero-inbox-stack-micro" class="mt-0.5 size-4 shrink-0 text-ink-faint" />
+        <span>{AmbientText.pending(@ambient.pending)}</span>
+      </p>
+      <.ambient_last :if={@ambient.last_digest} job="digest" result={@ambient.last_digest} />
+      <.ambient_last :if={@ambient.last_review} job="review" result={@ambient.last_review} />
+      <p :if={@ambient.stopped} id="ambient-stopped" class="flex items-start gap-2 text-bad">
+        <.icon name="hero-exclamation-triangle-micro" class="mt-0.5 size-4 shrink-0" />
+        <span>{AmbientText.stopped(@ambient.stopped)}</span>
+      </p>
+    </div>
+    """
+  end
+
+  attr :job, :string, required: true
+  attr :result, :map, required: true
+
+  defp ambient_last(assigns) do
+    ~H"""
+    <p id={"ambient-last-#{@job}"} class="flex items-start gap-2">
+      <.icon
+        name={if(@job == "digest", do: "hero-newspaper-micro", else: "hero-sun-micro")}
+        class="mt-0.5 size-4 shrink-0 text-ink-faint"
+      />
+      <span phx-no-format>{AmbientText.last_label(@job)} <.local_time id={"ambient-last-#{@job}-at"} at={@result.at} class="text-ink" />: {AmbientText.last(@job, @result)}</span>
+    </p>
     """
   end
 

@@ -159,4 +159,88 @@ defmodule Photon.Durable.ContextTest do
                ~w(user assistant c1 c2 assistant user assistant c3 c4)
     end
   end
+
+  describe "an earlier run that asked to shrink (\"older\")" do
+    @stub "[Digest delivered 2026-10-07 15:00 UTC: 3 new, 6 smaller.]"
+    @older %{"text" => @stub, "drop_if_answer" => "[nothing to tell]"}
+
+    defp digest_entry(text, seq, older) do
+      source = %{"kind" => "signal", "signals" => [], "older" => older}
+      entry("user", %{"message" => Message.user(text), "source" => source}, seq: seq)
+    end
+
+    # A digest whose run looked at a machine and then answered `answer`.
+    defp digest_run(answer, older \\ @older) do
+      [
+        digest_entry("[Digest] Since the last digest: ...", 1, older),
+        assistant_entry("", [call("shell", %{}, "c1")], seq: 2),
+        tool_result_entry("c1", String.duplicate("q", 1_000), seq: 3),
+        assistant_entry(answer, [], seq: 4)
+      ]
+    end
+
+    defp next_run, do: [user_entry("good morning", seq: 5)]
+
+    defp texts(messages), do: Enum.map(messages, &(&1["tool_call_id"] || Message.text_of(&1)))
+
+    test "is sent as its stub, with its tool results cut to 500 code points" do
+      messages = Context.messages(digest_run("The pump thread failed.") ++ next_run())
+
+      assert [stub, call, result, answer, morning] = messages
+      assert stub == Message.user(@stub)
+      assert Message.tool_calls(call) != []
+      assert answer == Message.assistant("The pump thread failed.")
+      assert morning == Message.user("good morning")
+
+      text = Message.text_of(result)
+      assert String.starts_with?(text, String.duplicate("q", 250) <> "\n\n...")
+      assert String.ends_with?(text, "...\n\n" <> String.duplicate("q", 250))
+      assert text =~ "...500 characters of this older result left out..."
+    end
+
+    test "is left out whole when it answered the drop answer" do
+      for answer <- ["[nothing to tell]", "  [Nothing to tell].\n"] do
+        messages = Context.messages(digest_run(answer) ++ next_run())
+        assert messages == [Message.user("good morning")]
+      end
+    end
+
+    test "is kept as a stub when an owner steer joined it" do
+      [digest, call, result, answer] = digest_run("[nothing to tell]")
+      steer = user_entry("and the backups?", seq: 4)
+      entries = [digest, call, result, steer, %{answer | seq: 5}] ++ next_run()
+
+      assert texts(Context.messages(entries)) ==
+               [@stub, "", "c1", "and the backups?", "[nothing to tell]", "good morning"]
+    end
+
+    test "is kept as a stub when it ended without an answer, or had no drop answer" do
+      [digest, call, result, _answer] = digest_run("[nothing to tell]")
+      stopped = entry("error", %{"message" => "Stopped.", "stopped" => true}, seq: 4)
+
+      assert texts(Context.messages([digest, call, result, stopped] ++ next_run())) ==
+               [@stub, "", "c1", "good morning"]
+
+      no_drop = digest_run("[nothing to tell]", %{"text" => @stub})
+
+      assert texts(Context.messages(no_drop ++ next_run())) ==
+               [@stub, "", "c1", "[nothing to tell]", "good morning"]
+    end
+
+    test "never changes the current run" do
+      entries = digest_run("[nothing to tell]")
+      [digest, call, result, answer] = Enum.map(entries, & &1.data["message"])
+      assert Context.messages(entries) == [digest, call, result, answer]
+    end
+
+    test "leaves runs without \"older\" as before" do
+      older_source = %{"kind" => "signal", "signals" => [], "older" => nil}
+      plain = entry("user", %{"message" => Message.user("hi"), "source" => older_source}, seq: 1)
+      [_digest | rest] = digest_run("[nothing to tell]")
+      messages = Context.messages([plain | rest] ++ next_run())
+
+      assert texts(messages) == ["hi", "", "c1", "[nothing to tell]", "good morning"]
+      assert Enum.at(messages, 2) == Message.tool_result("c1", String.duplicate("q", 1_000))
+    end
+  end
 end
