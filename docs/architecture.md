@@ -13,8 +13,9 @@ layers from *Designing Elixir Systems with OTP* (Gray and Tate):
 Tests are the book's sixth layer; test support modules get a short table at
 the end of the module map.
 
-The module map and the supervision trees describe the code after step 4 of
-`docs/projects-and-blip.md` (2026-10-07). Step 1 made nodes executors for
+The module map and the supervision trees describe the code after step 5 of
+`docs/projects-and-blip.md` (2026-10-07), the last step of its build
+order. Step 1 made nodes executors for
 the hub's operations, gave Blip machine tools to run commands on them,
 and removed node sessions, the model relay and the node's agent loop
 (`docs/plans/step-1-machine-tools.md`). Step 2 added projects, their
@@ -25,10 +26,13 @@ schedules into projects (`docs/plans/step-3-skills-and-schedules.md`).
 Step 4 made Blip a coordinator: tools over every project and thread,
 `ask_blip` questions, thread state worked out by code, signals to Blip,
 the home page and the activity log
-(`docs/plans/step-4-blip-as-coordinator.md`). The hotspots and the refactor log below were written against the
+(`docs/plans/step-4-blip-as-coordinator.md`). Step 5 added ambient mode:
+a setting that gives Blip a digest of what changed every few hours and
+a daily review of threads left alone (`docs/plans/step-5-ambient-mode.md`).
+The hotspots and the refactor log below were written against the
 `elixir-harness` worktree as of 2026-10-03, and their line numbers refer
 to that snapshot. Many of the modules they name were removed in step 1;
-the step 1 to 4 entries at the end of the refactor log say what each
+the step 1 to 5 entries at the end of the refactor log say what each
 step changed.
 
 Purity column:
@@ -114,6 +118,22 @@ wakes it. Who asked for each of Blip's runs is the pure
 use. The home page and the activity page read the board and the log;
 neither keeps state of its own.
 
+Ambient mode adds no process either. Its setting is a durable doc
+(`global/ambient`), so turning it on or off and arming or retiring its
+two timers are one commit (`Photon.Ambient.configure/1`). The timers are
+durable tasks of kind `"ambient"` (`Ambient.Timer`), a schedule's
+routine reused: each firing is one fenced commit that reads what is
+pending and posts at most one message into Blip's conversation. While it
+is on, the commits that make a change also collect it as a digest item
+(`Signals.collect_tx/2`, a row read and deleted by the digest that
+carries it). Which items are new to the owner, which threads the review
+raises, and every word of the messages are the pure `Ambient.Rules` and
+`Ambient.Text`. A run a digest or review starts only reports
+(`Assistant.Origin`'s `report_only?`), so it can't cause the work a
+later digest would carry, and `Durable.Context` shrinks earlier digests
+to a one-line stub in later requests, by a generic rule that knows
+nothing about digests.
+
 ## Module map
 
 ### apps/core (`:photon_core`)
@@ -188,7 +208,7 @@ neither keeps state of its own.
 | `Photon.Durable.Turn` | functional core (a generation's request, outcome, entries, settlements, transitions, usage, live events) | pure | `Context`, `Tool`, `Message`, `PhotonCore.LLM` (types) |
 | `Photon.Durable.ToolTask` | worker logic (task kind): finds the tool, runs it with the profile's `workdir/1` in its API, commits; a raise in `execute/2` or `resume/2` is rescued and recorded with the tool's `on_interrupt/2` in the same commit; every recorded result calls `Durable.tool_result/3` with the stored entry | does I/O | `Durable`, `ToolCall`, `Tool`, `ToolAPI`, `Runtime`, `Tx` |
 | `Photon.Durable.ToolCall` | functional core (whether a call runs, its result entry, its transitions) | pure | `Schema`, `Message` |
-| `Photon.Durable.Context` | functional core (model input from the transcript; tool results from earlier runs shortened: images dropped, long text cut around a pointer to the full output) | pure | `Entry`, `Message`, `Output` |
+| `Photon.Durable.Context` | functional core (model input from the transcript; tool results from earlier runs shortened: images dropped, long text cut around a pointer to the full output; an earlier run whose first user entry's source has an `"older"` map is sent as its stub with results cut to 500 code points, or left out when its answer is the map's `"drop_if_answer"`, a generic rule Blip's digests and reviews use) | pure | `Entry`, `Message`, `Output` |
 | `Photon.Durable.Schema` | functional core | pure | none |
 | `Photon.Durable.Conversation` | data (Ecto schema, `t/0`) | pure | Ecto |
 | `Photon.Durable.Entry` | data | pure | Ecto |
@@ -197,14 +217,15 @@ neither keeps state of its own.
 | `Photon.Durable.Submission` | data (plus `background?/1`: input from a schedule, a signal or an answer, which Blip's Stop keeps) | pure | Ecto |
 | `Photon.Durable.TaskRecord` | data (plus `terminal?/1`) | pure | Ecto |
 | **Assistant** | | | |
-| `Photon.Assistant` | boundary (the assistant's API, which the web pages use, and its `"assistant"` profile; its tools are its own 21 plus `MachineTools.tools/0`; `page_at/1` makes the page the user has open, and `send/2` sends a message with the page's facts read fresh; `answer/2`, the panel's answer to a question; `schedules/0`, `project_schedules/1` and `cancel_schedule/1` through `Photon.Schedules`; `stop/0` keeps scheduled prompts, signals and answers (`Submission.background?/1`); for its tools `find_project/1`, `find_thread/1`, `question_refusal/2`, and inside a commit `origin_tx/2` (who asked for a run), `unattended_count_tx/1` and `may_act_tx/3` (the refusals of a question's run, the unattended limit, and project schedules only in runs the owner typed into); its hooks `on_tool_result/4` and `on_settled/3` write the activity log; `conversation_id/0` delegates to `Photon.Signals`. Over `ModuleDependencies`' limit, with the reason on the module) | does I/O (docs, settings file, clock, projects, threads, questions, skills and schedules); `conversation_id/0` may commit | `Durable`, `Settings`, `ChatGPT`, `Prompt`, `Memory`, `Page`, `Origin`, `Readout`, `MachineTools` (`tools/0`), `Projects`, `Threads`, `Questions`, `Signals`, `Activity`, `Skills` (`enabled(:blip)` for the prompt), `Schedules`, `Transcript`, `Assistant.Tools.*` |
-| `Photon.Assistant.Prompt` | functional core (system prompt from settings, memory, time and Blip's enabled skills; Blip's voice; the shell lines from `MachineTools.Guide`; the line about page notes; the lines on coordinating threads, on signals, on answering a thread's question from memory or asking the user, and on not passing the user's details to threads; the schedule line for Blip's own and a project's schedules) | pure | `Memory`, `MachineTools.Guide`, `Skills.Prompt` |
+| `Photon.Assistant` | boundary (the assistant's API, which the web pages use, and its `"assistant"` profile; its tools are its own 21 plus `MachineTools.tools/0`; `page_at/1` makes the page the user has open, and `send/2` sends a message with the page's facts read fresh; `answer/2`, the panel's answer to a question; `schedules/0`, `project_schedules/1` and `cancel_schedule/1` through `Photon.Schedules`; `stop/0` keeps scheduled prompts, signals and answers (`Submission.background?/1`); for its tools `find_project/1`, `find_thread/1`, `question_refusal/2`, and inside a commit `origin_tx/2` (who asked for a run), `unattended_count_tx/1` and `may_act_tx/3` (the refusals of a question's run, of a digest's or review's run that only reports, the unattended limit, and project schedules only in runs the owner typed into); `system_prompt/1` passes whether ambient mode is on; its hooks `on_tool_result/4` and `on_settled/3` write the activity log, with no row for an answer of `[nothing to tell]`; `conversation_id/0` delegates to `Photon.Signals`. Over `ModuleDependencies`' limit, with the reason on the module) | does I/O (docs, settings file, clock, projects, threads, questions, skills and schedules); `conversation_id/0` may commit | `Durable`, `Settings`, `ChatGPT`, `Prompt`, `Memory`, `Page`, `Origin`, `Readout`, `MachineTools` (`tools/0`), `Projects`, `Threads`, `Questions`, `Signals`, `Activity`, `Skills` (`enabled(:blip)` for the prompt), `Schedules`, `Transcript`, `Assistant.Tools.*` |
+| `Photon.Assistant.Prompt` | functional core (system prompt from settings, memory, time and Blip's enabled skills; Blip's voice; the shell lines from `MachineTools.Guide`; the line about page notes; the lines on coordinating threads, on signals, on answering a thread's question from memory or asking the user, and on not passing the user's details to threads; the schedule line for Blip's own and a project's schedules; with ambient mode on (`system_prompt/5`'s fifth argument), an `## Ambient mode` section on digests, reviews, report-only runs and `[nothing to tell]`) | pure | `Memory`, `MachineTools.Guide`, `Skills.Prompt` |
 | `Photon.Assistant.Page` | functional core (the page the user has open under Blip: what a path is about (`at/1`), the page and its chip's label for a project, a file or a thread, and the bounded note the model sees in front of a message) | pure | none |
 | `Photon.Assistant.Memory` | functional core (editing the memory text) | pure | none |
-| `Photon.Assistant.Notice` | functional core (what Blip says unasked while its panel is closed: its own answers and failures, and a question passed to the owner) | pure | `Entry`, `Message`, `Transcript` |
-| `Photon.Assistant.MockScript` | functional core (mock model script: first `MockCoordinator.unasked/2` for signals and answers, then the machine phrasings from `MachineTools.MockPhrases`, the skill phrasings from `Skills.MockPhrases`, `MockCoordinator.phrasings/1`, memory, schedules and `here`; otherwise matches the last text part of the message) | pure* | `LLM.Mock`, `Message`, `MachineTools.MockPhrases`, `Skills.MockPhrases`, `MockCoordinator` |
-| `Photon.Assistant.MockCoordinator` | functional core (the scripted Blip's coordinator phrasings, one per tool over projects, threads, files, project schedules, skills and questions; `unasked/2` answers a thread's question from a memory line whose key it contains or asks the owner, replies to `(prose)` questions without a tool, relays thread updates, and notes the owner's answers) | pure* | `LLM.Mock`, `Message` |
-| `Photon.Assistant.Origin` | functional core (who asked for a run, from the sources of the submissions it answers: the owner, a schedule, Blip's follow-up, a thread's question; whether the owner wrote to it; whether it is restricted (it carries a question the owner hasn't written into); `for_call/3` credits a question tool's call to its thread; `unattended_ok?/3` and `unattended_details/1` (only calls in runs the owner didn't type into count); `schedule_work_ok?/1`; `asked_by/1` for a schedule Blip makes; the refusals' words; total) | pure | `Message` |
+| `Photon.Assistant.Notice` | functional core (what Blip says unasked while its panel is closed: its own answers and failures, and a question passed to the owner; none for an answer of `[nothing to tell]`) | pure | `Entry`, `Message`, `Transcript` |
+| `Photon.Assistant.MockScript` | functional core (mock model script: first `MockCoordinator.unasked/2` for signals and answers (digests and reviews included), then the machine phrasings from `MachineTools.MockPhrases`, the skill phrasings from `Skills.MockPhrases`, `MockCoordinator.phrasings/1`, memory, schedules and `here`; otherwise matches the last text part of the message; the help text adds `MockAmbient.help/0`) | pure* | `LLM.Mock`, `Message`, `MachineTools.MockPhrases`, `Skills.MockPhrases`, `MockCoordinator`, `MockAmbient` |
+| `Photon.Assistant.MockCoordinator` | functional core (the scripted Blip's coordinator phrasings, one per tool over projects, threads, files, project schedules, skills and questions; `unasked/2` tries `MockAmbient.unasked/2` first, then answers a thread's question from a memory line whose key it contains or asks the owner, replies to `(prose)` questions without a tool, relays thread updates, and notes the owner's answers) | pure* | `LLM.Mock`, `Message`, `MockAmbient` |
+| `Photon.Assistant.MockAmbient` | functional core (the scripted Blip's replies to a `[Digest]` or `[Daily review]` message: a line per new change or listed thread, leaving out lines with a word from a `- ignore: <word>` memory line, and `[nothing to tell]` when none is left; never calls a tool) | pure | `Message` |
+| `Photon.Assistant.Origin` | functional core (who asked for a run, from the sources of the submissions it answers: the owner, a schedule, Blip's follow-up, a thread's question; whether the owner wrote to it; whether it is restricted (it carries a question the owner hasn't written into); a digest's or daily review's run is Blip's follow-up on `"digest"` or `"review"` and only reports (`report_only?`) until the owner types into it; `for_call/3` credits a question tool's call to its thread; `unattended_ok?/3` and `unattended_details/1` (only calls in runs the owner didn't type into count); `schedule_work_ok?/1`; `asked_by/1` for a schedule Blip makes; the refusals' words; total) | pure | `Message` |
 | `Photon.Assistant.Readout` | functional core (the texts of Blip's read tools: projects, a project, threads, a thread's recent entries, and the words after a file write or edit, for the schedule and skill tools, and for an unknown project, thread, question or skill; thread states in Blip's words) | pure (time passed in) | `Threads.State`, `Message` |
 | `Photon.Assistant.Tools.UpdateMemory` | boundary (tool) | does I/O (commit); the editing is `Memory.edit/3` | `Durable`, `Memory` |
 | `Photon.Assistant.Tools.Schedule` | boundary (tool: one of Blip's own schedules or, with `project`, a project's that starts a new thread or wakes one, made with `Schedules.tool_schedule_tx/4` inside the commit that records the result, with the call's task ID as its request ID and `asked_by` from the run's origin; refuses in a question's run, and a project's in any run the owner didn't type into) | does I/O (a commit, clock) | `Schedules`, `Assistant`, `Threads`, `Origin`, `Readout`, `ToolAPI` |
@@ -217,12 +238,12 @@ neither keeps state of its own.
 | `Photon.Assistant.Tools.ListSkills`, `.SetProjectSkill` | boundary (durable tools, `replay: :safe`: every skill and where it is on; turn one on or off for a project with `Skills.enable_tx/3` or `disable_tx/3` inside the commit that records the result, refused in a question's run) | does I/O (DB, a commit) | `Skills`, `Assistant`, `Readout` |
 | `Photon.Assistant.Tools.LoadSkill` | boundary (durable tool, `replay: :safe`: one of Blip's enabled skills, read with `Skills.load_tx/3` inside the commit that records the result) | does I/O (DB, in a commit) | `Skills`, `Skills.Prompt` |
 | **Projects and threads** | | | |
-| `Photon.Projects` | boundary (the projects context: projects, their slugs and their context files; every write is a Store commit that checks with `Rules` and announces with `Tx.announce/3`; `create_tx/2` for Blip's `start_project`, and `write_file_tx/5` and `edit_file_tx/6` for the thread's and Blip's file tools, inside their own commit, with errors that name the writer; `file_counts/0` for `list_projects`; no process) | does I/O (DB through commits, PubSub through `Events`, clock, IDs) | `Durable`, `Tx`, `Repo`, `Events`, `Rules`, `Project`, `ContextFile` |
+| `Photon.Projects` | boundary (the projects context: projects, their slugs and their context files; every write is a Store commit that checks with `Rules` and announces with `Tx.announce/3`; `create_tx/2` for Blip's `start_project`, and `write_file_tx/5` and `edit_file_tx/6` for the thread's and Blip's file tools, inside their own commit, with errors that name the writer; `file_counts/0` for `list_projects`; in ambient mode the owner's new projects and name or Purpose edits, and the owner's and threads' file writes, are collected for the next digest (`Signals.collect_tx/2`) inside the commit that makes them; no process) | does I/O (DB through commits, PubSub through `Events`, clock, IDs) | `Durable`, `Tx`, `Repo`, `Events`, `Signals`, `Rules`, `Project`, `ContextFile` |
 | `Photon.Projects.Project` | data (Ecto schema, table `projects`: name, purpose, the slug fixed at creation) | pure | Ecto |
 | `Photon.Projects.ContextFile` | data (Ecto schema, table `project_files`: name, lookup key, content, version, who wrote it last: the user, a thread or Blip) | pure | Ecto |
 | `Photon.Projects.Rules` | functional core (purpose and name, the name made from the purpose, slugs and their uniqueness, file names and lookup keys, the content limit, the user's version check, a thread's exactly-once edit) | pure | `Project`, `ContextFile` |
-| `Photon.Threads` | boundary (the threads context's API, which the pages use, and the `"thread"` profile: the model in Settings, the prompt with the project's enabled skills, the machine tools, four context-file tools, `load_skill` and `ask_blip`, and `workdir/1`, the project's slug; starting a thread makes the row, the conversation, the first message and the title task in one commit; `start_tx/4` and `send_tx/4` do it inside a caller's commit, with a `:source` and a `:request_id`, for schedules and Blip's tools, set `started_by` and clear `resolved_at`; `stop_tx/2`; `rename/2`; a thread's state: `board/1` (every thread in scope with its state and open questions, in three queries), `state/1`, `needs_you_count/0`, `sidebar/1` with each thread's state, `places/1`; `mark_seen/1`, `mark_all_seen/0`, `resolve/1`, `reopen/1`; `describe_files/2` and `read_file_text/3` for both profiles' file tools; its settle hook `on_settled/3` records a run's end on the row and posts a signal to Blip when `Signals.Rules` says so; no process. Over `ModuleDependencies`' limit, with the reason on the module) | does I/O (DB, commits, settings file, clock) | `Durable`, `Tx`, `Repo`, `Projects`, `Questions`, `Signals`, `Settings`, `Skills`, `ChatGPT`, `MachineTools`, `Transcript`, `Thread`, `State`, `Rules`, `Prompt`, `Threads.Tools.*` |
-| `Photon.Threads.Thread` | data (Ecto schema, table `threads`: the conversation's ID, its project, title and `active_at`; who started it, how and when its last run ended, whether that answer asked, its note, and when the owner last saw or resolved it) | pure | Ecto |
+| `Photon.Threads` | boundary (the threads context's API, which the pages use, and the `"thread"` profile: the model in Settings, the prompt with the project's enabled skills, the machine tools, four context-file tools, `load_skill` and `ask_blip`, and `workdir/1`, the project's slug; starting a thread makes the row, the conversation, the first message and the title task in one commit; `start_tx/4` and `send_tx/4` do it inside a caller's commit, with a `:source` and a `:request_id`, for schedules and Blip's tools, set `started_by` and clear `resolved_at`; `stop_tx/2`; `rename/2`; a thread's state: `board/1` (every thread in scope with its state and open questions, in three queries), `state/1`, `needs_you_count/0`, `sidebar/1` with each thread's state, `places/1`; `mark_seen/1`, `mark_all_seen/0`, `resolve/1`, `reopen/1`; `describe_files/2` and `read_file_text/3` for both profiles' file tools; its settle hook `on_settled/3` records a run's end on the row and posts a signal to Blip when `Signals.Rules` says so, in the mode read in the same commit, or in ambient mode collects the owner's finished run for the next digest; `start/2` and `resolve/1` collect the owner's thread starts and Resolves too; `mark_reviewed_tx/3` and `unmark_reviewed_tx/2` for the daily review, and `quiet_after/0`, the threshold the state and the review share; no process. Over `ModuleDependencies`' limit, with the reason on the module) | does I/O (DB, commits, settings file, clock) | `Durable`, `Tx`, `Repo`, `Projects`, `Questions`, `Signals`, `Settings`, `Skills`, `ChatGPT`, `MachineTools`, `Transcript`, `Thread`, `State`, `Rules`, `Prompt`, `Threads.Tools.*` |
+| `Photon.Threads.Thread` | data (Ecto schema, table `threads`: the conversation's ID, its project, title and `active_at`; who started it, how and when its last run ended, whether that answer asked, its note, when the owner last saw or resolved it, and when a daily review last listed it (`reviewed_at`, a fact the state doesn't read)) | pure | Ecto |
 | `Photon.Threads.State` | functional core (a thread's state from its facts, first rule wins: waiting on you, asking Blip, running, idle when resolved, failed, waiting on you, unread, quiet, idle; `asks?/1` and `note/2` for a run's end, `label/2` for the words, `unseen?/1`, `last_activity/1`, and `sections/1` for the home page's groups; total) | pure (time passed in) | none |
 | `Photon.Threads.Rules` | functional core (a thread's first title from its first message, without a leading `[Scheduled] `, the request for the model's short title and what of its answer is one, a renamed title; `started_by/1` from the first message's source; how the tools list a project's files and head a read, naming who changed each file from the reader's side, a thread's or Blip's) | pure | `Message` |
 | `Photon.Threads.Prompt` | functional core (a thread's system prompt from its project, the hour and the project's enabled skills, with the line saying what a `[Scheduled]` message is, when to call `ask_blip`, and to end with a question only when it needs a reply; nothing about the user) | pure | `MachineTools.Guide`, `Skills.Prompt` |
@@ -234,8 +255,9 @@ neither keeps state of its own.
 | `Photon.Threads.Tools.LoadSkill` | boundary (durable tool, `replay: :safe`: one of the project's enabled skills, read with `Skills.load_tx/3` inside the commit that records the result) | does I/O (DB, in a commit) | `Skills`, `Skills.Prompt`, `Threads` |
 | `Photon.Threads.Tools.AskBlip` | boundary (durable tool, `replay: :safe`: `execute/2` stores the question and posts it to Blip (`Questions.ask/1`, fenced on the call's task) and parks on its signal; `resume/2` returns the answer, waits on an owner, or calls `Questions.escalate/1` every `check_ms` while Blip has it; `on_interrupt/2` withdraws it) | does I/O (commits through `Questions`, app env, clock) | `Questions`, `Questions.Rules`, `Threads`, `Projects`, `ToolAPI` |
 | **Signals and questions** | | | |
-| `Photon.Signals` | boundary (what reaches Blip unasked: `post_tx/2` posts a thread update or a question into Blip's conversation inside the caller's commit, merging into a queued message of the same kind and making each key once; `unpost_tx/2`; `answer_tx/3`, the owner's answer as Blip's own message; `notice_tx/3`, an escalation or withdraw notice; `blip_conversation_id/0`; `mode/0`, quiet for now; no process) | does I/O (commits through `Tx`) | `Durable`, `Tx`, `Submission`, `Rules`, `Text`, `Message` |
-| `Photon.Signals.Rules` | functional core (`thread_update/2`: which settles Blip hears about, from the settled submissions' sources and the mode; the keys and refs; whether a queued message takes a signal, and adding or taking back one; total) | pure | none |
+| `Photon.Signals` | boundary (what reaches Blip unasked: `post_tx/2` posts a thread update or a question into Blip's conversation inside the caller's commit, merging into a queued message of the same kind and making each key once; `unpost_tx/2`; `answer_tx/3`, the owner's answer as Blip's own message; `notice_tx/3`, an escalation or withdraw notice; `blip_conversation_id/0`; `post_tx/2` also takes an `older:` stub for the message's source. Ambient mode: it reads and writes the `global/ambient` doc (`ambient_doc/0`, `ambient_doc_tx/1`, `put_ambient_doc_tx/2`), since the threads' settle hook reads it in its own commit; `mode/0` and `mode_tx/1` are `:ambient` when it is on, else `:quiet`; `collect_tx/2` inserts a digest item only in ambient mode, is total, and announces `{:ambient_changed}` on `ambient_topic/0`; `pending_tx/1`, `pending/0`, `drop_items_tx/2`, `queued_ambient?/2` and `withdraw_ambient_tx/1` for `Photon.Ambient`; no process) | does I/O (commits through `Tx`, DB) | `Durable`, `Tx`, `Repo`, `Submission`, `DigestItem`, `Rules`, `Text`, `Message` |
+| `Photon.Signals.DigestItem` | data (Ecto schema, table `digest_items`: a change waiting for the next digest, its kind, the thread, project, schedule or file it is about, the file's writer and a note; plain IDs, no foreign keys, so an item whose subject is gone is dropped at digest time) | pure | Ecto |
+| `Photon.Signals.Rules` | functional core (`thread_update/2`: which settles Blip hears about, from the settled submissions' sources and the mode (in ambient mode an owner's finished run is `:digest`, an item for the next digest, not a signal); `ambient_kind/1`, a source's digest or review ref; the keys and refs; whether a queued message takes a signal, and adding or taking back one; total) | pure | none |
 | `Photon.Signals.Text` | functional core (the words of a thread update and a question as the model reads them, the note in front of the owner's answer, and the escalation and withdraw notices; total) | pure | none |
 | `Photon.Questions` | boundary (`ask_blip` questions: `ask/1`, a commit outside the step's fence that checks the call's task itself, stores the row and posts the signal; `answer/2` for the owner; `answer_tx/4` and `pass_tx/4` for Blip's tools; `escalate/1` passes one Blip's run went past; `withdraw_tx/2` in the commit that ends the call; reads `get/1`, `by_task/1`, `open/0`, `open_by_thread/1`; every change announces `{:questions_changed, thread_id}`; no process) | does I/O (DB, commits, PubSub through `Events`, app env) | `Durable`, `Tx`, `Repo`, `Events`, `Signals` (with its `Rules` and `Text`), `Question`, `Rules` |
 | `Photon.Questions.Question` | data (Ecto schema, table `questions`: one per tool call, the thread and its place as they were, the question, its status, who passed and answered it, Blip's wording, the answer, and the message carrying it to Blip) | pure | Ecto |
@@ -243,7 +265,7 @@ neither keeps state of its own.
 | **Activity** | | | |
 | `Photon.Activity` | boundary (the activity log: `record_tx/2`, called from Blip's hooks inside the commit that stores the call's result or the run's answer, total, one row per entry; `list/1` newest first with a cursor and filters, `get/1`, `subscribe/0`; announces `{:activity_added, id}`; no process) | does I/O (DB, in commits; PubSub through `Events`) | `Tx`, `Entry`, `TaskRecord`, `Repo`, `Events`, `Action`, `Rules` |
 | `Photon.Activity.Action` | data (Ecto schema, table `activity`: a call or a message, its summary, status, whether it changes something, who asked, the project and thread it acted on, its entry) | pure | Ecto |
-| `Photon.Activity.Rules` | functional core (`summary/3` over the raw call, `message_summary/1`, `changes?/1`, `origin_label/2`, `origins/0`; total) | pure | `Message` |
+| `Photon.Activity.Rules` | functional core (`summary/3` over the raw call, `message_summary/1`, `changes?/1`, `origin_label/2` (with "Blip's follow-up on the digest" and "... on the daily review"), `origins/0`; total) | pure | `Message` |
 | **Skills** | | | |
 | `Photon.Skills` | boundary (the skills context: `list/0` with each skill's scopes, `get/1`, `get_by_name/1`, `create/1`, `install/2`, `update/3` against a version, `delete/1`, `enable/2` and `disable/2` per scope (`:blip` or `{:project, id}`, at most 30 each), `enable_tx/3` and `disable_tx/3` for Blip's `set_project_skill` inside its commit, `enabled/1` for the prompts, `load_tx/3` for the `load_skill` tools inside their commit, `read/1` for a pasted SKILL.md, `fetch/1` for a link; every write is a Store commit announced with `Tx.announce/3` on `"skills"`; no process) | does I/O (DB through commits, PubSub through `Events`, clock, IDs; HTTP through `Fetch`) | `Durable`, `Tx`, `Repo`, `Events`, `Projects`, `Rules`, `Source`, `Fetch`, `Skill`, `Enablement` |
 | `Photon.Skills.Skill` | data (Ecto schema, table `skills`: name, description, instructions, version, origin, source URL, install notes, the files install left out) | pure | Ecto |
@@ -258,8 +280,13 @@ neither keeps state of its own.
 | `Photon.Schedules` | boundary (the schedules context: `list/1` and `get/1` with each schedule's next time and state read from its task, `create/2`, `update/3` against a version, `delete/1`, `run_now/1`, `consent?/0`, the form's `new_params/1` and `edit_params/1`, and for Blip's tools `tool_schedule_tx/4` (Blip's or a project's, with `asked_by`), `delete_tx/3` (scope `:blip` or `:any`) and `when_text/1`; `prompts/1` for the activity page; every change writes the row and replaces or retires its routine task in one Store commit, announced on `"schedules"`; no process) | does I/O (DB through commits, PubSub through `Events`, settings file, clock, IDs) | `Durable`, `Tx`, `Repo`, `Events`, `Projects`, `Settings`, `Threads` (`start_tx/4`, `send_tx/4`), `Rules`, `Routine`, `Schedule` |
 | `Photon.Schedules.Schedule` | data (Ecto schema, table `schedules`: the prompt, the first time and the interval, the project and thread it targets (neither for Blip's), who made it and, for Blip's, whether the owner asked for it (`asked_by`), the version, its routine task, and the last firing's time, outcome and thread) | pure | Ecto |
 | `Photon.Schedules.Rules` | functional core (the form's and Blip's tool's input, the first time a new or edited schedule's task waits for (`arm/4`, from what the old task fired), the next time after a firing, where a schedule fires and what a firing does there from the consent and overlap facts (`fire/2`), the scheduled text, the skip notice and the request IDs; `tool_thread/3`, the thread a project schedule from Blip's tool wakes) | pure (time passed in) | none |
-| `Photon.Schedules.Routine` | worker logic (the `"routine"` task kind, moved from `Photon.Assistant.Routine`: a background task that waits for the schedule's next time, fires it in one fenced commit (`fire_tx/3`, shared with run-now) and waits again, with the schedule's `created_by` and `asked_by` in every firing's source; `on_fail/3` records a failed task on its row) | does I/O (commits, clock, the settings file through `Schedules.consent?/0`) | `Durable`, `Runtime`, `Tx`, `Repo`, `Schedules`, `Threads`, `Rules`, `Schedule` |
-| `Photon.Transcript` | functional core (what a conversation page shows, for Blip's panel and a thread's page: entry index without image data, what the user typed without the page note, signal and answer messages, the in-flight answer fold, running calls' output tails, a call's status and a machine call's line, Blip's mood, an image decoded from its entry; `questions/3`, the questions open in Blip's panel from its entries and queue, `close_from_rows/2`, `signal_lines/1`, `question_card/1`, `escalation/1`) | pure | `Entry`, `Message` |
+| `Photon.Schedules.Routine` | worker logic (the `"routine"` task kind, moved from `Photon.Assistant.Routine`: a background task that waits for the schedule's next time, fires it in one fenced commit (`fire_tx/3`, shared with run-now) and waits again, with the schedule's `created_by` and `asked_by` in every firing's source; `on_fail/3` records a failed task on its row and, in ambient mode, collects the stopped schedule for the next digest) | does I/O (commits, clock, the settings file through `Schedules.consent?/0`) | `Durable`, `Runtime`, `Tx`, `Repo`, `Schedules`, `Signals`, `Threads`, `Rules`, `Schedule` |
+| **Ambient mode** | | | |
+| `Photon.Ambient` | boundary (ambient mode's API, no process: `status/0` (the setting, the next times read from the timer tasks, the pending counts by `Rules.digest/3`, the last outcomes, a stopped timer, consent), `subscribe/0`, `configure/1` (the Settings form over the doc; one commit writes the doc, arms or retires both timers, and when turned off deletes the pending items, withdraws a queued digest or review and clears the marks of a withdrawn review), `digest_now/0` and `review_now/0` (the scripted model's buttons), `fire_tx/3` (one firing, inside the timer's fenced commit: skip, or post one `[Digest]` or `[Daily review]` signal with its older stub and delete or mark what it carried), `every_options/0`; announces `{:ambient_changed}`; exports nothing but itself) | does I/O (commits, DB, the settings file for consent, clock, IDs) | `Durable`, `Tx`, `Events`, `Projects`, `Schedules`, `Settings`, `Signals`, `Threads`, `Rules`, `Text`, `Timer` |
+| `Photon.Ambient.Rules` | functional core (`config/2`, the form over the doc, where a missing or unexpected value keeps the doc's; `changes/3`, what a Save does to each timer and to what is pending; `next_firing/3` (missed slots skipped) and `next_review/2` (the next 09:00 at a UTC offset); `firing/1`, the skips; `digest/3`, the items sorted into new, smaller and gone against the board, one per subject, cut at 20 and 15 rows; `review/3`, the threads quiet, failed or waiting and untouched for `quiet_after`, not reviewed since, cut at 10; `last_touch/1`; total over missing fields) | pure (time passed in) | `Threads.State` |
+| `Photon.Ambient.Text` | functional core (the words Blip reads: a digest (`digest/2`, at most 6,000 characters) and a daily review (`review/3`), their refs for the message's source (`digest_ref/2`, `review_ref/2`), their one-line stubs for later requests (`digest_older/2`, `review_older/2`, at most 300 characters, with `"drop_if_answer" => "[nothing to tell]"`), and `ago/2`) | pure (time passed in) | none |
+| `Photon.Ambient.Timer` | worker logic (the `"ambient"` task kind, a schedule's routine reused for the digest and the review: waits until its time, reads consent and the clock, runs `Ambient.fire_tx/3` and its next wait in one `Runtime.commit/2`, and waits again on its grid; the signal's key is the task and its run count; `on_fail/3` records the stopped timer on the doc through `Ambient.stopped_tx/4` and never retries; `task/2`, a timer's task attributes) | does I/O (commits, clock, the settings file through `Schedules.consent?/0`) | `Durable`, `Runtime`, `Ambient`, `Rules`, `Schedules` |
+| `Photon.Transcript` | functional core (what a conversation page shows, for Blip's panel and a thread's page: entry index without image data, what the user typed without the page note, signal and answer messages, the in-flight answer fold, running calls' output tails, a call's status and a machine call's line, Blip's mood, an image decoded from its entry; `questions/3`, the questions open in Blip's panel from its entries and queue, `close_from_rows/2`, `signal_lines/1`, `question_card/1`, `escalation/1`; `nothing_to_tell?/1` and `untold?/1` for Blip's `[nothing to tell]` answer; a digest or review in Blip's panel: `ambient_ref/1`, `ambient_heading/1`, `ambient_lines/3` (each thread under its current title, a review's "4 days ago" as of when it was posted), `ambient_more/1`, `ambient_chip/1`; `thread_ids/1` reads a digest's and review's items too) | pure | `Entry`, `Message` |
 | **Machines and machine tools** | | | |
 | `Photon.Machines` | boundary (the context for machines and their operations: the registry of connected nodes (`register/2`, `list/0`, `get/1`, `online?/1`, `subscribe/0`), status and roster, starting an op, the tool call's claim, cancel and give-up inside its commit, and the channel's join, push, snapshot and output, which push nothing to an outdated machine; `command/3` and `push_op/2` are plain sends to a channel, and its moduledoc says why; no process) | does I/O: every write and the channel's reads are `Durable.Store` commits; Registry, sends to channels (`op.cancel` from inside cancel commits), PubSub through `Events`, output broadcast with `Durable.live/2` | `Durable`, `Tx`, `Repo`, `Events`, `NodeKeys`, `Machines.Op`, `Machines.Rules`, `Machines.Roster`, `PhotonCore.Operation.Wire`, `Photon.MachineRegistry` |
 | `Photon.Machines.Op` | data (Ecto schema, table `machine_ops`: one row per tool call's op, with `confirmed`, `pushed`, `cancel` and the result until it is claimed) | pure | Ecto |
@@ -320,10 +347,10 @@ neither keeps state of its own.
 | `PhotonWeb.SkillText` | functional core (the skills pages' words: where a skill is on, how it arrived, a link's place, the install notes as lines) | pure | `Skills.Skill` |
 | `PhotonWeb.Blip` | boundary (UI component: Blip drawn from the brand kit's SVG, posed by `data-state`) | pure | Phoenix.Component |
 | `PhotonWeb.Layouts` | boundary (UI layout: the sidebar with Home and how many threads need the owner, Activity, the projects and their threads each with its state's mark, Machines with the online count linking to the Nodes page, Skills, and Settings; `active` marks the page on screen) | pure | `CoreComponents` |
-| `PhotonWeb.ConversationComponents` | boundary (UI components for a durable conversation, shared by Blip's panel and a thread's page: entries, signal and answer messages, a message Blip sent a thread, the question card for an `ask_owner` result, tool call lines naming the machine, skill, project, thread or question, web searches, the in-flight answer, the composer with `:above` and `:footer` slots, the queued messages (a queued answer shows as sent, with no withdraw), `answer_box/1` (a question's answer box, Enter sends), the sign-in panel; `action_icon/1` is shared with the activity page; IDs take a prefix, images an image path function) | pure | `Transcript`, `Markdown`, `Message`, `CoreComponents` |
+| `PhotonWeb.ConversationComponents` | boundary (UI components for a durable conversation, shared by Blip's panel and a thread's page: entries, signal and answer messages, a message Blip sent a thread, the question card for an `ask_owner` result, tool call lines naming the machine, skill, project, thread or question, web searches, the in-flight answer, the composer with `:above` and `:footer` slots, the queued messages (a queued answer shows as sent, with no withdraw), `answer_box/1` (a question's answer box, Enter sends), the sign-in panel; a digest or daily review as one collapsed line that opens to its items (`ambient_message/1`) and its chip while queued, and, with `hide_untold` (Blip's panel only), an empty element for Blip's `[nothing to tell]` answer; `action_icon/1` is shared with the activity page; IDs take a prefix, images an image path function) | pure | `Transcript`, `Markdown`, `Message`, `CoreComponents` |
 | `PhotonWeb.ConversationView` | boundary (socket helpers for the two conversation pages: mount a conversation's assigns and stream, fold in commits and live events, and keep the `questions` assign from the entries and the queue, closed on mount by the question rows the page reads; not a process, and calls only `Transcript` and `Markdown`) | pure apart from the socket it's handed | `Transcript`, `Markdown` |
 | `PhotonWeb.ProjectText` | functional core (the project pages' words for times, file sizes and who changed a file (you, a thread by title, or Blip), from a time and the thread titles passed in) | pure | `ContextFile` |
-| `PhotonWeb.BlipLive` | boundary (UI process; sticky, rendered once by `Layouts.app/1` over every page) | is a process; talks only to `Photon.Assistant`; draws with the shared conversation modules and `Assistant.Notice`; a hook reports the page under it, which a chip in the message box offers as context; a question card's Answer puts a reply chip in the message box, and the next message goes to the thread through `Assistant.answer/2`, with a refusal shown above the composer | `Assistant`, `Transcript`, `Assistant.Notice`, `ConversationComponents`, `ConversationView`, `Markdown`, `Message`, `Blip` |
+| `PhotonWeb.BlipLive` | boundary (UI process; sticky, rendered once by `Layouts.app/1` over every page) | is a process; talks only to `Photon.Assistant`; draws with the shared conversation modules and `Assistant.Notice`; a hook reports the page under it, which a chip in the message box offers as context; a question card's Answer puts a reply chip in the message box, and the next message goes to the thread through `Assistant.answer/2`, with a refusal shown above the composer; a `[nothing to tell]` answer and its stream wrapper are hidden | `Assistant`, `Transcript`, `Assistant.Notice`, `ConversationComponents`, `ConversationView`, `Markdown`, `Message`, `Blip` |
 | `PhotonWeb.ProjectNewLive` | boundary (UI process; starts a project from a purpose and an optional name) | is a process; talks only to `Photon.Projects` | `Projects` |
 | `PhotonWeb.ProjectLive` | boundary (UI process; a project's page: name, folder and purpose (editable), its threads (from the project's board, each with its state's mark and words) and context files as streams, and in the second column its skills (turned on and off with a picker) and schedules (with Run now, Delete, and a banner when scheduled work is off)) | is a process; reads on mount and on `{:projects_changed, _}` (schedules too), `{:project_files_changed, ...}`, `{:skills_changed, _}`, its own `{:schedules_changed, id}`, settings changes, and its own threads' `{:durable_tasks, _}` and `{:questions_changed, _}` | `Projects`, `Threads`, `Skills`, `Schedules`, `Markdown`, `ProjectText`, `ScheduleText`, `ThreadText`, `ScheduleComponents` |
 | `PhotonWeb.ContextFileLive` | boundary (UI process; writes a new context file or edits one, with a preview, saves against the version it loaded, and a banner naming who saved first: a thread, Blip or another tab) | is a process; reads on mount, on `{:project_files_changed, ...}` and on `{:projects_changed, _}` for the project's name | `Projects`, `Threads`, `Markdown`, `ProjectText`, `EditorComponents` |
@@ -332,11 +359,12 @@ neither keeps state of its own.
 | `PhotonWeb.SkillLive` | boundary (UI process; `:new` writes a skill, `:edit` edits one against the version it loaded and turns it on for Blip and each project; a toggle re-reads the switches, and only a new version touches the form) | is a process; follows `{:skills_changed, _}` and `{:projects_changed, _}` | `Skills`, `Projects`, `Markdown`, `SkillText`, `EditorComponents` |
 | `PhotonWeb.SkillInstallLive` | boundary (UI process; install from a link, fetched in a `start_async` task, or a pasted SKILL.md: one candidate opens an editable preview, several are a list to pick from) | is a process; the fetch's HTTP runs in its `start_async` task; follows `{:skills_changed, _}` while a list is open | `Skills`, `Markdown`, `SkillText`, `EditorComponents` |
 | `PhotonWeb.ThreadLive` | boundary (UI process; `:new` starts a thread with its first message, `:show` is its conversation with a composer, Stop and a Schedule link to a new schedule for the thread, drawn with the shared conversation modules under the ID prefix `thread-`; its state chip, Resolve and Reopen; while Blip has its `ask_blip` question a line above the composer, and while one is with the owner an answer form per question in the composer's place) | is a process; subscribes to the thread's conversation; marks the thread seen while open; re-reads its state on its project's `{:projects_changed, _}` and its own `{:questions_changed, _}` | `Projects`, `Threads`, `Questions`, `Transcript`, `ThreadText`, `ConversationComponents`, `ConversationView` |
-| `PhotonWeb.HomeLive` | boundary (UI process; the home page at `/`, Home in the sidebar: what needs the owner across every project (questions passed to them with answer forms, threads that asked, failed and unread threads), what is running or asking Blip, threads gone quiet, and Blip's schedules) | is a process; the board (`Threads.board/1`, grouped by `Threads.State.sections/1`) read on mount, on `{:projects_changed, _}`, `{:questions_changed, _}` and a one-minute tick; answer drafts kept by question ID; Blip's schedules on `{:schedules_changed, nil}` | `Threads`, `Questions`, `Assistant`, `Schedules`, `ThreadText`, `ScheduleComponents` |
+| `PhotonWeb.HomeLive` | boundary (UI process; the home page at `/`, Home in the sidebar: what needs the owner across every project (questions passed to them with answer forms, threads that asked, failed and unread threads), what is running or asking Blip, threads gone quiet, and Blip's schedules; in ambient mode a warning when a timer stopped or digests skip for consent, and "In Blip's review" on the rows a review raised) | is a process; the board (`Threads.board/1`, grouped by `Threads.State.sections/1`) read on mount, on `{:projects_changed, _}`, `{:questions_changed, _}` and a one-minute tick; answer drafts kept by question ID; Blip's schedules on `{:schedules_changed, nil}`; `Ambient.status/0` on mount and on `{:ambient_changed}` | `Threads`, `Questions`, `Assistant`, `Schedules`, `Ambient`, `ThreadText`, `AmbientText`, `ScheduleComponents` |
 | `PhotonWeb.ActivityLive` | boundary (UI process; the activity page at `/activity`: Blip's actions newest first, 50 at a time with Show older, filtered by who asked and to changes, a new row inserted on top) | is a process; reads the log and the names its rows mention; subscribes to `"activity"` | `Activity`, `Threads` (`places/1`), `Schedules` (`prompts/1`), `Projects`, `ActivityText` |
-| `PhotonWeb.ActivityText` | functional core (web formatting: the activity page's filter, empty state and rows, over `Activity.Rules`' labels) | pure | `Activity.Rules`, `Activity.Action` |
+| `PhotonWeb.ActivityText` | functional core (web formatting: the activity page's filter, empty state and rows, over `Activity.Rules`' labels; `wanted/1` reads no schedule for a follow-up on a digest or review) | pure | `Activity.Rules`, `Activity.Action` |
+| `PhotonWeb.AmbientText` | functional core (web formatting for ambient mode: the Settings section's hint, warnings and form values, the interval labels, the status block (`next/1` as parts the page renders with local times, `pending/1`, `last/2`, `stopped/1`), the run-now flashes (`ran/2`), the home page's warnings (`skipping?/1`, `home_stopped?/1`) and review marks (`reviewed?/1`)) | pure | `Ambient` and `Threads` (types), `Threads.State` |
 | `PhotonWeb.NodesLive` | boundary (UI process) | is a process; node data read on mount and on change messages, `tailscale` in a `start_async` task; `render/1` only derives from assigns | `Machines`, `NodeDist`, `NodeKeys`, `Provision`, `Tailnet`, `Hub` |
-| `PhotonWeb.SettingsLive` | boundary (UI process; the scheduled-work checkbox covers every schedule, Blip's and the projects') | is a process; settings file, the ChatGPT account (sign-in steps; models in a `start_async` task), Blip's memory | `Settings`, `ChatGPT`, `Assistant` |
+| `PhotonWeb.SettingsLive` | boundary (UI process; the scheduled-work checkbox covers every schedule, Blip's and the projects'; the Ambient mode section (shown whenever Blip can think): the switch, the digest interval, the browser's UTC offset through the colocated `.UtcOffset` hook, the status block, and on the scripted model "Send a digest now" and "Run the review now") | is a process; settings file, the ChatGPT account (sign-in steps; models in a `start_async` task), Blip's memory; Save writes the settings file, then `Ambient.configure/1`, and rebuilds the form with the ambient values; `Ambient.status/0` on mount, `{:ambient_changed}` and `{:projects_changed, _}` | `Settings`, `ChatGPT`, `Assistant`, `Ambient`, `Projects`, `AmbientText` |
 
 ### Test support
 
@@ -374,7 +402,11 @@ threads share, a project schedule that starts a thread whose command
 runs there and which loads a skill turned on for the project, and Blip
 coordinating a thread there: Blip starts it and hears how it ended, the
 thread asks Blip one question Blip answers from its memory and one Blip
-passes to the owner, and the activity log says who asked for each.
+passes to the owner, and the activity log says who asked for each. In
+ambient mode, a digest tells Blip of a thread that finished unseen on the
+node and Blip tells the owner, a second digest has nothing new and posts
+nothing, the daily review raises a stopped and a failed thread, and
+turning it off retires the timers and collects nothing more.
 
 ## Supervision trees
 
@@ -488,6 +520,17 @@ Photon.Supervisor  one_for_one                      (Photon.Application)
   pages, `HomeLive` at `/` (replacing `OverviewLive`) and `ActivityLive`
   at `/activity`, are LiveViews under the endpoint; the home page's
   minute tick is a `send_after` to itself.
+- Step 5 added no process and no registered name either.
+  `Photon.Ambient` is an API over the database and the Store's commit
+  line. Its two timers are durable tasks of a new kind, `"ambient"`
+  (`Ambient.Timer`, registered in `config :photon, Photon.Durable`'s
+  `kinds`), that the existing Scheduler wakes, so their steps run under
+  `Durable.TaskSupervisor` and a hub restart finds them waiting; a time
+  missed while the hub was down fires once when it comes back. The
+  setting is a durable doc and the digest items are rows, so a crash
+  loses nothing. `Signals.collect_tx/2` and the timer's `on_fail/3` run
+  on the harness's hook paths and are total, like step 4's hooks.
+  `SettingsLive` and `HomeLive` only gained subscriptions.
 - The durable trio is under its own `one_for_one` supervisor, so a
   `Scheduler` restart doesn't touch the steps already running under
   `Durable.TaskSupervisor`; their commits are fenced instead (H2). Its
@@ -1869,3 +1912,96 @@ dialyzer` pass in all three apps; the Credo checks' own 66 tests pass.
 The TLC runs are C19's (Durable-ask, -ask-mixed and -ask-live pass, the
 two bug configs fail as expected); the review changed nothing the specs
 model, so they weren't rerun.
+
+### Step 5: ambient mode (hub)
+
+2026-10-07. Step 5 of `docs/projects-and-blip.md`, planned in
+`docs/plans/step-5-ambient-mode.md`, added ambient mode: a setting, off
+by default, that gives Blip a digest of what changed across the owner's
+projects and threads every few hours and a daily review of threads left
+stopped, failed or waiting on the owner. Blip decides what to tell the
+owner and says it in its own conversation. With it, the five steps of
+`docs/projects-and-blip.md` are built. Only the hub changed. The module
+map and supervision trees above are the result.
+
+What was added:
+
+- Hub, ambient mode: `Photon.Ambient` (the setting, the status the pages
+  show, `configure/1`, a firing, and the scripted model's run-now), the
+  pure `Ambient.Rules` (the form over the stored setting, what a Save
+  does to the timers, the timers' times, the skips, which items are new
+  to the owner, which threads a review raises) and `Ambient.Text` (the
+  digest and review texts, their refs and one-line stubs), and
+  `Ambient.Timer`, the `"ambient"` task kind.
+- Hub, signals: the `global/ambient` doc and the mode (`Signals.mode/0`
+  now reads it), digest items (`Signals.DigestItem`, collected by
+  `collect_tx/2` and read, dropped or withdrawn by `Photon.Ambient`), the
+  `:ambient` clause of `Signals.Rules.thread_update/2`, and `post_tx/2`'s
+  `older:` stub.
+- Hub, the call sites that collect: the threads' settle hook (an owner's
+  finished run), `Threads.start/2` and `resolve/1`, `Projects.create/1`,
+  `update/2` and the file writes by the owner and by threads, and
+  `Schedules.Routine.on_fail/3`. `Threads.mark_reviewed_tx/3`,
+  `unmark_reviewed_tx/2` and `quiet_after/0` for the review.
+- Hub, harness: one generic rule in `Durable.Context`. An earlier run
+  whose first user entry carries an `"older"` stub is sent as the stub
+  with its tool results cut to 500 code points, or left out when its
+  answer is the stub's `"drop_if_answer"`.
+- Hub, Blip: digest and review runs in `Assistant.Origin` (Blip's
+  follow-up, and `report_only?`, which `may_act_tx/3` refuses every
+  acting tool in), the prompt's `## Ambient mode` section while it is on,
+  `[nothing to tell]` making no notice and no activity row, the activity
+  log's two new origin labels, and the scripted `MockAmbient`.
+- Hub, web: the Settings page's Ambient mode section with its `.UtcOffset`
+  hook and status block, the home page's consent and stopped warnings
+  and review marks, a digest or review as one collapsed line in Blip's
+  panel (with its queued chip and a hidden `[nothing to tell]`), and the
+  pure `AmbientText`.
+- Development: `PHOTON_QUIET_AFTER_HOURS` (dev only) sets
+  `quiet_after_hours`, so the review can be tried without waiting three
+  days.
+
+What moved or changed:
+
+- `Signals.mode/0` is no longer always quiet, and the settle hook reads
+  the mode inside its own commit (`mode_tx/1`), so turning ambient mode
+  off in one commit stops collection from the next.
+- `Projects` and `Schedules` depend on `Photon.Signals` now, for
+  `collect_tx/2`; `Signals` depends only on the harness, the repo and
+  core, so there is no cycle.
+- `Prompt.system_prompt/5` takes whether ambient mode is on; with it
+  off, the prompt is exactly step 4's.
+- `Transcript.thread_ids/1` reads a digest's and a review's items (and a
+  file's writer when a thread wrote it), so Blip's panel names their
+  threads by current title. `ActivityText.wanted/1` looks up no schedule
+  for a follow-up on a digest or review.
+
+Layers. No new process and no registered name (rules 2, 3, 31, 89): the
+setting is a durable doc, the items are rows, and the two timers are
+durable tasks the Scheduler already runs, a schedule's routine reused.
+Each firing reads and writes only inside its step's fenced commit, so a
+retired timer or a step left over from a Scheduler restart posts
+nothing. Every decision and every word is in a strict-Boundary pure
+module, with the time passed in: `Ambient.Rules`, `Ambient.Text`,
+`MockAmbient` and `AmbientText`, plus the changes to `Durable.Context`,
+`Signals.Rules`, `Origin`, `Notice` and `Transcript`. `collect_tx/2` and
+the timer's `on_fail/3` run on the harness's hook paths and are total.
+`apps/hub/.credo.exs` lists the new core modules (and the
+`DigestItem` schema) in `FunctionalCore` and adds `Photon.Ambient` to
+`ProcessNameOwnership`'s API modules. The TLA+ specs don't change: the
+timers are routines as `Durable.tla` already models them, and every new
+claim is about a single commit (`specs/tla/Durable.md`, "What changed in
+build step 5").
+
+Compatibility. None needed. One migration adds the `digest_items` table
+and `threads.reviewed_at`; with ambient mode off, which is the default,
+the hub behaves as it did after step 4. Deleting the hub database is
+still fine. Nodes are unchanged.
+
+Results at the end of step 5's build, 2026-10-07: core 187 passed (12
+properties, 175 tests; unchanged), node 106 passed (1 property, 105
+tests; one more than step 4's final count, from the step 4 polish), hub
+1651 passed (12 properties, 1639 tests). `mix precommit` passes in the
+hub, the only app this step changed; the Credo checks' own 66 tests
+pass. No TLC run: the specs didn't change. `mix dialyzer` and `mix test
+--cover` are left to the final checks, which record their results here.

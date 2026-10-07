@@ -1,8 +1,8 @@
 # Projects, threads and Blip
 
-Status: written 2026-10-05. Steps 1 to 4 of the build order are built
-(2026-10-06 to 2026-10-07); step 5 and what comes after it are still a
-design. See "Build order".
+Status: written 2026-10-05. All five steps of the build order are built
+(2026-10-06 to 2026-10-07). What they left for later is listed under
+"Build order".
 
 Photon is meant to be a self-hostable replacement for two things at once:
 
@@ -157,7 +157,9 @@ assistant. Blip:
 > question in. A schedule asked when it is one you asked Blip for
 > (whether it repeats or not). Blip's follow-up covers schedules Blip made
 > on its own and runs a thread update started, naming the thread it
-> followed up on. A thread asked only when Blip handled that thread's
+> followed up on. Step 5 added two more follow-ups: runs started by an
+> ambient mode digest or daily review are logged as "Blip's follow-up on
+> the digest" and "Blip's follow-up on the daily review". A thread asked only when Blip handled that thread's
 > question, and each call is credited to the thread whose question it
 > was. The log is on the Activity page (`/activity`), filtered by who
 > asked or to changes only.
@@ -227,6 +229,66 @@ The home page shows the state layer directly ("needs you", "running",
 > shares a message with an update. Ambient mode (digests, the daily
 > review, the setting) is step 5; the filter takes the mode as an
 > argument, so it plugs in there.
+
+> Status: step 5 built ambient mode (`docs/plans/step-5-ambient-mode.md`).
+>
+> The setting is in Settings, under Ambient mode: a switch, off by
+> default, and how often the digest comes (every hour, 3 hours or 6
+> hours; 3 by default). The section shows whenever Blip can think. The
+> setting lives in the hub's database rather than the settings file, so
+> turning it on or off and starting or stopping its two timers happen in
+> one step. Off, Blip hears exactly what quiet mode lets through, its
+> prompt and tools are step 4's, and nothing runs on a timer.
+>
+> While it is on, the hub collects what changed that Blip didn't already
+> hear about: runs of your threads that finished, schedules that stopped
+> after an error, context files written by threads or by you, projects
+> and threads you started, name and Purpose edits, and threads you
+> resolved. At each interval the digest timer reads that list. Only a
+> finished run you haven't opened yet, or a stopped schedule, can send a
+> digest. Everything else rides along in compact form, and with nothing
+> new there is no message and no model run; the smaller changes wait for
+> the next digest that has something new. A digest is one message in
+> Blip's conversation, at most 20 new and 15 smaller changes, and the
+> changes it carries are cleared in the same commit that posts it, so
+> none is reported twice or lost.
+>
+> The daily review comes around 09:00 at your browser's UTC offset,
+> which Settings sends with every Save. It lists threads that are
+> stopped, failed or waiting on you and that nobody has touched for 72
+> hours (`quiet_after_hours`), at most 10, oldest first. Each is listed
+> once per quiet spell, and again after a week if it is still untouched.
+> Finished threads you haven't read stay out of it, since the digest
+> covers them. Home marks the threads a review raised. Like a schedule,
+> the review is a fixed 24-hour repeat, so it drifts an hour at daylight
+> saving changes until you next save Settings.
+>
+> Blip reads each digest or review and tells you what's worth knowing in
+> its own conversation, which makes a speech bubble when its panel is
+> closed. In a run a digest or review started, Blip can read anything,
+> check machines and update its memory, but it can't start, message or
+> stop threads, or change projects or schedules, until you answer. So a
+> digest can't cause the work that would fill the next one. Blip has no
+> tool to resolve a thread; the review tells you where the Resolve button
+> is. Blip's panel shows each digest or review as one collapsed line that
+> opens to its items.
+>
+> When nothing is worth saying, Blip answers `[nothing to tell]`. That
+> makes no bubble and no activity row, and draws nothing in the panel
+> beyond the digest's own line.
+>
+> Blip's conversation is cleared only when you press Fresh context, so
+> digests would otherwise make every later request bigger. Once a later
+> run starts, an earlier digest or review reaches the model as a
+> one-line note with its tool results cut short, and one Blip answered
+> with `[nothing to tell]` is left out entirely.
+>
+> Each digest and review is a run on your ChatGPT plan, so both obey the
+> consent for scheduled work in Settings: while schedules can't use your
+> plan, they skip, and Settings and Home say so. A digest or review also
+> skips while the last one still waits for Blip. Turning ambient mode off
+> stops both timers, drops what was waiting, and takes back a digest or
+> review Blip hasn't started on.
 
 ## Hub and nodes
 
@@ -352,6 +414,15 @@ Each step leaves a working app.
 > or deleting threads and deleting projects, and pruning the activity
 > log. Every flow can be tried with `PHOTON_MOCK_MODEL=1`; section 8.3 of
 > the plan walks through it.
+>
+> Step 5 (`docs/plans/step-5-ambient-mode.md`) built ambient mode: the
+> setting, the digest, the daily review, and Blip's report-only runs on
+> them (see "Keeping track"). With it all five steps are built. Every
+> flow can be tried with `PHOTON_MOCK_MODEL=1`, and
+> `PHOTON_QUIET_AFTER_HOURS=0` makes a stopped thread count as quiet at
+> once so the review has something to show; section 8.4 of the plan walks
+> through it. With the scripted model, Settings has "Send a digest now"
+> and "Run the review now" buttons for trying it.
 
 1. **Machine tools on the hub.** Make nodes executors and give Blip shell
    and view_image on any machine, replacing `run_on_node` and node
@@ -367,7 +438,7 @@ Each step leaves a working app.
 5. **Ambient mode.** Digests, the daily review of quiet threads, the
    setting to turn it on.
 
-Later, with the door left open:
+Left for later, with the door left open:
 
 - a Discord client for Blip, so you can talk to it from your phone
 - watchers on outside services (GitHub, Slack) that post into threads the
@@ -375,6 +446,19 @@ Later, with the door left open:
 - skills scoped to particular machines, and skills with scripts
 - tagging @Blip inside a thread to bring it in there
 - collaborators on projects
+- approvals for shell commands (see "Open questions")
+- a model per thread or project
+- Blip resolving, archiving or deleting threads
+- deleting or archiving projects, and moving threads between them
+- pruning the activity log
+- schedules and the daily review following your time zone across
+  daylight saving changes
+- calendar rules for schedules, such as "weekdays at 9"
+- pausing a schedule
+- digests of machine changes, such as a node going offline
+- quiet hours for digests
+- a review time other than 09:00
+- threads sharing a directory (see "Open questions")
 
 ## Open questions
 

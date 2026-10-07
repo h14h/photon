@@ -1628,7 +1628,12 @@ M12. Docs and the final checks. After M11.
 - `apps/hub/lib/photon.ex` and `Photon.Application` moduledocs, final
   pass.
 - Section 11.5's checks, with the results recorded in the architecture
-  entry.
+  entry. M12 ran `mix precommit` (and the core and node suites, which
+  this step doesn't change); `mix dialyzer` and `mix test --cover` were
+  left to the build's final checks, which add their results to the
+  entry. The design doc's "Later, with the door left open" list became
+  the "Left for later" list rather than a second list beside it, since
+  the two would have repeated five items.
 
 ## 15. Decisions made in this plan
 
