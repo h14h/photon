@@ -21,12 +21,40 @@ defmodule Photon.Threads.MockTitleTest do
     assert title("on mm1: look at shots/pump.png") == "Look at pump.png on mm1"
   end
 
-  test "names a command by the first program it runs" do
-    assert title("on local: $ df -h /; for i in 1 2 3; do echo ok; done") == "Run df on local"
+  test "names a command by what it runs, past sudo and variable settings" do
+    assert title("on local: $ df -h /") == "Run df on local"
     assert title("on mm1: $ sudo /usr/bin/apt update && apt upgrade") == "Run apt on mm1"
-    assert title("on mm1: $ for i in $(seq 1 60); do echo tick; done") == "Run echo on mm1"
     assert title("on mm1: $ LANG=C ls") == "Run ls on mm1"
-    assert title("on mm1: $ for x in a; do") == "Run a command on mm1"
+    assert title("on mm1: $ FOO=1") == "Run a command on mm1"
+  end
+
+  test "names a loop or a condition as a whole, not what runs inside it" do
+    assert title("on local: $ for i in 1 2 3; do echo $i; done") == "Run a for loop on local"
+    assert title("on mm1: $ for i in $(seq 1 60); do echo tick; done") == "Run a for loop on mm1"
+    assert title("on mm1: $ for x in a; do") == "Run a for loop on mm1"
+    assert title("on mm1: $ while true; do date; sleep 1; done") == "Run a while loop on mm1"
+    assert title("on mm1: $ until ping -c1 nas; do sleep 5; done") == "Run an until loop on mm1"
+
+    assert title("on mm1: $ if [ -f /etc/hosts ]; then cat /etc/hosts; fi") ==
+             "Run an if statement on mm1"
+
+    assert title("on mm1: $ case $1 in a) echo a;; esac") == "Run a case statement on mm1"
+
+    # Nested: the outer loop is what runs.
+    assert title("on mm1: $ for a in 1 2; do for b in 3 4; do echo $a$b; done; done; uptime") ==
+             "Run a for loop and uptime on mm1"
+  end
+
+  test "names what a pipeline or a chain runs, each once" do
+    assert title("on mm1: $ ps aux | grep beam") == "Run ps and grep on mm1"
+    assert title("on mm1: $ cd /srv && git pull && make") == "Run cd, git and more on mm1"
+    assert title("on mm1: $ cat log | grep x | grep -v y") == "Run cat and grep on mm1"
+
+    assert title("on local: $ df -h /; for i in 1 2 3; do echo ok; done") ==
+             "Run df and a for loop on local"
+
+    assert title("on mm1: $ ls | while read f; do echo $f; done") ==
+             "Run ls and a while loop on mm1"
   end
 
   test "names a schedule's prompt as it names the same message typed" do
