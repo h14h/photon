@@ -258,7 +258,7 @@ defmodule Photon.ActivityTest do
       assert {passed.origin, passed.origin_id, passed.thread_id} ==
                {"thread", second.id, second.id}
 
-      assert answered.summary == ~s(Answered "#{Threads.get(first.id).title}"'s question)
+      assert answered.summary == "Answered: staging"
       assert passed.summary =~ ~r/\AAsked you: /
 
       # The owner answers; Blip's run on their answer is the owner's, so

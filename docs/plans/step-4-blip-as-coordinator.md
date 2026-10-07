@@ -1219,8 +1219,10 @@ checkpoint's submissions), the same way the call hook does.
   the past tense, naming the machine, project or thread: `Ran \`df -h\` on
   mm1`, `Looked at shots/pump.png on mp1`, `Checked your machines`,
   `Started "Check the backups" in garden`, `Messaged "Fix the pump"`,
-  `Stopped "Fix the pump"`, `Started the project garden`, `Answered "Fix
-  the pump"'s question`, `Asked you: Which pump model should I order?`,
+  `Stopped "Fix the pump"`, `Started the project garden`, `Answered:
+  staging` (what Blip told the thread; the row's asker and target name
+  the thread by its title as it is now, where a title in the summary
+  would be the one it had then), `Asked you: Which pump model should I order?`,
   `Wrote notes.md in garden`, `Edited notes.md in garden`, `Read
   notes.md in garden`, `Read "Fix the pump"`, `Looked over garden`,
   `Listed projects`, `Listed threads`, `Scheduled "check the pump" every

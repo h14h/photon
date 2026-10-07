@@ -84,8 +84,8 @@ defmodule Photon.Activity.RulesTest do
 
     test "questions" do
       args = %{"question_id" => "q_1", "answer" => "staging"}
-      assert ok("answer_question", args, @pump) == ~s(Answered "Fix the pump"'s question)
-      assert ok("answer_question", args) == "Answered q_1"
+      assert ok("answer_question", args, @pump) == "Answered: staging"
+      assert ok("answer_question", args) == "Answered: staging"
 
       assert ok("ask_owner", %{
                "question_id" => "q_1",

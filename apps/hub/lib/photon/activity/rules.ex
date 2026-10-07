@@ -150,13 +150,11 @@ defmodule Photon.Activity.Rules do
   end
 
   # Questions.
-  defp line("answer_question", %{"question_id" => id, "answer" => answer}, d)
-       when is_binary(id) and is_binary(answer) do
-    case d["title"] do
-      title when is_binary(title) -> ~s(Answered "#{one_line(title)}"'s question)
-      _none -> "Answered " <> one_line(id)
-    end
-  end
+  # What Blip told the thread, as `ask_owner`'s row says what it asked: the
+  # row's asker and target already name the thread, by its title now.
+  defp line("answer_question", %{"question_id" => id, "answer" => answer}, _d)
+       when is_binary(id) and is_binary(answer),
+       do: "Answered: " <> one_line(answer, @summary_limit)
 
   defp line("ask_owner", %{"question_id" => id, "question" => question}, _d)
        when is_binary(id) and is_binary(question),
