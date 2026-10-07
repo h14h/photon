@@ -19,6 +19,12 @@ defmodule Photon.Machines.Roster do
   `docs/plans/step-2-projects-and-threads.md`). A step 1 node would fail
   a thread's first command with "start process ...: enoent" instead, so it
   gets no work until it is reinstalled.
+
+  `ids/3` names the same machines as `build/3` without their state, in an
+  order that ignores who is connected: `local` first, then by ID. Machine
+  skills are listed in that order in every agent's prompt, so a machine
+  connecting or disconnecting never changes one (section 2.2 of
+  `docs/plans/machine-skills.md`).
   """
 
   # Functional core: no processes, no I/O.
@@ -52,6 +58,19 @@ defmodule Photon.Machines.Roster do
 
     (Enum.map(online_infos, &%{id: &1["id"], online: true, info: &1}) ++ offline)
     |> Enum.sort_by(&{&1.id != @local, not &1.online, &1.id})
+  end
+
+  @doc """
+  The IDs of every machine the hub knows, from the same inputs as
+  `build/3`: `local` first, then by ID, whichever of them are connected.
+  """
+  @spec ids([info()], [String.t()], boolean()) :: [String.t()]
+  def ids(online_infos, known_ids, local_node?) do
+    local = if local_node?, do: [@local], else: []
+
+    (Enum.map(online_infos, & &1["id"]) ++ local ++ known_ids)
+    |> Enum.uniq()
+    |> Enum.sort_by(&{&1 != @local, &1})
   end
 
   @doc "Connected machines' info in the order they are listed: `local` first, then by ID."

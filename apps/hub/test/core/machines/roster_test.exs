@@ -43,6 +43,35 @@ defmodule Photon.Machines.RosterTest do
     end
   end
 
+  describe "ids/3" do
+    test "local first, then by ID" do
+      assert Roster.ids([online("zed")], ["nas", "abe"], true) == ["local", "abe", "nas", "zed"]
+    end
+
+    test "the same IDs in the same order whichever machines are connected" do
+      known = ["nas", "mm1", "abe"]
+      expected = ["local", "abe", "mm1", "nas"]
+
+      assert Roster.ids([], known, true) == expected
+      assert Roster.ids([online("nas")], known, true) == expected
+      assert Roster.ids([online("nas"), online("local"), online("abe")], known, true) == expected
+    end
+
+    test "includes a connected machine that has no key" do
+      assert Roster.ids([online("guest")], ["nas"], false) == ["guest", "nas"]
+    end
+
+    test "lists a machine once, however often it is known" do
+      assert Roster.ids([online("nas"), online("local")], ["nas", "nas", "local"], true) ==
+               ["local", "nas"]
+    end
+
+    test "leaves local out when the hub doesn't run its own node and it isn't connected" do
+      assert Roster.ids([], ["nas"], false) == ["nas"]
+      assert Roster.ids([online("local")], ["nas"], false) == ["local", "nas"]
+    end
+  end
+
   describe "sort/1" do
     test "puts the local machine first, then sorts by ID" do
       infos = [online("zed"), online("local"), online("abe")]
