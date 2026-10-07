@@ -1,7 +1,7 @@
 defmodule PhotonWeb.ConversationComponentsTest do
   @moduledoc """
   The conversation pieces Blip's panel and a thread page share: the
-  context-file, `load_skill` and `ask_blip` calls' lines, the ID prefix
+  context-file, `load_skill`, `ask_blip` and Blip's read calls' lines, the ID prefix
   that keeps two conversations on one page apart, and images loaded from
   the page's own route.
   """
@@ -125,6 +125,43 @@ defmodule PhotonWeb.ConversationComponentsTest do
 
       assert label(action(call, error)) == "Couldn't ask Blip: Which branch?"
       assert label(action(call("ask_blip", %{}, "c2"), nil)) == "Asking Blip"
+    end
+  end
+
+  describe "Blip's read calls" do
+    test "say what they look over, in the present while they run" do
+      for {tool, args, details, running, done} <- [
+            {"list_projects", %{}, %{}, "Looking over projects", "Looked over projects"},
+            {"read_project", %{"project" => "garden"}, %{"slug" => "garden"},
+             "Looking over garden", "Looked over garden"},
+            {"list_threads", %{}, %{}, "Checking threads", "Checked threads"},
+            {"list_threads", %{"project" => "garden"}, %{"slug" => "garden"},
+             "Checking threads in garden", "Checked threads in garden"},
+            {"read_thread", %{"thread" => "c_123"}, %{"title" => "Fix the pump"}, "Reading c_123",
+             ~s(Read "Fix the pump")}
+          ] do
+        call = call(tool, args, "c1")
+        assert label(action(call, nil)) == running
+        assert label(action(call, ok("c1", "Text.", details))) == done
+      end
+    end
+
+    test "a call that couldn't read, or was stopped, says so" do
+      call = call("read_project", %{"project" => "gardn"}, "c1")
+
+      error = %{
+        "message" => Message.tool_result("c1", "Error: There's no project called gardn."),
+        "status" => "error",
+        "details" => %{},
+        "entry_id" => "e_1"
+      }
+
+      assert label(action(call, error)) == "Couldn't look over gardn"
+
+      stopped = %{error | "status" => "aborted"}
+
+      assert label(action(call("read_thread", %{"thread" => "c_1"}, "c1"), stopped)) ==
+               "Stopped reading c_1"
     end
   end
 

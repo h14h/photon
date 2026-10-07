@@ -14,7 +14,10 @@ defmodule Photon.Assistant do
   `list_machines`), keeps a memory, and keeps schedules of its own in
   `Photon.Schedules`, which post into its conversation. Its prompt
   lists the skills turned on for Blip (`Photon.Skills`), and `load_skill`
-  loads one.
+  loads one. It sees every project and thread with its read tools
+  (`list_projects`, `read_project`, `list_threads`, `read_thread`),
+  which find what they name through `find_project/1` and `find_thread/1`
+  and put their texts together in `Photon.Assistant.Readout`.
 
   This module is the assistant's API, which the web pages use, and its
   `Photon.Durable.Profile`. Behind it, by layer:
@@ -23,7 +26,9 @@ defmodule Photon.Assistant do
       prompt), `Photon.Assistant.Memory`, `Photon.Assistant.Page` (the
       page the user has open, and the note of it the model sees),
       `Photon.Assistant.Notice` (what Blip says unasked),
-      `Photon.Assistant.MockScript` (the mock model)
+      `Photon.Assistant.Readout` (what the read tools say),
+      `Photon.Assistant.MockScript` and `Photon.Assistant.MockCoordinator`
+      (the mock model)
     * boundary: the tools in `Photon.Assistant.Tools`; the machine tools
       are their own context, `Photon.MachineTools`
     * workers: none of its own; Blip's schedules fire through the
@@ -33,8 +38,6 @@ defmodule Photon.Assistant do
   thread is on screen: `page_at/1` makes the page from its path, and
   `send/2` with `page:` reads the page's facts through `Photon.Projects`
   and `Photon.Threads` and puts a note of them in front of the message.
-  Blip has no tools over projects and threads yet; the note is how it sees
-  them.
   """
 
   use Boundary,
@@ -56,7 +59,7 @@ defmodule Photon.Assistant do
 
   @behaviour Photon.Durable.Profile
 
-  alias Photon.Assistant.{Memory, Page, Prompt, Tools}
+  alias Photon.Assistant.{Memory, Page, Prompt, Readout, Tools}
 
   alias Photon.{
     Durable,
@@ -72,6 +75,7 @@ defmodule Photon.Assistant do
 
   alias Photon.Durable.{Entry, Submission}
   alias Photon.Projects.Project
+  alias Photon.Threads.Thread
   alias PhotonCore.Message
 
   @tools [
@@ -79,7 +83,11 @@ defmodule Photon.Assistant do
     Tools.Schedule,
     Tools.ListSchedules,
     Tools.CancelSchedule,
-    Tools.LoadSkill
+    Tools.LoadSkill,
+    Tools.ListProjects,
+    Tools.ReadProject,
+    Tools.ListThreads,
+    Tools.ReadThread
   ]
 
   @doc """
@@ -194,6 +202,40 @@ defmodule Photon.Assistant do
           &%{id: &1.id, title: &1.title, running?: MapSet.member?(running, &1.id)}
         )
     }
+  end
+
+  ## Finding what Blip's tools name
+
+  @doc """
+  The project a tool's `project` argument names: its slug, or its ID.
+  Otherwise an error that lists the projects there are
+  (`Photon.Assistant.Readout.unknown_project/2`).
+  """
+  @spec find_project(String.t()) :: {:ok, Project.t()} | {:error, String.t()}
+  def find_project(name) do
+    name = String.trim(name)
+
+    case Projects.get_by_slug(name) || Projects.get(name) do
+      %Project{} = project ->
+        {:ok, project}
+
+      nil ->
+        {:error, Readout.unknown_project(name, Enum.map(Projects.list(), & &1.slug))}
+    end
+  end
+
+  @doc """
+  The thread a tool's `thread` argument names, by its ID. Otherwise an
+  error that points Blip to `list_threads`.
+  """
+  @spec find_thread(String.t()) :: {:ok, Thread.t()} | {:error, String.t()}
+  def find_thread(id) do
+    id = String.trim(id)
+
+    case Threads.get(id) do
+      %Thread{} = thread -> {:ok, thread}
+      nil -> {:error, Readout.unknown_thread(id)}
+    end
   end
 
   @doc """

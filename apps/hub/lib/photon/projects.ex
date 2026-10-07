@@ -160,6 +160,16 @@ defmodule Photon.Projects do
     |> Repo.all()
   end
 
+  @doc "How many context files each project has, by project ID; a project with none is left out."
+  @spec file_counts() :: %{optional(String.t()) => pos_integer()}
+  def file_counts do
+    ContextFile
+    |> group_by([f], f.project_id)
+    |> select([f], {f.project_id, count(f.id)})
+    |> Repo.all()
+    |> Map.new()
+  end
+
   @doc """
   A project's context file called `name`, or nil. Case doesn't matter, and
   neither does a missing `.md`: `Notes` finds `notes.md`.

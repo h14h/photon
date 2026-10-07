@@ -7,8 +7,9 @@ defmodule Photon do
   The contexts (the APIs the web layer and nodes use):
 
     * `Photon.Assistant`: Blip's conversation and memory, its tools over
-      its own skills and schedules, the page the user has open under it,
-      and its `"assistant"` profile for the durable harness
+      its own skills and schedules and its read tools over every project
+      and thread, the page the user has open under it, and its
+      `"assistant"` profile for the durable harness
     * `Photon.Projects`: projects (a purpose, for any body of work) and
       their context files, the Markdown notes the user and the project's
       threads share
@@ -48,7 +49,7 @@ defmodule Photon do
   moduledoc names its pure core and its processes. The pure modules are
   `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall,
   Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Page,
-  MockScript}`, `Photon.Transcript` (what a conversation page shows),
+  Readout, MockScript, MockCoordinator}`, `Photon.Transcript` (what a conversation page shows),
   `Photon.Projects.Rules`, `Photon.Threads.{Rules, State, Prompt, MockScript}`,
   `Photon.Signals.{Rules, Text}`, `Photon.Questions.Rules`,
   `Photon.Skills.{Rules, SkillMd, Source, Prompt, MockPhrases}`,

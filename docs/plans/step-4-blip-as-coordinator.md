@@ -817,7 +817,15 @@ queue behind a long run waits for it: the carrier isn't settled yet.
 - The texts the read tools return are `Photon.Assistant.Readout` (pure):
   it takes the rows, the board entries and the clock passed in, and uses
   `Threads.State.label/2` for states, so a state reads the same in a tool
-  result and on a page.
+  result and on a page, turned to Blip's side: the page's "Waiting on
+  you" is "waiting on the user", "Asking Blip" is "asking you", and
+  "Finished" is "finished, not yet seen by the user". An open question
+  shows as `question q_456, with you: ...` or `question q_456, passed to
+  the user: ...` wherever its thread is listed.
+- The read tools put what they read in their result's details too
+  (`read_project` and `list_threads` with a project: `"project_id"` and
+  `"slug"`; `read_thread`: `"thread_id"`, `"project_id"` and `"title"`),
+  for the lines in Blip's panel (section 10.8).
 - Every tool that writes does it inside the commit that records its
   result (`{:commit, fun}`), as the thread's file tools and Blip's
   schedule tool do, so a rerun after a restart never acts twice and a
@@ -833,10 +841,10 @@ All in `apps/hub/lib/photon/assistant/tools/`, one module each:
 
 | Tool | Parameters | Does | Result |
 |---|---|---|---|
-| `list_projects` | none | `Projects.list/0`, `Threads.board(:all)` | One line per project, by name: `garden: Garden. Keep the vegetable beds watered and the pump running. 1 running, 1 waiting on the user, 4 idle. 3 context files.` The purpose is its first sentence, at most 120 characters. `No projects yet.` with none. |
+| `list_projects` | none | `Projects.list/0`, `Threads.board(:all)`, `Projects.file_counts/0` (one grouped query) | One line per project, by name: `garden: Garden. Keep the vegetable beds watered and the pump running. 1 running, 1 waiting on the user, 4 idle. 3 context files.` The purpose is its first sentence, at most 120 characters. `No projects yet.` with none. |
 | `read_project` | `project` | the project, `Projects.list_files/1`, `Threads.board({:project, id})`, `Schedules.list({:project, id})`, `Skills.enabled({:project, id})` | Its name, slug and whole purpose; context files (name, size, changed when and by whom); threads (ID, title, state, note), most recent first, at most 40; schedules (ID, when, target); skills on (names). Each list says "none" when empty. |
 | `list_threads` | `project` (optional), `state` (optional, one of `running`, `asking`, `waiting`, `failed`, `unread`, `quiet`, `idle`) | `Threads.board/1`, filtered | One line per thread, most recent activity first, at most 40: `c_123 "Fix the pump" (garden): waiting on the user: Which pump model should I order?` Then `...and 12 more; name a project or a state to see fewer.` when cut. |
-| `read_thread` | `thread`, `last` (optional, 1 to 50, default 20) | `Threads.state/1`, `Questions.open_by_thread/1`, `Threads.recent_entries(id, last * 4)` | A header (title, ID, project, state, who started it, last activity, the open question if any), then the last `last` items: `[user]`, `[Blip]` (a message Blip sent), `[scheduled]`, `[thread]` (its answers' text) and `[tool]` lines (`Ran \`df -h\` on mm1: exit 0`, `Wrote notes.md`). Items over 1,500 characters are cut in the middle; the whole is cut to 12,000 characters from the end, with `...N earlier items left out.` on top. No tool output, no images. |
+| `read_thread` | `thread`, `last` (optional, 1 to 50, default 20; a number outside is brought inside) | `Threads.state/1` (its entry carries the open questions, so no `Questions` call), `Threads.recent_entries(id, last * 4)` | A header (title, ID, project, state, who started it, last activity, the open question if any), then the last `last` items: `[user]`, `[Blip]` (a message Blip sent), `[scheduled]`, `[thread]` (its answers' text) and `[tool]` lines (`Ran \`df -h\` on mm1: exit 0`, `Wrote notes.md`). Items over 1,500 characters are cut in the middle; the whole is cut to 12,000 characters from the end, with `...N earlier items left out.` on top. No tool output, no images. |
 | `start_project` | `purpose` (required), `name` (optional) | `Projects.create_tx/2` | `Started garden (Garden).` A refused purpose or name returns the rules' messages joined: `purpose: Say what this project is for, in a sentence or two.` |
 | `start_thread` | `project`, `message` | `Threads.start_tx(tx, project_id, message, source: %{"kind" => "blip"}, request_id: "blip:" <> task_id)` | `Started c_123 "Check the backups" in garden. You'll get an update when its run ends.` |
 | `message_thread` | `thread`, `message`, `when_busy` (optional, `follow_up` or `steer`, default `follow_up`) | `Threads.send_tx/4` with `source: %{"kind" => "blip"}`, `request_id: "blip:" <> task_id` and `when_busy` | `Sent to "Fix the pump"; it's working on it.`, `Queued for "Fix the pump", behind its current run.`, or for a steer `"Fix the pump" will see it after its current step.` |
@@ -1219,9 +1227,9 @@ and skill phrasings and before its own. Its help text lists them.
 
 | Phrasing | Calls |
 |---|---|
-| `projects` | `list_projects` |
+| `projects` (or `list projects`) | `list_projects` |
 | `project <slug>` | `read_project` |
-| `threads`, `threads in <slug>` | `list_threads` |
+| `threads` (or `list threads`), `threads in <slug>` | `list_threads` |
 | `read thread <id>` | `read_thread` |
 | `start project: <purpose>` | `start_project` |
 | `start thread in <slug>: <message>` | `start_thread` |
@@ -1523,8 +1531,8 @@ labels.
 | Tool | Running | Done | Stopped / error |
 |---|---|---|---|
 | `ask_blip` | Asking Blip: <question, one line> | Asked Blip: <question> | Stopped asking Blip: <question> / Couldn't ask Blip: <question> |
-| `list_projects`, `read_project` | Looking over projects / garden | Looked over ... | |
-| `list_threads`, `read_thread` | Checking threads / Reading "Fix the pump" | Checked threads / Read "Fix the pump" | |
+| `list_projects`, `read_project` | Looking over projects / garden | Looked over ... | Stopped looking over ... / Couldn't look over ... |
+| `list_threads`, `read_thread` | Checking threads (in garden) / Reading c_123 | Checked threads (in garden) / Read "Fix the pump" | Stopped checking threads / Couldn't read c_999 |
 | `start_project` | Starting a project | Started the project garden | |
 | `start_thread` | Starting a thread in garden | Started "Check the backups" in garden (linked) | |
 | `message_thread` | Messaging "Fix the pump" | Messaged "Fix the pump" | |
@@ -1586,8 +1594,8 @@ No changes.
 | `Photon.Assistant` | boundary (API and the `"assistant"` profile) | deps add `Photon.Activity`, `Photon.Questions`, `Photon.Signals`; `exports: [Notice]` | `conversation_id/0` delegates to `Signals`; `answer/2` (the panel's reply chip, through `Questions.answer/2`); `find_project/1`, `find_thread/1` for the tools; `origin_tx/2`; `unattended_count_tx/1`; `on_tool_result/4` and `on_settled/3` (`settled_tx/3`) record activity; the tool list (sections 5.2 to 5.5). It goes past `ModuleDependencies`' 20, as `Photon.Threads` did in step 3; disable the check on the module with the same reason (it is the context's API and the profile). |
 | `Photon.Assistant.Prompt` | core | unchanged | Section 5.6. |
 | `Photon.Assistant.Origin` | core | `use Boundary, type: :strict, deps: []` | `of/1`, `for_call/3`, `unattended_ok?/3` (section 5.4). |
-| `Photon.Assistant.Readout` | core | `use Boundary, type: :strict, deps: [Photon.Threads, PhotonCore]` (it reaches `Threads.State` through the parent's export, as prompts reach `Skills.Prompt`) | The read tools' texts (section 5.2), `thread/3` over recent entries, the unknown-project and unknown-thread messages. Takes `now`. |
-| `Photon.Assistant.MockCoordinator` | core | `use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]` | Section 8.2. |
+| `Photon.Assistant.Readout` | core | `use Boundary, type: :strict, deps: [Photon.Threads, PhotonCore]` (it reaches `Threads.State` through the parent's export, as prompts reach `Skills.Prompt`) | The read tools' texts (section 5.2): `projects/3`, `project/2` (schedules come in with their `when` text, which the tool gets from `Schedules.when_text/1`), `threads/2`, `thread/3` over recent entries (takes `now`), `unknown_project/2`, `unknown_thread/1`, and `state_names/0` and `state_named/1` for `list_threads`' `state` argument. |
+| `Photon.Assistant.MockCoordinator` | core | `use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]` | Section 8.2: `phrasings/1`, and `help/0`, the lines `MockScript`'s help text includes. |
 | `Photon.Assistant.MockScript` | core | deps add `Photon.Assistant.MockCoordinator` (same boundary) | Tries `MockCoordinator.phrasings/1`; help text. |
 | `Photon.Assistant.Notice` | core | unchanged | `:question` notices (section 10.6). |
 | `Photon.Assistant.Tools.ListProjects`, `.ReadProject`, `.ListThreads`, `.ReadThread`, `.StartProject`, `.StartThread`, `.MessageThread`, `.StopThread`, `.ListContextFiles`, `.ReadContextFile`, `.WriteContextFile`, `.EditContextFile`, `.AnswerQuestion`, `.AskOwner`, `.ListSkills`, `.SetProjectSkill` | boundary (durable tools) | inside `Photon.Assistant` | Sections 5.2 to 5.5. The ones that change things check `Origin` (section 5.4) inside their commit; `StartThread` and `MessageThread` also check the unattended count. |
@@ -1600,7 +1608,7 @@ No changes.
 
 | Module | Change |
 |---|---|
-| `Photon.Projects` | `create_tx/2` public; `updated_by` may be `"blip"`; the file functions' errors name the writer (section 5.2). |
+| `Photon.Projects` | `file_counts/0` (context files per project, one grouped query, for `list_projects`); `create_tx/2` public; `updated_by` may be `"blip"`; the file functions' errors name the writer (section 5.2). |
 | `Photon.Schedules` | `tool_schedule_tx/5` replaces `blip_schedule_tx/5` and writes `asked_by`; `delete_tx/3` takes `:any`. |
 | `Photon.Schedules.Schedule` | `asked_by` (section 5.4). |
 | `Photon.Schedules.Routine` | `"created_by"` and `"asked_by"` in every firing's source (sections 3.2, 5.4). |

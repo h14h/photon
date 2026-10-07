@@ -22,7 +22,10 @@ defmodule PhotonWeb.ConversationComponents do
   output it printed before the stop in view under its line, since its
   result only says it was stopped. The context-file calls
   read "Checked the context files", "Read notes.md", "Wrote notes.md" and
-  "Edited notes.md", in the present while they run.
+  "Edited notes.md", in the present while they run. Blip's read tools
+  read "Looked over projects", "Looked over garden", "Checked threads"
+  and `Read "Fix the pump"`, naming the project or thread from the
+  result's details, or the arguments until there is a result.
 
   A message the user sent to Blip from a page inside a project shows only
   what they typed, with a small "About Garden / Fix the pump" line under
@@ -40,6 +43,7 @@ defmodule PhotonWeb.ConversationComponents do
   alias PhotonCore.Message
 
   @file_tools ~w(list_context_files read_context_file write_context_file edit_context_file)
+  @read_tools ~w(list_projects read_project list_threads read_thread)
 
   @doc "One entry of the conversation: a message, an answer with its calls, an error or a reset."
   attr :entry, :map, required: true
@@ -353,6 +357,15 @@ defmodule PhotonWeb.ConversationComponents do
     """
   end
 
+  def action_label(%{name: name} = assigns) when name in @read_tools do
+    {verb, subject} = read_words(name, assigns.args, assigns.details, assigns.status)
+    assigns = assign(assigns, verb: verb, subject: truncate(subject))
+
+    ~H"""
+    <span phx-no-format>{@verb}<span :if={@subject != ""}> <span class="font-medium text-ink">{@subject}</span></span></span>
+    """
+  end
+
   def action_label(assigns) do
     assigns = assign(assigns, :text, label_text(assigns.name, assigns.args))
 
@@ -384,6 +397,40 @@ defmodule PhotonWeb.ConversationComponents do
   defp ask_verb(:stopped), do: "Stopped asking Blip"
   defp ask_verb(_done), do: "Asked Blip"
 
+  # Blip's read tools: the verb for the call's status, and what it read
+  # (a project's slug, a thread's title in quotes), from the result's
+  # details or else the arguments.
+  defp read_words("list_projects", _args, _details, status),
+    do: {read_verb(status, "Looking over", "Looked over", "look over"), "projects"}
+
+  defp read_words("read_project", args, details, status),
+    do:
+      {read_verb(status, "Looking over", "Looked over", "look over"),
+       details["slug"] || args["project"]}
+
+  defp read_words("list_threads", args, details, status) do
+    verb = read_verb(status, "Checking threads", "Checked threads", "check threads")
+
+    case details["slug"] || args["project"] do
+      project when is_binary(project) -> {verb <> " in", project}
+      _all -> {verb, ""}
+    end
+  end
+
+  defp read_words("read_thread", args, details, status) do
+    verb = read_verb(status, "Reading", "Read", "read")
+
+    case details["title"] do
+      title when is_binary(title) -> {verb, ~s("#{title}")}
+      _none -> {verb, args["thread"]}
+    end
+  end
+
+  defp read_verb(:pending, running, _done, _base), do: running
+  defp read_verb(:error, _running, _done, base), do: "Couldn't " <> base
+  defp read_verb(:stopped, running, _done, _base), do: "Stopped " <> String.downcase(running)
+  defp read_verb(_done, _running, done, _base), do: done
+
   # Listing names no file; the others name the one they touched.
   defp file_verb("list_context_files", :pending), do: "Checking the context files"
   defp file_verb("list_context_files", _status), do: "Checked the context files"
@@ -404,6 +451,9 @@ defmodule PhotonWeb.ConversationComponents do
   defp action_icon("edit_context_file"), do: "hero-pencil-square-micro"
   defp action_icon("load_skill"), do: "hero-book-open-micro"
   defp action_icon("ask_blip"), do: "hero-chat-bubble-left-ellipsis-micro"
+  defp action_icon(name) when name in ~w(list_projects read_project), do: "hero-folder-micro"
+  defp action_icon("list_threads"), do: "hero-queue-list-micro"
+  defp action_icon("read_thread"), do: "hero-chat-bubble-left-right-micro"
 
   defp action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
     do: "hero-clock-micro"

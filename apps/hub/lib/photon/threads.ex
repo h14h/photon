@@ -701,6 +701,14 @@ defmodule Photon.Threads do
     end)
   end
 
+  @doc """
+  Thread `thread_id`'s newest `limit` entries of kinds `"user"`,
+  `"assistant"` and `"tool_result"`, oldest first, for Blip's
+  `read_thread`. Blip reading a thread doesn't mark it seen.
+  """
+  @spec recent_entries(String.t(), pos_integer()) :: [Entry.t()]
+  def recent_entries(thread_id, limit), do: Durable.recent_entries(thread_id, limit)
+
   ## The conversation, for the thread page
 
   @doc """
