@@ -2,7 +2,8 @@ defmodule PhotonWeb.AmbientTextTest do
   @moduledoc """
   The pages' words for ambient mode: the last firings' outcomes, the
   run-now flashes, what is waiting, when the timers fire next, the
-  consent warning, the form's values and the review mark.
+  consent warning, the form's values, the home page's warnings and the
+  review mark.
   """
 
   use Photon.Case, async: true
@@ -138,6 +139,39 @@ defmodule PhotonWeb.AmbientTextTest do
     refute AmbientText.needs_consent?(status(%{consent?: true}))
     refute AmbientText.needs_consent?(status(%{consent?: false, scripted?: true}))
     assert AmbientText.needs_consent() =~ "Let schedules use my plan while I'm away"
+  end
+
+  test "skipping?/1 warns Home while the last digest or review skipped for consent" do
+    skipped = result("skipped_consent")
+
+    assert AmbientText.skipping?(status(%{consent?: false, last_digest: skipped}))
+
+    assert AmbientText.skipping?(
+             status(%{consent?: false, last_digest: result("sent", 2), last_review: skipped})
+           )
+
+    # Not once the owner allows it, nor while it is off, nor for other skips.
+    refute AmbientText.skipping?(status(%{consent?: true, last_review: skipped}))
+    refute AmbientText.skipping?(status(%{on?: false, consent?: false, last_digest: skipped}))
+
+    refute AmbientText.skipping?(
+             status(%{consent?: false, last_digest: result("skipped_nothing")})
+           )
+
+    refute AmbientText.skipping?(status(%{consent?: false}))
+    assert AmbientText.skipping() =~ "schedules can't use your plan while you're away"
+  end
+
+  test "home_stopped?/1 warns Home while a timer is stopped" do
+    assert AmbientText.home_stopped?(status(%{stopped: %{job: "review", reason: "boom"}}))
+    refute AmbientText.home_stopped?(status(%{}))
+
+    refute AmbientText.home_stopped?(
+             status(%{on?: false, stopped: %{job: "digest", reason: "boom"}})
+           )
+
+    assert AmbientText.home_stopped() ==
+             "Ambient mode stopped after an error. Save settings to start it again."
   end
 
   test "form_values/1 carries the saved switch and interval back into the form" do

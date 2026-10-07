@@ -929,13 +929,18 @@ digest now" then calls nothing new.
 
 `PhotonWeb.HomeLive` adds only warnings and marks, no status line:
 
-- When ambient mode is on and the last digest or review was skipped for
-  consent, a line `#ambient-consent` in the warn colour under the header:
-  "Digests and reviews are skipping: schedules can't use your plan while
-  you're away." with a link `#ambient-settings` ("Settings", to
-  `/settings`).
+- When ambient mode is on, the last digest or review was skipped for
+  consent and Settings still doesn't give it, a line `#ambient-consent`
+  in the warn colour under the header: "Digests and reviews are
+  skipping: schedules can't use your plan while you're away." with a
+  link `#ambient-settings` ("Settings", to `/settings`). Without the
+  consent check, a review skipped for consent would keep the warning up
+  for a day after the owner gave it (`AmbientText.skipping?/1`).
 - When a timer failed, `#ambient-stopped`: "Ambient mode stopped after
-  an error. Save settings to start it again." with the same link.
+  an error. Save settings to start it again." with the same link
+  (`AmbientText.home_stopped?/1`). At most one of the two lines shows, the
+  stopped one first, so the link's ID stays unique; the Save it asks for
+  then shows the consent line if that still applies.
 - The Failed, Waiting on you (thread rows) and Gone quiet rows of a thread
   raised in a review since its last touch get a line `#<row id>-reviewed`
   with a `hero-eye-micro` icon: "In Blip's review <local_time>"
@@ -1133,7 +1138,7 @@ No changes.
 |---|---|---|
 | `PhotonWeb.SettingsLive` | server (LiveView) | Section 7.2, and the `.UtcOffset` colocated hook. |
 | `PhotonWeb.HomeLive` | server | Section 7.3. |
-| `PhotonWeb.AmbientText` | functional core (web formatting) | The hint words, `form_values/1`, the interval labels, `next/1`, `last/2` (a last outcome as words), `pending/1`, `ran/2` (the flashes), `needs_consent?/1`, `reviewed?/1`. |
+| `PhotonWeb.AmbientText` | functional core (web formatting) | The hint words, `form_values/1`, the interval labels, `next/1`, `last/2` (a last outcome as words), `pending/1`, `ran/2` (the flashes), `needs_consent?/1`, `reviewed?/1`, and Home's `skipping?/1`, `skipping/0`, `home_stopped?/1`, `home_stopped/0`. |
 | `PhotonWeb.ConversationComponents` | boundary (UI components) | `ambient_message/1`, the empty nothing-to-tell element, the queued chip. |
 
 ### 10.7 Credo, Boundary and deps

@@ -4,8 +4,8 @@ defmodule PhotonWeb.AmbientText do
   `docs/plans/step-5-ambient-mode.md`): the Settings section's hint and
   warnings, the digest intervals, the status block (when the next digest
   and review come, what is waiting, what the last ones did, a timer that
-  stopped), the flashes of the scripted model's run-now buttons, and
-  whether a home page row was in Blip's review.
+  stopped), the flashes of the scripted model's run-now buttons, and the
+  home page's warnings and whether one of its rows was in Blip's review.
 
   Pure, over `Photon.Ambient.status/0` and board entries. Times are never
   formatted here: the browser knows the owner's time zone, so a page
@@ -181,6 +181,33 @@ defmodule PhotonWeb.AmbientText do
   def ran(_review, %{outcome: "skipped_queued"}), do: "Blip still has the last review waiting."
   def ran(_job, %{outcome: "skipped_consent"}), do: "Skipped: schedules can't use your plan."
   def ran(_job, _result), do: "Done."
+
+  @doc """
+  Whether the home page warns that digests and reviews are skipping for
+  consent: ambient mode is on, the last digest or the last review was
+  skipped because schedules can't use the owner's plan, and Settings still
+  doesn't let them. Once the owner allows it, the warning goes before the
+  next firing.
+  """
+  @spec skipping?(Ambient.status()) :: boolean()
+  def skipping?(%{on?: true, consent?: false, last_digest: digest, last_review: review}),
+    do: Enum.any?([digest, review], &match?(%{outcome: "skipped_consent"}, &1))
+
+  def skipping?(_status), do: false
+
+  @doc "The home page's warning while digests and reviews skip for consent."
+  @spec skipping() :: String.t()
+  def skipping,
+    do: "Digests and reviews are skipping: schedules can't use your plan while you're away."
+
+  @doc "Whether the home page warns that a timer stopped after an error."
+  @spec home_stopped?(Ambient.status()) :: boolean()
+  def home_stopped?(%{on?: true, stopped: %{}}), do: true
+  def home_stopped?(_status), do: false
+
+  @doc "The home page's warning after a timer stopped (the reason is on the Settings page)."
+  @spec home_stopped() :: String.t()
+  def home_stopped, do: "Ambient mode stopped after an error. Save settings to start it again."
 
   @doc """
   Whether a board entry's thread was raised in a review since it was last
