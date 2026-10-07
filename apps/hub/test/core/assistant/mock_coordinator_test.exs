@@ -8,6 +8,7 @@ defmodule Photon.Assistant.MockCoordinatorTest do
   use Photon.Case, async: true
 
   alias Photon.Assistant.{MockCoordinator, MockScript}
+  alias PhotonCore.LLM.Mock
 
   defp ask(text), do: MockScript.respond(%{messages: [Message.user(text)]})
 
@@ -277,10 +278,97 @@ defmodule Photon.Assistant.MockCoordinatorTest do
     end
   end
 
-  test "relays what a read tool said" do
-    listed = ~s(c_1 "Fix the pump" \(garden\): failed: the pump is unplugged)
-    result = Message.tool_result("call_1", listed)
-    request = %{messages: [Message.user("threads"), Message.assistant("", []), result]}
-    assert Message.text_of(MockScript.respond(request)) == listed
+  describe "after a result, in the owner's words" do
+    # The request after Blip's call to `name` returned `text`.
+    defp after_result(name, text) do
+      call = Mock.call(name, %{})
+
+      %{
+        messages: [
+          Message.user("go"),
+          Message.assistant("", [call]),
+          Message.tool_result(call["id"], text)
+        ]
+      }
+    end
+
+    defp said(name, text),
+      do: name |> after_result(text) |> MockScript.respond() |> Message.text_of()
+
+    test "a thread it started, a question it passed on or answered: by title, no IDs" do
+      assert said(
+               "start_thread",
+               ~s(Started "Fix the pump" in garden \(c_06ghd1\). You'll get an update when its run ends.)
+             ) == ~s(Started "Fix the pump" in garden. I'll tell you how it goes.)
+
+      assert said(
+               "ask_owner",
+               ~s{Asked the user. Their answer goes straight to "Fix the pump"; you'll see it here.}
+             ) == ~s(I've asked you for "Fix the pump". Your answer goes straight to the thread.)
+
+      assert said("answer_question", ~s{Sent your answer to "Fix the pump".}) ==
+               ~s(Answered "Fix the pump".)
+
+      assert said("message_thread", ~s{Sent to "Fix the pump"; it's working on it.}) ==
+               ~s{Sent to "Fix the pump"; it's working on it.}
+    end
+
+    test "what a read tool said, without IDs, the owner as you and Blip as me" do
+      listed =
+        Enum.join(
+          [
+            ~s(c_1 "Fix the pump" \(garden\): waiting on the user: which valve?),
+            ~s(c_2 "Plant list" \(garden\): asking you: question q_9, with you: which beds?)
+          ],
+          "\n"
+        )
+
+      assert said("list_threads", listed) ==
+               Enum.join(
+                 [
+                   "```",
+                   ~s("Fix the pump" \(garden\): waiting on you: which valve?),
+                   ~s("Plant list" \(garden\): asking me: question, with me: which beds?),
+                   "```"
+                 ],
+                 "\n"
+               )
+
+      header = ~s("Fix the pump" \(c_1\), in Garden \(garden\)\nStarted by the user; last)
+
+      assert said("read_thread", header) =~
+               ~s("Fix the pump", in Garden \(garden\)\nStarted by you;)
+
+      assert said(
+               "ask_owner",
+               "Error: q_1 is with the user. Wait for their answer; it goes to the thread without you."
+             ) ==
+               "That didn't work: That question is with you. " <>
+                 "Wait for your answer; it goes to the thread without me."
+
+      assert said("answer_question", "Error: You already asked the user about q_1.") ==
+               "That didn't work: I already asked you about that question."
+
+      assert said("read_thread", "Error: There's no thread c_9. list_threads shows them.") ==
+               "That didn't work: There's no such thread. list_threads shows them."
+    end
+
+    test "other tools' results are relayed as they are" do
+      assert said("shell", "c_1 the user") == "c_1 the user"
+      assert said("read_context_file", "the user wrote c_1") == "the user wrote c_1"
+
+      # A result whose call isn't in the request is relayed as it is.
+      result = Message.tool_result("call_1", ~s(c_1 "Fix the pump" \(garden\): failed))
+      request = %{messages: [Message.user("threads"), Message.assistant("", []), result]}
+
+      assert Message.text_of(MockScript.respond(request)) ==
+               ~s(c_1 "Fix the pump" \(garden\): failed)
+    end
+
+    test "its intros don't repeat a thread's or a question's ID" do
+      for text <- ["read thread c_123", "tell c_123: go", "stop thread c_123", "answer q_1: yes"] do
+        refute Message.text_of(ask(text)) =~ ~r/[cq]_1/, text
+      end
+    end
   end
 end

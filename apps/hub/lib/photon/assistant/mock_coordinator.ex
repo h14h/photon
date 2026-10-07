@@ -49,7 +49,18 @@ defmodule Photon.Assistant.MockCoordinator do
       (`Fix the pump in Garden finished.`), no call
     * the owner's answer to a question (`[Your answer to ...`): "Noted."
 
-  After a tool result, the script's usual relay prints it.
+  What it says is for the owner: threads by title, never an ID, and the
+  owner as "you". Its intros don't repeat the ID a phrasing named the
+  thread or question by (`Telling the thread.`). After a result of its
+  tools over threads (`relay/3`), it says what happened in its own words
+  where the result is written for the model (`Started "Fix the pump" in
+  garden. I'll tell you how it goes.`, `I've asked you for "Fix the
+  pump". Your answer goes straight to the thread.`, `Answered "Fix the
+  pump".`); any other result of theirs it relays as the script's usual
+  relay prints it, with the IDs left out and the model's words for the
+  owner and itself turned round ("waiting on the user" reads "waiting on
+  you", "asking you" reads "asking me"). Other tools' results (a
+  command's output, a file) are relayed as they are.
   """
 
   # Functional core: no processes, no I/O.
@@ -57,6 +68,37 @@ defmodule Photon.Assistant.MockCoordinator do
 
   alias PhotonCore.LLM.Mock
   alias PhotonCore.Message
+
+  # Blip's tools whose results name threads and questions in the model's
+  # words, which `relay/3` turns into the owner's.
+  @thread_tools ~w(list_projects read_project list_threads read_thread list_context_files
+                   start_thread message_thread stop_thread answer_question ask_owner)
+
+  # The model's words for the owner and for Blip, and the IDs it is given,
+  # in the order `owner_words/1` turns them round or leaves them out:
+  # Blip's "you" becomes "me" before the user's words become "you".
+  @owner_words [
+    {~r/\bYou already asked\b/, "I already asked"},
+    {~r/\basking you\b/, "asking me"},
+    {~r/\bwith you\b/, "with me"},
+    {~r/\bby you\b/, "by me"},
+    {~r/\bwithout you\b/, "without me"},
+    {~r/\byours to answer\b/, "mine to answer"},
+    {~r/\btheir answer\b/, "your answer"},
+    {~r/\bthe user's\b/, "your"},
+    {~r/\bthe user\b/, "you"},
+    {~r/\[user\]/, "[you]"},
+    {~r/\bc_[a-z0-9]+ (?=")/, ""},
+    {~r/ \(c_[a-z0-9]+\)/, ""},
+    {~r/, ID p_[a-z0-9]+/, ""},
+    {~r/\bno thread c_[a-z0-9]+/, "no such thread"},
+    {~r/\bno open question q_[a-z0-9]+/, "no such open question"},
+    {~r/\bq_[a-z0-9]+ from /, "the question from "},
+    {~r/\bquestion q_[a-z0-9]+/, "question"},
+    {~r/(\A|[:.] )q_[a-z0-9]+\b/, "\\1That question"},
+    {~r/\bq_[a-z0-9]+\b/, "that question"},
+    {~r/\bc_[a-z0-9]+\b/, "that thread"}
+  ]
 
   @typedoc "A phrasing: the pattern a message must match, and the reply its captures make."
   @type phrasing :: {Regex.t(), ([String.t()] -> Message.t())}
@@ -164,7 +206,7 @@ defmodule Photon.Assistant.MockCoordinator do
   defp threads_in(slug),
     do: call("list_threads", %{"project" => slug}, "Here are the threads in #{slug}.")
 
-  defp read_thread(id), do: call("read_thread", %{"thread" => id}, "Reading #{id}.")
+  defp read_thread(id), do: call("read_thread", %{"thread" => id}, "Reading the thread.")
 
   defp start_project(purpose),
     do: call("start_project", %{"purpose" => String.trim(purpose)}, "Starting a project.")
@@ -182,10 +224,10 @@ defmodule Photon.Assistant.MockCoordinator do
       call(
         "message_thread",
         %{"thread" => id, "message" => String.trim(message)},
-        "Telling #{id}."
+        "Telling the thread."
       )
 
-  defp stop_thread(id), do: call("stop_thread", %{"thread" => id}, "Stopping #{id}.")
+  defp stop_thread(id), do: call("stop_thread", %{"thread" => id}, "Stopping the thread.")
 
   defp files_in([slug]),
     do:
@@ -250,7 +292,7 @@ defmodule Photon.Assistant.MockCoordinator do
       call(
         "answer_question",
         %{"question_id" => id, "answer" => String.trim(text)},
-        "Sending your answer to #{id}."
+        "Sending your answer to the thread."
       )
 
   defp answer_last(request, text) do
@@ -273,6 +315,55 @@ defmodule Photon.Assistant.MockCoordinator do
     end)
     |> List.last()
   end
+
+  ## After a result
+
+  @doc """
+  What the scripted Blip says after its call to tool `name` (nil when the
+  call isn't found) returned `text`, given `relayed`, what the script's
+  usual relay makes of the result: for its tools over threads, its own
+  words, or the relayed result in the owner's words; for any other tool,
+  `relayed` as it is.
+  """
+  @spec relay(String.t() | nil, String.t(), String.t()) :: String.t()
+  def relay(name, text, relayed) when name in @thread_tools,
+    do: own_words(name, text) || owner_words(relayed)
+
+  def relay(_name, _text, relayed), do: relayed
+
+  # The results written for the model, said for the owner.
+  defp own_words("start_thread", text) do
+    case Regex.run(~r/\AStarted (".*") in (\S+) \([^()]*\)\./, text, capture: :all_but_first) do
+      [title, slug] -> "Started #{title} in #{slug}. I'll tell you how it goes."
+      nil -> nil
+    end
+  end
+
+  defp own_words("ask_owner", text) do
+    case Regex.run(~r/\AAsked the user\. .*? goes straight to (".*?");/, text,
+           capture: :all_but_first
+         ) do
+      [title] -> "I've asked you for #{title}. Your answer goes straight to the thread."
+      nil -> nil
+    end
+  end
+
+  defp own_words("answer_question", text) do
+    case Regex.run(~r/\ASent your answer to (".*")\.\z/, text, capture: :all_but_first) do
+      [title] -> "Answered #{title}."
+      nil -> nil
+    end
+  end
+
+  defp own_words(_name, _text), do: nil
+
+  # A result in the owner's words: no IDs, the owner as "you" and Blip as
+  # "me".
+  defp owner_words(text),
+    do:
+      Enum.reduce(@owner_words, text, fn {pattern, words}, text ->
+        String.replace(text, pattern, words)
+      end)
 
   ## What the owner didn't type
 

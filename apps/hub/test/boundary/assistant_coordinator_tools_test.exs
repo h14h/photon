@@ -325,7 +325,7 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       assert thread.started_by == "blip"
 
       assert text ==
-               ~s(Started #{thread.id} "#{thread.title}" in garden. ) <>
+               ~s(Started "#{thread.title}" in garden \(#{thread.id}\). ) <>
                  "You'll get an update when its run ends."
 
       assert data["details"] == %{
