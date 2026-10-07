@@ -5,8 +5,11 @@ defmodule Photon.Assistant.Tools.SetProjectSkill do
   for a project's threads, inside the commit that records the call's
   result (`Photon.Skills.enable_tx/3`, `disable_tx/3`), so a rerun after
   a restart changes nothing twice. The skill is found by name in that
-  commit; a project holds at most 30. Blip's own set stays the owner's to
-  change, on the Skills page.
+  commit; a project holds at most 30. Blip's own set and each machine's
+  stay the owner's to change, on the skills pages. The description says a
+  machine's skills already reach every thread for work on that machine,
+  so Blip doesn't turn one on for a project to get it there
+  (`docs/plans/machine-skills.md`).
 
   A run that carries a thread's question, and that the owner hasn't
   written into, can't change a project (`Photon.Assistant.may_act_tx/3`).
@@ -24,7 +27,9 @@ defmodule Photon.Assistant.Tools.SetProjectSkill do
   def description,
     do:
       "Turn a skill on or off for a project's threads. Their prompts list the skills on " <>
-        "for their project, and they load one when a task calls for it. list_skills shows them."
+        "for their project, and they load one when a task calls for it. list_skills shows them. " <>
+        "A skill on for a machine already reaches every thread, and you, for work on that " <>
+        "machine: there's no need to turn it on for a project as well."
 
   @impl true
   def parameters,

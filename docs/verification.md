@@ -220,6 +220,78 @@ done
 
 ## Results
 
+### Machine skills, no spec change (2026-10-07)
+
+A follow-up to the five steps (`docs/plans/machine-skills.md`) lets a
+skill be turned on for a machine as well as for Blip or a project. A
+machine's skills are offered to Blip and every thread, listed under the
+machine in their prompts, and `load_skill` accepts them. No spec changed
+and TLC wasn't run. Section 11 of the plan gives the reasons:
+
+- There is no new process, task kind, timer, signal or protocol message,
+  and nodes don't change: nothing about skills reaches a node.
+- Every write is a commit of a kind that already exists. Turning a skill
+  on or off for a machine inserts or deletes one `skill_enablements` row,
+  as a Blip or project toggle does; the machine is only a new form of the
+  `scope` string (`"machine:<id>"`), so there is no migration either.
+- `load_tx/3` still reads what it offers inside the commit that records
+  the tool's result, so a load is ordered against a toggle by the Store,
+  as step 3 argued for project and Blip skills.
+- Prompts are rebuilt from rows at each model request, and `Durable.tla`
+  doesn't model them.
+
+The one new read that the Store doesn't order is which machines the hub
+knows (`Photon.Machines.known/0`), which comes from the node keys and
+the registry, written outside the Store. Its worst case is a load that
+runs while its machine is being removed and still returns the skill.
+That costs nothing: the text is instructions, and the next request's
+prompt no longer lists the skill, which tells the agent to stop
+following it. A spec change would be needed for a tool that turns
+machine skills on from inside a run, or for anything that sends skills
+to nodes; neither exists.
+
+The new claims are each one read or one commit, checked by boundary and
+LiveView tests in `apps/hub`:
+
+- A removed machine's skills are hidden and come back with the machine.
+  `test/boundary/skills_test.exs`: "a removed machine's skills are
+  hidden until it is installed again" (after `NodeKeys.revoke/1` and
+  again after `forget/1`, `scopes/1`, `list/0`, `machine_skills/0` and
+  `load_tx/3` leave mm1's skills out, enabling one for it is refused, and
+  after `NodeKeys.issue/2` all four have them back); "a machine the hub
+  doesn't know is refused". `test/boundary/skill_tools_test.exs`: "every
+  prompt lists it under its machine, and a removed machine's group goes"
+  (Blip's and a thread's prompts). `test/web/live/skill_live_test.exs`:
+  "each known machine has a switch, and a removed one doesn't",
+  "machines installed and removed while the page is open come and go",
+  "a machine reinstalled under its name keeps its switch on", "a machine
+  removed since the page loaded is refused with a flash".
+  `test/web/live/skills_live_test.exs`: "a removed machine drops out of
+  the line".
+- A load finds the agent's own skill first, then a machine's, inside its
+  commit. The decision is pure, `Photon.Skills.Rules.find_offered/2`, in
+  `test/core/skills/rules_test.exs` ("the own set wins over a machine
+  that has the same skill", "names every machine that has it, in the
+  order given", and the not-found cases). `test/boundary/skills_test.exs`
+  checks it through the commit once: "load_tx/3 loads a machine's skill
+  for Blip and for a project, naming the machines", and the removal
+  case above. `test/boundary/skill_tools_test.exs`, through the scripted
+  models: "a thread in a project with no skills lists and loads a
+  machine's", "Blip lists and loads a machine's skill", and "turned off
+  between two messages, it is no longer listed and won't load".
+- Each machine holds at most 30, apart from Blip and other machines
+  ("each machine takes at most 30 skills, apart from Blip and other
+  machines"; on the page, "the 31st skill on a machine is refused with a
+  flash"), and deleting a skill deletes its machine rows ("deleting a
+  skill deletes its machine rows").
+- Prompts don't change as machines connect and disconnect:
+  `test/boundary/machines_test.exs`, "keeps its order while a machine
+  connects and disconnects", and `test/core/machines/roster_test.exs`,
+  "the same IDs in the same order whichever machines are connected". A
+  hub with no machine skills sends the prompt it sent before:
+  `test/core/skills/prompt_test.exs`, "with no machine skills, is the
+  text it was before machines had skills, byte for byte".
+
 ### Step 5: ambient mode, no spec change (2026-10-07)
 
 Step 5 adds ambient mode (`docs/plans/step-5-ambient-mode.md`): two

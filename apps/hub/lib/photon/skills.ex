@@ -6,14 +6,29 @@ defmodule Photon.Skills do
   only its name, description and Markdown instructions. Nothing else from
   a SKILL.md's folder is kept, and no skill runs anything.
 
-  A skill is on or off per scope. A scope is `:blip` (Blip's own set) or
-  `{:project, project_id}` (that project's threads); a new skill is on
-  nowhere. Each scope holds at most 30, since an agent's prompt lists
-  every enabled skill's name and description on every request. Turning a
-  skill on stores one `Photon.Skills.Enablement` row, and turning it off
-  deletes it. Room for machines: a later step can add the machines a skill
-  is on for to that row, and an argument to `enabled/1`, without
-  redesigning either.
+  A skill is on or off per scope. A scope is `:blip` (Blip's own set),
+  `{:project, project_id}` (that project's threads) or `{:machine,
+  machine_id}` (work on that machine, `docs/plans/machine-skills.md`); a
+  new skill is on nowhere. Turning a skill on stores one
+  `Photon.Skills.Enablement` row, and turning it off deletes it. The
+  row's `scope` column is `"blip"`, the project's ID, or `"machine:"`
+  followed by the machine's ID (node IDs can't hold a `:`, so the three
+  forms can't collide); only this module turns a scope into that string
+  and back.
+
+  A machine's skills are offered to every agent that can use the
+  machine: Blip and every thread in every project, beside their own set
+  (`offered/1`), whatever that set holds. They are tied to the machine's
+  name, and only machines the hub knows count (`Photon.Machines.known/0`:
+  connected or offline, not removed). A removed machine's rows stay, but
+  nothing reads them: `scopes/1`, `list/0`, `machine_skills/0` and
+  `load_tx/3` leave them out, and turning a skill on for it is refused.
+  Reinstalled under the same name, the machine has its skills back.
+
+  Each scope holds at most 30, since an agent's prompt lists every
+  enabled skill's name and description on every request. The limit is
+  per set, so one prompt carries up to 30 × (machines with skills + 1):
+  the agent's own set and every machine's (section 3.3 of the plan).
 
   Every write is a `Photon.Durable.commit/1`, as `Photon.Projects` does it:
   it reads what it needs inside the commit, asks `Photon.Skills.Rules`
@@ -29,8 +44,11 @@ defmodule Photon.Skills do
   `load_skill`: Blip's and a thread's tools call `load_tx/3` inside the
   commit that records the call's result, so a load and a toggle are
   ordered by the Store and a load never returns a skill that was already
-  off. `Photon.Skills.MockPhrases` are the skill phrasings both scripted
-  models share.
+  off. Which machines are known comes from `Photon.NodeKeys`, written
+  outside the Store, so a load racing a machine's removal may still
+  return its skill; the next prompt no longer lists it, which tells the
+  agent to stop following it. `Photon.Skills.MockPhrases` are the skill
+  phrasings both scripted models share.
 
   Installing starts from a candidate: `read/1` makes one from a pasted
   SKILL.md, and `fetch/1` downloads them from a link (through
@@ -40,8 +58,8 @@ defmodule Photon.Skills do
 
   Blip turns skills on and off for a project with its `set_project_skill`
   tool, through `enable_tx/3` and `disable_tx/3` inside the commit that
-  records the call's result. Blip's own set stays the owner's to change,
-  on the Skills page.
+  records the call's result. Blip's own set and each machine's stay the
+  owner's to change, on the skills pages.
 
   There is no process here: the rows hold the state and the Store's
   commit line orders the writes. `fetch/1` runs in its caller's process
@@ -52,6 +70,7 @@ defmodule Photon.Skills do
     deps: [
       Photon.Durable,
       Photon.Events,
+      Photon.Machines,
       Photon.Projects,
       Photon.Repo,
       PhotonCore,
@@ -64,15 +83,19 @@ defmodule Photon.Skills do
 
   import Ecto.Query
 
-  alias Photon.{Durable, Events, Projects, Repo}
+  alias Photon.{Durable, Events, Machines, Projects, Repo}
   alias Photon.Durable.Tx
   alias Photon.Skills.{Enablement, Fetch, Prompt, Rules, Skill, Source}
 
   @topic "skills"
   @blip "blip"
+  @machine "machine:"
 
-  @typedoc "Where a skill can be on: Blip's own set, or a project's."
-  @type scope :: :blip | {:project, String.t()}
+  @typedoc "Where a skill can be on: Blip's own set, a project's, or a machine's."
+  @type scope :: :blip | {:project, String.t()} | {:machine, String.t()}
+
+  @typedoc "An agent's own scope: Blip's, or a project's for its threads."
+  @type agent :: :blip | {:project, String.t()}
 
   @typedoc "Form errors: each field's message, e.g. `%{name: \"There's already ...\"}`."
   @type field_errors :: Rules.field_errors()
@@ -106,11 +129,15 @@ defmodule Photon.Skills do
 
   ## Reading
 
-  @doc "Every skill, by name, each with the scopes it is on in."
+  @doc """
+  Every skill, by name, each with the scopes it is on in (machine scopes
+  only for machines the hub knows).
+  """
   @spec list() :: [listed()]
   def list do
     scopes =
       Enablement
+      |> shown()
       |> scopes_order()
       |> Repo.all()
       |> Enum.group_by(& &1.skill_id, &scope/1)
@@ -186,11 +213,16 @@ defmodule Photon.Skills do
     |> Repo.all()
   end
 
-  @doc "The scopes skill `skill_id` is on in: Blip first, then projects in the order they were turned on."
+  @doc """
+  The scopes skill `skill_id` is on in: Blip first, then projects and
+  machines in the order they were turned on. Machines the hub doesn't
+  know (removed ones) are left out.
+  """
   @spec scopes(String.t()) :: [scope()]
   def scopes(skill_id) do
     Enablement
     |> where([e], e.skill_id == ^skill_id)
+    |> shown()
     |> scopes_order()
     |> Repo.all()
     |> Enum.map(&scope/1)
@@ -198,30 +230,75 @@ defmodule Photon.Skills do
   end
 
   @doc """
+  Each known machine with skills on, with them by name; machines in
+  `Photon.Machines.known/0`'s order (`local` first, then by ID), which
+  doesn't change as machines connect and disconnect. A machine with no
+  skills on is left out. One query, plus `known/0`'s read.
+  """
+  @spec machine_skills() :: [{String.t(), [Skill.t()]}]
+  def machine_skills do
+    Skill
+    |> join(:inner, [s], e in Enablement,
+      on: e.skill_id == s.id and like(e.scope, ^(@machine <> "%"))
+    )
+    |> order_by([s], asc: s.name)
+    |> select([s, e], {e.scope, s})
+    |> Repo.all()
+    |> Enum.map(fn {@machine <> machine_id, skill} -> {machine_id, skill} end)
+    |> Rules.by_machine(Machines.known())
+  end
+
+  @doc """
+  What an agent in `scope` is offered: its own set (`enabled/1`) and every
+  known machine's skills (`machine_skills/0`). Both profiles build the
+  prompt's Skills section from it on every model request.
+  """
+  @spec offered(agent()) :: Prompt.offered()
+  def offered(scope), do: %{own: enabled(scope), machines: machine_skills()}
+
+  @doc """
   For the `load_skill` tools, inside the commit that records the call's
   result: the skill called `name` (trimmed and downcased) if it is on in
-  `scope`, as the tool's result (`Photon.Skills.Prompt.loaded/1`, with the
-  skill's name and version and how to load it again in the details), or
-  an error that names the skills that are on.
+  `scope` or for a known machine, as the tool's result, or an error that
+  names the skills that are on (`Photon.Skills.Prompt.not_loaded/3`).
+
+  Which one loads is `Photon.Skills.Rules.find_offered/2`'s decision:
+  the agent's own set is searched first, and a skill found there loads
+  as today (`Photon.Skills.Prompt.loaded/1`, with the skill's name and
+  version and how to load it again in the details). One found only on
+  machines loads with them named (`Photon.Skills.Prompt.loaded/2`), and
+  the details add `"machines"`, their IDs in `known/0` order.
   """
-  @spec load_tx(Tx.t(), scope(), String.t()) ::
+  @spec load_tx(Tx.t(), agent(), String.t()) ::
           {:ok, String.t(), %{String.t() => term()}} | {:error, String.t()}
   def load_tx(_tx, scope, name) do
     name = name |> String.trim() |> String.downcase()
-    skills = enabled(scope)
 
-    case Enum.find(skills, &(&1.name == name)) do
-      %Skill{} = skill ->
-        {:ok, Prompt.loaded(skill),
-         %{
-           "skill" => skill.name,
-           "version" => skill.version,
-           "full_output" => Prompt.full_output_hint(skill.name)
-         }}
+    case Rules.find_offered(offered(scope), name) do
+      {:own, skill} ->
+        {:ok, Prompt.loaded(skill), load_details(skill)}
 
-      nil ->
-        {:error, Prompt.not_loaded(name, Enum.map(skills, & &1.name))}
+      {:machines, skill, ids} ->
+        {:ok, Prompt.loaded(skill, ids), Map.put(load_details(skill), "machines", ids)}
+
+      {:none, own, machines} ->
+        {:error, Prompt.not_loaded(name, own, machines)}
     end
+  end
+
+  defp load_details(skill) do
+    %{
+      "skill" => skill.name,
+      "version" => skill.version,
+      "full_output" => Prompt.full_output_hint(skill.name)
+    }
+  end
+
+  # Machine scopes only for the machines the hub knows: a removed
+  # machine's rows stay, hidden, until it is installed again.
+  defp shown(query) do
+    known = Enum.map(Machines.known(), &scope_column({:machine, &1}))
+    where(query, [e], not like(e.scope, ^(@machine <> "%")) or e.scope in ^known)
   end
 
   defp scopes_order(query), do: order_by(query, [e], asc: e.inserted_at, asc: e.scope)
@@ -368,7 +445,8 @@ defmodule Photon.Skills do
   @doc """
   Turns skill `skill_id` on in `scope`. Does nothing when it is on
   already. Errors: `:not_found` for the skill, or a message when the
-  project doesn't exist or the scope has 30 skills on.
+  project doesn't exist, the machine isn't one the hub knows, or the
+  scope has 30 skills on.
   """
   @spec enable(String.t(), scope()) :: :ok | {:error, :not_found | String.t()}
   def enable(skill_id, scope), do: Durable.commit(&enable_tx(&1, skill_id, scope))
@@ -393,7 +471,10 @@ defmodule Photon.Skills do
     end
   end
 
-  @doc "Turns skill `skill_id` off in `scope`. Does nothing when it isn't on."
+  @doc """
+  Turns skill `skill_id` off in `scope`. Does nothing when it isn't on.
+  A machine needn't be known: a removed machine's skills can be turned off.
+  """
   @spec disable(String.t(), scope()) :: :ok
   def disable(skill_id, scope), do: Durable.commit(&disable_tx(&1, skill_id, scope))
 
@@ -431,6 +512,12 @@ defmodule Photon.Skills do
     if Projects.get(project_id), do: :ok, else: {:error, "That project doesn't exist."}
   end
 
+  defp scope_exists({:machine, machine_id}) do
+    if machine_id in Machines.known(),
+      do: :ok,
+      else: {:error, "There's no machine called #{machine_id}."}
+  end
+
   ## Helpers
 
   defp fetch_skill(id) do
@@ -443,8 +530,10 @@ defmodule Photon.Skills do
   # Only this module turns a scope into the column's string and back.
   defp scope_column(:blip), do: @blip
   defp scope_column({:project, project_id}) when is_binary(project_id), do: project_id
+  defp scope_column({:machine, machine_id}) when is_binary(machine_id), do: @machine <> machine_id
 
   defp scope(%Enablement{scope: @blip}), do: :blip
+  defp scope(%Enablement{scope: @machine <> machine_id}), do: {:machine, machine_id}
   defp scope(%Enablement{scope: project_id}), do: {:project, project_id}
 
   defp announce(tx, skill_id), do: Tx.announce(tx, @topic, {:skills_changed, skill_id})

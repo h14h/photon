@@ -42,6 +42,19 @@ other files to run.
 > enabled skills' names and descriptions, and its `load_skill` tool puts
 > one's instructions in the conversation. Each set holds at most 30.
 
+> Status: a follow-up (`docs/plans/machine-skills.md`) made machines a
+> third place to turn a skill on, for skills about working on that
+> machine ("hosting private web apps" on mp1, "running iOS simulators"
+> on mm1). A skill turned on for a machine is offered to Blip and to
+> every thread in every project, whatever their own sets hold: their
+> prompts list it under that machine, `list_machines` names it on the
+> machine's line, and `load_skill` loads it when work there starts. It
+> adds to an agent's skills and never narrows them. You turn it on with
+> the Machines switches on the skill's page; Blip has no tool for it.
+> Each machine holds at most 30. A machine's skills are tied to its
+> name: while the machine is removed they are hidden and offered to no
+> one, and reinstalling it under the same name brings them back.
+
 **Project.** A context for some body of work, not necessarily code. It has:
 
 - an owner (you, for now)
@@ -346,7 +359,9 @@ After this change there is one loop, on the hub:
 
 > Status: step 3 built skills on the hub. Nothing about them reaches a
 > node: the hub stores them, lists them in prompts and loads them inside
-> the conversation's own commit.
+> the conversation's own commit. A skill turned on for a machine is no
+> different: it is instructions for the agents that work there, and the
+> machine sees only the commands they run.
 
 What goes away: the node's session state machine, coordinator, context
 builder, log store, skills and model requests; the hub's model relay;
@@ -405,15 +420,15 @@ Each step leaves a working app.
 > step 4 gives it tools.
 >
 > Step 3 put skills and schedules in the project page's second column.
-> It left out, for later: skills scoped to machines and skills with
-> scripts or other files; updating an installed skill from its source,
-> and exporting one as a SKILL.md; pausing a schedule (delete it and make
-> it again); calendar rules such as "weekdays at 9"; and repeats that
-> follow your time zone across daylight saving changes (a repeat is a
-> fixed interval, so it drifts by an hour). Blip's schedule tools touch
-> only its own schedules until step 4. Asked for recurring work in a
-> project, Blip tells you to add it with New schedule on the project's
-> page.
+> It left out, for later: skills scoped to machines (built since, in
+> `docs/plans/machine-skills.md`) and skills with scripts or other
+> files; updating an installed skill from its source, and exporting one
+> as a SKILL.md; pausing a schedule (delete it and make it again);
+> calendar rules such as "weekdays at 9"; and repeats that follow your
+> time zone across daylight saving changes (a repeat is a fixed
+> interval, so it drifts by an hour). Blip's schedule tools touch only
+> its own schedules until step 4. Asked for recurring work in a project,
+> Blip tells you to add it with New schedule on the project's page.
 >
 > Step 4 (`docs/plans/step-4-blip-as-coordinator.md`) built Blip as
 > coordinator: its tools over projects and threads, `ask_blip`, thread
@@ -452,7 +467,7 @@ Left for later, with the door left open:
 - a Discord client for Blip, so you can talk to it from your phone
 - watchers on outside services (GitHub, Slack) that post into threads the
   way schedules do
-- skills scoped to particular machines, and skills with scripts
+- skills with scripts
 - tagging @Blip inside a thread to bring it in there
 - collaborators on projects
 - approvals for shell commands (see "Open questions")

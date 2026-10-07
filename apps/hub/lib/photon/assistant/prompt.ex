@@ -1,22 +1,25 @@
 defmodule Photon.Assistant.Prompt do
   @moduledoc """
   The assistant's system prompt, as a pure function of the
-  hub settings, the memory text, the time and the skills turned on for
-  Blip. `Photon.Assistant` reads those and calls these.
+  hub settings, the memory text, the time and the skills Blip is offered:
+  those turned on for Blip, and those turned on for each machine (section
+  3 of `docs/plans/machine-skills.md`). `Photon.Assistant` reads those and calls these.
 
   The prompt opens with Blip's voice (who it is and how it talks), then how
   the hub works (including the note of the page the user has open that a
   message may start with, `Photon.Assistant.Page`), how Blip works with
   projects and threads (their updates and `ask_blip` questions, and the
   limits on what it starts on its own), how it handles ambient mode's
-  digests and daily reviews (only while ambient mode is on), Blip's skills
-  (`Photon.Skills.Prompt.section/1`, left out when none are on), the
-  memory, and the time. The lines about how a `shell`
+  digests and daily reviews (only while ambient mode is on), the skills
+  (`Photon.Skills.Prompt.section/1`: Blip's, then each machine's under its
+  name; left out when none are on), the memory, and the time. The lines about how a `shell`
   call behaves are `Photon.MachineTools.Guide.shell/1`'s, shared with a
   thread's prompt.
 
   The prompt names the time only to the hour, so it stays the same between
-  requests and provider prompt caches stay warm. Ambient mode is a
+  requests and provider prompt caches stay warm. The skills change only
+  when one is turned on or off or changed, or a machine with skills is
+  installed or removed, not as machines connect. Ambient mode is a
   setting that changes rarely, so its section doesn't disturb the cache
   either.
   """
@@ -30,11 +33,12 @@ defmodule Photon.Assistant.Prompt do
 
   @doc """
   The system prompt for `settings`, `memory`, the time `now`, `skills`,
-  the skills turned on for Blip, by name, and `ambient?`, whether ambient
-  mode is on. With `ambient?` false the prompt has no Ambient mode
-  section, and is step 4's.
+  the skills Blip is offered (`Photon.Skills.offered/1`: Blip's, by name,
+  and each machine's), and `ambient?`, whether ambient mode is on. With
+  `ambient?` false the prompt has no Ambient mode section, and is step
+  4's.
   """
-  @spec system_prompt(map(), String.t(), DateTime.t(), [SkillsPrompt.listed()], boolean()) ::
+  @spec system_prompt(map(), String.t(), DateTime.t(), SkillsPrompt.offered(), boolean()) ::
           String.t()
   def system_prompt(settings, memory, now, skills, ambient? \\ false) do
     """

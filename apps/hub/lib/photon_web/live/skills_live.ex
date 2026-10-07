@@ -4,7 +4,8 @@ defmodule PhotonWeb.SkillsLive do
   `docs/plans/step-3-skills-and-schedules.md`): every skill on this hub,
   where each is on, how it arrived, and a switch per skill for Blip, with
   the two ways to add one, writing it here (`/skills/new`) or installing
-  it from a SKILL.md or a link (`/skills/install`).
+  it from a SKILL.md or a link (`/skills/install`). A new skill is off
+  everywhere until the owner turns it on for Blip, a project or a machine.
 
   The skills are a stream (`#skills`, rows `#skill-<id>`) read from
   `Photon.Skills.list/0` together with the projects' names for the scopes
@@ -14,6 +15,10 @@ defmodule PhotonWeb.SkillsLive do
   project's. `{:projects_changed, id}` (through `PhotonWeb.Shell`)
   re-reads it only when a listed skill is on in that project, so a
   rename shows and a busy project's thread messages don't (rule 73).
+  `{:node_keys_changed, _}` (also through the shell) re-reads it on every
+  machine installed or removed, so a removed machine drops out of the
+  scopes lines (section 6.2 of `docs/plans/machine-skills.md`); removals
+  are rare, so it doesn't check which skills name the machine.
 
   The Blip switch sends the state it should end in, so a double click or
   a stale page can't flip it the wrong way; a refused enable (30 on
@@ -80,6 +85,8 @@ defmodule PhotonWeb.SkillsLive do
   @impl true
   def handle_info({:skills_changed, _id}, socket), do: {:noreply, load(socket)}
 
+  def handle_info({:node_keys_changed, _id}, socket), do: {:noreply, load(socket)}
+
   def handle_info({:projects_changed, id}, socket) do
     if MapSet.member?(socket.assigns.project_ids, id),
       do: {:noreply, load(socket)},
@@ -97,7 +104,7 @@ defmodule PhotonWeb.SkillsLive do
           <.header>
             <span id="skills-heading">Skills</span>
             <:subtitle>
-              Instructions an agent loads when a task calls for them. A new skill is off everywhere until you turn it on for Blip or a project.
+              Instructions an agent loads when a task calls for them. A new skill is off everywhere until you turn it on for Blip, a project or a machine.
             </:subtitle>
             <:actions>
               <.button id="install-skill" size="sm" navigate={~p"/skills/install"}>

@@ -6,6 +6,11 @@ defmodule Photon.Skills.MockPhrasesTest do
   alias Photon.Skills.MockPhrases
   alias Photon.Skills.Prompt, as: SkillsPrompt
 
+  @pdf %{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."}
+  @notes %{id: "sk_notes", name: "release-notes", version: 1, description: "Write release notes."}
+  @hosting %{id: "sk_host", name: "hosting-private-apps", version: 1, description: "Serve it."}
+  @ios %{id: "sk_ios", name: "ios-simulators", version: 3, description: "Run simulators."}
+
   # The reply of the first phrasing `text` matches, for a request whose
   # system prompt is `system`.
   defp reply(text, system \\ "") do
@@ -29,15 +34,7 @@ defmodule Photon.Skills.MockPhrasesTest do
   test "skills lists what the system prompt lists, with versions, without a tool call" do
     system =
       "You are an agent.\n\n" <>
-        SkillsPrompt.section([
-          %{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."},
-          %{
-            id: "sk_notes",
-            name: "release-notes",
-            version: 1,
-            description: "Write release notes."
-          }
-        ])
+        SkillsPrompt.section(%{own: [@pdf, @notes], machines: []})
 
     for text <- ["skills", "list skills"] do
       message = reply(text, system)
@@ -53,6 +50,27 @@ defmodule Photon.Skills.MockPhrasesTest do
              "No skills are turned on here."
 
     assert Message.text_of(reply("skills")) == "No skills are turned on here."
+  end
+
+  test "skills names each machine's skills after the agent's own" do
+    system =
+      "You are an agent.\n\n" <>
+        SkillsPrompt.section(%{
+          own: [@pdf],
+          machines: [{"local", [@hosting]}, {"mm1", [@ios, @notes]}]
+        })
+
+    assert Message.text_of(reply("skills", system)) ==
+             "Skills turned on here: pdf-forms (version 2). For machines: " <>
+               "local: hosting-private-apps (version 1); " <>
+               "mm1: ios-simulators (version 3), release-notes (version 1)."
+  end
+
+  test "skills with only machine skills says none are on here, then names them" do
+    system = SkillsPrompt.section(%{own: [], machines: [{"local", [@hosting]}]})
+
+    assert Message.text_of(reply("skills", system)) ==
+             "No skills are turned on here. For machines: local: hosting-private-apps (version 1)."
   end
 
   test "load skill calls load_skill with the name" do

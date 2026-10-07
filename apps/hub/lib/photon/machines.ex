@@ -14,7 +14,11 @@ defmodule Photon.Machines do
   `subscribe/0` hears `:nodes_changed` whenever a node joins or leaves.
   The machines the hub knows but can't reach are the IDs of node keys that
   aren't revoked (`Photon.NodeKeys`), plus `local` when the hub runs its
-  own node; `roster/0` and `status/1` combine the two.
+  own node; `roster/0` and `status/1` combine the two. `known/0` lists the
+  same machines by ID alone, `local` first and then by ID, an order that
+  ignores who is connected: the agents' prompts list machine skills in it,
+  so they change only when a machine is installed or removed, not when one
+  connects or disconnects (`Photon.Machines.Roster.ids/3`).
 
   An operation is a row (`Photon.Machines.Op`, table `machine_ops`), one per
   tool call, keyed by the op ID the call derives from its durable task. The
@@ -224,6 +228,13 @@ defmodule Photon.Machines do
   @doc "Every machine the hub knows, `local` first, then connected ones, then offline ones."
   @spec roster() :: [Roster.machine()]
   def roster, do: Roster.build(list(), known_ids(), local_node?())
+
+  @doc """
+  The IDs of every machine the hub knows, connected or offline but not
+  removed: `local` first, then by ID, whoever is connected.
+  """
+  @spec known() :: [String.t()]
+  def known, do: Roster.ids(list(), known_ids(), local_node?())
 
   # Nodes with a key that hasn't been revoked.
   defp known_ids, do: for(%{node_id: id, revoked_at: nil} <- NodeKeys.list(), do: id)

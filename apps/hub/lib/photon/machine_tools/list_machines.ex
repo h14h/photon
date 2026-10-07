@@ -6,7 +6,10 @@ defmodule Photon.MachineTools.ListMachines do
   their platform, hostname, workspace and photon-node version; a connected
   machine whose photon-node can't take commands says so; known machines
   that aren't connected are listed as offline. `local` is the hub's own
-  computer.
+  computer. A machine with skills turned on for it ends its line with
+  them, as "; skills: a, b" (`Photon.Skills.machine_skills/0`, section 5
+  of `docs/plans/machine-skills.md`), so the machine list says which
+  skills go with which machine, as the prompt's Skills section does.
 
   When the conversation has a working directory (`api.workdir`, a
   project's slug for a thread), the list opens with a line saying the
@@ -17,7 +20,7 @@ defmodule Photon.MachineTools.ListMachines do
   """
   @behaviour Photon.Durable.Tool
 
-  alias Photon.Machines
+  alias Photon.{Machines, Skills}
 
   @impl true
   def name, do: "list_machines"
@@ -41,9 +44,17 @@ defmodule Photon.MachineTools.ListMachines do
         {:ok, "No machines yet. The user can add one from the Nodes page."}
 
       machines ->
-        {:ok, intro(api.workdir) <> Enum.map_join(machines, "\n", &line(&1, api.workdir))}
+        skills =
+          Map.new(Skills.machine_skills(), fn {id, on} -> {id, Enum.map(on, & &1.name)} end)
+
+        {:ok,
+         intro(api.workdir) <>
+           Enum.map_join(machines, "\n", &(line(&1, api.workdir) <> skills(skills[&1.id])))}
     end
   end
+
+  defp skills(nil), do: ""
+  defp skills(names), do: "; skills: " <> Enum.join(names, ", ")
 
   defp intro(nil), do: ""
 

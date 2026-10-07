@@ -1,7 +1,7 @@
 defmodule PhotonWeb.SkillText do
   @moduledoc """
   The words the skills pages use: where a skill is on ("On for Blip,
-  Garden and House"), how it arrived ("Written here", "Pasted", "From
+  Garden and machine mm1"), how it arrived ("Written here", "Pasted", "From
   github.com/..."), and its install notes as a list.
 
   Pure: the project names are passed in, so a page reads them once with
@@ -11,13 +11,14 @@ defmodule PhotonWeb.SkillText do
   alias Photon.Skills.Skill
 
   @typedoc "Where a skill is on, as `Photon.Skills` gives it."
-  @type scope :: :blip | {:project, String.t()}
+  @type scope :: :blip | {:project, String.t()} | {:machine, String.t()}
 
   @doc ~S"""
-  Where a skill is on, from its scopes (Blip first, then projects) and the
-  projects' names by ID: "On for Blip", "On for Blip and Garden", "On for
-  Blip, Garden and House", or "Off everywhere". A project missing from
-  `names` is left out.
+  Where a skill is on, from its scopes (Blip first, then projects and
+  machines) and the projects' names by ID: "On for Blip", "On for Blip
+  and Garden", "On for Blip, Garden and machine mm1", or "Off
+  everywhere". A machine reads "machine mm1", so it can't be taken for a
+  project. A project missing from `names` is left out.
   """
   @spec scopes([scope()], %{String.t() => String.t()}) :: String.t()
   def scopes(scopes, names) do
@@ -25,6 +26,7 @@ defmodule PhotonWeb.SkillText do
       Enum.flat_map(scopes, fn
         :blip -> ["Blip"]
         {:project, id} -> names |> Map.get(id) |> List.wrap()
+        {:machine, id} -> ["machine " <> id]
       end)
 
     case labels do

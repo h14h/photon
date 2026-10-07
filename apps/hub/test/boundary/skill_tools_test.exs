@@ -4,13 +4,17 @@ defmodule Photon.SkillToolsTest do
   the scripted models: `skills` says what the profile's prompt listed, and
   `load skill <name>` calls `load_skill`. The prompt's and the loaded
   text's exact words are covered in `test/core/skills/prompt_test.exs`.
+
+  A skill turned on for a machine (section 3 of
+  `docs/plans/machine-skills.md`) reaches Blip and every thread whatever
+  their own sets hold: the `machine skills` cases.
   """
 
   use Photon.DataCase, async: false
 
   @moduletag :durable
 
-  alias Photon.{Assistant, Projects, Skills, Threads}
+  alias Photon.{Assistant, NodeKeys, Projects, Skills, Threads}
   alias Photon.Durable.Context
   alias Photon.Skills.Prompt, as: SkillsPrompt
   alias PhotonCore.Message
@@ -201,5 +205,99 @@ defmodule Photon.SkillToolsTest do
              ~r/characters of this older result left out\. Load it again with load_skill\("long-one"\) to read all of it\.\.\./
 
     assert String.starts_with?(loaded, ~s(<skill name="long-one" id="#{long.id}" version="1">))
+  end
+
+  describe "machine skills" do
+    setup do
+      {:ok, _key} = NodeKeys.issue("mm1")
+
+      {:ok, ios} =
+        Skills.create(%{
+          "name" => "ios-simulators",
+          "description" => "Run and drive iOS simulators on this Mac.",
+          "instructions" => "Boot one with `xcrun simctl boot`."
+        })
+
+      :ok = Skills.enable(ios.id, {:machine, "mm1"})
+
+      {:ok, shed} = Projects.create(%{"purpose" => "Fix the shed.", "name" => "Shed"})
+      {:ok, shed_thread} = Threads.start(shed.id, "hello")
+      :ok = Threads.subscribe(shed_thread.id)
+      await_entry(shed_thread.id, &(&1.kind == "assistant"))
+
+      %{ios: ios, shed_thread: shed_thread.id}
+    end
+
+    test "a thread in a project with no skills lists and loads a machine's", %{
+      ios: ios,
+      shed_thread: thread
+    } do
+      :ok = ask(thread, "skills")
+
+      assert answer(thread) ==
+               "No skills are turned on here. For machines: mm1: ios-simulators (version 1)."
+
+      :ok = ask(thread, "load skill ios-simulators")
+      result = last(thread, "tool_result")
+
+      assert Message.text_of(result.data["message"]) == SkillsPrompt.loaded(ios, ["mm1"])
+
+      assert Message.text_of(result.data["message"]) =~
+               "</skill>\nThis skill is turned on for mm1: follow it when you work on mm1."
+
+      assert result.data["details"]["machines"] == ["mm1"]
+    end
+
+    test "a thread with its own skills gets the machine's too", %{thread: thread} do
+      :ok = ask(thread, "skills")
+
+      assert answer(thread) ==
+               "Skills turned on here: pdf-forms (version 1). " <>
+                 "For machines: mm1: ios-simulators (version 1)."
+    end
+
+    test "Blip lists and loads a machine's skill", %{ios: ios} do
+      blip = Assistant.conversation_id()
+      :ok = Assistant.subscribe(blip)
+
+      :ok = ask_blip(blip, "skills")
+
+      assert answer(blip) ==
+               "No skills are turned on here. For machines: mm1: ios-simulators (version 1)."
+
+      :ok = ask_blip(blip, "load skill ios-simulators")
+      assert result_text(blip) == SkillsPrompt.loaded(ios, ["mm1"])
+    end
+
+    test "turned off between two messages, it is no longer listed and won't load", %{
+      ios: ios,
+      shed_thread: thread
+    } do
+      :ok = ask(thread, "skills")
+      assert answer(thread) =~ "mm1: ios-simulators"
+
+      :ok = Skills.disable(ios.id, {:machine, "mm1"})
+
+      :ok = ask(thread, "skills")
+      assert answer(thread) == "No skills are turned on here."
+
+      :ok = ask(thread, "load skill ios-simulators")
+      assert result_text(thread) == "Error: No skills are turned on here."
+    end
+
+    test "every prompt lists it under its machine, and a removed machine's group goes", %{
+      shed_thread: thread
+    } do
+      blip = Assistant.system_prompt(nil)
+      shed = Threads.system_prompt(Durable.conversation(thread))
+
+      for prompt <- [blip, shed] do
+        assert prompt =~ ~s(<machine name="mm1">\n<skill><name>ios-simulators</name>)
+      end
+
+      :ok = NodeKeys.revoke("mm1")
+      refute Threads.system_prompt(Durable.conversation(thread)) =~ "## Skills"
+      refute Assistant.system_prompt(nil) =~ "ios-simulators"
+    end
   end
 end

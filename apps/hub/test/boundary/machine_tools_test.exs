@@ -18,7 +18,7 @@ defmodule Photon.MachineToolsTest do
   import Phoenix.ChannelTest
   import Photon.Fixtures, only: [call: 2]
 
-  alias Photon.{Assistant, Machines}
+  alias Photon.{Assistant, Machines, Skills}
   alias Photon.Durable.{Submission, TaskRecord, ToolAPI, Tx}
   alias Photon.Machines.Op
   alias Photon.MachineTools.{ListMachines, Shell, Translate, ViewImage}
@@ -116,6 +116,17 @@ defmodule Photon.MachineToolsTest do
       )
 
     ToolAPI.new(task, workdir)
+  end
+
+  defp skill!(name) do
+    {:ok, skill} =
+      Skills.create(%{
+        "name" => name,
+        "description" => "Use for #{name}.",
+        "instructions" => "Do it."
+      })
+
+    skill
   end
 
   defp limits(limits) do
@@ -520,6 +531,39 @@ defmodule Photon.MachineToolsTest do
                  ],
                  "\n"
                )
+    end
+
+    test "ends a machine's line with the skills turned on for it; a machine with none has no suffix" do
+      _key = key("mm1")
+      _key = key("nas")
+      _socket = join_node("mp1")
+      ios = skill!("ios-simulators")
+      xcode = skill!("xcode-builds")
+      hosting = skill!("hosting-private-apps")
+      :ok = Skills.enable(xcode.id, {:machine, "mm1"})
+      :ok = Skills.enable(ios.id, {:machine, "mm1"})
+      :ok = Skills.enable(hosting.id, {:machine, "mp1"})
+      # Blip's own set isn't a machine's.
+      :ok = Skills.enable(hosting.id, :blip)
+
+      {:ok, text} = ListMachines.execute(%{}, tool_api(%{}))
+
+      assert text ==
+               Enum.join(
+                 [
+                   "- mp1: online, linux, hostname mp1, workspace /home/me/photon, photon-node 0.2.0; " <>
+                     "skills: hosting-private-apps",
+                   "- mm1: offline; skills: ios-simulators, xcode-builds",
+                   "- nas: offline"
+                 ],
+                 "\n"
+               )
+
+      :ok = Skills.disable(ios.id, {:machine, "mm1"})
+      :ok = Skills.disable(xcode.id, {:machine, "mm1"})
+
+      {:ok, text} = ListMachines.execute(%{}, tool_api(%{}))
+      assert text =~ "\n- mm1: offline\n"
     end
 
     test "says when there are none" do

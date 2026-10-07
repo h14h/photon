@@ -76,7 +76,7 @@ defmodule Photon.Assistant.MockScript do
   - `in 2 minutes: <prompt>` or `every 30 minutes: <prompt>` schedules a prompt
   - `schedules` lists what's scheduled
   - `here` tells you which page you're on, as I see it
-  - `skills` lists the skills turned on for me
+  - `skills` lists the skills turned on for me, and for each machine
   - `load skill <name>` loads one, like `load skill pdf-forms`
   #{MockCoordinator.help()}#{MockAmbient.help()}
   Sign in with ChatGPT and I can do the rest.

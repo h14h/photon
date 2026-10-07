@@ -198,8 +198,9 @@ defmodule Photon.Skills.Rules do
 
   @doc """
   Whether a skill may be turned on in a scope that has `enabled_count`
-  skills on already: at most 30 per scope, since every enabled skill's
-  description is in every prompt there.
+  skills on already: at most 30 per scope (Blip, each project and each
+  machine), since every enabled skill's description is in every prompt
+  there.
   """
   @spec enable_check(non_neg_integer()) :: :ok | {:error, String.t()}
   def enable_check(enabled_count) when enabled_count < @scope_limit, do: :ok
@@ -209,6 +210,65 @@ defmodule Photon.Skills.Rules do
      "30 skills are on here already. Turn one off first: agents read every enabled " <>
        "skill's description on every request."}
   end
+
+  ## Machine skills
+
+  @doc """
+  Machine skills grouped by machine (section 2.3 of
+  `docs/plans/machine-skills.md`). `pairs` are `{machine_id, skill}` in
+  the order to list the skills; `known` are the machines the hub knows,
+  in the order to list them. Returns `{machine_id, skills}` for each
+  known machine with at least one skill, in `known`'s order, so a
+  removed machine's skills are left out.
+  """
+  @spec by_machine([{String.t(), skill}], [String.t()]) :: [{String.t(), [skill, ...]}]
+        when skill: term()
+  def by_machine(pairs, known) do
+    grouped = Enum.group_by(pairs, &elem(&1, 0), &elem(&1, 1))
+    for id <- known, skills = Map.get(grouped, id), do: {id, skills}
+  end
+
+  @typedoc "What `find_offered/2` needs of a skill: a `Photon.Skills.Skill` will do."
+  @type named :: %{required(:name) => String.t(), optional(atom()) => term()}
+
+  @doc """
+  Where a `load_skill` call finds the skill called `name` (as listed:
+  trimmed and downcased) among what the agent is `offered` (section 4 of
+  `docs/plans/machine-skills.md`):
+
+  - `{:own, skill}` when the agent's own set has it. The own set wins
+    over the machines', since a skill on for the agent applies to all its
+    work, not only on a machine.
+  - `{:machines, skill, ids}` when only machines have it: every machine
+    that does, in `offered`'s order.
+  - `{:none, own_names, machine_names}` when nothing does: the names in
+    the own set, and each machine with its skills' names, for the error.
+  """
+  @spec find_offered(%{own: [skill], machines: [{String.t(), [skill]}]}, String.t()) ::
+          {:own, skill}
+          | {:machines, skill, [String.t(), ...]}
+          | {:none, [String.t()], [{String.t(), [String.t()]}]}
+        when skill: named()
+  def find_offered(%{own: own, machines: machines}, name) do
+    case named(own, name) do
+      nil -> find_on_machines(machines, name, own)
+      skill -> {:own, skill}
+    end
+  end
+
+  defp find_on_machines(machines, name, own) do
+    case for({id, skills} <- machines, skill = named(skills, name), do: {id, skill}) do
+      [{_id, skill} | _more] = found ->
+        {:machines, skill, Enum.map(found, &elem(&1, 0))}
+
+      [] ->
+        {:none, names(own), for({id, skills} <- machines, do: {id, names(skills)})}
+    end
+  end
+
+  defp named(skills, name), do: Enum.find(skills, &(&1.name == name))
+
+  defp names(skills), do: Enum.map(skills, & &1.name)
 
   ## What install left out
 

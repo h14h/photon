@@ -166,6 +166,39 @@ defmodule Photon.MachinesTest do
     end
   end
 
+  describe "known/0" do
+    test "lists issued keys by ID and leaves out a revoked node" do
+      {:ok, _key} = Photon.NodeKeys.issue("nas")
+      {:ok, _key} = Photon.NodeKeys.issue("mm1")
+      {:ok, _key} = Photon.NodeKeys.issue("gone")
+      :ok = Photon.NodeKeys.revoke("gone")
+
+      assert Machines.known() == ["mm1", "nas"]
+    end
+
+    test "lists local first on a hub that runs its own node" do
+      Application.put_env(:photon, :local_node, true)
+      on_exit(fn -> Application.put_env(:photon, :local_node, false) end)
+      {:ok, _key} = Photon.NodeKeys.issue("abe")
+
+      assert Machines.known() == ["local", "abe"]
+    end
+
+    test "keeps its order while a machine connects and disconnects" do
+      {:ok, _key} = Photon.NodeKeys.issue("zed")
+      {:ok, _key} = Photon.NodeKeys.issue("abe")
+      before = Machines.known()
+
+      :ok = connect("zed")
+      assert Machines.known() == before
+      assert [%{id: "zed", online: true} | _rest] = Machines.roster()
+
+      :ok = Machines.unregister("zed")
+      assert Machines.known() == before
+      assert before == ["abe", "zed"]
+    end
+  end
+
   describe "snapshot/3 (hub rules 3 to 6)" do
     test "a result is stored with its signal, then acked" do
       {_task, %{id: id}} = started("mm1")

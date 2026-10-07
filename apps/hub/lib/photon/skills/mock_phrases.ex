@@ -7,7 +7,9 @@ defmodule Photon.Skills.MockPhrases do
 
     * `skills` (or `list skills`) says which skills the request's system
       prompt lists, with their versions, without a tool call, so tests and
-      a hub on the scripted model can see what the prompt listed
+      a hub on the scripted model can see what the prompt listed: the
+      agent's own, then, when the prompt lists any, each machine's
+      (section 7.1 of `docs/plans/machine-skills.md`)
     * `load skill <name>` calls `load_skill` with `name`
 
   After a `load_skill` result, the scripts' usual relay prints it.
@@ -21,6 +23,10 @@ defmodule Photon.Skills.MockPhrases do
 
   # One listed skill in the prompt's Skills section (`Photon.Skills.Prompt`).
   @listed ~r{<skill><name>([^<]*)</name><version>(\d+)</version>}
+
+  # Where the machines' skills start in that section, and one machine's group.
+  @machine_skills "<machine_skills>"
+  @machine ~r{<machine name="([^"]*)">(.*?)</machine>}s
 
   @typedoc "A phrasing: the pattern a message must match, and the reply its captures make."
   @type phrasing :: {Regex.t(), ([String.t()] -> Message.t())}
@@ -41,17 +47,36 @@ defmodule Photon.Skills.MockPhrases do
   end
 
   defp list(system) do
-    case Regex.scan(@listed, system, capture: :all_but_first) do
+    {own, machines} =
+      case String.split(system, @machine_skills, parts: 2) do
+        [own, machines] -> {own, machines}
+        [own] -> {own, ""}
+      end
+
+    Message.assistant(own_sentence(listed(own)) <> machines_sentence(machines))
+  end
+
+  defp own_sentence([]), do: "No skills are turned on here."
+  defp own_sentence(skills), do: "Skills turned on here: #{names(skills)}."
+
+  # Nothing when the prompt lists no machine skills, so the reply is what
+  # it was before machines had skills.
+  defp machines_sentence(text) do
+    case Regex.scan(@machine, text, capture: :all_but_first) do
       [] ->
-        Message.assistant("No skills are turned on here.")
+        ""
 
-      skills ->
-        names =
-          Enum.map_join(skills, ", ", fn [name, version] -> "#{name} (version #{version})" end)
-
-        Message.assistant("Skills turned on here: #{names}.")
+      groups ->
+        " For machines: " <>
+          Enum.map_join(groups, "; ", fn [id, group] -> "#{id}: #{names(listed(group))}" end) <>
+          "."
     end
   end
+
+  defp listed(text), do: Regex.scan(@listed, text, capture: :all_but_first)
+
+  defp names(skills),
+    do: Enum.map_join(skills, ", ", fn [name, version] -> "#{name} (version #{version})" end)
 
   defp load([name]),
     do:
