@@ -1,7 +1,7 @@
 defmodule PhotonWeb.ConversationComponentsTest do
   @moduledoc """
   The conversation pieces Blip's panel and a thread page share: the
-  context-file, `load_skill`, `ask_blip` and Blip's read and work calls'
+  context-file (a thread's and Blip's), `load_skill`, `ask_blip` and Blip's read and work calls'
   lines, the ID prefix
   that keeps two conversations on one page apart, and images loaded from
   the page's own route.
@@ -59,6 +59,26 @@ defmodule PhotonWeb.ConversationComponentsTest do
       call = call("list_context_files", %{}, "c1")
       assert label(action(call, nil)) == "Checking the context files"
       assert label(action(call, ok("c1", "notes.md", %{}))) == "Checked the context files"
+    end
+
+    test "Blip's names the project, by its slug once the result is in" do
+      for {tool, running, done} <- [
+            {"read_context_file", "Reading notes.md in gardn", "Read notes.md in garden"},
+            {"write_context_file", "Writing notes.md in gardn", "Wrote notes.md in garden"},
+            {"edit_context_file", "Editing notes.md in gardn", "Edited notes.md in garden"}
+          ] do
+        call = call(tool, %{"project" => "gardn", "name" => "notes.md"}, "c1")
+        assert label(action(call, nil)) == running
+
+        details = %{"project_id" => "p_1", "slug" => "garden", "file" => "notes.md"}
+        assert label(action(call, ok("c1", "Done.", details))) == done
+      end
+
+      list = call("list_context_files", %{"project" => "garden"}, "c1")
+      assert label(action(list, nil)) == "Checking the context files in garden"
+
+      listed = ok("c1", "notes.md", %{"project_id" => "p_1", "slug" => "garden"})
+      assert label(action(list, listed)) == "Checked the context files in garden"
     end
   end
 

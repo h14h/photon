@@ -16,6 +16,7 @@ defmodule Photon.AssistantCoordinatorToolsTest do
   alias Photon.{Assistant, Projects, Questions, Schedules, Signals, Skills, Threads}
   alias Photon.Assistant.Tools
   alias Photon.Durable.{Submission, TaskRecord, ToolAPI}
+  alias Photon.Projects.ContextFile
   alias PhotonCore.Message
 
   setup do
@@ -413,6 +414,147 @@ defmodule Photon.AssistantCoordinatorToolsTest do
     end
   end
 
+  describe "context files" do
+    test "list_context_files and read_context_file name writers from Blip's side", %{
+      garden: garden,
+      blip: blip
+    } do
+      {text, data} = tool!(blip, "files in garden", "list_context_files")
+      assert {data["status"], text} == {"ok", "This project has no context files yet."}
+      assert data["details"] == %{"project_id" => garden.id, "slug" => "garden"}
+
+      writer = ended!(garden, "write zones.md: three zones")
+      {:ok, _file} = Projects.create_file(garden.id, %{"name" => "plan.md", "content" => ""})
+      {_text, _data} = tool!(blip, "write garden/notes.md: hello", "write_context_file")
+
+      {text, _data} = tool!(blip, "files in #{garden.id}", "list_context_files")
+      lines = String.split(text, "\n")
+      assert length(lines) == 3
+      assert Enum.any?(lines, &(&1 =~ ~r/\A- notes\.md \(5 characters, changed .* by you\)\z/))
+
+      assert Enum.any?(
+               lines,
+               &(&1 =~ ~r/\A- plan\.md \(0 characters, changed .* by the user\)\z/)
+             )
+
+      assert Enum.any?(
+               lines,
+               &(&1 =~
+                   ~r/\A- zones\.md \(11 characters, changed .* by thread "#{writer.title}"\)\z/)
+             )
+
+      {text, data} = tool!(blip, "read garden/Zones", "read_context_file")
+      assert data["status"] == "ok"
+      assert data["details"] == %{"project_id" => garden.id, "slug" => "garden"}
+
+      assert text =~
+               ~r/\Azones\.md, 11 characters, changed .* by thread "#{writer.title}":\nthree zones\z/
+    end
+
+    test "a missing file or project is an error that says what there is", %{
+      garden: garden,
+      blip: blip
+    } do
+      {:ok, _file} = Projects.create_file(garden.id, %{"name" => "notes.md", "content" => "hi"})
+
+      {text, data} = tool!(blip, "read garden/todo.md", "read_context_file")
+      assert data["status"] == "error"
+      assert text == "Error: There's no todo.md. This project's context files are: notes.md."
+
+      {text, _data} = tool!(blip, "read house/todo.md", "read_context_file")
+      assert text == "Error: There's no todo.md. This project has no context files yet."
+
+      for {phrase, name} <- [
+            {"files in gardn", "list_context_files"},
+            {"read gardn/notes.md", "read_context_file"},
+            {"write gardn/notes.md: hi", "write_context_file"},
+            {"edit gardn/notes.md: hi => bye", "edit_context_file"}
+          ] do
+        {text, data} = tool!(blip, phrase, name)
+        assert data["status"] == "error", name
+        assert text == "Error: There's no project called gardn. Projects: garden, house.", name
+      end
+    end
+
+    test "write_context_file creates or replaces a file as Blip's, and announces it", %{
+      garden: garden,
+      blip: blip
+    } do
+      :ok = Projects.subscribe_files(garden.id)
+      garden_id = garden.id
+
+      {text, data} = tool!(blip, "write garden/notes.md: hello", "write_context_file")
+      assert {data["status"], text} == {"ok", "Created notes.md in garden (5 characters)."}
+
+      assert data["details"] == %{
+               "project_id" => garden.id,
+               "slug" => "garden",
+               "file" => "notes.md",
+               "version" => 1
+             }
+
+      assert_receive {:project_files_changed, ^garden_id, "notes.md"}
+
+      assert %ContextFile{content: "hello", version: 1, updated_by: "blip"} =
+               Projects.get_file(garden.id, "notes.md")
+
+      {text, _data} = tool!(blip, "write garden/Notes.md: hello, world", "write_context_file")
+      assert text == "Wrote notes.md in garden (12 characters)."
+      assert %ContextFile{version: 2} = Projects.get_file(garden.id, "notes.md")
+
+      {text, data} = tool!(blip, "write garden/x*y.md: hi", "write_context_file")
+      assert data["status"] == "error"
+      assert text =~ "Error: A file name uses letters"
+    end
+
+    test "edit_context_file changes one passage as Blip's; a bad edit changes nothing", %{
+      garden: garden,
+      blip: blip
+    } do
+      {:ok, _file} =
+        Projects.create_file(garden.id, %{"name" => "notes.md", "content" => "zone 2 stuck"})
+
+      {text, data} = tool!(blip, "edit garden/notes.md: stuck => fixed", "edit_context_file")
+      assert {data["status"], text} == {"ok", "Edited notes.md in garden."}
+
+      assert data["details"] == %{
+               "project_id" => garden.id,
+               "slug" => "garden",
+               "file" => "notes.md",
+               "version" => 2
+             }
+
+      assert %ContextFile{content: "zone 2 fixed", updated_by: "blip"} =
+               Projects.get_file(garden.id, "notes.md")
+
+      {text, _data} = tool!(blip, "edit garden/notes.md: stuck => fixed", "edit_context_file")
+      assert text == "Error: old_text wasn't found in notes.md."
+      assert %ContextFile{version: 2} = Projects.get_file(garden.id, "notes.md")
+    end
+
+    test "a project gone between the lookup and the commit says so", %{blip: blip} do
+      {:ok, shed} = Projects.create(%{"purpose" => "Tidy the shed.", "name" => "Shed"})
+      {_text, _data} = tool!(blip, "files in shed", "list_context_files")
+      api = ToolAPI.new(tool_task!(blip, "list_context_files"))
+
+      {:commit, write} =
+        Tools.WriteContextFile.execute(
+          %{"project" => "shed", "name" => "notes.md", "content" => "hi"},
+          api
+        )
+
+      {:commit, edit} =
+        Tools.EditContextFile.execute(
+          %{"project" => "shed", "name" => "notes.md", "old_text" => "a", "new_text" => "b"},
+          api
+        )
+
+      _deleted = Repo.delete!(shed)
+      assert Durable.commit(write) == {:error, "That project no longer exists."}
+      assert Durable.commit(edit) == {:error, "That project no longer exists."}
+    end
+  end
+
   describe "a thread's question" do
     @refused "Error: A thread's question can't start or change work. " <>
                "Answer it with answer_question, or ask the user with ask_owner."
@@ -424,24 +566,37 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       busy = parked_thread!(garden)
       idle = ended!(garden, "files")
       projects = length(Projects.list())
+      {:ok, _plan} = Projects.create_file(garden.id, %{"name" => "plan.md", "content" => "beds"})
 
       for {text, name} <- [
             {"start project: Keep the bees healthy.", "start_project"},
             {"start thread in garden: files", "start_thread"},
             {"tell #{idle.id}: files", "message_thread"},
-            {"stop thread #{busy.id}", "stop_thread"}
+            {"stop thread #{busy.id}", "stop_thread"},
+            {"write garden/notes.md: hello", "write_context_file"},
+            {"edit garden/plan.md: beds => pots", "edit_context_file"}
           ] do
         {result, data} = signal_tool!(blip, :question, text, name)
         assert {data["status"], result} == {"error", @refused}, name
       end
 
       assert length(Projects.list()) == projects
+
+      assert [%ContextFile{name: "plan.md", content: "beds", version: 1}] =
+               Projects.list_files(garden.id)
+
       assert [_busy, _idle] = Threads.list(garden.id)
       assert [_first] = submissions(idle.id)
       assert Durable.busy?(busy.id)
 
-      {_text, data} = signal_tool!(blip, :question, "project garden", "read_project")
-      assert data["status"] == "ok"
+      for {text, name} <- [
+            {"project garden", "read_project"},
+            {"files in garden", "list_context_files"},
+            {"read garden/plan.md", "read_context_file"}
+          ] do
+        {_text, data} = signal_tool!(blip, :question, text, name)
+        assert data["status"] == "ok", name
+      end
 
       :ok = Threads.stop(busy.id)
       :ok = idle!(busy.id)

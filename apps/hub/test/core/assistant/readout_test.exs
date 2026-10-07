@@ -403,6 +403,16 @@ defmodule Photon.Assistant.ReadoutTest do
     end
   end
 
+  test "what Blip's file tools say after a write or an edit" do
+    assert Readout.file_written("notes.md", "garden", String.duplicate("x", 1_234), true) ==
+             "Created notes.md in garden (1,234 characters)."
+
+    assert Readout.file_written("notes.md", "garden", "é", false) ==
+             "Wrote notes.md in garden (1 character)."
+
+    assert Readout.file_edited("notes.md", "garden") == "Edited notes.md in garden."
+  end
+
   test "the words for a project or thread that isn't there" do
     assert Readout.unknown_project("gardn", ["garden", "house"]) ==
              "There's no project called gardn. Projects: garden, house."

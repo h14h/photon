@@ -20,13 +20,19 @@ defmodule Photon.Assistant do
   and put their texts together in `Photon.Assistant.Readout`. It starts
   projects and threads, messages threads and stops them
   (`start_project`, `start_thread`, `message_thread`, `stop_thread`),
-  each inside the commit that records its result.
+  each inside the commit that records its result. It lists, reads, writes
+  and edits any project's context files (`list_context_files`,
+  `read_context_file`, `write_context_file`, `edit_context_file`), which
+  read through `Photon.Threads.describe_files/2` and `read_file_text/3`
+  as a thread's file tools do, and write as `"blip"` through
+  `Photon.Projects`.
 
   Who asked for a run is read from the sources of the messages it
   answers (`origin_tx/2`, `Photon.Assistant.Origin`): the owner, a
   schedule, Blip's own follow-up on a thread update, or a thread's
   `ask_blip` question. A run that carries a question the owner hasn't
-  written into can't start, wake or stop work, and between two of the
+  written into can't start, wake or stop work or change a project's
+  files, and between two of the
   owner's messages Blip can start or message threads only
   `unattended_limit/0` times on its own (`may_act_tx/3`), so a loop
   between Blip and a thread stops in code.
@@ -104,7 +110,11 @@ defmodule Photon.Assistant do
     Tools.StartProject,
     Tools.StartThread,
     Tools.MessageThread,
-    Tools.StopThread
+    Tools.StopThread,
+    Tools.ListContextFiles,
+    Tools.ReadContextFile,
+    Tools.WriteContextFile,
+    Tools.EditContextFile
   ]
 
   # The tools that start or wake threads, which the unattended limit counts.

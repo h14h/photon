@@ -13,6 +13,13 @@ defmodule Photon.Assistant.MockCoordinator do
     * `start thread in <slug>: <message>` starts a thread (`start_thread`)
     * `tell <id>: <message>` messages a thread (`message_thread`)
     * `stop thread <id>` stops one (`stop_thread`)
+    * `files in <slug>` lists a project's context files
+      (`list_context_files`)
+    * `read <slug>/<name>` reads one (`read_context_file`)
+    * `write <slug>/<name>: <text>` writes `<text>`, which may run over
+      several lines, as the whole file (`write_context_file`)
+    * `edit <slug>/<name>: <old> => <new>` changes one passage
+      (`edit_context_file`)
 
   After a tool result, the script's usual relay prints it.
   """
@@ -32,6 +39,9 @@ defmodule Photon.Assistant.MockCoordinator do
   - `start project: <purpose>` starts a project
   - `start thread in <slug>: <message>` starts a thread there, like `start thread in garden: files`
   - `tell <id>: <message>` messages a thread, and `stop thread <id>` stops one
+  - `files in <slug>` lists a project's context files, and `read <slug>/<name>` reads one
+  - `write <slug>/<name>: <text>` writes a whole file, like `write garden/notes.md: hello`
+  - `edit <slug>/<name>: <old text> => <new text>` changes one passage
   """
 
   @doc """
@@ -40,7 +50,7 @@ defmodule Photon.Assistant.MockCoordinator do
   don't look at it.
   """
   @spec phrasings(map()) :: [phrasing()]
-  def phrasings(_request), do: read_phrasings() ++ work_phrasings()
+  def phrasings(_request), do: read_phrasings() ++ work_phrasings() ++ file_phrasings()
 
   # The read tools' phrasings.
   defp read_phrasings do
@@ -63,6 +73,17 @@ defmodule Photon.Assistant.MockCoordinator do
        fn [slug, message] -> start_thread(slug, message) end},
       {~r/\Atell\s+(\S+?)\s*:\s*(.+)\z/is, fn [id, message] -> tell(id, message) end},
       {~r/\Astop thread\s+(\S+)\z/i, fn [id] -> stop_thread(id) end}
+    ]
+  end
+
+  # The context-file tools' phrasings. A file is named `<slug>/<name>`, so
+  # `read thread <id>` never reads as a file.
+  defp file_phrasings do
+    [
+      {~r/\Afiles in\s+(\S+)\z/i, &files_in/1},
+      {~r/\Aread\s+([^\s\/]+)\/([^\s\/:]+)\z/i, &read_file/1},
+      {~r/\Awrite\s+([^\s\/]+)\/([^\s\/:]+)\s*:\s*(.*)\z/s, &write_file/1},
+      {~r/\Aedit\s+([^\s\/]+)\/([^\s\/:]+)\s*:\s*(.+?)\s*=>\s*(.*)\z/s, &edit_file/1}
     ]
   end
 
@@ -97,6 +118,38 @@ defmodule Photon.Assistant.MockCoordinator do
       )
 
   defp stop_thread(id), do: call("stop_thread", %{"thread" => id}, "Stopping #{id}.")
+
+  defp files_in([slug]),
+    do:
+      call(
+        "list_context_files",
+        %{"project" => slug},
+        "Checking the context files in #{slug}."
+      )
+
+  defp read_file([slug, name]),
+    do:
+      call(
+        "read_context_file",
+        %{"project" => slug, "name" => name},
+        "Reading #{name} in #{slug}."
+      )
+
+  defp write_file([slug, name, content]),
+    do:
+      call(
+        "write_context_file",
+        %{"project" => slug, "name" => name, "content" => content},
+        "Writing #{name} in #{slug}."
+      )
+
+  defp edit_file([slug, name, old_text, new_text]),
+    do:
+      call(
+        "edit_context_file",
+        %{"project" => slug, "name" => name, "old_text" => old_text, "new_text" => new_text},
+        "Editing #{name} in #{slug}."
+      )
 
   defp call(tool, args, intro), do: Message.assistant(intro, [Mock.call(tool, args)])
 end

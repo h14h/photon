@@ -850,9 +850,9 @@ All in `apps/hub/lib/photon/assistant/tools/`, one module each:
 | `message_thread` | `thread`, `message`, `when_busy` (optional, `follow_up` or `steer`, default `follow_up`) | `Threads.send_tx/4` with `source: %{"kind" => "blip"}`, `request_id: "blip:" <> task_id` and `when_busy` | `Sent to "Fix the pump"; it's working on it.`, `Queued for "Fix the pump", behind its current run.`, or for a steer `"Fix the pump" will see it after its current step.` |
 | `stop_thread` | `thread` | `Threads.stop_tx/2` | `Stopped "Fix the pump".` or `"Fix the pump" wasn't running; nothing to stop.` |
 | `list_context_files` | `project` | `Threads.describe_files/2` | the listing the thread tool gives, with `you` meaning Blip |
-| `read_context_file` | `project`, `name` | `Threads.read_file_text/3` | the file with its header, as the thread tool reads it |
-| `write_context_file` | `project`, `name`, `content` | `Projects.write_file_tx(tx, project_id, name, content, "blip")` | `Created notes.md in garden (1,234 characters).` or `Wrote ...` |
-| `edit_context_file` | `project`, `name`, `old_text`, `new_text` | `Projects.edit_file_tx(..., "blip")` | `Edited notes.md in garden.` |
+| `read_context_file` | `project`, `name` | `Threads.read_file_text/3` | the file with its header, as the thread tool reads it; a missing file lists the files there are |
+| `write_context_file` | `project`, `name`, `content` | `Projects.write_file_tx(tx, project_id, name, content, "blip")` | `Created notes.md in garden (1,234 characters).` or `Wrote ...` (`Readout.file_written/4`) |
+| `edit_context_file` | `project`, `name`, `old_text`, `new_text` | `Projects.edit_file_tx(..., "blip")` | `Edited notes.md in garden.` (`Readout.file_edited/2`) |
 
 `start_thread` and `message_thread` refuse an empty message (`The
 message is empty; say what the thread should do.` / `The message is
@@ -860,7 +860,10 @@ empty.`), and say `That project no longer exists.` or `That thread no
 longer exists.` when it went between the lookup and the commit. Their
 details, and `stop_thread`'s, carry `"thread_id"`, `"title"` and
 `"project_id"` (`start_thread` also `"slug"`, for its link);
-`start_project`'s carry `"project_id"`, `"slug"` and `"name"`.
+`start_project`'s carry `"project_id"`, `"slug"` and `"name"`. The
+four file tools' details carry `"project_id"` and `"slug"`, and
+`write_context_file`'s and `edit_context_file`'s also `"file"` (the name
+as stored) and `"version"`, as the thread's tools do.
 
 Supporting changes:
 
@@ -879,9 +882,11 @@ Supporting changes:
   their errors: the missing-project check (today `project_for_thread/1`,
   "This thread's project no longer exists.") becomes `project_for(writer,
   project_id)`, which says `That project no longer exists.` when the
-  writer is `"blip"`. Blip's file tools also resolve the project first
-  (`Assistant.find_project/1`), so the message is only reachable when the
-  project goes between the lookup and the commit.
+  writer is `"blip"`. `edit_file_tx/6` makes the same check before it
+  looks for the file (it had none, so a thread editing in a project that
+  was gone read "There's no notes.md"). Blip's file tools also resolve
+  the project first (`Assistant.find_project/1`), so the message is only
+  reachable when the project goes between the lookup and the commit.
 - `ContextFile.updated_by` may be `"blip"`. `Threads.Rules`' listing and
   read header take the viewer (a thread ID or `"blip"`) and name writers
   from that side: `you`, `the user`, `Blip`, or a thread by title.
@@ -1610,7 +1615,7 @@ No changes.
 | `Photon.Assistant` | boundary (API and the `"assistant"` profile) | deps add `Photon.Activity`, `Photon.Questions`, `Photon.Signals`; `exports: [Notice]` | `conversation_id/0` delegates to `Signals`; `answer/2` (the panel's reply chip, through `Questions.answer/2`); `find_project/1`, `find_thread/1` for the tools; `origin_tx/2` (takes the generation or one of its tool tasks); `unattended_count_tx/1`; `unattended_limit/0`; `may_act_tx/3` (the refusals of section 5.4, which the tools that start or change work call in their commit); `on_tool_result/4` and `on_settled/3` (`settled_tx/3`) record activity; the tool list (sections 5.2 to 5.5). It goes past `ModuleDependencies`' 20, as `Photon.Threads` did in step 3; disable the check on the module with the same reason (it is the context's API and the profile). |
 | `Photon.Assistant.Prompt` | core | unchanged | Section 5.6. |
 | `Photon.Assistant.Origin` | core | `use Boundary, type: :strict, deps: [PhotonCore]` (`for_call/3` decodes the raw arguments with `PhotonCore.Message.arguments/1`) | `of/1`, `for_call/3`, `unattended_ok?/3` (section 5.4), and the two refusals' words, `restricted_message/0` and `unattended_message/1`. |
-| `Photon.Assistant.Readout` | core | `use Boundary, type: :strict, deps: [Photon.Threads, PhotonCore]` (it reaches `Threads.State` through the parent's export, as prompts reach `Skills.Prompt`) | The read tools' texts (section 5.2): `projects/3`, `project/2` (schedules come in with their `when` text, which the tool gets from `Schedules.when_text/1`), `threads/2`, `thread/3` over recent entries (takes `now`), `unknown_project/2`, `unknown_thread/1`, and `state_names/0` and `state_named/1` for `list_threads`' `state` argument. |
+| `Photon.Assistant.Readout` | core | `use Boundary, type: :strict, deps: [Photon.Threads, PhotonCore]` (it reaches `Threads.State` through the parent's export, as prompts reach `Skills.Prompt`) | The read tools' texts (section 5.2): `projects/3`, `project/2` (schedules come in with their `when` text, which the tool gets from `Schedules.when_text/1`), `threads/2`, `thread/3` over recent entries (takes `now`), `unknown_project/2`, `unknown_thread/1`, and `state_names/0` and `state_named/1` for `list_threads`' `state` argument; `file_written/4` and `file_edited/2` for the write and edit tools' results (the listing and read texts are `Threads.describe_files/2` and `read_file_text/3`). |
 | `Photon.Assistant.MockCoordinator` | core | `use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]` | Section 8.2: `phrasings/1`, and `help/0`, the lines `MockScript`'s help text includes. |
 | `Photon.Assistant.MockScript` | core | deps add `Photon.Assistant.MockCoordinator` (same boundary) | Tries `MockCoordinator.phrasings/1`; help text. |
 | `Photon.Assistant.Notice` | core | unchanged | `:question` notices (section 10.6). |

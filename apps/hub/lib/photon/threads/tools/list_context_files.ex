@@ -2,13 +2,13 @@ defmodule Photon.Threads.Tools.ListContextFiles do
   @moduledoc """
   The `list_context_files` tool: the thread's project's context files,
   newest change first, each with its size, when it changed and who changed
-  it (section 3.3 of `docs/plans/step-2-projects-and-threads.md`). It
-  changes nothing, so a rerun after a restart is safe.
+  it (section 3.3 of `docs/plans/step-2-projects-and-threads.md`), through
+  `Photon.Threads.describe_files/2`, which Blip's tool of the same name
+  shares. It changes nothing, so a rerun after a restart is safe.
   """
   @behaviour Photon.Durable.Tool
 
-  alias Photon.{Projects, Threads}
-  alias Photon.Threads.Rules
+  alias Photon.Threads
 
   @impl true
   def name, do: "list_context_files"
@@ -28,8 +28,6 @@ defmodule Photon.Threads.Tools.ListContextFiles do
   @impl true
   def execute(_args, api) do
     thread_id = api.conversation_id
-    files = thread_id |> Threads.project_id!() |> Projects.list_files()
-    titles = files |> Enum.map(& &1.updated_by) |> Enum.uniq() |> Threads.titles()
-    {:ok, Rules.listing(files, thread_id, titles)}
+    {:ok, thread_id |> Threads.project_id!() |> Threads.describe_files(thread_id)}
   end
 end

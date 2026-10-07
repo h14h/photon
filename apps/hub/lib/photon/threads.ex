@@ -701,6 +701,40 @@ defmodule Photon.Threads do
     |> Map.new()
   end
 
+  ## Context files, as the file tools describe them
+
+  @doc """
+  The project's context files, newest change first, each with its size and
+  who changed it last, as `viewer` sees them: a thread's ID for a thread's
+  `list_context_files`, or `"blip"` for Blip's
+  (`Photon.Threads.Rules.listing/3`). Says so when there are none.
+  """
+  @spec describe_files(String.t(), String.t()) :: String.t()
+  def describe_files(project_id, viewer) do
+    files = Projects.list_files(project_id)
+    titles = files |> Enum.map(& &1.updated_by) |> Enum.uniq() |> titles()
+    Rules.listing(files, viewer, titles)
+  end
+
+  @doc """
+  The project's context file `name` after a line naming it with its size,
+  when it changed and who changed it, as `viewer` sees it (a thread's ID
+  or `"blip"`). A missing file is an error that lists the files there are.
+  """
+  @spec read_file_text(String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, String.t()}
+  def read_file_text(project_id, name, viewer) do
+    case Projects.get_file(project_id, name) do
+      nil ->
+        names = project_id |> Projects.list_files() |> Enum.map(& &1.name)
+        {:error, Rules.missing_file(String.trim(name), names)}
+
+      file ->
+        titles = titles([file.updated_by])
+        {:ok, Rules.file_header(file, viewer, titles) <> "\n" <> file.content}
+    end
+  end
+
   @doc """
   The text of the thread's latest answer: its newest assistant message that
   has text, or nil when it has none yet. A message that only calls tools has

@@ -3,9 +3,12 @@ defmodule Photon.Assistant.Readout do
   The texts Blip's read tools return (section 5.2 of
   `docs/plans/step-4-blip-as-coordinator.md`): `list_projects`
   (`projects/3`), `read_project` (`project/2`), `list_threads`
-  (`threads/2`) and `read_thread` (`thread/3`), and the words for a
-  project or thread that isn't there (`unknown_project/2`,
-  `unknown_thread/1`).
+  (`threads/2`) and `read_thread` (`thread/3`), what its file tools say
+  after a write or an edit (`file_written/4`, `file_edited/2`), and the
+  words for a project or thread that isn't there (`unknown_project/2`,
+  `unknown_thread/1`). Its file tools' listing and read text are the
+  threads' (`Photon.Threads.describe_files/2`, `read_file_text/3`), seen
+  from Blip's side.
 
   It takes the rows, the board entries (`Photon.Threads.board/1`) and the
   time, all passed in. A thread's state reads as `Photon.Threads.State.label/2`
@@ -519,6 +522,22 @@ defmodule Photon.Assistant.Readout do
       String.slice(item, 0, keep) <> marker <> String.slice(item, length - keep, keep)
     end
   end
+
+  ## Context files
+
+  @doc """
+  What Blip's `write_context_file` says: `Created notes.md in garden
+  (1,234 characters).` for a new file, `Wrote ...` for one it replaced.
+  """
+  @spec file_written(String.t(), String.t(), String.t(), boolean()) :: String.t()
+  def file_written(name, slug, content, created?) do
+    verb = if created?, do: "Created", else: "Wrote"
+    "#{verb} #{name} in #{slug} (#{characters(content)})."
+  end
+
+  @doc "What Blip's `edit_context_file` says: `Edited notes.md in garden.`"
+  @spec file_edited(String.t(), String.t()) :: String.t()
+  def file_edited(name, slug), do: "Edited #{name} in #{slug}."
 
   ## Unknown names
 

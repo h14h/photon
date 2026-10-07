@@ -18,7 +18,9 @@ defmodule Photon.Assistant.MockScript do
       `Photon.Assistant.MockCoordinator`: `projects`, `project <slug>`,
       `threads`, `threads in <slug>`, `read thread <id>`, `start project:
       <purpose>`, `start thread in <slug>: <message>`, `tell <id>:
-      <message>`, `stop thread <id>`
+      <message>`, `stop thread <id>`, `files in <slug>`, `read
+      <slug>/<name>`, `write <slug>/<name>: <text>`, `edit <slug>/<name>:
+      <old> => <new>`
 
   It reads the last text part of the user's message, which is what the
   user typed: a message sent from a page has the page's note in front of

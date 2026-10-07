@@ -289,7 +289,8 @@ defmodule PhotonWeb.ConversationComponents do
 
   @doc """
   What a call did, in a line. A machine call names its command or path,
-  and the machine; a context-file call names the file, `load_skill` the
+  and the machine; a context-file call names the file (and Blip's its
+  project), `load_skill` the
   skill, and `ask_blip` its question. They are in the present while they
   run.
   """
@@ -322,11 +323,12 @@ defmodule PhotonWeb.ConversationComponents do
     assigns =
       assign(assigns,
         verb: file_verb(name, assigns.status),
-        file: truncate(assigns.details["file"] || assigns.args["name"])
+        file: truncate(assigns.details["file"] || assigns.args["name"]),
+        project: file_project(assigns.args, assigns.details)
       )
 
     ~H"""
-    <span phx-no-format>{@verb}<span :if={@file != ""}> <span class="font-medium text-ink">{@file}</span></span></span>
+    <span phx-no-format>{@verb}<span :if={@file != ""}> <span class="font-medium text-ink">{@file}</span></span><span :if={@project} data-project={@project}> in <span class="font-medium text-ink">{@project}</span></span></span>
     """
   end
 
@@ -495,6 +497,15 @@ defmodule PhotonWeb.ConversationComponents do
   defp status_verb(:error, _running, _done, base), do: "Couldn't " <> base
   defp status_verb(:stopped, running, _done, _base), do: "Stopped " <> String.downcase(running)
   defp status_verb(_done, _running, done, _base), do: done
+
+  # Blip's file calls name a project (its slug once the result is in); a
+  # thread's only ever touch its own, so they name none.
+  defp file_project(args, details) do
+    case details["slug"] || args["project"] do
+      project when is_binary(project) and project != "" -> truncate(project)
+      _none -> nil
+    end
+  end
 
   # Listing names no file; the others name the one they touched.
   defp file_verb("list_context_files", :pending), do: "Checking the context files"

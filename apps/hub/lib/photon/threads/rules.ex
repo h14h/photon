@@ -9,8 +9,10 @@ defmodule Photon.Threads.Rules do
   (`title_request/2`), and what it says is taken only if it reads as a
   title (`model_title/1`). The owner can rename a thread (`rename/1`).
 
-  Files are described by who last wrote them, from the reading thread's
-  point of view: "you" for itself, "the user" for the owner, and
+  Files are described by who last wrote them, from the reader's point of
+  view (the viewer: a thread's ID, or `"blip"` for Blip's own file tools,
+  section 5.2 of `docs/plans/step-4-blip-as-coordinator.md`): "you" for
+  the reader itself, "the user" for the owner, "Blip" for Blip, and
   `thread "Fix the pump"` for another thread, whose titles the caller
   reads and passes in.
   """
@@ -21,6 +23,7 @@ defmodule Photon.Threads.Rules do
   @title_limit 50
   @rename_limit 80
   @owner "owner"
+  @blip "blip"
 
   # How much of the first message and the first answer the title request
   # shows the model: enough to name the work, little enough to stay cheap.
@@ -50,6 +53,9 @@ defmodule Photon.Threads.Rules do
 
   @typedoc "Other threads' titles by ID, for naming who wrote a file."
   @type titles :: %{optional(String.t()) => String.t()}
+
+  @typedoc ~S(Who reads a file listing or header: a thread's ID, or `"blip"`.)
+  @type viewer :: String.t()
 
   ## Who started a thread
 
@@ -198,27 +204,28 @@ defmodule Photon.Threads.Rules do
   @doc """
   The `list_context_files` result: one line per file, newest change first,
   like `- notes.md (1,234 characters, changed 2026-10-07 14:03 UTC by
-  you)`, as seen by thread `thread_id`. Other threads are named from
-  `titles`.
+  you)`, as seen by `viewer` (a thread's ID, or `"blip"`). Other threads
+  are named from `titles`.
   """
-  @spec listing([file()], String.t(), titles()) :: String.t()
-  def listing([], _thread_id, _titles), do: "This project has no context files yet."
+  @spec listing([file()], viewer(), titles()) :: String.t()
+  def listing([], _viewer, _titles), do: "This project has no context files yet."
 
-  def listing(files, thread_id, titles) do
+  def listing(files, viewer, titles) do
     files
     |> Enum.sort_by(& &1.updated_at, {:desc, DateTime})
     |> Enum.map_join("\n", fn file ->
-      "- #{file.name} (#{characters(file.content)}, #{changed(file, thread_id, titles)})"
+      "- #{file.name} (#{characters(file.content)}, #{changed(file, viewer, titles)})"
     end)
   end
 
   @doc """
   The first line of a `read_context_file` result, before the content:
-  `notes.md, 1,234 characters, changed 2026-10-07 14:03 UTC by you:`.
+  `notes.md, 1,234 characters, changed 2026-10-07 14:03 UTC by you:`, as
+  seen by `viewer`.
   """
-  @spec file_header(file(), String.t(), titles()) :: String.t()
-  def file_header(file, thread_id, titles),
-    do: "#{file.name}, #{characters(file.content)}, #{changed(file, thread_id, titles)}:"
+  @spec file_header(file(), viewer(), titles()) :: String.t()
+  def file_header(file, viewer, titles),
+    do: "#{file.name}, #{characters(file.content)}, #{changed(file, viewer, titles)}:"
 
   @doc """
   The `read_context_file` error for a file called `name` that isn't there,
@@ -239,15 +246,16 @@ defmodule Photon.Threads.Rules do
     end
   end
 
-  defp changed(file, thread_id, titles) do
+  defp changed(file, viewer, titles) do
     "changed #{Calendar.strftime(file.updated_at, "%Y-%m-%d %H:%M UTC")} by " <>
-      writer(file.updated_by, thread_id, titles)
+      writer(file.updated_by, viewer, titles)
   end
 
-  defp writer(thread_id, thread_id, _titles), do: "you"
-  defp writer(@owner, _thread_id, _titles), do: "the user"
+  defp writer(viewer, viewer, _titles), do: "you"
+  defp writer(@owner, _viewer, _titles), do: "the user"
+  defp writer(@blip, _viewer, _titles), do: "Blip"
 
-  defp writer(other, _thread_id, titles) do
+  defp writer(other, _viewer, titles) do
     case Map.fetch(titles, other) do
       {:ok, title} -> ~s(thread "#{title}")
       :error -> "another thread"

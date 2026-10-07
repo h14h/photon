@@ -125,14 +125,53 @@ defmodule Photon.Threads.RulesTest do
 
     test "says when there are no files" do
       assert Rules.listing([], "c_me", %{}) == "This project has no context files yet."
+      assert Rules.listing([], "blip", %{}) == "This project has no context files yet."
+    end
+
+    test "names Blip to a thread, and Blip as you to Blip, who sees every thread by title" do
+      files = [
+        file("zones.md", "a", "c_other", ~N[2026-10-07 09:00:00]),
+        file("notes.md", "hi", "blip", ~N[2026-10-07 14:03:00]),
+        file("plan.md", "", "owner", ~N[2026-10-07 11:30:00])
+      ]
+
+      assert Rules.listing(files, "c_me", %{"c_other" => "Fix the pump"}) =~
+               "- notes.md (2 characters, changed 2026-10-07 14:03 UTC by Blip)"
+
+      assert Rules.listing(files, "blip", %{"c_other" => "Fix the pump"}) ==
+               """
+               - notes.md (2 characters, changed 2026-10-07 14:03 UTC by you)
+               - plan.md (0 characters, changed 2026-10-07 11:30 UTC by the user)
+               - zones.md (1 character, changed 2026-10-07 09:00 UTC by thread "Fix the pump")\
+               """
+
+      assert Rules.listing(files, "blip", %{}) =~
+               "zones.md (1 character, changed " <>
+                 "2026-10-07 09:00 UTC by another thread)"
     end
   end
 
-  test "file_header/3 is the first line of a read" do
+  test "file_header/3 is the first line of a read, from the viewer's side" do
     notes = file("notes.md", "héllo", "owner", ~N[2026-10-07 14:03:00])
 
     assert Rules.file_header(notes, "c_me", %{}) ==
              "notes.md, 5 characters, changed 2026-10-07 14:03 UTC by the user:"
+
+    assert Rules.file_header(notes, "blip", %{}) ==
+             "notes.md, 5 characters, changed 2026-10-07 14:03 UTC by the user:"
+
+    by_blip = %{notes | updated_by: "blip"}
+
+    assert Rules.file_header(by_blip, "c_me", %{}) ==
+             "notes.md, 5 characters, changed 2026-10-07 14:03 UTC by Blip:"
+
+    assert Rules.file_header(by_blip, "blip", %{}) ==
+             "notes.md, 5 characters, changed 2026-10-07 14:03 UTC by you:"
+
+    by_thread = %{notes | updated_by: "c_me"}
+
+    assert Rules.file_header(by_thread, "blip", %{"c_me" => "Fix the pump"}) ==
+             ~s(notes.md, 5 characters, changed 2026-10-07 14:03 UTC by thread "Fix the pump":)
   end
 
   test "missing_file/2 lists the files there are" do

@@ -31,12 +31,13 @@ defmodule Photon.Projects do
       message (`threads_changed_tx/2`)
     * `"project:" <> id` (`subscribe_files/1`):
       `{:project_files_changed, project_id, key}` when a context file is
-      created, written, edited or deleted, by the user or a thread
+      created, written, edited or deleted, by the user, a thread or Blip
 
-  `write_file_tx/5` and `edit_file_tx/6` are for thread tools, inside the
-  commit that records the tool's result: they check the name and content
-  themselves and return `{:error, message}` for the model, so the tools
-  check nothing.
+  `write_file_tx/5` and `edit_file_tx/6` are for the file tools of
+  threads and of Blip, inside the commit that records the tool's result:
+  they check the name and content themselves and return `{:error,
+  message}` for the model, worded for the writer (a thread's ID or
+  `"blip"`), so the tools check nothing.
 
   There is no process here: the rows hold the state and the Store's commit
   line orders the writes.
@@ -54,6 +55,7 @@ defmodule Photon.Projects do
 
   @topic "projects"
   @owner "owner"
+  @blip "blip"
 
   @typedoc "Form errors: each field's message, e.g. `%{purpose: \"Say what the project is for.\"}`."
   @type field_errors :: %{optional(:name | :purpose | :content) => String.t()}
@@ -262,52 +264,65 @@ defmodule Photon.Projects do
     end)
   end
 
-  ## Context files, for thread tools inside their commit
+  ## Context files, for file tools inside their commit
 
   @doc """
-  Inside the commit that records a thread tool's result: creates the file
+  Inside the commit that records a file tool's result: creates the file
   `name` or replaces all of it with `content`, with no version check (last
-  write wins), as written by thread `thread_id`. Checks the name and the
-  content first and returns a message for the model when either breaks a
-  rule; a refused write changes nothing.
+  write wins), as written by `writer`: a thread's ID, or `"blip"`. Checks
+  the name, the content and that the project is still there, and returns
+  a message for the model when one fails, worded for the writer; a
+  refused write changes nothing.
   """
-  @spec write_file_tx(Tx.t(), String.t(), String.t(), String.t(), String.t()) ::
+  @spec write_file_tx(Tx.t(), String.t(), String.t(), String.t(), ContextFile.writer()) ::
           {:ok, %{file: ContextFile.t(), created?: boolean()}} | {:error, String.t()}
-  def write_file_tx(tx, project_id, name, content, thread_id) do
+  def write_file_tx(tx, project_id, name, content, writer) do
     with {:ok, name} <- Rules.file_name(name),
          :ok <- Rules.content(name, content),
-         :ok <- project_for_thread(project_id) do
+         :ok <- project_for(writer, project_id) do
       current = get_file(project_id, name)
-      file = put_file(tx, current || new_file(project_id, name), content, thread_id)
+      file = put_file(tx, current || new_file(project_id, name), content, writer)
       {:ok, %{file: file, created?: current == nil}}
     end
   end
 
   @doc """
-  Inside the commit that records a thread tool's result: replaces
+  Inside the commit that records a file tool's result: replaces
   `old_text`, which must occur exactly once in file `name`, with
-  `new_text`, as written by thread `thread_id`. Returns a message for the
-  model when the file is missing, the passage isn't found exactly once or
-  the result is too long; a refused edit changes nothing.
+  `new_text`, as written by `writer` (a thread's ID, or `"blip"`). Returns
+  a message for the model, worded for the writer, when the project or the
+  file is missing, the passage isn't found exactly once or the result is
+  too long; a refused edit changes nothing.
   """
-  @spec edit_file_tx(Tx.t(), String.t(), String.t(), String.t(), String.t(), String.t()) ::
-          {:ok, ContextFile.t()} | {:error, String.t()}
+  @spec edit_file_tx(
+          Tx.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          ContextFile.writer()
+        ) :: {:ok, ContextFile.t()} | {:error, String.t()}
   # The plan's signature (section 3.3): the tool's three arguments, and
-  # the commit and the project and thread they apply to.
+  # the commit, the project and the writer they apply to.
   # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
-  def edit_file_tx(tx, project_id, name, old_text, new_text, thread_id) do
+  def edit_file_tx(tx, project_id, name, old_text, new_text, writer) do
     with {:ok, name} <- Rules.file_name(name),
+         :ok <- project_for(writer, project_id),
          {:ok, file} <- existing_file(project_id, name),
          {:ok, content} <- Rules.edit(file.name, file.content, old_text, new_text),
          :ok <- Rules.content(file.name, content) do
-      {:ok, put_file(tx, file, content, thread_id)}
+      {:ok, put_file(tx, file, content, writer)}
     end
   end
 
-  defp project_for_thread(project_id) do
-    case project_exists(project_id) do
-      :ok -> :ok
-      :not_found -> {:error, "This thread's project no longer exists."}
+  # The project a file tool writes to must still be there. Blip names
+  # projects itself, so for Blip it is "that project"; a thread only ever
+  # writes to its own.
+  defp project_for(writer, project_id) do
+    case {project_exists(project_id), writer} do
+      {:ok, _writer} -> :ok
+      {:not_found, @blip} -> {:error, "That project no longer exists."}
+      {:not_found, _thread} -> {:error, "This thread's project no longer exists."}
     end
   end
 

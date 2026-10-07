@@ -45,6 +45,30 @@ defmodule Photon.Assistant.MockCoordinatorTest do
     end
   end
 
+  test "the file phrasings name a project and a file, and call the file tools" do
+    for {text, call} <- [
+          {"files in garden", {"list_context_files", %{"project" => "garden"}}},
+          {"read garden/notes.md",
+           {"read_context_file", %{"project" => "garden", "name" => "notes.md"}}},
+          {"write garden/notes.md: # Beds\n\nWater zone 2.",
+           {"write_context_file",
+            %{"project" => "garden", "name" => "notes.md", "content" => "# Beds\n\nWater zone 2."}}},
+          {"edit garden/notes.md: zone 2 => zone 3",
+           {"edit_context_file",
+            %{
+              "project" => "garden",
+              "name" => "notes.md",
+              "old_text" => "zone 2",
+              "new_text" => "zone 3"
+            }}}
+        ] do
+      assert calls(ask(text)) == [call], text
+    end
+
+    # A thread is read by its ID, never as a file.
+    assert calls(ask("read thread c_123")) == [{"read_thread", %{"thread" => "c_123"}}]
+  end
+
   test "each phrasing matches the whole message" do
     for text <- [
           "projects please",
@@ -56,7 +80,12 @@ defmodule Photon.Assistant.MockCoordinatorTest do
           "start thread in garden",
           "tell c_123",
           "stop thread",
-          "stop thread c_1 now"
+          "stop thread c_1 now",
+          "files in",
+          "read notes.md",
+          "read garden/notes.md now",
+          "write garden: hello",
+          "edit garden/notes.md: zone 2"
         ] do
       assert calls(ask(text)) == [], text
     end
@@ -78,6 +107,7 @@ defmodule Photon.Assistant.MockCoordinatorTest do
     assert help =~ "`read thread <id>` reads one"
     assert help =~ "`start thread in <slug>: <message>` starts a thread there"
     assert help =~ "`stop thread <id>` stops one"
+    assert help =~ "`write <slug>/<name>: <text>` writes a whole file"
     assert help =~ MockCoordinator.help()
   end
 
