@@ -1,10 +1,10 @@
 defmodule PhotonWeb.ContextFileLiveTest do
   @moduledoc """
   A project's context file: making one, editing one, and what the editor
-  does when a thread writes or deletes the open file.
+  does when a thread or Blip writes or deletes the open file.
 
-  A thread's write is committed through `Projects.write_file_tx/5`, as the
-  context-file tools do it. The Store broadcasts inside the commit's call,
+  A thread's or Blip's write is committed through `Projects.write_file_tx/5`,
+  as the context-file tools do it. The Store broadcasts inside the commit's call,
   so the page has the announcement queued before the test's next render.
   """
 
@@ -26,10 +26,10 @@ defmodule PhotonWeb.ContextFileLiveTest do
     %{project: project, notes: notes}
   end
 
-  # Writes `content` over notes.md as thread `thread_id` would.
-  defp thread_writes(project, content, thread_id \\ "c_elsewhere") do
+  # Writes `content` over notes.md as `writer` (a thread's ID or "blip") would.
+  defp thread_writes(project, content, writer \\ "c_elsewhere") do
     {:ok, %{file: file}} =
-      Durable.commit(&Projects.write_file_tx(&1, project.id, "notes.md", content, thread_id))
+      Durable.commit(&Projects.write_file_tx(&1, project.id, "notes.md", content, writer))
 
     file
   end
@@ -315,6 +315,34 @@ defmodule PhotonWeb.ContextFileLiveTest do
       _ = render(view)
 
       refute has_element?(view, "#file-changed")
+      assert content(view) =~ "My draft."
+    end
+  end
+
+  describe "when Blip writes the open file" do
+    test "the meta line says Blip wrote it", %{conn: conn, project: project} do
+      _file = thread_writes(project, "Zone 3 leaks.", "blip")
+
+      {:ok, view, _html} = open_notes(conn)
+
+      assert view |> element("#file-meta") |> render() =~
+               "Version 2, changed just now by Blip"
+    end
+
+    test "a dirty editor's banner names Blip", %{conn: conn, project: project} do
+      {:ok, view, _html} = open_notes(conn)
+      view |> form("#file-form", file: %{content: "My draft."}) |> render_change()
+
+      thread_writes(project, "Zone 3 leaks.", "blip")
+      _ = render(view)
+
+      assert has_element?(
+               view,
+               "#file-changed",
+               "Blip changed this file while you were editing."
+             )
+
+      refute has_element?(view, "#file-changed", "A thread")
       assert content(view) =~ "My draft."
     end
   end

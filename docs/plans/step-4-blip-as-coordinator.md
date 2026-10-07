@@ -2538,8 +2538,9 @@ C17. The activity page. After C12 and C13.
 C18. Blip as a writer on the file pages. No dependencies.
 - `apps/hub/lib/photon_web/project_text.ex` (`writer/2`'s `"blip"`
   clause) and `live/context_file_live.ex` (`changed_by/1`'s Blip
-  clause), section 7. Nothing writes `"blip"` until C9; the tests build
-  the file row directly.
+  clause), section 7. The editor's tests write the file as `"blip"`
+  through `Projects.write_file_tx/5`, which C9 already allows; the
+  `ProjectText` test builds the file row directly.
 - Tests: `test/web/project_text_test.exs`, `context_file_live_test.exs`.
 
 C19. End to end, docs and the final checks. After all of the above.

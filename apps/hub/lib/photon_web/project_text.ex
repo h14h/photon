@@ -1,7 +1,8 @@
 defmodule PhotonWeb.ProjectText do
   @moduledoc """
   The words the project pages use for times, file sizes and who changed a
-  context file: "5 minutes ago", "1.2 KB", "by you" or `by "Fix the pump"`.
+  context file: "5 minutes ago", "1.2 KB", "by you", "by Blip" or
+  `by "Fix the pump"`.
 
   Pure: the time to measure from and the thread titles are passed in, so
   a page reads the clock and the titles once and these only format them.
@@ -40,11 +41,14 @@ defmodule PhotonWeb.ProjectText do
   end
 
   @doc ~S"""
-  Who last wrote `file`: "you", or the writing thread's title in quotes
-  from `titles` (thread ID to title), or "a thread" when it isn't there.
+  Who last wrote `file`: "you", "Blip", or the writing thread's title in
+  quotes from `titles` (thread ID to title), or "a thread" when it isn't
+  there.
   """
   @spec writer(ContextFile.t(), %{optional(String.t()) => String.t()}) :: String.t()
   def writer(%ContextFile{updated_by: "owner"}, _titles), do: "you"
+  # Ahead of the thread clause, which would look "blip" up as a thread ID.
+  def writer(%ContextFile{updated_by: "blip"}, _titles), do: "Blip"
 
   def writer(%ContextFile{updated_by: thread_id}, titles) do
     case Map.fetch(titles, thread_id) do
@@ -54,7 +58,8 @@ defmodule PhotonWeb.ProjectText do
   end
 
   @doc ~S"""
-  "changed 5 minutes ago by you", or `changed yesterday by "Fix the pump"`.
+  "changed 5 minutes ago by you", "changed just now by Blip", or
+  `changed yesterday by "Fix the pump"`.
   """
   @spec changed(ContextFile.t(), %{optional(String.t()) => String.t()}, DateTime.t()) ::
           String.t()
