@@ -93,7 +93,10 @@ defmodule PhotonWeb.ActivityTextTest do
       action(origin: "follow_up", origin_id: "sc_morning"),
       action(origin: "schedule", origin_id: "sc_disks"),
       action(origin: "schedule", origin_id: "sc_disks", thread_id: "c_pump"),
-      action(origin: "owner")
+      action(origin: "owner"),
+      # A follow-up on a digest or the daily review names no schedule.
+      action(origin: "follow_up", origin_id: "digest"),
+      action(origin: "follow_up", origin_id: "review")
     ]
 
     assert ActivityText.wanted(actions) == %{

@@ -151,6 +151,16 @@ defmodule Photon.TranscriptTest do
     end
   end
 
+  describe "an untold answer" do
+    test "is an answer of [nothing to tell] that makes no call" do
+      assert Transcript.untold?(assistant_entry("[Nothing to tell]."))
+      refute Transcript.untold?(assistant_entry("The pump is fixed."))
+      refute Transcript.untold?(assistant_entry("[nothing to tell]", [call("wait", %{}, "c1")]))
+      refute Transcript.untold?(user_entry("[nothing to tell]"))
+      refute Transcript.untold?(%{})
+    end
+  end
+
   describe "the in-flight answer" do
     test "collects text, reasoning and the tools being prepared" do
       live =
@@ -600,6 +610,43 @@ defmodule Photon.TranscriptTest do
       assert Transcript.thread_ids(submission()) == []
     end
 
+    test "a digest's and a daily review's items name their threads, a file's writer too" do
+      digest = %{
+        "kind" => "digest",
+        "items" => [
+          %{"kind" => "finished", "new" => true, "thread_id" => "c_1"},
+          %{"kind" => "file_written", "new" => false, "name" => "a.md", "writer" => "c_2"},
+          %{"kind" => "file_written", "new" => false, "name" => "b.md", "writer" => "user"},
+          %{"kind" => "project_created", "new" => false, "project_id" => "p_1"},
+          %{"kind" => "resolved", "new" => false, "thread_id" => "c_1"},
+          "junk"
+        ]
+      }
+
+      source = %{"kind" => "signal", "signals" => [digest]}
+      signal = entry("user", %{"message" => Message.user("[Digest] ..."), "source" => source})
+      assert Transcript.thread_ids(signal) == ["c_1", "c_2"]
+
+      queued = submission(content: %{"parts" => [], "source" => source})
+      assert Transcript.thread_ids(queued) == ["c_1", "c_2"]
+
+      review = %{
+        "kind" => "review",
+        "items" => [%{"thread_id" => "c_3", "state" => "quiet"}, %{"thread_id" => "c_4"}]
+      }
+
+      signal =
+        entry("user", %{
+          "message" => Message.user("[Daily review] ..."),
+          "source" => %{"kind" => "signal", "signals" => [review]}
+        })
+
+      assert Transcript.thread_ids(signal) == ["c_3", "c_4"]
+
+      bad = %{"kind" => "signal", "signals" => [%{"kind" => "digest", "items" => "x"}]}
+      assert Transcript.thread_ids(entry("user", %{"source" => bad})) == []
+    end
+
     test "a thread shows under its current title, else the one the entry recorded" do
       titles = %{"c_1" => "Fix the pump", "c_2" => nil}
 
@@ -672,6 +719,239 @@ defmodule Photon.TranscriptTest do
                "message" => Message.user([]),
                "source" => %{"kind" => "signal", "signals" => [question, "junk"]}
              }) == [%{ref: question, question: nil}]
+    end
+  end
+
+  describe "a digest or a daily review in Blip's panel" do
+    @digest %{
+      "kind" => "digest",
+      "key" => "digest:t_1:1",
+      "items" => [
+        %{
+          "kind" => "finished",
+          "new" => true,
+          "thread_id" => "c_1",
+          "title" => "fix the pump please",
+          "project_id" => "p_1",
+          "slug" => "garden",
+          "project" => "Garden",
+          "note" => "Replaced the fuse."
+        },
+        %{
+          "kind" => "schedule_stopped",
+          "new" => true,
+          "schedule_id" => "sc_9",
+          "project_id" => "p_1",
+          "slug" => "garden",
+          "project" => "Garden",
+          "prompt" => "check\nthe gutters",
+          "reason" => "the thread's project no longer exists"
+        },
+        %{"kind" => "schedule_stopped", "new" => true, "schedule_id" => "sc_8", "prompt" => "hi"},
+        %{
+          "kind" => "finished",
+          "new" => false,
+          "thread_id" => "c_2",
+          "title" => "Order seeds",
+          "slug" => "garden",
+          "project" => "Garden"
+        },
+        %{
+          "kind" => "file_written",
+          "new" => false,
+          "slug" => "garden",
+          "project" => "Garden",
+          "name" => "notes.md",
+          "writer" => "c_1",
+          "writer_title" => "fix the pump please",
+          "deleted" => false
+        },
+        %{
+          "kind" => "file_written",
+          "new" => false,
+          "slug" => "house",
+          "project" => "House",
+          "name" => "old.md",
+          "writer" => "user",
+          "deleted" => true
+        },
+        %{"kind" => "project_created", "new" => false, "slug" => "shed", "project" => "Shed"},
+        %{"kind" => "purpose_changed", "new" => false, "slug" => "garden", "project" => "Garden"},
+        %{
+          "kind" => "thread_started",
+          "new" => false,
+          "thread_id" => "c_3",
+          "title" => "Gutters",
+          "slug" => "house",
+          "project" => "House"
+        },
+        %{
+          "kind" => "resolved",
+          "new" => false,
+          "thread_id" => "c_4",
+          "title" => "Old pump",
+          "project" => "Garden"
+        }
+      ],
+      "more" => 4,
+      "more_smaller" => 3
+    }
+
+    test "a digest's lines: where, what, and the link, each thread by its current title" do
+      titles = %{"c_1" => "Fix the pump", "c_3" => nil}
+
+      assert [
+               finished,
+               schedule,
+               own_schedule,
+               seen,
+               written,
+               deleted,
+               created,
+               edited,
+               started,
+               resolved
+             ] = Transcript.ambient_lines(@digest, titles)
+
+      assert finished == %{
+               kind: "finished",
+               new?: true,
+               project: "Garden",
+               lead: nil,
+               subject: "Fix the pump",
+               link: {:thread, "garden", "c_1"},
+               words: "finished"
+             }
+
+      assert %{lead: "schedule", subject: ~s("check the gutters"), new?: true} = schedule
+      assert schedule.link == {:schedule, "garden", "sc_9"}
+      assert schedule.words == "stopped after an error"
+
+      assert %{project: nil, lead: "Blip's schedule", subject: ~s("hi"), link: nil} =
+               own_schedule
+
+      assert %{subject: "Order seeds", new?: false, words: "finished; you've seen it"} = seen
+
+      assert %{lead: "context file", subject: "notes.md", link: {:file, "garden", "notes.md"}} =
+               written
+
+      assert written.words == ~s(written by "Fix the pump")
+      assert %{subject: "old.md", link: nil, words: "deleted by you"} = deleted
+
+      assert %{project: nil, lead: "project", subject: "Shed", link: {:project, "shed"}} =
+               created
+
+      assert created.words == "started"
+      assert %{subject: "Garden", words: "name or Purpose edited"} = edited
+      # A thread that is gone, or not read, keeps the title the digest wrote.
+      assert %{subject: "Gutters", words: "started", link: {:thread, "house", "c_3"}} = started
+      # No slug, no link.
+      assert %{subject: "Old pump", words: "resolved", link: nil} = resolved
+    end
+
+    test "a digest's heading, chip and the rest it carried" do
+      assert Transcript.ambient_heading(@digest) == "Digest: 7 new, 10 smaller"
+      assert Transcript.ambient_chip(@digest) == "Digest: 7 new changes"
+      assert Transcript.ambient_more(@digest) == "And 7 more."
+
+      one = %{"kind" => "digest", "items" => [%{"kind" => "finished", "new" => true}]}
+      assert Transcript.ambient_heading(one) == "Digest: 1 new"
+      assert Transcript.ambient_chip(one) == "Digest: 1 new change"
+      assert Transcript.ambient_more(one) == nil
+
+      smaller = %{"kind" => "digest", "items" => [%{"new" => false}], "more_smaller" => 1}
+      assert Transcript.ambient_heading(smaller) == "Digest: 2 smaller"
+      assert Transcript.ambient_chip(smaller) == "Digest: 2 smaller changes"
+
+      assert Transcript.ambient_heading(%{"kind" => "digest"}) == "Digest"
+      assert Transcript.ambient_chip(%{"kind" => "digest", "more" => "x"}) == "Digest"
+    end
+
+    test "a review's lines say how long each thread had sat when it was posted" do
+      at = ~U[2026-10-07 09:00:00Z]
+
+      review = %{
+        "kind" => "review",
+        "items" => [
+          %{
+            "thread_id" => "c_1",
+            "title" => "Fix the pump",
+            "slug" => "garden",
+            "project" => "Garden",
+            "state" => "quiet",
+            "since" => "2026-10-03T08:00:00Z"
+          },
+          %{
+            "thread_id" => "c_2",
+            "title" => "Gutters",
+            "slug" => "house",
+            "project" => "House",
+            "state" => "failed",
+            "since" => "2026-10-07T04:00:00Z"
+          },
+          %{
+            "thread_id" => "c_3",
+            "title" => "Paint",
+            "project" => "House",
+            "state" => "waiting",
+            "since" => "2026-10-07T08:59:30Z"
+          }
+        ],
+        "more" => 2
+      }
+
+      assert [quiet, failed, waiting] =
+               Transcript.ambient_lines(review, %{"c_1" => "Pump repair"}, at)
+
+      assert quiet == %{
+               kind: "quiet",
+               new?: true,
+               project: "Garden",
+               lead: nil,
+               subject: "Pump repair",
+               link: {:thread, "garden", "c_1"},
+               words: "stopped 4 days ago"
+             }
+
+      assert %{kind: "failed", words: "failed 5 hours ago"} = failed
+      assert %{kind: "waiting", words: "waiting on you for 1 minute", link: nil} = waiting
+
+      # Without the time, or with a bad one, just the state.
+      assert ["stopped", "failed", "waiting on you"] ==
+               Enum.map(Transcript.ambient_lines(review, %{}), & &1.words)
+
+      bad = %{"kind" => "review", "items" => [%{"state" => "failed", "since" => "soon"}]}
+      assert [%{words: "failed", subject: "A thread"}] = Transcript.ambient_lines(bad, %{}, at)
+
+      assert Transcript.ambient_heading(review) == "Daily review: 5 threads"
+      assert Transcript.ambient_chip(review) == "Daily review: 5 threads"
+      assert Transcript.ambient_more(review) == "And 2 more."
+
+      assert Transcript.ambient_heading(%{"kind" => "review", "items" => [%{}]}) ==
+               "Daily review: 1 thread"
+    end
+
+    test "the ref a signal message carries, and garbage" do
+      assert Transcript.ambient_ref(%{"kind" => "signal", "signals" => [@digest]}) == @digest
+
+      for source <- [
+            %{"kind" => "signal", "signals" => [%{"kind" => "thread_update"}]},
+            %{"kind" => "user"},
+            %{"kind" => "signal", "signals" => "x"},
+            nil
+          ],
+          do: assert(Transcript.ambient_ref(source) == nil)
+
+      for ref <- [
+            %{"kind" => "thread_update", "items" => [%{}]},
+            %{"kind" => "digest", "items" => "x"},
+            %{"kind" => "digest"},
+            nil
+          ],
+          do: assert(Transcript.ambient_lines(ref, %{}) == [])
+
+      assert [%{subject: "A thread", words: "changed"}] =
+               Transcript.ambient_lines(%{"kind" => "digest", "items" => [%{}, 1]}, %{})
     end
   end
 end

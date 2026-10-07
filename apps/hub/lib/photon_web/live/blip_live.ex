@@ -55,6 +55,10 @@ defmodule PhotonWeb.BlipLive do
   and bubbles that name a thread re-render with its new title
   (`@titles`, see `PhotonWeb.ConversationView`).
 
+  A digest or daily review (ambient mode) shows as one collapsed line
+  that opens to its items, and Blip's `[nothing to tell]` answer to one
+  draws nothing (`hide_untold`), so a quiet digest leaves only its line.
+
   The conversation is shared with a project's thread page.
   `PhotonWeb.ConversationComponents` renders it: the entries, each tool
   call inside the answer that made it, a running call's output tail, the
@@ -428,11 +432,15 @@ defmodule PhotonWeb.BlipLive do
             <.empty_state :if={@empty?} shell={@shell} />
 
             <div id="entries" phx-update="stream" class="space-y-5">
-              <%!-- An answer arrives already shown, streamed in: no rise. --%>
+              <%!-- An answer arrives already shown, streamed in: no rise. Blip's
+                [nothing to tell] takes no room. --%>
               <div
                 :for={{dom_id, entry} <- @streams.entries}
                 id={dom_id}
-                class={entry.kind != "assistant" && "animate-rise"}
+                class={[
+                  entry.kind != "assistant" && "animate-rise",
+                  Transcript.untold?(entry) && "hidden"
+                ]}
               >
                 <.entry
                   entry={entry}
@@ -441,6 +449,7 @@ defmodule PhotonWeb.BlipLive do
                   questions={@questions}
                   titles={@titles}
                   image_path={&image_path/2}
+                  hide_untold
                 />
               </div>
             </div>

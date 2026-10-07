@@ -40,7 +40,16 @@ defmodule Photon.Transcript do
       notice's words with the thread's current title (`notice_text/2`)
     * whether Blip's answer is `[nothing to tell]` (`nothing_to_tell?/1`),
       its reply to a digest or daily review with nothing worth the
-      owner's attention, which makes no bubble and no activity row
+      owner's attention, which makes no bubble and no activity row, and
+      whether an entry is such an answer, which Blip's panel draws as
+      nothing (`untold?/1`)
+    * a digest or daily review in Blip's panel (ambient mode): the ref a
+      signal message carries (`ambient_ref/1`), its collapsed line
+      (`ambient_heading/1`), the lines it opens to (`ambient_lines/3`,
+      each thread under its current title), how many more it carried
+      (`ambient_more/1`), and its chip while it waits in Blip's inbox
+      (`ambient_chip/1`). A digest's and a review's items name their
+      threads for `thread_ids/1` like any signal's
   """
 
   # Functional core: no processes, no I/O.
@@ -85,6 +94,35 @@ defmodule Photon.Transcript do
   """
   @type titles :: %{optional(String.t()) => String.t() | nil}
 
+  @typedoc """
+  Where an ambient line's subject links: a thread's page, a project's, a
+  context file's or a schedule's, by the project's slug; nil for none.
+  """
+  @type ambient_link ::
+          {:thread, String.t(), String.t()}
+          | {:project, String.t()}
+          | {:file, String.t(), String.t()}
+          | {:schedule, String.t(), String.t()}
+          | nil
+
+  @typedoc """
+  One line of an opened digest or daily review: the item's kind, whether
+  it was new to the owner (a review's lines all are), the project's name
+  in front (nil when the subject is the project, or there is none), a
+  word or two before the subject (`"context file"`), the subject (a
+  thread's current title, a file's name...), where it links, and what
+  happened.
+  """
+  @type ambient_line :: %{
+          kind: String.t(),
+          new?: boolean(),
+          project: String.t() | nil,
+          lead: String.t() | nil,
+          subject: String.t(),
+          link: ambient_link(),
+          words: String.t()
+        }
+
   @typedoc "Blip's mood, as the avatar shows it."
   @type mood :: :idle | :thinking | :done | :error
 
@@ -108,6 +146,13 @@ defmodule Photon.Transcript do
   # saying (section 5.4 of docs/plans/step-5-ambient-mode.md).
   @nothing_to_tell "[nothing to tell]"
 
+  # The signal refs ambient mode posts (section 3.4 of
+  # docs/plans/step-5-ambient-mode.md).
+  @ambient_kinds ~w(digest review)
+
+  # How much of a schedule's prompt a digest line shows.
+  @prompt_limit 80
+
   @doc """
   Whether `text` is Blip's `[nothing to tell]`: the text trimmed,
   lowercased and without a trailing `.` is exactly that. Anything that
@@ -120,6 +165,17 @@ defmodule Photon.Transcript do
         @nothing_to_tell
 
   def nothing_to_tell?(_text), do: false
+
+  @doc """
+  Whether an entry is Blip's `[nothing to tell]` answer: an assistant
+  entry whose text is that (`nothing_to_tell?/1`) and that makes no tool
+  call. Blip's panel draws nothing for it.
+  """
+  @spec untold?(Entry.t() | map()) :: boolean()
+  def untold?(%{kind: "assistant", data: %{"message" => message}}),
+    do: Message.tool_calls(message) == [] and nothing_to_tell?(Message.text_of(message))
+
+  def untold?(_entry), do: false
 
   @doc "Whether an entry is shown in the conversation on its own."
   @spec shown?(Entry.t()) :: boolean()
@@ -175,10 +231,26 @@ defmodule Photon.Transcript do
   def thread_ids(_entry), do: []
 
   defp source_threads(%{"kind" => "signal", "signals" => refs}) when is_list(refs),
-    do: for(%{"thread_id" => id} when is_binary(id) <- refs, uniq: true, do: id)
+    do: refs |> Enum.flat_map(&ref_threads/1) |> Enum.uniq()
 
   defp source_threads(%{"kind" => "answer", "thread_id" => id}) when is_binary(id), do: [id]
   defp source_threads(_source), do: []
+
+  # A digest's or review's threads are its items' (a file's writer
+  # included, when a thread wrote it); any other ref's is its own.
+  defp ref_threads(%{"kind" => kind, "items" => items}) when kind in @ambient_kinds,
+    do: if(is_list(items), do: Enum.flat_map(items, &item_threads/1), else: [])
+
+  defp ref_threads(%{"thread_id" => id}) when is_binary(id), do: [id]
+  defp ref_threads(_ref), do: []
+
+  defp item_threads(%{} = item) do
+    for id <- [item["thread_id"], item["writer"]], thread_id?(id), do: id
+  end
+
+  defp item_threads(_item), do: []
+
+  defp thread_id?(id), do: is_binary(id) and String.starts_with?(id, "c_")
 
   @doc """
   The title a page shows for thread `id`: its current title from
@@ -250,6 +322,255 @@ defmodule Photon.Transcript do
   end
 
   defp signal_question(_ref, _part), do: nil
+
+  @doc """
+  The digest or daily review ref a signal message's source carries (ref
+  kind `"digest"` or `"review"`), or nil for any other source. Such a
+  message carries only that ref: a digest or review never merges with
+  other signals.
+  """
+  @spec ambient_ref(term()) :: map() | nil
+  def ambient_ref(%{"kind" => "signal", "signals" => refs}) when is_list(refs),
+    do: Enum.find(refs, &match?(%{"kind" => kind} when kind in @ambient_kinds, &1))
+
+  def ambient_ref(_source), do: nil
+
+  @doc ~S"""
+  A digest's or daily review's collapsed line: "Digest: 3 new, 6
+  smaller" (counting the items it shows and the ones it had no room
+  for), or "Daily review: 2 threads".
+  """
+  @spec ambient_heading(map()) :: String.t()
+  def ambient_heading(%{"kind" => "digest"} = ref) do
+    case digest_counts(ref) do
+      {0, 0} -> "Digest"
+      {new, 0} -> "Digest: #{new} new"
+      {0, smaller} -> "Digest: #{smaller} smaller"
+      {new, smaller} -> "Digest: #{new} new, #{smaller} smaller"
+    end
+  end
+
+  def ambient_heading(%{"kind" => "review"} = ref),
+    do: "Daily review: " <> count(review_count(ref), "thread")
+
+  def ambient_heading(_ref), do: "Digest"
+
+  @doc ~S"""
+  A digest's or daily review's chip while it waits in Blip's inbox:
+  "Digest: 3 new changes" or "Daily review: 2 threads". It names no
+  thread.
+  """
+  @spec ambient_chip(map()) :: String.t()
+  def ambient_chip(%{"kind" => "digest"} = ref) do
+    case digest_counts(ref) do
+      {0, 0} -> "Digest"
+      {0, smaller} -> "Digest: " <> count(smaller, "smaller change")
+      {new, _smaller} -> "Digest: " <> count(new, "new change")
+    end
+  end
+
+  def ambient_chip(ref), do: ambient_heading(ref)
+
+  @doc ~S"""
+  How many items a digest or daily review carried beyond the ones it
+  lists, in words ("And 4 more."), or nil when it lists them all.
+  """
+  @spec ambient_more(map()) :: String.t() | nil
+  def ambient_more(%{} = ref) do
+    case amount(ref["more"]) + amount(ref["more_smaller"]) do
+      0 -> nil
+      more -> "And #{more} more."
+    end
+  end
+
+  def ambient_more(_ref), do: nil
+
+  # New and smaller changes, the listed items and the ones past the cut.
+  defp digest_counts(ref) do
+    items = if is_list(ref["items"]), do: ref["items"], else: []
+    new = Enum.count(items, &match?(%{"new" => true}, &1))
+
+    {new + amount(ref["more"]), Enum.count(items, &is_map/1) - new + amount(ref["more_smaller"])}
+  end
+
+  defp review_count(ref) do
+    items = if is_list(ref["items"]), do: ref["items"], else: []
+    Enum.count(items, &is_map/1) + amount(ref["more"])
+  end
+
+  defp amount(n) when is_integer(n) and n > 0, do: n
+  defp amount(_n), do: 0
+
+  @doc """
+  The lines an opened digest or daily review shows, one per item it
+  lists, in order (see `t:ambient_line/0`). Each thread is named by its
+  current title in `titles`, else the title the digest recorded
+  (`title/3`), so one written before the thread was named reads with its
+  name. `at` is when the message was posted: a review's lines say how
+  long each thread had sat as of then ("stopped 4 days ago"), or just
+  its state without it. Items that aren't maps, and any other ref, give
+  none.
+  """
+  @spec ambient_lines(term(), titles(), DateTime.t() | nil) :: [ambient_line()]
+  def ambient_lines(ref, titles, at \\ nil)
+
+  def ambient_lines(%{"kind" => kind, "items" => items}, titles, at)
+      when kind in @ambient_kinds and is_list(items),
+      do: for(%{} = item <- items, do: ambient_line(kind, item, titles, at))
+
+  def ambient_lines(_ref, _titles, _at), do: []
+
+  defp ambient_line("digest", item, titles, _at) do
+    Map.merge(
+      %{
+        kind: text_or(item["kind"], "change"),
+        new?: item["new"] == true,
+        project: text_or_nil(item["project"]),
+        lead: nil
+      },
+      digest_line(item["kind"], item, titles)
+    )
+  end
+
+  defp ambient_line("review", item, titles, at) do
+    item
+    |> thread_line(titles, review_words(item["state"], since(item["since"]), at))
+    |> Map.merge(%{
+      kind: text_or(item["state"], "quiet"),
+      new?: true,
+      project: text_or_nil(item["project"]),
+      lead: nil
+    })
+  end
+
+  # What a digest item's line says, past its kind and project: its subject,
+  # where it links and what happened, and a lead before the subject (or no
+  # project in front, when the subject is the project).
+  defp digest_line("finished", %{"new" => true} = item, titles),
+    do: thread_line(item, titles, "finished")
+
+  defp digest_line("finished", item, titles),
+    do: thread_line(item, titles, "finished; you've seen it")
+
+  defp digest_line("thread_started", item, titles), do: thread_line(item, titles, "started")
+  defp digest_line("resolved", item, titles), do: thread_line(item, titles, "resolved")
+
+  defp digest_line("schedule_stopped", item, _titles) do
+    subject =
+      case item["prompt"] |> one_line() |> cut(@prompt_limit) do
+        "" -> text_or(item["schedule_id"], "without a prompt")
+        prompt -> ~s("#{prompt}")
+      end
+
+    %{
+      lead: if(is_binary(item["project"]), do: "schedule", else: "Blip's schedule"),
+      subject: subject,
+      link: if(is_binary(item["slug"]), do: link(:schedule, item["slug"], item["schedule_id"])),
+      words: "stopped after an error"
+    }
+  end
+
+  defp digest_line("file_written", item, titles) do
+    deleted? = item["deleted"] == true
+
+    %{
+      lead: "context file",
+      subject: text_or(item["name"], "a file"),
+      link: if(not deleted?, do: link(:file, item["slug"], item["name"])),
+      words: if(deleted?, do: "deleted", else: "written") <> writer(item, titles)
+    }
+  end
+
+  defp digest_line("project_created", item, _titles), do: project_line(item, "started")
+
+  defp digest_line("purpose_changed", item, _titles),
+    do: project_line(item, "name or Purpose edited")
+
+  defp digest_line(_kind, item, titles), do: thread_line(item, titles, "changed")
+
+  defp thread_line(item, titles, words),
+    do: %{subject: thread_subject(item, titles), link: thread_link(item), words: words}
+
+  defp project_line(item, words),
+    do: %{
+      project: nil,
+      lead: "project",
+      subject: text_or(item["project"], "A project"),
+      link: project_link(item),
+      words: words
+    }
+
+  # Who wrote a file: the owner, a thread by its current title, or nobody named.
+  defp writer(%{"writer" => "user"}, _titles), do: " by you"
+
+  defp writer(%{"writer" => writer} = item, titles) when is_binary(writer) do
+    case title(titles, writer, item["writer_title"]) do
+      title when is_binary(title) and title != "" -> ~s( by "#{title}")
+      _untitled -> " by a thread"
+    end
+  end
+
+  defp writer(_item, _titles), do: ""
+
+  defp thread_subject(item, titles) do
+    case title(titles, item["thread_id"], item["title"]) do
+      title when is_binary(title) and title != "" -> title
+      _untitled -> "A thread"
+    end
+  end
+
+  defp thread_link(item), do: link(:thread, item["slug"], item["thread_id"])
+
+  defp project_link(%{"slug" => slug}) when is_binary(slug), do: {:project, slug}
+  defp project_link(_item), do: nil
+
+  defp link(kind, slug, id) when is_binary(slug) and is_binary(id), do: {kind, slug, id}
+  defp link(_kind, _slug, _id), do: nil
+
+  # A review's words: the thread's state, and how long it had sat when the
+  # review was posted.
+  defp review_words("failed", since, at), do: "failed" <> ago(since, at)
+  defp review_words("waiting", since, at), do: "waiting on you" <> sat_for(since, at)
+  defp review_words(_quiet, since, at), do: "stopped" <> ago(since, at)
+
+  defp ago(%DateTime{} = since, %DateTime{} = at), do: " #{duration(since, at)} ago"
+  defp ago(_since, _at), do: ""
+
+  defp sat_for(%DateTime{} = since, %DateTime{} = at), do: " for #{duration(since, at)}"
+  defp sat_for(_since, _at), do: ""
+
+  # Whole days, else whole hours, else whole minutes (at least one).
+  defp duration(since, at) do
+    case max(DateTime.diff(at, since, :second), 0) do
+      seconds when seconds >= 86_400 -> count(div(seconds, 86_400), "day")
+      seconds when seconds >= 3_600 -> count(div(seconds, 3_600), "hour")
+      seconds -> count(max(div(seconds, 60), 1), "minute")
+    end
+  end
+
+  defp since(text) when is_binary(text) do
+    case DateTime.from_iso8601(text) do
+      {:ok, since, _offset} -> since
+      _error -> nil
+    end
+  end
+
+  defp since(_text), do: nil
+
+  defp count(1, word), do: "1 #{word}"
+  defp count(n, word), do: "#{n} #{word}s"
+
+  defp text_or(text, _default) when is_binary(text) and text != "", do: text
+  defp text_or(_text, default), do: default
+
+  defp one_line(text) when is_binary(text),
+    do: text |> String.replace(~r/\s+/, " ") |> String.trim()
+
+  defp one_line(_text), do: ""
+
+  defp cut(text, limit) do
+    if String.length(text) > limit, do: String.slice(text, 0, limit - 3) <> "...", else: text
+  end
 
   @doc """
   Whether a tool result is an `ask_owner` call that passed a question to

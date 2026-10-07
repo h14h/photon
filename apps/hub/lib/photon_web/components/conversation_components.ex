@@ -43,6 +43,15 @@ defmodule PhotonWeb.ConversationComponents do
   so each question has one card. A withdrawn question's notice is a quiet
   line. A queued signal message's chip names the threads it is from.
 
+  In ambient mode a digest or a daily review is a signal message too. It
+  shows as one collapsed line, "Digest: 3 new, 6 smaller" or "Daily
+  review: 2 threads", which opens to a line per item it carried
+  (`ambient_message/1`): the owner reads Blip's reply, not the raw
+  digest, unless they open it. Waiting in Blip's inbox, its chip says the
+  same without naming a thread. Blip's `[nothing to tell]` answer to one
+  draws nothing in Blip's panel (`hide_untold`): an empty, hidden element
+  keeps the stream at one element per entry.
+
   A thread is named by its current title wherever it appears (`titles`,
   thread ID to title, which the page reads and keeps up to date; see
   `Photon.Transcript.title/3`), else by the title the entry recorded: a
@@ -78,6 +87,10 @@ defmodule PhotonWeb.ConversationComponents do
 
   attr :titles, :map, default: %{}, doc: "threads' current titles, by ID"
 
+  attr :hide_untold, :boolean,
+    default: false,
+    doc: "whether Blip's `[nothing to tell]` answer draws nothing (Blip's panel)"
+
   @spec entry(map()) :: Phoenix.LiveView.Rendered.t()
   def entry(%{entry: %{kind: "user"}} = assigns) do
     source = assigns.entry.data["source"] || %{}
@@ -85,6 +98,7 @@ defmodule PhotonWeb.ConversationComponents do
     assigns =
       assign(assigns,
         source: source,
+        ambient: Transcript.ambient_ref(source),
         text: Transcript.typed(assigns.entry.data["message"], assigns.entry.data["source"]),
         about: get_in(source, ["page", "label"])
       )
@@ -102,7 +116,15 @@ defmodule PhotonWeb.ConversationComponents do
           </div>
         </div>
       <% "signal" -> %>
+        <.ambient_message
+          :if={@ambient}
+          id={"#{@id_prefix}message-#{@entry.id}"}
+          ref={@ambient}
+          at={@entry.inserted_at}
+          titles={@titles}
+        />
         <.signal_message
+          :if={!@ambient}
           id={"#{@id_prefix}message-#{@entry.id}"}
           data={@entry.data}
           titles={@titles}
@@ -177,6 +199,36 @@ defmodule PhotonWeb.ConversationComponents do
   end
 
   def entry(%{entry: %{kind: "assistant"}} = assigns) do
+    if assigns.hide_untold and Transcript.untold?(assigns.entry),
+      do: untold(assigns),
+      else: answer(assigns)
+  end
+
+  def entry(%{entry: %{kind: "error"}} = assigns) do
+    case Transcript.escalation(assigns.entry) do
+      nil -> notice(assign(assigns, quiet: Transcript.quiet?(assigns.entry.data)))
+      id -> escalation_card(assign(assigns, question_id: id))
+    end
+  end
+
+  def entry(%{entry: %{kind: "reset"}} = assigns) do
+    ~H"""
+    <div class="flex items-center gap-3 py-2 text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
+      <span class="h-px flex-1 bg-line" /> Fresh context <span class="h-px flex-1 bg-line" />
+    </div>
+    """
+  end
+
+  # Blip had nothing worth telling the owner: nothing to see, but one
+  # element for the entry all the same.
+  defp untold(assigns) do
+    ~H"""
+    <div id={"#{@id_prefix}message-#{@entry.id}"} class="hidden" data-untold></div>
+    """
+  end
+
+  # An answer, with its web searches and its calls.
+  defp answer(assigns) do
     message = assigns.entry.data["message"]
 
     assigns =
@@ -214,21 +266,6 @@ defmodule PhotonWeb.ConversationComponents do
           <% end %>
         <% end %>
       </div>
-    </div>
-    """
-  end
-
-  def entry(%{entry: %{kind: "error"}} = assigns) do
-    case Transcript.escalation(assigns.entry) do
-      nil -> notice(assign(assigns, quiet: Transcript.quiet?(assigns.entry.data)))
-      id -> escalation_card(assign(assigns, question_id: id))
-    end
-  end
-
-  def entry(%{entry: %{kind: "reset"}} = assigns) do
-    ~H"""
-    <div class="flex items-center gap-3 py-2 text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
-      <span class="h-px flex-1 bg-line" /> Fresh context <span class="h-px flex-1 bg-line" />
     </div>
     """
   end
@@ -344,6 +381,129 @@ defmodule PhotonWeb.ConversationComponents do
   defp signal_words(%{ref: %{"status" => "failed"}}), do: "failed"
   defp signal_words(%{ref: %{"status" => "asking"}}), do: "is waiting on you"
   defp signal_words(_line), do: "changed"
+
+  @doc """
+  A digest or a daily review in Blip's conversation (ambient mode), as one
+  muted line that opens: its heading (`#<id>-heading`), "Digest: 3 new, 6
+  smaller" or "Daily review: 2 threads", and opened, a line per item it
+  lists (`#<id>-item-<n>`, `Photon.Transcript.ambient_lines/3`): the
+  project and the thread (linked, under its current title), the context
+  file, schedule or project, and what happened. A digest's changes the
+  owner has already seen come after the new ones, apart and fainter.
+  """
+  attr :id, :string, required: true
+  attr :ref, :map, required: true, doc: "the message's digest or review ref"
+  attr :at, :any, default: nil, doc: "when the message was posted, for a review's ages"
+  attr :titles, :map, default: %{}, doc: "threads' current titles, by ID"
+
+  @spec ambient_message(map()) :: Phoenix.LiveView.Rendered.t()
+  def ambient_message(assigns) do
+    lines =
+      assigns.ref |> Transcript.ambient_lines(assigns.titles, assigns.at) |> Enum.with_index()
+
+    {new, seen} = Enum.split_with(lines, fn {line, _n} -> line.new? end)
+
+    assigns =
+      assign(assigns,
+        review?: assigns.ref["kind"] == "review",
+        heading: Transcript.ambient_heading(assigns.ref),
+        more: Transcript.ambient_more(assigns.ref),
+        new: new,
+        seen: seen
+      )
+
+    ~H"""
+    <div id={@id} data-kind={@ref["kind"]} class="flex items-start gap-3 text-sm">
+      <span class="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-sunken text-ink-faint">
+        <.icon name={if(@review?, do: "hero-sun-micro", else: "hero-newspaper-micro")} class="size-4" />
+      </span>
+      <details
+        id={"#{@id}-details"}
+        class="group min-w-0 flex-1 pt-1"
+        phx-mounted={JS.ignore_attributes(["open"])}
+      >
+        <summary class="flex w-fit cursor-pointer list-none items-center gap-1 rounded text-ink-faint transition-colors select-none hover:text-ink-soft">
+          <span id={"#{@id}-heading"} class="text-[13px]">{@heading}</span>
+          <.icon
+            name="hero-chevron-down-micro"
+            class="size-3.5 shrink-0 transition group-open:rotate-180"
+          />
+        </summary>
+        <ul :if={@new != []} class="mt-1.5 space-y-1">
+          <.ambient_item :for={{line, n} <- @new} id={"#{@id}-item-#{n}"} line={line} />
+        </ul>
+        <p
+          :if={@seen != [] and @new != []}
+          class="mt-2.5 text-[11px] font-semibold tracking-wider text-ink-faint uppercase"
+        >
+          Already seen, or done by you
+        </p>
+        <ul
+          :if={@seen != []}
+          class={["space-y-1 opacity-80", if(@new == [], do: "mt-1.5", else: "mt-1")]}
+        >
+          <.ambient_item :for={{line, n} <- @seen} id={"#{@id}-item-#{n}"} line={line} />
+        </ul>
+        <p :if={@more} id={"#{@id}-more"} class="mt-1.5 text-[12.5px] text-ink-faint">{@more}</p>
+      </details>
+    </div>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :line, :map, required: true
+
+  # One item of a digest or review: its mark, where, and what happened.
+  defp ambient_item(assigns) do
+    assigns = assign(assigns, href: ambient_href(assigns.line.link))
+
+    ~H"""
+    <li
+      id={@id}
+      data-kind={@line.kind}
+      data-new={to_string(@line.new?)}
+      class="flex min-w-0 items-start gap-2 text-ink-soft"
+    >
+      <span class="mt-[3px] flex size-3.5 shrink-0 items-center justify-center">
+        <.state_mark :if={@line.kind == "failed"} state={:failed} />
+        <.state_mark :if={@line.kind == "waiting"} state={:waiting} />
+        <.icon
+          :if={@line.kind not in ~w(failed waiting)}
+          name={ambient_icon(@line.kind)}
+          class={["size-3.5", ambient_tone(@line)]}
+        />
+      </span>
+      <span class="min-w-0 leading-snug">
+        <span :if={@line.project} class="text-ink-faint">{@line.project} /</span>
+        <span :if={@line.lead} class="text-ink-faint">{@line.lead}</span>
+        <.link :if={@href} navigate={@href} class="font-medium text-ink hover:underline">{@line.subject}</.link><span
+          :if={!@href}
+          class="font-medium text-ink"
+        >{@line.subject}</span> {@line.words}
+      </span>
+    </li>
+    """
+  end
+
+  defp ambient_href({:thread, slug, id}), do: ~p"/projects/#{slug}/threads/#{id}"
+  defp ambient_href({:project, slug}), do: ~p"/projects/#{slug}"
+  defp ambient_href({:file, slug, name}), do: ~p"/projects/#{slug}/files/#{name}"
+  defp ambient_href({:schedule, slug, id}), do: ~p"/projects/#{slug}/schedules/#{id}"
+  defp ambient_href(_none), do: nil
+
+  defp ambient_icon("finished"), do: "hero-check-circle-micro"
+  defp ambient_icon("schedule_stopped"), do: "hero-exclamation-triangle-micro"
+  defp ambient_icon("file_written"), do: "hero-document-text-micro"
+  defp ambient_icon("project_created"), do: "hero-folder-plus-micro"
+  defp ambient_icon("purpose_changed"), do: "hero-pencil-square-micro"
+  defp ambient_icon("thread_started"), do: "hero-play-circle-micro"
+  defp ambient_icon("resolved"), do: "hero-check-micro"
+  defp ambient_icon("quiet"), do: "hero-stop-circle-micro"
+  defp ambient_icon(_kind), do: "hero-bell-micro"
+
+  defp ambient_tone(%{kind: "schedule_stopped"}), do: "text-bad"
+  defp ambient_tone(%{kind: "finished", new?: true}), do: "text-ok"
+  defp ambient_tone(_line), do: "text-ink-faint"
 
   attr :title, :string, default: nil
   attr :slug, :string, default: nil
@@ -1307,8 +1467,18 @@ defmodule PhotonWeb.ConversationComponents do
   end
 
   # What a queued message says on its chip: what was typed, or for a
-  # signal message, which threads it is from.
-  defp queued_text(%{"source" => %{"kind" => "signal"}} = content, titles) do
+  # signal message, which threads it is from (a digest or review, what it
+  # holds).
+  defp queued_text(%{"source" => %{"kind" => "signal"} = source} = content, titles) do
+    case Transcript.ambient_ref(source) do
+      nil -> signal_chip(content, titles)
+      ref -> Transcript.ambient_chip(ref)
+    end
+  end
+
+  defp queued_text(content, _titles), do: Transcript.typed(content["parts"], content["source"])
+
+  defp signal_chip(content, titles) do
     lines =
       Transcript.signal_lines(%{
         "message" => %{"content" => content["parts"]},
@@ -1324,6 +1494,4 @@ defmodule PhotonWeb.ConversationComponents do
 
     if(questions?, do: "Question from ", else: "Update on ") <> named
   end
-
-  defp queued_text(content, _titles), do: Transcript.typed(content["parts"], content["source"])
 end

@@ -818,7 +818,11 @@ text, lowercased, with a trailing `.` removed, is `[nothing to tell]`.
 - `Assistant.settled_tx/3`: no `kind: "message"` activity row for it.
 - Blip's panel draws nothing for it: the stream item is an empty
   `<div id="message-<entry id>" class="hidden">`, so the stream keeps one
-  element per entry. A quiet digest leaves only its own collapsed line
+  element per entry, and its stream wrapper is hidden too, so the list's
+  spacing leaves no gap (`Transcript.untold?/1`: an assistant entry whose
+  text is nothing to tell and that makes no call; the components draw it
+  so only with `hide_untold`, which Blip's panel passes and a thread's
+  page doesn't). A quiet digest leaves only its own collapsed line
   (section 7.4).
 
 The check doesn't look at who asked: the owner never gets that answer
@@ -965,13 +969,28 @@ digest now" then calls nothing new.
   "context file notes.md", "started", "resolved" for a digest, or
   "stopped 4 days ago", "failed 5 days ago", "waiting on you for 3 days"
   for a review. The owner reads Blip's reply, not the raw digest, unless
-  they open it.
-- `Photon.Transcript.ambient_lines(ref, titles)` (pure) reads the ref
+  they open it. The words the plan didn't settle: a seen finish reads
+  "finished; you've seen it"; a file "context file notes.md written by
+  you" (or `by "Fix the pump"`, or "deleted by you"), linked to the file
+  unless deleted; a schedule `schedule "check the gutters" stopped after
+  an error` (Blip's own: `Blip's schedule "..."`), linked to the
+  schedule's page; a project "project Shed started" or "project Garden
+  name or Purpose edited", linked to the project. A digest's smaller
+  items follow the new ones under "Already seen, or done by you", a
+  little fainter, and "And N more." (`#message-<entry id>-more`) counts
+  what the ref carried past its rows.
+- `Photon.Transcript.ambient_lines(ref, titles, at)` (pure) reads the ref
   and names each thread with `Transcript.title(titles, id, item["title"])`,
   so a digest written before the thread got its title shows the current
-  one. `Transcript.thread_ids/1` (through `source_threads/1`) also
+  one. `at` is the entry's `inserted_at`: a review's "4 days ago" is as of
+  when the review was posted, not as of reading it (without `at`, the
+  line says only the state). `Transcript.ambient_ref/1` finds the ref in
+  a source, and `ambient_heading/1`, `ambient_more/1` and
+  `ambient_chip/1` give the heading, the more line and the chip.
+  `Transcript.thread_ids/1` (through `source_threads/1`) also
   collects the `"thread_id"`s under a `"digest"` or `"review"` ref's
-  `"items"`, so `ConversationView` reads their titles with the others.
+  `"items"` (and a file's `"writer"` when a thread wrote it), so
+  `ConversationView` reads their titles with the others.
 - Blip's `[nothing to tell]` answer renders as section 5.4's empty
   element.
 - A queued digest or review in Blip's inbox shows a chip: "Digest: 3 new
@@ -1129,7 +1148,7 @@ No changes.
 | `Photon.Assistant.MockCoordinator` | core | deps add `Photon.Assistant.MockAmbient` | `unasked/2` tries `MockAmbient` first. |
 | `Photon.Assistant.MockScript` | core | deps add `Photon.Assistant.MockAmbient` | Help text. |
 | `Photon.Activity.Rules` | core | unchanged | `origin_label/2` for `"digest"` and `"review"`. |
-| `Photon.Transcript` | core | unchanged | `nothing_to_tell?/1`, `ambient_lines/2`, `source_threads/1` reads digest and review items. |
+| `Photon.Transcript` | core | unchanged | `nothing_to_tell?/1`, `untold?/1`, `ambient_ref/1`, `ambient_lines/3` (the ref, the titles and when it was posted), `ambient_heading/1`, `ambient_more/1`, `ambient_chip/1`; `source_threads/1` reads digest and review items. |
 | `Photon` | root | exports add `Ambient` | Moduledoc names `Photon.Ambient` and its pure modules. |
 
 ### 10.6 apps/hub: web
@@ -1139,7 +1158,8 @@ No changes.
 | `PhotonWeb.SettingsLive` | server (LiveView) | Section 7.2, and the `.UtcOffset` colocated hook. |
 | `PhotonWeb.HomeLive` | server | Section 7.3. |
 | `PhotonWeb.AmbientText` | functional core (web formatting) | The hint words, `form_values/1`, the interval labels, `next/1`, `last/2` (a last outcome as words), `pending/1`, `ran/2` (the flashes), `needs_consent?/1`, `reviewed?/1`, and Home's `skipping?/1`, `skipping/0`, `home_stopped?/1`, `home_stopped/0`. |
-| `PhotonWeb.ConversationComponents` | boundary (UI components) | `ambient_message/1`, the empty nothing-to-tell element, the queued chip. |
+| `PhotonWeb.ConversationComponents` | boundary (UI components) | `ambient_message/1`, the empty nothing-to-tell element (`entry/1`'s `hide_untold`), the queued chip. |
+| `PhotonWeb.ActivityText` | functional core (web formatting) | `wanted/1` reads no schedule for a follow-up whose `origin_id` is `"digest"` or `"review"`. |
 
 ### 10.7 Credo, Boundary and deps
 
@@ -1224,7 +1244,7 @@ with `>`, and a thread that ended in the same second isn't quiet yet.
   and in capitals) makes no notice; other answers still do.
 - `activity/rules_test.exs`: `origin_label/2` for `"digest"` and
   `"review"`.
-- `transcript_test.exs`: `nothing_to_tell?/1`; `ambient_lines/2` for a
+- `transcript_test.exs`: `nothing_to_tell?/1`, `untold?/1`; `ambient_lines/3` for a
   digest and a review ref, with a title from `titles` winning over the
   stored one, and garbage refs; `thread_ids/1` of a digest and a review
   signal entry lists the items' threads.
@@ -1549,8 +1569,10 @@ M9. The home page. After M8 (`AmbientText`).
 M10. Blip's panel and the activity page's rows. After M5 and M6.
 - `apps/hub/lib/photon_web/components/conversation_components.ex`
   (`ambient_message/1`, the empty nothing-to-tell element, the queued
-  chip); `apps/hub/lib/photon/transcript.ex` (`ambient_lines/2`,
-  `source_threads/1` reading digest and review items).
+  chip); `apps/hub/lib/photon/transcript.ex` (`ambient_lines/3`,
+  `source_threads/1` reading digest and review items); `blip_live.ex`
+  (`hide_untold`, the hidden wrapper); `activity_text.ex` (`wanted/1`
+  skips `"digest"` and `"review"`).
 - Tests: `test/web/live/blip_live_test.exs` (the nothing-to-tell answer
   appended with `Tx.append`), `test/web/live/activity_live_test.exs`,
   `test/core/transcript_test.exs`, `conversation_components_test.exs`

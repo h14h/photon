@@ -152,6 +152,41 @@ defmodule PhotonWeb.ActivityLiveTest do
     refute has_element?(view, "#activity-a_5-origin a")
   end
 
+  test "rows from digest and review runs are Blip's follow-ups on them, under that filter", %{
+    conn: conn
+  } do
+    row!("a_1", 1,
+      kind: "message",
+      tool: nil,
+      summary: "Told you: Fix the pump finished.",
+      changes: false,
+      origin: "follow_up",
+      origin_id: "digest"
+    )
+
+    row!("a_2", 2,
+      tool: "read_thread",
+      summary: ~s(Read "Fix the pump"),
+      changes: false,
+      origin: "follow_up",
+      origin_id: "review",
+      thread_id: "c_pump"
+    )
+
+    view = activity(conn)
+    assert has_element?(view, "#activity-a_1-origin", "Blip's follow-up on the digest")
+    assert has_element?(view, "#activity-a_2-origin", "Blip's follow-up on the daily review")
+    # Neither names a thread who asked.
+    refute has_element?(view, "#activity-a_1-origin a")
+    refute has_element?(view, "#activity-a_2-origin a")
+
+    view
+    |> form("#activity-filter")
+    |> render_change(%{filter: %{origin: "follow_up", changes: "false"}})
+
+    assert shown(view) == ~w(activity-a_2 activity-a_1)
+  end
+
   test "a thread named or renamed since shows its new title, once per row", %{
     conn: conn,
     garden: garden
