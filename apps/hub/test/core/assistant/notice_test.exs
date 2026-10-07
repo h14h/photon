@@ -35,12 +35,18 @@ defmodule Photon.Assistant.NoticeTest do
     test "an ok ask_owner result says the question in Blip's words; a refused one says nothing" do
       details = %{
         "question_id" => "q_1",
+        "thread_id" => "c_1",
         "title" => "Fix the pump",
         "wording" => "Which\nbranch?"
       }
 
       assert Notice.from_entries([ask_owner("ok", details)]) == [
-               %{kind: :question, text: ~s("Fix the pump" asks: Which branch?)}
+               %{
+                 kind: :question,
+                 text: ~s("Fix the pump" asks: Which branch?),
+                 thread_id: "c_1",
+                 title: "Fix the pump"
+               }
              ]
 
       assert Notice.from_entries([ask_owner("error", %{})]) == []
@@ -54,16 +60,41 @@ defmodule Photon.Assistant.NoticeTest do
           "notice" => true,
           "question_id" => "q_2",
           "question_notice" => "escalated",
+          "thread_id" => "c_2",
           "title" => "Gate",
           "question" => "Is it locked?"
         })
 
       assert Notice.from_entries([notice]) == [
-               %{kind: :question, text: ~s("Gate" asks: Is it locked?)}
+               %{
+                 kind: :question,
+                 text: ~s("Gate" asks: Is it locked?),
+                 thread_id: "c_2",
+                 title: "Gate"
+               }
              ]
 
       withdrawn = put_in(notice.data["question_notice"], "withdrawn")
       assert Notice.from_entries([withdrawn]) == []
+    end
+
+    test "a question names its thread by the thread's current title" do
+      details = %{
+        "question_id" => "q_1",
+        "thread_id" => "c_1",
+        "title" => "ask blip: which branch?",
+        "wording" => "Which branch?"
+      }
+
+      [said] = Notice.from_entries([ask_owner("ok", details)])
+      assert Notice.text(said, %{}) == ~s("ask blip: which branch?" asks: Which branch?)
+
+      assert Notice.text(said, %{"c_1" => "Deploy branch"}) ==
+               ~s("Deploy branch" asks: Which branch?)
+
+      # A thread that is gone keeps the title the question had.
+      assert Notice.text(said, %{"c_1" => nil}) == said.text
+      assert Notice.text(%{kind: :reply, text: "Done."}, %{"c_1" => "Deploy"}) == "Done."
     end
 
     test "a long question is cut, and one with no words still says there is one" do
@@ -74,7 +105,12 @@ defmodule Photon.Assistant.NoticeTest do
       assert String.ends_with?(text, "...")
 
       assert Notice.from_entries([ask_owner("ok", %{"question_id" => "q_1"})]) == [
-               %{kind: :question, text: "A thread has a question for you."}
+               %{
+                 kind: :question,
+                 text: "A thread has a question for you.",
+                 thread_id: nil,
+                 title: nil
+               }
              ]
     end
 
@@ -114,7 +150,7 @@ defmodule Photon.Assistant.NoticeTest do
       {third, state} = Notice.scan([assistant_entry("Asked the user.")], state)
 
       assert first == []
-      assert second == [%{kind: :question, text: ~s("Deploy" asks: Which branch?)}]
+      assert [%{kind: :question, text: ~s("Deploy" asks: Which branch?)}] = second
       assert third == []
 
       # The owner's next message starts a run of theirs, which speaks.

@@ -28,9 +28,18 @@ defmodule PhotonWeb.ConversationView do
     hub's escalation notice), so a card re-renders when its question
     changes, as an answer re-renders when a call's result lands. Only
     Blip's conversation has any;
+  - `titles`: the current title of each thread the conversation names
+    (`Photon.Transcript.thread_ids/1`), by ID, which the components show
+    in place of the title an entry recorded, and `mentions`, the entries
+    that show each thread (a tool result's thread shows in the answer
+    that made the call), so they re-render when its title changes. The
+    page reads the titles: for the entries it mounts with (`titles:`),
+    for threads new entries name (`untitled/2`) and for all of them when
+    threads change (`thread_ids/1`), and hands them to `put_titles/2`;
   - the `:entries` stream of what the conversation shows.
 
   `apply_changes/4` folds a commit's `{:durable, ...}` changes in,
+  `put_titles/2` threads' titles,
   `apply_live/2` a `{:live, ...}` event, and `reset_form/1` empties the
   composer after a send.
   """
@@ -43,9 +52,11 @@ defmodule PhotonWeb.ConversationView do
 
   @doc """
   Sets up a conversation's assigns and its `:entries` stream from its
-  entries. Options: `busy:` and `queued:` (both required), and `dom_id:`, a
-  function from an entry to its DOM ID (the stream's default,
-  `entries-<id>`, without it).
+  entries. Options: `busy:` and `queued:` (both required), `titles:`, the
+  current titles of the threads the entries and the queued messages
+  name (`Photon.Transcript.thread_ids/1`; none without it), and
+  `dom_id:`, a function from an entry to its DOM ID (the stream's
+  default, `entries-<id>`, without it).
   """
   @spec mount_conversation(Socket.t(), [map()], keyword()) :: Socket.t()
   def mount_conversation(socket, entries, opts) do
@@ -56,6 +67,8 @@ defmodule PhotonWeb.ConversationView do
     |> assign(
       results: results,
       calls: calls,
+      titles: Keyword.get(opts, :titles, %{}),
+      mentions: Enum.reduce(entries, %{}, &add_mentions(&2, &1, calls)),
       questions: Transcript.questions(entries, queued),
       cards: Enum.reduce(entries, %{}, &add_card(&2, &1, calls)),
       outputs: %{},
@@ -84,6 +97,75 @@ defmodule PhotonWeb.ConversationView do
   @spec open_questions(Socket.t()) :: [String.t()]
   def open_questions(socket),
     do: for({id, %{status: :open}} <- socket.assigns.questions, do: id)
+
+  @doc """
+  The threads the conversation names (its entries and its queued
+  messages), by ID, for the page to read their titles.
+  """
+  @spec thread_ids(Socket.t()) :: [String.t()]
+  def thread_ids(socket) do
+    queued = Enum.flat_map(socket.assigns.queued, &Transcript.thread_ids/1)
+    Enum.uniq(Map.keys(socket.assigns.mentions) ++ queued)
+  end
+
+  @doc """
+  The threads `items` (entries, queued messages) name whose titles the
+  page hasn't read yet, for it to read before it folds them in.
+  """
+  @spec untitled(Socket.t(), [map()]) :: [String.t()]
+  def untitled(socket, items) do
+    items
+    |> Enum.flat_map(&Transcript.thread_ids/1)
+    |> Enum.uniq()
+    |> Enum.reject(&Map.has_key?(socket.assigns.titles, &1))
+  end
+
+  @doc """
+  Takes the titles the page read (`read`, by thread ID; nil for a thread
+  that is gone), and re-renders the entries that show a thread whose
+  title changed.
+  """
+  @spec put_titles(Socket.t(), Transcript.titles()) :: Socket.t()
+  def put_titles(socket, read) do
+    %{titles: titles, mentions: mentions} = socket.assigns
+    changed = for {id, title} <- read, Map.get(titles, id) != title, do: id
+
+    changed
+    |> Enum.flat_map(&Map.values(Map.get(mentions, &1, %{})))
+    |> Enum.uniq_by(& &1.id)
+    |> Enum.reduce(assign(socket, titles: Map.merge(titles, read)), fn entry, socket ->
+      stream_insert(socket, :entries, entry)
+    end)
+  end
+
+  # The entry that shows each thread `entry` names: the entry itself, or
+  # for a tool result the answer that made its call.
+  defp add_mentions(mentions, entry, calls) do
+    shown_in =
+      cond do
+        entry.kind == "tool_result" -> calls[Transcript.call_id(entry)]
+        Transcript.shown?(entry) -> entry
+        true -> nil
+      end
+
+    case {Transcript.thread_ids(entry), shown_in} do
+      {[], _entry} ->
+        mentions
+
+      {_ids, nil} ->
+        mentions
+
+      {ids, shown_in} ->
+        Enum.reduce(ids, mentions, fn id, mentions ->
+          Map.update(
+            mentions,
+            id,
+            %{shown_in.id => shown_in},
+            &Map.put(&1, shown_in.id, shown_in)
+          )
+        end)
+    end
+  end
 
   defp configure(socket, nil), do: socket
   defp configure(socket, dom_id), do: stream_configure(socket, :entries, dom_id: dom_id)
@@ -171,6 +253,7 @@ defmodule PhotonWeb.ConversationView do
     socket
     |> assign(results: results)
     |> update(:cards, &add_card(&1, entry, socket.assigns.calls))
+    |> update(:mentions, &add_mentions(&1, entry, socket.assigns.calls))
     |> update(:outputs, &Transcript.settle_output(&1, call_id, results[call_id]))
     |> show_call(call_id)
   end
@@ -188,6 +271,7 @@ defmodule PhotonWeb.ConversationView do
         socket
         |> assign(empty?: false)
         |> update(:cards, &add_card(&1, entry, socket.assigns.calls))
+        |> update(:mentions, &add_mentions(&1, entry, socket.assigns.calls))
         |> stream_insert(:entries, entry),
       else: socket
   end

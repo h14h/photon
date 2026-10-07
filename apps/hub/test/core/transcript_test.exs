@@ -430,7 +430,7 @@ defmodule Photon.TranscriptTest do
           "source" => answer_source(id)
         })
 
-    @open %{status: :open, answer: nil, title: "Gate"}
+    @open %{status: :open, answer: nil, title: "Gate", thread_id: "c_1"}
 
     test "an ok ask_owner result opens one; a refused one doesn't" do
       assert Transcript.questions([ask_owner_result("c1", "q_1")], []) == %{"q_1" => @open}
@@ -462,7 +462,7 @@ defmodule Photon.TranscriptTest do
       asked = ask_owner_result("c1", "q_1")
 
       assert Transcript.questions([asked, answer_entry("q_1", "green\nlike the shed")], []) ==
-               %{"q_1" => %{status: :answered, answer: "green\nlike the shed", title: "Gate"}}
+               %{"q_1" => %{@open | status: :answered, answer: "green\nlike the shed"}}
 
       answered =
         put_in(
@@ -473,10 +473,10 @@ defmodule Photon.TranscriptTest do
         )
 
       assert Transcript.questions([asked, answered], []) ==
-               %{"q_1" => %{status: :answered, answer: "blue", title: "Gate"}}
+               %{"q_1" => %{@open | status: :answered, answer: "blue"}}
 
       assert Transcript.questions([asked, notice_entry("withdrawn", "q_1")], []) ==
-               %{"q_1" => %{status: :withdrawn, answer: nil, title: "Gate"}}
+               %{"q_1" => %{@open | status: :withdrawn}}
 
       queued =
         submission(
@@ -484,7 +484,7 @@ defmodule Photon.TranscriptTest do
         )
 
       assert Transcript.questions([asked], [queued]) ==
-               %{"q_1" => %{status: :answered, answer: "red", title: "Gate"}}
+               %{"q_1" => %{@open | status: :answered, answer: "red"}}
 
       # Other queued messages close nothing.
       assert Transcript.questions([asked], [submission()]) == %{"q_1" => @open}
@@ -521,18 +521,81 @@ defmodule Photon.TranscriptTest do
         %{id: "q_1", status: "answered", answer: "staging", thread_title: "Gate"},
         %{id: "q_2", status: "with_owner", answer: nil, thread_title: "Gate"},
         %{id: "q_3", status: "withdrawn", answer: nil, thread_title: "Gate"},
-        %{id: "q_4", status: "withdrawn", answer: nil, thread_title: "Shed"}
+        %{id: "q_4", status: "withdrawn", answer: nil, thread_title: "Shed", thread_id: "c_4"}
       ]
 
       assert Transcript.close_from_rows(known, rows) == %{
-               "q_1" => %{status: :answered, answer: "staging", title: "Gate"},
+               "q_1" => %{@open | status: :answered, answer: "staging"},
                "q_2" => @open,
                # Answered stays answered, and a row's answer may be blank.
                "q_3" => known["q_3"],
-               "q_4" => %{status: :withdrawn, answer: nil, title: "Shed"}
+               "q_4" => %{status: :withdrawn, answer: nil, title: "Shed", thread_id: "c_4"}
              }
 
       assert Transcript.close_from_rows(known, []) == known
+    end
+  end
+
+  describe "the threads a conversation names" do
+    @signal_source %{
+      "kind" => "signal",
+      "signals" => [
+        %{"kind" => "thread_update", "thread_id" => "c_1", "title" => "fail: pump"},
+        %{"kind" => "question", "thread_id" => "c_2", "title" => "ask blip: gate?"},
+        %{"kind" => "thread_update", "thread_id" => "c_1", "title" => "fail: pump"}
+      ]
+    }
+
+    test "signals, answers, tool results' details, notices and queued messages name them" do
+      signal = entry("user", %{"message" => Message.user("x"), "source" => @signal_source})
+      assert Transcript.thread_ids(signal) == ["c_1", "c_2"]
+
+      answer =
+        entry("user", %{
+          "message" => Message.user("x"),
+          "source" => %{"kind" => "answer", "thread_id" => "c_3"}
+        })
+
+      assert Transcript.thread_ids(answer) == ["c_3"]
+
+      started = tool_result_entry("call_1", "Started.", details: %{"thread_id" => "c_4"})
+      assert Transcript.thread_ids(started) == ["c_4"]
+
+      notice = entry("error", %{"message" => "x", "notice" => true, "thread_id" => "c_5"})
+      assert Transcript.thread_ids(notice) == ["c_5"]
+
+      queued = submission(content: %{"parts" => [], "source" => @signal_source})
+      assert Transcript.thread_ids(queued) == ["c_1", "c_2"]
+
+      assert Transcript.thread_ids(user_entry("hi")) == []
+      assert Transcript.thread_ids(tool_result_entry("call_2", "ok")) == []
+      assert Transcript.thread_ids(submission()) == []
+    end
+
+    test "a thread shows under its current title, else the one the entry recorded" do
+      titles = %{"c_1" => "Fix the pump", "c_2" => nil}
+
+      assert Transcript.title(titles, "c_1", "fix the pump please") == "Fix the pump"
+      # Gone, or not read: what the entry recorded.
+      assert Transcript.title(titles, "c_2", "Gate") == "Gate"
+      assert Transcript.title(titles, "c_3", "Shed") == "Shed"
+      assert Transcript.title(titles, nil, "Shed") == "Shed"
+      assert Transcript.title(titles, "c_3", nil) == nil
+    end
+
+    test "a notice names its thread by the current title" do
+      data = %{
+        "message" => ~s("ask blip: gate?" was stopped, so its question was withdrawn.),
+        "thread_id" => "c_1",
+        "title" => "ask blip: gate?"
+      }
+
+      assert Transcript.notice_text(data, %{"c_1" => "Gate colour"}) ==
+               ~s("Gate colour" was stopped, so its question was withdrawn.)
+
+      assert Transcript.notice_text(data, %{}) == data["message"]
+      assert Transcript.notice_text(%{"message" => "Skipped."}, %{"c_1" => "x"}) == "Skipped."
+      assert Transcript.notice_text(%{}, %{}) == ""
     end
   end
 

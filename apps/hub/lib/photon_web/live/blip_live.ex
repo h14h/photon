@@ -48,6 +48,13 @@ defmodule PhotonWeb.BlipLive do
   close any that were settled where the conversation doesn't show it. Only a question that is open on the page takes a reply:
   the ID comes from the browser.
 
+  Threads show under their current titles: the panel reads the titles of
+  the threads the conversation names when it mounts, when new entries
+  name others, and again on every `{:projects_changed, _}` (a thread
+  named after its first run, or renamed), and the lines, cards, chips
+  and bubbles that name a thread re-render with its new title
+  (`@titles`, see `PhotonWeb.ConversationView`).
+
   The conversation is shared with a project's thread page.
   `PhotonWeb.ConversationComponents` renders it: the entries, each tool
   call inside the answer that made it, a running call's output tail, the
@@ -70,7 +77,7 @@ defmodule PhotonWeb.BlipLive do
 
   import PhotonWeb.ConversationComponents
 
-  alias Photon.{Assistant, Markdown, Questions, Transcript}
+  alias Photon.{Assistant, Markdown, Questions, Threads, Transcript}
   alias Photon.Assistant.Notice
   alias PhotonWeb.ConversationView
 
@@ -91,9 +98,11 @@ defmodule PhotonWeb.BlipLive do
     conversation = Assistant.conversation_id()
     if connected?(socket), do: Assistant.subscribe(conversation)
     entries = Assistant.entries(conversation)
+    queued = Assistant.queued(conversation)
     # Where the conversation's runs stand, so a reply in a run already
     # under way is judged by who asked for that run.
     {_said, notice_state} = Notice.scan(entries, Notice.initial())
+    named = (entries ++ queued) |> Enum.flat_map(&Transcript.thread_ids/1) |> Enum.uniq()
 
     socket =
       socket
@@ -113,7 +122,8 @@ defmodule PhotonWeb.BlipLive do
       )
       |> ConversationView.mount_conversation(entries,
         busy: Assistant.busy?(conversation),
-        queued: Assistant.queued(conversation)
+        queued: queued,
+        titles: read_titles(named)
       )
 
     open = ConversationView.open_questions(socket)
@@ -185,8 +195,9 @@ defmodule PhotonWeb.BlipLive do
   # A question card's Answer: the next message answers that question.
   def handle_event("reply", %{"id" => id}, socket) do
     case socket.assigns.questions[id] do
-      %{status: :open, title: title} ->
-        {:noreply, assign(socket, reply: %{id: id, title: title}, reply_error: nil)}
+      %{status: :open} = question ->
+        reply = %{id: id, title: question.title, thread_id: question.thread_id}
+        {:noreply, assign(socket, reply: reply, reply_error: nil)}
 
       _closed_or_unknown ->
         {:noreply, socket}
@@ -234,11 +245,13 @@ defmodule PhotonWeb.BlipLive do
       ) do
     was_busy = socket.assigns.busy
     busy = Assistant.busy?(conversation)
+    queued = Assistant.queued(conversation)
     {notices, notice_state} = Notice.scan(changes.entries, socket.assigns.notice_state)
 
     socket =
       socket
-      |> ConversationView.apply_changes(changes, busy, Assistant.queued(conversation))
+      |> title_new(changes.entries ++ queued)
+      |> ConversationView.apply_changes(changes, busy, queued)
       |> keep_reply()
       |> hold(Transcript.outcome(changes.entries, was_busy, busy))
       |> assign(notice_state: notice_state)
@@ -254,10 +267,24 @@ defmodule PhotonWeb.BlipLive do
       ),
       do: {:noreply, ConversationView.apply_live(socket, event)}
 
-  # The project on screen changed (its name, or a thread's title): the
-  # chip reads the page again. Through PhotonWeb.Shell's subscription.
-  def handle_info({:projects_changed, id}, %{assigns: %{page: %{"project_id" => id}}} = socket),
-    do: {:noreply, assign(socket, page: Assistant.page_at(socket.assigns.page_path))}
+  # A project changed (its name, a thread's title, a run): the threads
+  # the conversation names are read again, so a thread named or renamed
+  # since reads its new title; on the project on screen, the chip reads
+  # the page again. Through PhotonWeb.Shell's subscription. It is one
+  # read of the named threads by ID however often projects change (rule
+  # 73), and it re-renders only the entries whose thread's title changed.
+  def handle_info({:projects_changed, id}, socket) do
+    titles = socket |> ConversationView.thread_ids() |> read_titles()
+    socket = ConversationView.put_titles(socket, titles)
+
+    case socket.assigns.page do
+      %{"project_id" => ^id} ->
+        {:noreply, assign(socket, page: Assistant.page_at(socket.assigns.page_path))}
+
+      _other_page ->
+        {:noreply, socket}
+    end
+  end
 
   def handle_info({:bubble_gone, id}, socket),
     do:
@@ -310,6 +337,17 @@ defmodule PhotonWeb.BlipLive do
         id: Integer.to_string(System.unique_integer([:positive])),
         leaving: false
       })
+
+  # Reads the titles of the threads new entries or queued messages name,
+  # before they are shown.
+  defp title_new(socket, items) do
+    named = ConversationView.untitled(socket, items)
+    ConversationView.put_titles(socket, read_titles(named))
+  end
+
+  # The current titles of threads `ids`, nil for those that are gone.
+  defp read_titles([]), do: %{}
+  defp read_titles(ids), do: Map.merge(Map.new(ids, &{&1, nil}), Threads.titles(ids))
 
   # The bubbles `which` picks fade out, and go once they have.
   defp leave(socket, which),
@@ -400,6 +438,7 @@ defmodule PhotonWeb.BlipLive do
                   results={@results}
                   outputs={@outputs}
                   questions={@questions}
+                  titles={@titles}
                   image_path={&image_path/2}
                 />
               </div>
@@ -416,6 +455,7 @@ defmodule PhotonWeb.BlipLive do
           busy={@busy}
           mode={@mode}
           queued={@queued}
+          titles={@titles}
           placeholder={
             if(@reply, do: "Your answer goes straight to the thread", else: "Ask Blip anything...")
           }
@@ -430,7 +470,7 @@ defmodule PhotonWeb.BlipLive do
             </p>
           </:above>
           <:context :if={@reply}>
-            <.reply_chip reply={@reply} />
+            <.reply_chip reply={@reply} titles={@titles} />
           </:context>
           <:context :if={!@reply && @page && !@page_dismissed}>
             <.page_chip page={@page} />
@@ -441,7 +481,7 @@ defmodule PhotonWeb.BlipLive do
 
       <div id="blip-bubbles" class="blip-bubbles" aria-live="polite">
         <%!-- Newest last, nearest Blip. --%>
-        <.bubble :for={bubble <- Enum.reverse(@bubbles)} bubble={bubble} />
+        <.bubble :for={bubble <- Enum.reverse(@bubbles)} bubble={bubble} titles={@titles} />
       </div>
 
       <button
@@ -688,6 +728,7 @@ defmodule PhotonWeb.BlipLive do
   end
 
   attr :reply, :map, required: true
+  attr :titles, :map, required: true
 
   # The question the next message answers, inside the message box, with a
   # × to go back to talking to Blip.
@@ -700,7 +741,10 @@ defmodule PhotonWeb.BlipLive do
     >
       <.icon name="hero-arrow-uturn-left-micro" class="size-3.5 shrink-0 text-warn" />
       <span class="min-w-0 truncate">
-        Answering <span class="font-medium text-ink">{@reply.title || "a thread"}</span>
+        Answering
+        <span class="font-medium text-ink">
+          {Transcript.title(@titles, @reply.thread_id, @reply.title) || "a thread"}
+        </span>
       </span>
       <button
         type="button"
@@ -717,6 +761,7 @@ defmodule PhotonWeb.BlipLive do
   end
 
   attr :bubble, :map, required: true
+  attr :titles, :map, required: true
 
   # Blip saying something, in a speech bubble above it: the whole first
   # paragraph. Clicking it opens the chat. The × dismisses it. The tail
@@ -735,7 +780,9 @@ defmodule PhotonWeb.BlipLive do
     >
       <div class="blip-bubble-clip">
         <div class="blip-bubble-card" data-blip-action="open">
-          <div class="markdown-body blip-bubble-text">{raw(Markdown.to_html(@bubble.text))}</div>
+          <div class="markdown-body blip-bubble-text">
+            {raw(Markdown.to_html(Notice.text(@bubble, @titles)))}
+          </div>
           <button
             type="button"
             class="blip-bubble-close"

@@ -42,6 +42,12 @@ defmodule PhotonWeb.ConversationComponents do
   so each question has one card. A withdrawn question's notice is a quiet
   line. A queued signal message's chip names the threads it is from.
 
+  A thread is named by its current title wherever it appears (`titles`,
+  thread ID to title, which the page reads and keeps up to date; see
+  `Photon.Transcript.title/3`), else by the title the entry recorded: a
+  thread's first title is the start of its first message until its first
+  run ends and it gets a name.
+
   The events these components send (`send`, `toggle_mode`, `stop`,
   `withdraw`, and the card's `reply`) go to the LiveView that renders
   them; the socket side of the conversation is
@@ -69,6 +75,8 @@ defmodule PhotonWeb.ConversationComponents do
     default: %{},
     doc: "where each question put to the owner stands (`Photon.Transcript.questions/3`), by ID"
 
+  attr :titles, :map, default: %{}, doc: "threads' current titles, by ID"
+
   @spec entry(map()) :: Phoenix.LiveView.Rendered.t()
   def entry(%{entry: %{kind: "user"}} = assigns) do
     source = assigns.entry.data["source"] || %{}
@@ -93,7 +101,11 @@ defmodule PhotonWeb.ConversationComponents do
           </div>
         </div>
       <% "signal" -> %>
-        <.signal_message id={"#{@id_prefix}message-#{@entry.id}"} data={@entry.data} />
+        <.signal_message
+          id={"#{@id_prefix}message-#{@entry.id}"}
+          data={@entry.data}
+          titles={@titles}
+        />
       <% "answer" -> %>
         <%!-- The owner's answer to a thread's question: their bubble, and what it answered. --%>
         <div class="flex flex-col items-end gap-1 pl-10">
@@ -113,7 +125,7 @@ defmodule PhotonWeb.ConversationComponents do
             <span class="min-w-0 truncate">
               Answer to
               <.thread_link
-                title={@source["title"]}
+                title={Transcript.title(@titles, @source["thread_id"], @source["title"])}
                 slug={@source["slug"]}
                 thread_id={@source["thread_id"]}
                 class="hover:text-ink-soft hover:underline"
@@ -187,6 +199,7 @@ defmodule PhotonWeb.ConversationComponents do
                 call={call}
                 result={@results[call["id"]]}
                 tail={@outputs[call["id"]]}
+                titles={@titles}
                 id_prefix={@id_prefix}
                 image_path={@image_path}
               />
@@ -195,6 +208,7 @@ defmodule PhotonWeb.ConversationComponents do
                 id={question_id}
                 card={card_of_call(call, @results[call["id"]])}
                 question={@questions[question_id]}
+                titles={@titles}
               />
           <% end %>
         <% end %>
@@ -226,6 +240,7 @@ defmodule PhotonWeb.ConversationComponents do
       id={@question_id}
       card={card_of_notice(@entry.data)}
       question={@questions[@question_id]}
+      titles={@titles}
     />
     """
   end
@@ -249,7 +264,7 @@ defmodule PhotonWeb.ConversationComponents do
         }
         class={["mt-0.5 size-4 shrink-0", if(@quiet, do: "text-ink-faint", else: "text-bad")]}
       />
-      <span class="leading-relaxed">{@entry.data["message"]}</span>
+      <span class="leading-relaxed">{Transcript.notice_text(@entry.data, @titles)}</span>
     </div>
     """
   end
@@ -262,6 +277,7 @@ defmodule PhotonWeb.ConversationComponents do
   """
   attr :id, :string, required: true
   attr :data, :map, required: true, doc: "the user entry's data"
+  attr :titles, :map, default: %{}, doc: "threads' current titles, by ID"
 
   @spec signal_message(map()) :: Phoenix.LiveView.Rendered.t()
   def signal_message(assigns) do
@@ -298,7 +314,7 @@ defmodule PhotonWeb.ConversationComponents do
             <span class="min-w-0 leading-snug">
               <span :if={line.ref["project"]} class="text-ink-faint">{line.ref["project"]} /</span>
               <.thread_link
-                title={line.ref["title"]}
+                title={Transcript.title(@titles, line.ref["thread_id"], line.ref["title"])}
                 slug={line.ref["slug"]}
                 thread_id={line.ref["thread_id"]}
                 class="font-medium text-ink hover:underline"
@@ -362,6 +378,7 @@ defmodule PhotonWeb.ConversationComponents do
   attr :id, :string, required: true, doc: "the question's ID"
   attr :card, :map, required: true, doc: "title, slug, thread_id, text and hub?"
   attr :question, :map, default: nil, doc: "where it stands (`Photon.Transcript.question()`)"
+  attr :titles, :map, default: %{}, doc: "threads' current titles, by ID"
 
   @spec question_card(map()) :: Phoenix.LiveView.Rendered.t()
   def question_card(assigns) do
@@ -370,6 +387,7 @@ defmodule PhotonWeb.ConversationComponents do
     assigns =
       assign(assigns,
         dom_id: "question-card-#{assigns.id}",
+        title: Transcript.title(assigns.titles, assigns.card.thread_id, assigns.card.title),
         status: question.status,
         answer: first_line(question.answer)
       )
@@ -397,7 +415,7 @@ defmodule PhotonWeb.ConversationComponents do
           <p class="truncate text-[12.5px] text-ink-faint">
             <.thread_link
               id={"#{@dom_id}-thread"}
-              title={@card.title}
+              title={@title}
               slug={@card.slug}
               thread_id={@card.thread_id}
               class="font-medium text-ink-soft hover:text-ink hover:underline"
@@ -502,6 +520,7 @@ defmodule PhotonWeb.ConversationComponents do
   attr :call, :map, required: true
   attr :result, :map, default: nil
   attr :tail, :string, default: nil, doc: "the end of the call's output while it runs"
+  attr :titles, :map, default: %{}, doc: "threads' current titles, by ID"
   attr :id_prefix, :string, default: ""
   attr :image_path, :any, required: true, doc: "fn entry_id, index -> the image's path end"
 
@@ -556,7 +575,13 @@ defmodule PhotonWeb.ConversationComponents do
             <.icon :if={@status == :stopped} name="hero-stop-micro" class="size-3.5" />
           </span>
           <span class="min-w-0 flex-1 truncate text-ink-soft">
-            <.action_label name={@call["name"]} args={@args} details={@details} status={@status} />
+            <.action_label
+              name={@call["name"]}
+              args={@args}
+              details={@details}
+              status={@status}
+              titles={@titles}
+            />
           </span>
           <span
             :if={@details["exit_code"] not in [nil, 0]}
@@ -632,6 +657,7 @@ defmodule PhotonWeb.ConversationComponents do
   attr :args, :map, required: true
   attr :details, :map, default: %{}
   attr :status, :atom, default: :done
+  attr :titles, :map, default: %{}, doc: "threads' current titles, by ID"
 
   @spec action_label(map()) :: Phoenix.LiveView.Rendered.t()
   def action_label(%{name: name} = assigns) when name in ~w(shell view_image) do
@@ -695,7 +721,8 @@ defmodule PhotonWeb.ConversationComponents do
   end
 
   def action_label(%{name: name} = assigns) when name in @read_tools do
-    {verb, subject} = read_words(name, assigns.args, assigns.details, assigns.status)
+    details = current_title(assigns.details, assigns.titles)
+    {verb, subject} = read_words(name, assigns.args, details, assigns.status)
     assigns = assign(assigns, verb: verb, subject: truncate(subject))
 
     ~H"""
@@ -704,7 +731,8 @@ defmodule PhotonWeb.ConversationComponents do
   end
 
   def action_label(%{name: name} = assigns) when name in @work_tools do
-    {verb, subject, rest} = work_words(name, assigns.args, assigns.details, assigns.status)
+    details = current_title(assigns.details, assigns.titles)
+    {verb, subject, rest} = work_words(name, assigns.args, details, assigns.status)
 
     assigns =
       assign(assigns,
@@ -752,6 +780,12 @@ defmodule PhotonWeb.ConversationComponents do
   defp label_text("list_schedules", _), do: "Checked the schedule"
   defp label_text("cancel_schedule", args), do: "Cancelled #{args["schedule_id"]}"
   defp label_text(name, _), do: name
+
+  # A result's details with the thread they name under its current title.
+  defp current_title(%{"title" => title} = details, titles),
+    do: %{details | "title" => Transcript.title(titles, details["thread_id"], title)}
+
+  defp current_title(details, _titles), do: details
 
   # The words around a skill's name: "Loading the pdf-forms skill",
   # "Couldn't load pdf-form".
@@ -1052,6 +1086,7 @@ defmodule PhotonWeb.ConversationComponents do
   attr :busy, :boolean, required: true
   attr :mode, :string, required: true
   attr :queued, :list, required: true
+  attr :titles, :map, default: %{}, doc: "threads' current titles, by ID, for the queued chips"
   attr :id_prefix, :string, default: ""
   attr :placeholder, :string, default: "Ask Blip anything..."
   attr :class, :any, default: nil, doc: "added to the outer row"
@@ -1072,7 +1107,7 @@ defmodule PhotonWeb.ConversationComponents do
     <div class={["shrink-0 px-3 pt-1 pb-3 sm:px-4 sm:pb-4", @class]}>
       <div class="mx-auto w-full max-w-3xl">
         {render_slot(@above)}
-        <.queued_messages queued={@queued} id_prefix={@id_prefix} />
+        <.queued_messages queued={@queued} titles={@titles} id_prefix={@id_prefix} />
 
         <.form
           for={@form}
@@ -1220,6 +1255,7 @@ defmodule PhotonWeb.ConversationComponents do
   composer's place.
   """
   attr :queued, :list, required: true
+  attr :titles, :map, default: %{}, doc: "threads' current titles, by ID"
   attr :id_prefix, :string, default: ""
 
   @spec queued_messages(map()) :: Phoenix.LiveView.Rendered.t()
@@ -1232,7 +1268,7 @@ defmodule PhotonWeb.ConversationComponents do
         class="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-surface py-1 pr-1 pl-3 text-[12px] text-ink-soft"
       >
         <span class="font-medium text-ink-faint">{queued_label(s)}</span>
-        <span class="max-w-60 truncate">{queued_text(s.content)}</span>
+        <span class="max-w-60 truncate">{queued_text(s.content, @titles)}</span>
         <span
           :if={answer?(s)}
           id={"#{@id_prefix}queued-#{s.id}-sent"}
@@ -1269,7 +1305,7 @@ defmodule PhotonWeb.ConversationComponents do
 
   # What a queued message says on its chip: what was typed, or for a
   # signal message, which threads it is from.
-  defp queued_text(%{"source" => %{"kind" => "signal"}} = content) do
+  defp queued_text(%{"source" => %{"kind" => "signal"}} = content, titles) do
     lines =
       Transcript.signal_lines(%{
         "message" => %{"content" => content["parts"]},
@@ -1277,9 +1313,14 @@ defmodule PhotonWeb.ConversationComponents do
       })
 
     questions? = Enum.any?(lines, &(&1.ref["kind"] == "question"))
-    titles = Enum.map_join(lines, ", ", &~s("#{thread_title(&1.ref["title"])}"))
-    if(questions?, do: "Question from ", else: "Update on ") <> titles
+
+    named =
+      Enum.map_join(lines, ", ", fn %{ref: ref} ->
+        ~s("#{thread_title(Transcript.title(titles, ref["thread_id"], ref["title"]))}")
+      end)
+
+    if(questions?, do: "Question from ", else: "Update on ") <> named
   end
 
-  defp queued_text(content), do: Transcript.typed(content["parts"], content["source"])
+  defp queued_text(content, _titles), do: Transcript.typed(content["parts"], content["source"])
 end
