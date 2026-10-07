@@ -5,7 +5,12 @@ defmodule Photon.Assistant.Notice do
   answer, whole, as Markdown. `PhotonWeb.BlipLive` drives these.
 
   Blip speaks up only about its own answers and failures in the
-  conversation (`from_entries/1`), never with tips.
+  conversation (`from_entries/1`), never with tips, and about a thread's
+  question once it is with the owner (`:question`): Blip's `ask_owner`
+  passing it on, in Blip's words, or the hub's notice that it passed on
+  one Blip didn't get to, in the thread's. So a question reaches the
+  owner with the panel shut. A signal message is never a notice; Blip's
+  reply to it is, as any answer is.
   """
 
   # Functional core: no processes, no I/O.
@@ -15,8 +20,14 @@ defmodule Photon.Assistant.Notice do
   alias Photon.Transcript
   alias PhotonCore.Message
 
-  @typedoc "One thing Blip says: `:reply` (its answer) or `:error` (the conversation failed)."
-  @type t :: %{kind: :reply | :error, text: String.t()}
+  # The most of a question a bubble shows; the panel has all of it.
+  @question_limit 280
+
+  @typedoc """
+  One thing Blip says: `:reply` (its answer), `:error` (the conversation
+  failed) or `:question` (a thread's question is with the owner).
+  """
+  @type t :: %{kind: :reply | :error | :question, text: String.t()}
 
   @doc "What a batch of newly committed conversation entries is worth saying, in order."
   @spec from_entries([Entry.t()]) :: [t()]
@@ -29,13 +40,44 @@ defmodule Photon.Assistant.Notice do
     end
   end
 
-  defp of_entry(%{kind: "error", data: data}) do
-    if Transcript.quiet?(data),
-      do: nil,
-      else: %{kind: :error, text: paragraph(data["message"] || "")}
+  defp of_entry(%{kind: "tool_result", data: data}) do
+    details = data["details"]
+
+    if Transcript.question_card(data),
+      do: question(details["title"], details["wording"]),
+      else: nil
+  end
+
+  defp of_entry(%{kind: "error", data: data} = entry) do
+    cond do
+      Transcript.escalation(entry) -> question(data["title"], data["question"])
+      Transcript.quiet?(data) -> nil
+      true -> %{kind: :error, text: paragraph(data["message"] || "")}
+    end
   end
 
   defp of_entry(_entry), do: nil
+
+  # `"Fix the pump" asks: <the question>`, the question on one line and
+  # cut to what a bubble holds.
+  defp question(title, text) do
+    title = if is_binary(title) and title != "", do: ~s("#{title}"), else: "A thread"
+
+    case one_line(text) do
+      "" -> %{kind: :question, text: title <> " has a question for you."}
+      text -> %{kind: :question, text: title <> " asks: " <> text}
+    end
+  end
+
+  defp one_line(text) when is_binary(text) do
+    text = text |> String.split() |> Enum.join(" ")
+
+    if String.length(text) > @question_limit,
+      do: String.slice(text, 0, @question_limit - 3) <> "...",
+      else: text
+  end
+
+  defp one_line(_text), do: ""
 
   @doc """
   What of `text` goes in the bubble: its first paragraph (or list, or other

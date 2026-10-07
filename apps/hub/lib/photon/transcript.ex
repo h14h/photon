@@ -26,6 +26,11 @@ defmodule Photon.Transcript do
       how a machine call's line reads (`machine_action/4`)
     * Blip's mood (`mood/1`), and the outcome a batch of new entries is
       worth showing for a moment (`outcome/3`)
+    * in Blip's panel: a signal message's lines (`signal_lines/1`), which
+      entries show as a question's card (`question_card/1` for an ok
+      `ask_owner` result, `escalation/1` for the hub's notice), and where
+      each question put to the owner stands (`questions/3`), folded from
+      the entries and the answers still queued in Blip's inbox
   """
 
   # Functional core: no processes, no I/O.
@@ -50,6 +55,17 @@ defmodule Photon.Transcript do
 
   @typedoc "A web search the model ran: its ID, and what it did (nil while it runs)."
   @type search :: %{id: String.t(), action: map() | nil}
+
+  @typedoc """
+  A question Blip's conversation put to the owner, as its card shows it:
+  open, answered (with the answer, when the conversation has it) or
+  withdrawn, and the asking thread's title.
+  """
+  @type question :: %{
+          status: :open | :answered | :withdrawn,
+          answer: String.t() | nil,
+          title: String.t() | nil
+        }
 
   @typedoc "Blip's mood, as the avatar shows it."
   @type mood :: :idle | :thinking | :done | :error
@@ -103,6 +119,168 @@ defmodule Photon.Transcript do
     |> Enum.filter(&match?(%{"type" => "text", "text" => text} when is_binary(text), &1))
     |> List.last(%{"text" => ""})
     |> Map.fetch!("text")
+  end
+
+  @doc """
+  The lines of a signal message (source kind `"signal"`), one per signal
+  it carries, in order: each ref, and for a question the question as the
+  thread asked it (its text part without the header line; nil for an
+  update). Any other message has none.
+  """
+  @spec signal_lines(map()) :: [%{ref: map(), question: String.t() | nil}]
+  def signal_lines(%{"message" => message, "source" => %{"kind" => "signal", "signals" => refs}})
+      when is_list(refs) do
+    parts =
+      case message do
+        %{"content" => parts} when is_list(parts) -> parts
+        _other -> []
+      end
+
+    # A part for each ref, at the same index; a missing one is nil.
+    refs
+    |> Enum.zip(Stream.concat(parts, Stream.repeatedly(fn -> nil end)))
+    |> Enum.flat_map(fn
+      {%{} = ref, part} -> [%{ref: ref, question: signal_question(ref, part)}]
+      {_not_a_ref, _part} -> []
+    end)
+  end
+
+  def signal_lines(_data), do: []
+
+  # A question's part is a header line, then the question.
+  defp signal_question(%{"kind" => "question"}, %{"type" => "text", "text" => text})
+       when is_binary(text) do
+    case String.split(text, "\n", parts: 2) do
+      [_header, question] -> String.trim(question)
+      [_header_only] -> nil
+    end
+  end
+
+  defp signal_question(_ref, _part), do: nil
+
+  @doc """
+  Whether a tool result is an `ask_owner` call that passed a question to
+  the owner: its question's ID, so the call shows as the question's card.
+  A refused call (an error result) is nil, and shows as an ordinary line.
+  """
+  @spec question_card(map() | nil) :: String.t() | nil
+  def question_card(%{
+        "name" => "ask_owner",
+        "status" => "ok",
+        "details" => %{"question_id" => id}
+      })
+      when is_binary(id),
+      do: id
+
+  def question_card(_result), do: nil
+
+  @doc """
+  Whether an entry is the hub's notice that it passed a question Blip
+  didn't get to on to the owner: its question's ID. Such a notice shows
+  as the question's card.
+  """
+  @spec escalation(Entry.t() | map()) :: String.t() | nil
+  def escalation(%{
+        kind: "error",
+        data: %{"question_notice" => "escalated", "question_id" => id}
+      })
+      when is_binary(id),
+      do: id
+
+  def escalation(_entry), do: nil
+
+  @doc """
+  The questions Blip's conversation has put to the owner, by ID, folded
+  from its entries and the submissions still queued in its inbox, on top
+  of `known` (what an earlier fold gave):
+
+    * an ok `ask_owner` result, or the hub's escalation notice, opens one
+      (`:open`), with the thread's title
+    * the owner's answer (a user entry with source kind `"answer"`), an
+      ok `answer_question` result, or a queued `"answer"` submission
+      answers it (`:answered`, with the answer when it is known)
+    * a withdraw notice withdraws it (`:withdrawn`)
+
+  A queued answer counts because the answer has already gone to the
+  thread; its entry only comes when Blip's inbox gets to it. Answered and
+  withdrawn are final: nothing later reopens or changes them.
+  """
+  @spec questions([Entry.t()], [map()], %{String.t() => question()}) :: %{
+          String.t() => question()
+        }
+  def questions(entries, queued, known \\ %{}) do
+    events = Enum.flat_map(entries, &question_events/1) ++ Enum.flat_map(queued, &queued_answer/1)
+    Enum.reduce(events, known, &fold_question/2)
+  end
+
+  defp question_events(%{kind: "tool_result", data: data}) do
+    details = if is_map(data["details"]), do: data["details"], else: %{}
+
+    cond do
+      id = question_card(data) ->
+        [event(id, :open, details["title"], nil)]
+
+      answered_by_tool?(data, details) ->
+        [
+          event(
+            details["question_id"],
+            :answered,
+            details["title"],
+            text_or_nil(details["answer"])
+          )
+        ]
+
+      true ->
+        []
+    end
+  end
+
+  defp question_events(%{kind: "error", data: %{"question_id" => id} = data})
+       when is_binary(id) do
+    case data["question_notice"] do
+      "escalated" -> [event(id, :open, data["title"], nil)]
+      "withdrawn" -> [event(id, :withdrawn, data["title"], nil)]
+      _other -> []
+    end
+  end
+
+  defp question_events(%{kind: "user", data: %{"source" => source} = data}),
+    do: answer_event(data["message"], source)
+
+  defp question_events(_entry), do: []
+
+  defp answered_by_tool?(data, details),
+    do:
+      data["name"] == "answer_question" and data["status"] == "ok" and
+        is_binary(details["question_id"])
+
+  defp queued_answer(%{content: %{"parts" => parts, "source" => source}}),
+    do: answer_event(parts, source)
+
+  defp queued_answer(_submission), do: []
+
+  defp answer_event(content, %{"kind" => "answer", "question_id" => id} = source)
+       when is_binary(id),
+       do: [event(id, :answered, source["title"], text_or_nil(typed(content, source)))]
+
+  defp answer_event(_content, _source), do: []
+
+  defp text_or_nil(text) when is_binary(text) and text != "", do: text
+  defp text_or_nil(_text), do: nil
+
+  # What one entry says about question `id`: where it stands afterwards.
+  defp event(id, status, title, answer),
+    do: {id, %{status: status, answer: answer, title: title}}
+
+  defp fold_question({id, %{status: :open} = question}, questions),
+    do: Map.put_new(questions, id, question)
+
+  defp fold_question({id, question}, questions) do
+    case questions[id] do
+      %{status: done} when done in [:answered, :withdrawn] -> questions
+      nil -> Map.put(questions, id, question)
+      known -> Map.put(questions, id, %{question | title: question.title || known.title})
+    end
   end
 
   @doc "Whether a conversation has nothing to show yet (only tool results, or nothing)."

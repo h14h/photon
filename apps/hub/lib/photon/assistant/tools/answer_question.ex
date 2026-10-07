@@ -15,6 +15,9 @@ defmodule Photon.Assistant.Tools.AnswerQuestion do
   passing on what they said; otherwise it is refused, so a guess of
   Blip's never passes as the owner's decision.
 
+  Its result's details name the question and the thread, and carry the
+  answer, which the question's card in Blip's panel shows.
+
   A refusal is Blip's words for it (`Photon.Assistant.question_refusal/2`);
   an unknown ID lists the open questions.
   """
@@ -68,7 +71,8 @@ defmodule Photon.Assistant.Tools.AnswerQuestion do
            "title" => question.thread_title,
            "project_id" => question.project_id,
            "slug" => question.project_slug,
-           "answered_by" => question.answered_by
+           "answered_by" => question.answered_by,
+           "answer" => question.answer
          }}
 
       {:error, reason} ->

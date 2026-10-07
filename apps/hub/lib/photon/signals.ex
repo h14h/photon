@@ -194,20 +194,41 @@ defmodule Photon.Signals do
   question was with the owner. A notice is for the owner to read; the
   model never sees it. It runs on the harness's abort path, so it never
   raises.
+
+  Its data says which notice it is (`"question_notice"`: `"escalated"` or
+  `"withdrawn"`) and where the thread is (`"thread_id"`, `"title"`,
+  `"slug"`, `"project"`), and an escalation carries the thread's own
+  question (`"question"`): Blip's panel draws an escalation as the
+  question's card, which the owner answers from.
   """
   @spec notice_tx(Tx.t(), question(), :escalated | :withdrawn) :: :ok
   def notice_tx(tx, question, kind) do
     ref = question_ref(question)
     text = if kind == :escalated, do: Text.escalated(ref), else: Text.withdrawn(ref)
 
-    _entry =
-      Tx.append(tx, blip_conversation_tx(tx), "error", %{
-        "message" => text,
-        "notice" => true,
-        "question_id" => question.id
-      })
-
+    _entry = Tx.append(tx, blip_conversation_tx(tx), "error", notice_data(question, kind, text))
     :ok
+  end
+
+  # What the panel draws the notice from: which notice it is and where its
+  # thread is, and for an escalation the thread's own question, since the
+  # owner answers that one from the panel's card.
+  defp notice_data(question, kind, text) do
+    data = %{
+      "message" => text,
+      "notice" => true,
+      "question_id" => question.id,
+      "question_notice" => Atom.to_string(kind),
+      "thread_id" => question.thread_id,
+      "title" => question.thread_title,
+      "slug" => question.project_slug,
+      "project" => question.project_name
+    }
+
+    case {kind, Map.get(question, :question)} do
+      {:escalated, text} when is_binary(text) -> Map.put(data, "question", text)
+      _withdrawn_or_none -> data
+    end
   end
 
   defp question_ref(question) do

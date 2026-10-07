@@ -382,4 +382,176 @@ defmodule Photon.TranscriptTest do
       assert Transcript.search_label(%{"type" => "search"}) == "Searched the web"
     end
   end
+
+  describe "questions put to the owner, in Blip's panel" do
+    @place %{"thread_id" => "c_1", "title" => "Gate", "slug" => "garden", "project" => "Garden"}
+
+    defp ask_owner_result(call_id, question_id, overrides \\ []) do
+      details =
+        Map.merge(@place, %{"question_id" => question_id, "wording" => "What colour?"})
+
+      result =
+        tool_result_entry(call_id, "Asked the user.",
+          details: details,
+          status: Keyword.get(overrides, :status, "ok")
+        )
+
+      put_in(result.data["name"], "ask_owner")
+    end
+
+    defp notice_entry(kind, question_id, extra \\ %{}) do
+      entry(
+        "error",
+        @place
+        |> Map.merge(%{
+          "message" => "A notice.",
+          "notice" => true,
+          "question_id" => question_id,
+          "question_notice" => kind
+        })
+        |> Map.merge(extra)
+      )
+    end
+
+    defp answer_parts(id, text),
+      do: [
+        Message.text(
+          "[Your answer to #{id} from Garden / \"Gate\" (c_1) went straight to the thread.]"
+        ),
+        Message.text(text)
+      ]
+
+    defp answer_source(id), do: Map.merge(@place, %{"kind" => "answer", "question_id" => id})
+
+    defp answer_entry(id, text),
+      do:
+        entry("user", %{
+          "message" => Message.user(answer_parts(id, text)),
+          "source" => answer_source(id)
+        })
+
+    @open %{status: :open, answer: nil, title: "Gate"}
+
+    test "an ok ask_owner result opens one; a refused one doesn't" do
+      assert Transcript.questions([ask_owner_result("c1", "q_1")], []) == %{"q_1" => @open}
+      assert Transcript.questions([ask_owner_result("c1", "q_1", status: "error")], []) == %{}
+
+      assert Transcript.question_card(ask_owner_result("c1", "q_1").data) == "q_1"
+      assert Transcript.question_card(ask_owner_result("c1", "q_1", status: "error").data) == nil
+      assert Transcript.question_card(tool_result_entry("c1", "x").data) == nil
+      assert Transcript.question_card(nil) == nil
+    end
+
+    test "the hub's escalation notice opens one; other notices don't" do
+      escalated = notice_entry("escalated", "q_2", %{"question" => "Is it locked?"})
+
+      assert Transcript.questions([escalated], []) == %{"q_2" => %{@open | title: "Gate"}}
+      assert Transcript.escalation(escalated) == "q_2"
+      assert Transcript.escalation(notice_entry("withdrawn", "q_2")) == nil
+
+      assert Transcript.escalation(entry("error", %{"message" => "Skipped.", "notice" => true})) ==
+               nil
+
+      assert Transcript.questions(
+               [entry("error", %{"message" => "Skipped.", "notice" => true})],
+               []
+             ) == %{}
+    end
+
+    test "the owner's answer, Blip's answer_question, a withdraw notice and a queued answer close it" do
+      asked = ask_owner_result("c1", "q_1")
+
+      assert Transcript.questions([asked, answer_entry("q_1", "green\nlike the shed")], []) ==
+               %{"q_1" => %{status: :answered, answer: "green\nlike the shed", title: "Gate"}}
+
+      answered =
+        put_in(
+          tool_result_entry("c2", "Sent your answer.",
+            details: %{"question_id" => "q_1", "title" => "Gate", "answer" => "blue"}
+          ).data["name"],
+          "answer_question"
+        )
+
+      assert Transcript.questions([asked, answered], []) ==
+               %{"q_1" => %{status: :answered, answer: "blue", title: "Gate"}}
+
+      assert Transcript.questions([asked, notice_entry("withdrawn", "q_1")], []) ==
+               %{"q_1" => %{status: :withdrawn, answer: nil, title: "Gate"}}
+
+      queued =
+        submission(
+          content: %{"parts" => answer_parts("q_1", "red"), "source" => answer_source("q_1")}
+        )
+
+      assert Transcript.questions([asked], [queued]) ==
+               %{"q_1" => %{status: :answered, answer: "red", title: "Gate"}}
+
+      # Other queued messages close nothing.
+      assert Transcript.questions([asked], [submission()]) == %{"q_1" => @open}
+    end
+
+    test "answered and withdrawn are final, and a later fold builds on an earlier one" do
+      known = Transcript.questions([ask_owner_result("c1", "q_1")], [])
+      answered = Transcript.questions([answer_entry("q_1", "green")], [], known)
+      assert answered["q_1"].status == :answered
+
+      # The queued answer's entry, once placed, and a stray withdraw notice change nothing.
+      assert Transcript.questions(
+               [answer_entry("q_1", "green, again"), notice_entry("withdrawn", "q_1")],
+               [],
+               answered
+             ) == answered
+
+      # Nor does an open after the end.
+      assert Transcript.questions([ask_owner_result("c3", "q_1")], [], answered) == answered
+    end
+  end
+
+  describe "a signal message's lines" do
+    test "a line per signal, a question with its text and without its header" do
+      update = %{
+        "kind" => "thread_update",
+        "key" => "settle:s_1",
+        "status" => "failed",
+        "title" => "Pump"
+      }
+
+      question = %{
+        "kind" => "question",
+        "key" => "question:q_1",
+        "question_id" => "q_1",
+        "title" => "Gate"
+      }
+
+      data = %{
+        "message" =>
+          Message.user([
+            Message.text(~s{[Thread update] Garden / "Pump" (c_1) failed: unplugged}),
+            Message.text(~s{[Question q_1 from Garden / "Gate" (c_2)]\nWhat colour?\nAny.})
+          ]),
+        "source" => %{"kind" => "signal", "signals" => [update, question]}
+      }
+
+      assert Transcript.signal_lines(data) == [
+               %{ref: update, question: nil},
+               %{ref: question, question: "What colour?\nAny."}
+             ]
+    end
+
+    test "any other message has none, and a missing part reads as no question" do
+      assert Transcript.signal_lines(%{
+               "message" => Message.user("hi"),
+               "source" => %{"kind" => "user"}
+             }) == []
+
+      assert Transcript.signal_lines(%{}) == []
+
+      question = %{"kind" => "question", "question_id" => "q_1"}
+
+      assert Transcript.signal_lines(%{
+               "message" => Message.user([]),
+               "source" => %{"kind" => "signal", "signals" => [question, "junk"]}
+             }) == [%{ref: question, question: nil}]
+    end
+  end
 end

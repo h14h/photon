@@ -2,8 +2,15 @@ defmodule PhotonWeb.BlipLiveTest do
   @moduledoc """
   Blip, floating over the pages, driven as a user would: the conversation
   (sending, the in-flight answer, the inbox while the assistant is busy),
-  the panel, what Blip says while it's closed, its mood, and the page under
-  it.
+  the panel, what Blip says while it's closed, its mood, the page under
+  it, and what reaches Blip from the threads: updates and questions, the
+  question cards and the reply chip that answers one.
+
+  Threads and Blip run on the scripted models: a thread started with `ask
+  blip: <question>` asks Blip, and the scripted Blip passes it to the
+  owner with `ask_owner` (or, for a question ending in `(prose)`, replies
+  in prose so the hub passes it on). Blip is kept busy by a `shell` call
+  on `box`, a machine the test process plays and never answers.
   """
 
   use PhotonWeb.ConnCase, async: false
@@ -11,7 +18,7 @@ defmodule PhotonWeb.BlipLiveTest do
   import Phoenix.LiveViewTest
   import Photon.Fixtures, only: [call: 3]
 
-  alias Photon.{Assistant, Durable, Projects, Threads}
+  alias Photon.{Assistant, Durable, Machines, Projects, Questions, Threads}
   alias PhotonCore.Message
 
   @moduletag :durable
@@ -585,6 +592,333 @@ defmodule PhotonWeb.BlipLiveTest do
       assert Message.text_of(answer.data["message"]) == "I don't know which page you're on."
       _ = render(blip)
       refute has_element?(blip, "#message-#{user.id}-about")
+    end
+  end
+
+  describe "what reaches Blip from the threads" do
+    setup [:page, :opened]
+
+    setup do
+      {:ok, project} =
+        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+
+      :ok = Questions.subscribe()
+      %{project: project}
+    end
+
+    # Stands in for a connected machine that takes commands and never answers.
+    defp fake_machine(name) do
+      :ok =
+        Machines.register(name, %{
+          "platform" => "test",
+          "workspace" => "/w",
+          "version" => "0",
+          "capabilities" => ["ops:2"]
+        })
+    end
+
+    # Starts a thread that asks Blip `question`; returns it and its
+    # question once Blip has passed it to the owner.
+    defp passed!(project, c, question) do
+      {:ok, thread} = Threads.start(project.id, "ask blip: " <> question)
+      _result = await_entry(c, &(&1.kind == "tool_result" and &1.data["name"] == "ask_owner"))
+      idle!(c)
+      assert %{} = open = Questions.open_by_thread([thread.id])
+      [passed] = open[thread.id]
+      assert passed.status == "with_owner"
+      {thread, passed}
+    end
+
+    defp idle!(conversation_id) do
+      if Durable.busy?(conversation_id),
+        do: await_change(conversation_id, fn _changes -> not Durable.busy?(conversation_id) end)
+
+      :ok
+    end
+
+    # Blip's answer making ask_owner calls, and their results, as the
+    # harness records them.
+    defp ask_owner_calls(c, calls) do
+      calls =
+        for {id, question_id, _status} <- calls,
+            do:
+              call(
+                "ask_owner",
+                %{"question_id" => question_id, "question" => "Which branch?"},
+                id
+              )
+
+      Durable.commit(
+        &Durable.Tx.append(&1, c, "assistant", %{"message" => Message.assistant("", calls)})
+      )
+    end
+
+    defp ask_owner_result(c, call_id, question_id, "ok") do
+      Durable.commit(
+        &Durable.Tx.append(&1, c, "tool_result", %{
+          "message" => Message.tool_result(call_id, "Asked the user."),
+          "name" => "ask_owner",
+          "status" => "ok",
+          "details" => %{
+            "question_id" => question_id,
+            "thread_id" => "c_9",
+            "title" => "Fix the pump",
+            "slug" => "garden",
+            "project" => "Garden",
+            "wording" => "Which branch?"
+          }
+        })
+      )
+    end
+
+    defp ask_owner_result(c, call_id, _question_id, "error") do
+      Durable.commit(
+        &Durable.Tx.append(&1, c, "tool_result", %{
+          "message" =>
+            Message.tool_result(call_id, "Error: that question is already with the user."),
+          "name" => "ask_owner",
+          "status" => "error",
+          "details" => %{}
+        })
+      )
+    end
+
+    test "a thread's failure shows as a line linking the thread", %{
+      blip: blip,
+      project: project,
+      conversation: c
+    } do
+      {:ok, thread} = Threads.start(project.id, "fail: the pump is unplugged")
+
+      signal =
+        await_entry(c, &(&1.kind == "user" and &1.data["source"]["kind"] == "signal"))
+
+      _ = render(blip)
+      line = "#message-#{signal.id}-signal-0"
+      assert has_element?(blip, "#{line}[data-kind=thread_update]", "failed")
+
+      assert has_element?(
+               blip,
+               "#{line} a[href='/projects/garden/threads/#{thread.id}']",
+               thread.title
+             )
+
+      assert has_element?(blip, line, "Garden /")
+      # It isn't the owner's message, so no bubble of theirs.
+      refute has_element?(blip, "#message-#{signal.id} .whitespace-pre-wrap")
+    end
+
+    test "a question Blip passes on is a card; Answer puts the chip on the box, and sending answers it",
+         %{blip: blip, project: project, conversation: c} do
+      {thread, passed} = passed!(project, c, "which deploy branch?")
+      card = "#question-card-#{passed.id}"
+
+      _ = render(blip)
+      assert has_element?(blip, "#{card}[data-status=open]")
+      assert has_element?(blip, "#{card}-text", "which deploy branch?")
+      assert has_element?(blip, "#{card}-thread[href='/projects/garden/threads/#{thread.id}']")
+      # The question's signal shows too, as a line that asks.
+      assert has_element?(
+               blip,
+               "[id$=-signal-0][data-kind=question]",
+               "asks: which deploy branch?"
+             )
+
+      blip |> element("#{card}-answer") |> render_click()
+      assert has_element?(blip, "#reply-chip", "Answering")
+      assert has_element?(blip, "#reply-chip", passed.thread_title)
+
+      blip |> form("#composer", message: %{text: "main, always"}) |> render_submit()
+      refute has_element?(blip, "#reply-chip")
+
+      # The thread's call ends with the owner's words.
+      :ok = Threads.subscribe(thread.id)
+
+      result =
+        await_entry(thread.id, &(&1.kind == "tool_result" and &1.data["name"] == "ask_blip"))
+
+      assert result.data["status"] == "ok"
+
+      assert %{status: "answered", answer: "main, always", answered_by: "owner"} =
+               Questions.get(passed.id)
+
+      answer = await_entry(c, &(&1.kind == "user" and &1.data["source"]["kind"] == "answer"))
+      _ = render(blip)
+      assert has_element?(blip, "#{card}[data-status=answered]")
+      assert has_element?(blip, "#{card}-status", "main, always")
+      refute has_element?(blip, "#{card}-answer")
+      assert has_element?(blip, "#message-#{answer.id}", ~r/\Amain, always\z/)
+      assert has_element?(blip, "#message-#{answer.id}-about", "Answer to")
+
+      assert has_element?(
+               blip,
+               "#message-#{answer.id}-about a[href='/projects/garden/threads/#{thread.id}']"
+             )
+    end
+
+    test "an answer sent while Blip is busy closes the card at once, before Blip gets to it", %{
+      blip: blip,
+      project: project,
+      conversation: c
+    } do
+      {_thread, passed} = passed!(project, c, "which deploy branch?")
+      fake_machine("box")
+      {:ok, _parked} = Assistant.send("on box: $ sleep 1000")
+
+      _call =
+        await_entry(
+          c,
+          &(&1.kind == "assistant" and
+              Enum.any?(Message.tool_calls(&1.data["message"]), fn call ->
+                call["name"] == "shell"
+              end))
+        )
+
+      assert Durable.busy?(c)
+
+      card = "#question-card-#{passed.id}"
+      _ = render(blip)
+      blip |> element("#{card}-answer") |> render_click()
+      blip |> form("#composer", message: %{text: "main"}) |> render_submit()
+      _ = :sys.get_state(Photon.Durable.Store)
+
+      assert has_element?(blip, "#{card}[data-status=answered]", "main")
+      refute has_element?(blip, "#{card}-answer")
+      # The answer waits in Blip's inbox; it isn't in the conversation yet.
+      assert [queued] = Assistant.queued(c)
+      assert has_element?(blip, "#queued-#{queued.id}", "main")
+      refute Enum.any?(Durable.entries(c), &(&1.data["source"]["kind"] == "answer"))
+    end
+
+    test "a refused answer says why and keeps what was typed", %{
+      blip: blip,
+      project: project,
+      conversation: c
+    } do
+      {_thread, passed} = passed!(project, c, "which deploy branch?")
+      card = "#question-card-#{passed.id}"
+      _ = render(blip)
+      blip |> element("#{card}-answer") |> render_click()
+
+      # Answered by Blip meanwhile: nothing reaches Blip's conversation, so
+      # the page still offers the answer.
+      {:ok, _answered} =
+        Durable.commit(&Questions.answer_tx(&1, passed.id, "staging", {:blip, true}))
+
+      _ = render(blip)
+      assert has_element?(blip, "#{card}-answer")
+
+      blip |> form("#composer", message: %{text: "main"}) |> render_submit()
+      assert has_element?(blip, "#reply-error", "already answered")
+      assert has_element?(blip, "#composer-input", "main")
+      assert has_element?(blip, "#reply-chip")
+      assert %{answer: "staging"} = Questions.get(passed.id)
+
+      # Dropping the chip drops the refusal too.
+      blip |> element("#reply-chip-dismiss") |> render_click()
+      refute has_element?(blip, "#reply-error")
+    end
+
+    test "a refused ask_owner call is a one-line action, and each question has one card", %{
+      blip: blip,
+      conversation: c
+    } do
+      ask_owner_calls(c, [{"c1", "q_1", "ok"}, {"c2", "q_1", "error"}])
+      ask_owner_result(c, "c1", "q_1", "ok")
+      ask_owner_result(c, "c2", "q_1", "error")
+
+      html = blip |> render() |> LazyHTML.from_fragment()
+      assert html |> LazyHTML.query("[id=question-card-q_1]") |> Enum.count() == 1
+      assert has_element?(blip, "#question-card-q_1-text", "Which branch?")
+      refute has_element?(blip, "#action-c1")
+      assert has_element?(blip, "#action-c2[data-status=error]", "Couldn't ask you about q_1")
+    end
+
+    test "the chip's × goes back to talking to Blip", %{blip: blip, conversation: c} do
+      ask_owner_calls(c, [{"c1", "q_1", "ok"}])
+      ask_owner_result(c, "c1", "q_1", "ok")
+
+      blip |> element("#question-card-q_1-answer") |> render_click()
+      assert has_element?(blip, "#reply-chip", "Answering Fix the pump")
+
+      blip |> element("#reply-chip-dismiss") |> render_click()
+      refute has_element?(blip, "#reply-chip")
+      assert has_element?(blip, "#question-card-q_1-answer")
+
+      # A question that isn't open on the page takes no reply.
+      render_click(blip, "reply", %{"id" => "q_404"})
+      refute has_element?(blip, "#reply-chip")
+    end
+
+    test "a question whose thread is stopped shows as withdrawn, and the chip goes", %{
+      blip: blip,
+      project: project,
+      conversation: c
+    } do
+      {thread, passed} = passed!(project, c, "which deploy branch?")
+      card = "#question-card-#{passed.id}"
+      _ = render(blip)
+      blip |> element("#{card}-answer") |> render_click()
+
+      :ok = Threads.stop(thread.id)
+      notice = await_entry(c, &(&1.kind == "error" and &1.data["question_notice"] == "withdrawn"))
+      _ = render(blip)
+
+      assert has_element?(blip, "#{card}[data-status=withdrawn]")
+      assert has_element?(blip, "#{card}-status", "Withdrawn: the thread was stopped")
+      refute has_element?(blip, "#{card}-answer")
+      refute has_element?(blip, "#reply-chip")
+
+      assert has_element?(
+               blip,
+               "#entries-#{notice.id}",
+               "was stopped, so its question was withdrawn."
+             )
+    end
+
+    test "a question Blip didn't get to is a card in the thread's own words", %{
+      blip: blip,
+      project: project,
+      conversation: c
+    } do
+      {:ok, thread} = Threads.start(project.id, "ask blip: Is the gate locked? (prose)")
+      notice = await_entry(c, &(&1.kind == "error" and &1.data["question_notice"] == "escalated"))
+      [question] = Questions.open_by_thread([thread.id])[thread.id]
+      card = "#question-card-#{question.id}"
+
+      _ = render(blip)
+      assert has_element?(blip, "#entries-#{notice.id} #{card}[data-status=open]")
+      assert has_element?(blip, "#{card}-text", "Is the gate locked? (prose)")
+      assert has_element?(blip, "#{card}-note", "Blip didn't get to this one")
+
+      blip |> element("#{card}-answer") |> render_click()
+      blip |> form("#composer", message: %{text: "yes"}) |> render_submit()
+      assert %{status: "answered", answer: "yes"} = Questions.get(question.id)
+    end
+  end
+
+  describe "a thread's question, with the panel closed" do
+    setup :page
+
+    test "Blip says it in a bubble, and what it says next doesn't push it out", %{
+      blip: blip,
+      conversation: c
+    } do
+      {:ok, project} =
+        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+
+      {:ok, thread} = Threads.start(project.id, "ask blip: which deploy branch?")
+      _result = await_entry(c, &(&1.kind == "tool_result" and &1.data["name"] == "ask_owner"))
+      idle!(c)
+      _ = render(blip)
+
+      assert has_element?(
+               blip,
+               "[data-bubble].is-question:not(.is-leaving)",
+               ~s("#{thread.title}" asks:)
+             )
+
+      assert has_element?(blip, "#blip-unread")
     end
   end
 

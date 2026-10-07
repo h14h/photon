@@ -3,14 +3,14 @@ defmodule PhotonWeb.ConversationComponentsTest do
   The conversation pieces Blip's panel and a thread page share: the
   context-file (a thread's and Blip's), `load_skill`, `ask_blip` and Blip's read, work,
   skill, schedule and question calls' lines, the ID prefix
-  that keeps two conversations on one page apart, and images loaded from
-  the page's own route.
+  that keeps two conversations on one page apart, images loaded from
+  the page's own route, and the chips of Blip's queued signal messages.
   """
 
   use Photon.Case, async: true
 
   import Phoenix.LiveViewTest
-  import Photon.Fixtures, only: [call: 3]
+  import Photon.Fixtures, only: [call: 3, submission: 1]
 
   alias PhotonCore.Message
   alias PhotonWeb.ConversationComponents
@@ -444,6 +444,44 @@ defmodule PhotonWeb.ConversationComponentsTest do
 
       for id <- ~w(composer composer-input mode-toggle stop send),
           do: assert([_] = Enum.to_list(LazyHTML.query(blip, "##{id}")))
+    end
+  end
+
+  describe "Blip's inbox" do
+    test "a queued signal message names the threads it is from" do
+      update = %{"kind" => "thread_update", "status" => "failed", "title" => "Fix the pump"}
+      question = %{"kind" => "question", "question_id" => "q_1", "title" => "Plant list"}
+
+      queued = [
+        submission(
+          id: "s_1",
+          content: %{
+            "parts" => [Message.text("[Thread update] ..."), Message.text("[Thread update] ...")],
+            "source" => %{
+              "kind" => "signal",
+              "signals" => [update, %{update | "title" => "Gate"}]
+            }
+          }
+        ),
+        submission(
+          id: "s_2",
+          content: %{
+            "parts" => [Message.text("[Question q_1 from ...]\nWhich zone?")],
+            "source" => %{"kind" => "signal", "signals" => [question]}
+          }
+        ),
+        submission(id: "s_3")
+      ]
+
+      html =
+        LazyHTML.from_fragment(
+          render_component(&ConversationComponents.queued_messages/1, queued: queued)
+        )
+
+      text = fn id -> html |> LazyHTML.query("#queued-#{id}") |> LazyHTML.text() |> squish() end
+      assert text.("s_1") == ~s(Next Update on "Fix the pump", "Gate")
+      assert text.("s_2") == ~s(Next Question from "Plant list")
+      assert text.("s_3") == "Next hello"
     end
   end
 end

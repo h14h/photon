@@ -440,7 +440,8 @@ defmodule Photon.QuestionsTest do
                "title" => passed.thread_title,
                "project_id" => project.id,
                "slug" => "garden",
-               "project" => "Garden"
+               "project" => "Garden",
+               "wording" => wording
              }
 
       assert %{state: :waiting, asking_blip?: false} = Threads.state(thread.id)
@@ -983,7 +984,12 @@ defmodule Photon.QuestionsTest do
       assert notice == %{
                "message" => ~s{"files" was stopped, so its question was withdrawn.},
                "notice" => true,
-               "question_id" => asked.id
+               "question_id" => asked.id,
+               "question_notice" => "withdrawn",
+               "thread_id" => thread.id,
+               "title" => "files",
+               "slug" => "garden",
+               "project" => "Garden"
              }
 
       assert Questions.answer(asked.id, "main") ==
@@ -1040,9 +1046,17 @@ defmodule Photon.QuestionsTest do
       assert {passed.status, passed.passed_by, passed.wording} == {"with_owner", "hub", nil}
       assert_receive {:questions_changed, _}
 
-      assert [%{"message" => message, "question_id" => question_id}] = notices(blip)
+      assert [%{"message" => message, "question_id" => question_id} = notice] = notices(blip)
       assert message == ~s{I didn't get to "files"'s question, so it's with you now.}
       assert question_id == asked.id
+
+      # The panel draws it as the question's card, in the thread's own words.
+      assert %{
+               "question_notice" => "escalated",
+               "question" => "Is the gate locked? (prose)",
+               "title" => "files",
+               "slug" => "garden"
+             } = notice
 
       # Once: a second check finds it with the owner.
       assert {:ok, %{status: "with_owner"}} = Questions.escalate(asked.id)

@@ -447,7 +447,12 @@ them:
   once it has been placed.
 - `notice_tx(tx, question, kind)`: a notice entry in Blip's conversation
   (`"error"` kind, `"notice" => true`, `"question_id"`), for an
-  escalation or a withdraw (sections 4.6 and 4.7).
+  escalation or a withdraw (sections 4.6 and 4.7). Its data also says
+  which notice it is (`"question_notice"`: `"escalated"` or
+  `"withdrawn"`) and where the thread is (`"thread_id"`, `"title"`,
+  `"slug"`, `"project"`), and an escalation carries the thread's own
+  question (`"question"`), so the panel can tell the two apart and draw
+  an escalation as the question's card (section 10.6).
 
 The `ref` is a string-keyed map the panel uses to draw the line and link
 the thread: `"kind"` (`"thread_update"` or `"question"`), `"key"`,
@@ -690,7 +695,8 @@ Two of Blip's tools (section 5.3):
   `owner_wrote?` from `Assistant.origin_tx/2` inside the same commit
   (section 5.4). Result: `Sent your answer to "Fix the pump".` with
   details `%{"question_id", "thread_id", "title", "project_id", "slug",
-  "answered_by"}`. An error is
+  "answered_by", "answer"}` (the answer, for the card's "Answered" line,
+  section 10.6). An error is
   `Rules.message(reason, :blip, q)`, or for an unknown ID lists the open
   ones: `There's no open question q_999. Open: q_456 from "Fix the pump"
   (with the user), q_457 from "Plant list" (yours to answer).` (`No
@@ -703,8 +709,9 @@ Two of Blip's tools (section 5.3):
   wording for the owner (required, at most 2,000 characters). Result:
   `Asked the user. Their answer goes straight to "Fix the pump"; you'll
   see it here.` with details `%{"question_id", "thread_id", "title",
-  "project_id", "slug", "project"}` so the panel can draw the card
-  (section 10.6) and the activity log has the project (section 5.1). An
+  "project_id", "slug", "project", "wording"}` so the panel can draw the
+  card and the bubble (section 10.6) and the activity log has the
+  project (section 5.1). An
   unknown ID lists the open questions, as for `answer_question`.
 
 `Questions.answer_tx/4` applies `Rules.step/2`, writes `answer`,
@@ -1588,9 +1595,18 @@ the `sm` width up). The row's `data-running` goes. It re-reads them on
   ("Answering Fix the pump", × `#reply-chip-dismiss`), in place of the
   page chip. Sending with it calls `Assistant.answer(question_id, text)`
   instead of `Assistant.send/2`, then clears the chip. A refused answer
-  (already answered) flashes its message and keeps the text.
+  (already answered) shows its message above the composer
+  (`#reply-error`, since Blip's panel has no flash of its own: the flash
+  group belongs to the page under it) and keeps the text, in the form
+  and, through a `"composer:restore"` event the composer's hook takes,
+  in the browser, which empties the box as it sends. The chip stays
+  until its × (which drops the message too) or until its question is
+  answered or withdrawn, when it goes by itself. Only a question open on
+  the page takes a chip: the ID comes from the browser.
 - **Question states** come from Blip's own conversation, folded by
-  `Transcript.questions(entries, queued)` (pure, new): an ok `ask_owner`
+  `Transcript.questions(entries, queued, known \\ %{})` (pure, new;
+  `known` is the previous fold, so a commit folds only its new entries;
+  answered and withdrawn are final): an ok `ask_owner`
   result or an escalation notice makes a question open; an `"answer"`
   user entry, an ok `answer_question` result, a withdraw notice with that
   `question_id`, or a queued submission with source kind `"answer"` for
@@ -1601,17 +1617,29 @@ the `sm` width up). The row's `data-running` goes. It re-reads them on
   until Blip's run ends. `ConversationView` already tracks `queued`; it
   keeps the folded states in a `questions` assign, recomputes them when
   entries or `queued` change, and re-renders the card's entry when one
-  changes, as it re-renders a call when its result lands. No new
+  changes, as it re-renders a call when its result lands (a `cards`
+  assign keeps the entry that shows each question's card). No new
   subscription: every one of those is an entry or a submission in Blip's
-  conversation.
+  conversation. The card's "Answered" line is the owner's answer from
+  their entry or queued submission, or Blip's from `answer_question`'s
+  details (`"answer"`).
 - **Bubbles.** `Assistant.Notice.from_entries/1` gains `:question`: an
   ok `ask_owner` result, or an escalation notice, says `"Fix the pump"
   asks: <wording or the thread's question>` in a bubble
   while the panel is closed, so a question reaches the owner even with
   the panel shut. A signal message makes no bubble; Blip's reply to it
-  does, as any answer does.
+  does, as any answer does. Blip's wording comes from `ask_owner`'s
+  details (`"wording"`), the thread's question from the notice
+  (`"question"`). A question's bubble (`is-question`, in the waiting
+  colour) isn't pushed out by what Blip says next, as Blip's own bubbles
+  are (the scripted Blip, like a real model, says something after the
+  call); it goes when dismissed, read or timed out, as any bubble does.
+- **Queued signal messages.** A signal message waiting in Blip's inbox
+  has no typed text, so its chip names the threads it is from: `Update
+  on "Fix the pump", "Gate"` or `Question from "Plant list"`.
 - The withdraw notice is a quiet notice line, as a skipped schedule's
-  is. The escalation notice renders as a question card too
+  is (with a no-symbol icon rather than the clock). The escalation
+  notice renders as a question card too
   (`#question-card-<id>`), with the thread's own question and "Blip didn't
   get to this one", so the owner can answer it from the panel.
 
@@ -1734,7 +1762,7 @@ No changes.
 | `Photon.Schedules.Schedule` | `asked_by` (section 5.4). |
 | `Photon.Schedules.Routine` | `"created_by"` and `"asked_by"` in every firing's source (sections 3.2, 5.4). |
 | `Photon.Skills` | `enable_tx/3`, `disable_tx/3`. |
-| `Photon.Transcript` | `questions/2` (entries and queued submissions); `typed/2` for signal and answer messages. |
+| `Photon.Transcript` | `questions/3` (entries and queued submissions, on top of an earlier fold), `signal_lines/1` (a signal message's refs with each question's text), `question_card/1` (an ok `ask_owner` result's question ID) and `escalation/1` (an escalation notice's); `typed/2` for signal and answer messages. |
 | `Photon` | Moduledoc lists the three new contexts; `exports` add `Activity`, `Activity.Action`, `Activity.Rules`, `Questions`, `Questions.Question`, `Threads.State` (what the web layer uses; `Photon.Signals` has no caller outside the contexts). |
 
 ### 11.6 apps/hub: web
@@ -2472,10 +2500,17 @@ those tasks add).
   `components/conversation_components.ex` (signal and answer messages,
   the question card for ok `ask_owner` results only),
   `live/conversation_view.ex` (the `questions` assign from entries and
-  `queued`), `apps/hub/lib/photon/transcript.ex` (`questions/2`),
-  `assistant/notice.ex` (`:question`).
+  `queued`), `apps/hub/lib/photon/transcript.ex` (`questions/3`,
+  `signal_lines/1`, `question_card/1`, `escalation/1`),
+  `assistant/notice.ex` (`:question`); `signals.ex` (the notice's
+  `"question_notice"`, place and question), `tools/ask_owner.ex`
+  (`"wording"` in its details) and `tools/answer_question.ex`
+  (`"answer"`), which the card and the bubble read; `app.css` (the
+  question bubble).
 - Tests: `blip_live_test.exs`, `test/core/transcript_test.exs`,
-  `test/core/assistant/notice_test.exs`.
+  `test/core/assistant/notice_test.exs`, `conversation_components_test.exs`
+  (the queued signal chips), and the notice and details in
+  `questions_test.exs`.
 
 C17. The activity page. After C12 and C13.
 - `apps/hub/lib/photon_web/live/activity_live.ex` (section 10.7); new
