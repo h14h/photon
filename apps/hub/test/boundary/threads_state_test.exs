@@ -311,6 +311,41 @@ defmodule Photon.ThreadsStateTest do
       idle!(id)
       assert state(id) == :unread
     end
+
+    test "input queued before a running thread was resolved clears it when it runs", %{
+      project: project
+    } do
+      fake_machine("box")
+      thread = running!(project)
+      {:ok, queued} = Threads.send(thread.id, "fail: no water")
+      assert queued.status == "queued"
+
+      # Resolved while running, with the follow-up already waiting.
+      :ok = Threads.resolve(thread.id)
+
+      [shell] =
+        Repo.all(
+          from(t in TaskRecord, where: t.conversation_id == ^thread.id and t.kind == "tool")
+        )
+
+      _aborted = Durable.abort_task(shell.id)
+      await_settled(thread.id, queued.id)
+      idle!(thread.id)
+
+      assert %Thread{resolved_at: nil, last_run_status: "failed"} = Threads.get(thread.id)
+      assert state(thread.id) == :failed
+    end
+
+    test "a run that was going when the owner resolved stays resolved", %{project: project} do
+      fake_machine("box")
+      thread = running!(project)
+      :ok = Threads.resolve(thread.id)
+      :ok = Threads.stop(thread.id)
+      idle!(thread.id)
+
+      assert %Thread{resolved_at: %DateTime{}} = Threads.get(thread.id)
+      assert state(thread.id) == :idle
+    end
   end
 
   describe "started_by" do

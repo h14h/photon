@@ -648,7 +648,9 @@ defmodule Photon.Threads do
   @doc """
   Marks thread `thread_id` resolved: it reads as idle ("Resolved") until
   its next message, whatever its last run did. A running thread can be
-  resolved; its state changes once the run ends. Announces it.
+  resolved; its state changes once the run ends. Input already queued
+  for it starts a new run afterwards, which clears the mark again.
+  Announces it.
   """
   @spec resolve(String.t()) :: :ok | {:error, :not_found}
   def resolve(thread_id), do: Durable.commit(&resolved_tx(&1, thread_id, DateTime.utc_now()))
@@ -861,6 +863,7 @@ defmodule Photon.Threads do
       %Thread{} = thread ->
         text = run_text(conversation.id, settled)
         :ok = record_end_tx(tx, thread, settled, text)
+        :ok = reopen_tx(tx, thread, settled)
         signal_tx(tx, thread, settled, text)
 
       nil ->
@@ -885,6 +888,19 @@ defmodule Photon.Threads do
   end
 
   defp record_end_tx(_tx, _thread, _settled, _text), do: :ok
+
+  # A settle the generation goes on from places the next queued input: a
+  # new run, which a Resolve made before it doesn't cover, just as a new
+  # message clears it (section 2.5). Without this, input queued before the
+  # owner resolved a running thread could fail or ask them unseen.
+  defp reopen_tx(tx, %Thread{resolved_at: %DateTime{}} = thread, %{ended?: false}) do
+    {_count, _rows} =
+      Thread |> where([t], t.id == ^thread.id) |> Repo.update_all(set: [resolved_at: nil])
+
+    Projects.threads_changed_tx(tx, thread.project_id)
+  end
+
+  defp reopen_tx(_tx, _thread, _settled), do: :ok
 
   # Whether Blip hears about this settle is decided by
   # `Photon.Signals.Rules` from the settled submissions' sources; the
