@@ -12,6 +12,11 @@ defmodule Photon.Durable.Generation do
   moves on to the inbox the same way. Steers that arrive mid-run are placed
   after the current tool round.
 
+  Every settle (an answer, a model error, the round limit, a Stop, a
+  failed task) tells the conversation's profile in the same commit,
+  through `Photon.Durable.settled/3`, with the submissions it closed and
+  whether the task ends there (`Photon.Durable.Profile`'s `on_settled/3`).
+
   A request that crashes the hub is simply made again, since nothing was
   committed. Partial output streams to watchers as `{:live, ...}` events and
   is never stored; the finished response is.
@@ -63,8 +68,8 @@ defmodule Photon.Durable.Generation do
 
     Runtime.commit(runtime, fn tx ->
       _error = Tx.append(tx, task.conversation_id, "error", Turn.request_failed(message))
-      :ok = settle(tx, task, "unanswered", message)
-      continue_with_inbox(tx, task, {:fail, message})
+      closed = settle(tx, task, "unanswered", message)
+      continue_with_inbox(tx, task, facts("failed", message, nil, closed), {:fail, message})
     end)
   end
 
@@ -85,41 +90,59 @@ defmodule Photon.Durable.Generation do
     Enum.each(calls, &Tx.append(tx, task.conversation_id, "tool_result", Turn.not_run(&1)))
     {error, reason, last} = Turn.round_limit()
     _error = Tx.append(tx, task.conversation_id, "error", error)
-    :ok = settle(tx, task, "unanswered", reason)
-    continue_with_inbox(tx, task, last)
+    closed = settle(tx, task, "unanswered", reason)
+    continue_with_inbox(tx, task, facts("failed", reason, nil, closed), last)
   end
 
   defp follow(tx, task, entry, _checkpoint, :answer) do
-    :ok = settle(tx, task, "done", entry.id)
-    continue_with_inbox(tx, task, {:done, %{}})
+    closed = settle(tx, task, "done", entry.id)
+    continue_with_inbox(tx, task, facts("done", nil, entry.id, closed), {:done, %{}})
   end
 
-  # After the run's submissions are settled, takes the next input from the
-  # inbox, or ends with `last` when there is none.
-  defp continue_with_inbox(tx, task, last) do
-    case Durable.next_input(Tx.queued(tx, task.conversation_id)) do
+  # After the run's submissions are settled, tells the profile (with
+  # whether the run ends here), then takes the next input from the inbox,
+  # or ends with `last` when there is none.
+  defp continue_with_inbox(tx, task, facts, last) do
+    next = Durable.next_input(Tx.queued(tx, task.conversation_id))
+    :ok = Durable.settled(tx, task, Map.put(facts, :ended?, next == []))
+
+    case next do
       [] -> last
       next -> Turn.next_run(for s <- next, do: Durable.place(tx, s).id)
     end
   end
 
+  # Settles the submissions this run placed that are still placed, and
+  # returns them as stored: exactly what this settle closed.
   defp settle(tx, %TaskRecord{} = task, status, detail) do
     task.checkpoint
     |> Map.get("submissions", [])
     |> Enum.map(&Tx.get_submission(tx, &1))
     |> Enum.filter(&match?(%Submission{status: "placed"}, &1))
-    |> Enum.each(&Tx.update_submission(tx, &1, Turn.settlement(status, detail)))
+    |> Enum.map(&Tx.update_submission(tx, &1, Turn.settlement(status, detail)))
   end
 
+  # The facts of a settle for `Durable.settled/3`, short of `ended?`.
+  defp facts(outcome, reason, answer_entry_id, submissions),
+    do: %{
+      outcome: outcome,
+      reason: reason,
+      answer_entry_id: answer_entry_id,
+      submissions: submissions
+    }
+
+  # A stopped or failed task ends its run here, with nothing placed after.
   @impl true
   def on_abort(task, tx) do
     _error = Tx.append(tx, task.conversation_id, "error", Turn.stopped())
-    settle(tx, task, "unanswered", "stopped")
+    closed = settle(tx, task, "unanswered", "stopped")
+    Durable.settled(tx, task, Map.put(facts("stopped", "stopped", nil, closed), :ended?, true))
   end
 
   @impl true
   def on_fail(task, reason, tx) do
     _error = Tx.append(tx, task.conversation_id, "error", Turn.failed(reason))
-    settle(tx, task, "unanswered", reason)
+    closed = settle(tx, task, "unanswered", reason)
+    Durable.settled(tx, task, Map.put(facts("failed", reason, nil, closed), :ended?, true))
   end
 end

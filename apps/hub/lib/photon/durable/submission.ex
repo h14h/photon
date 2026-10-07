@@ -30,12 +30,18 @@ defmodule Photon.Durable.Submission do
     timestamps(type: :utc_datetime_usec)
   end
 
+  @background_kinds ~w(routine signal answer)
+
   @doc """
   Whether the submission came from background work rather than someone
-  typing it: today, a schedule's firing (source kind `"routine"`). Blip's
-  Stop keeps these waiting, since the work that sent them keeps running.
+  typing it: a schedule's firing (source kind `"routine"`), a signal that
+  reached Blip unasked (`"signal"`), or the owner's answer to a question
+  Blip passed on, relayed into Blip's conversation (`"answer"`). Blip's
+  Stop keeps these waiting, since the work that sent them goes on.
   """
   @spec background?(t()) :: boolean()
-  def background?(%__MODULE__{content: content}),
-    do: is_map(content) and get_in(content, ["source", "kind"]) == "routine"
+  def background?(%__MODULE__{content: %{"source" => %{"kind" => kind}}}),
+    do: kind in @background_kinds
+
+  def background?(%__MODULE__{}), do: false
 end

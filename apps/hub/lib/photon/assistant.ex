@@ -198,9 +198,10 @@ defmodule Photon.Assistant do
 
   @doc """
   Stops the current run and withdraws the user's queued messages.
-  Scheduled prompts that are waiting stay
-  (`Photon.Durable.Submission.background?/1`), since they come from
-  schedules the stop leaves running.
+  Background input that is waiting stays
+  (`Photon.Durable.Submission.background?/1`: scheduled prompts, and
+  later signals and relayed answers), since the work that sent it keeps
+  going.
   """
   @spec stop() :: :ok
   def stop do

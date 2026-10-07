@@ -54,6 +54,7 @@ config :photon, Photon.Durable,
     "assistant" => Photon.Assistant,
     "thread" => Photon.Threads,
     "test" => Photon.TestProfile,
+    "test_hooks" => Photon.TestProfile.Hooks,
     "test_workdir" => Photon.TestProfile.Workdir
   },
   kinds: %{

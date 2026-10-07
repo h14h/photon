@@ -1532,7 +1532,7 @@ No changes.
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
 | `Photon.Durable.Profile` | behaviour | unchanged | Optional `on_settled/3` and `on_tool_result/4` (section 3.1, the latter taking the stored `Entry.t()`), with the `settled` type. Moduledoc: hooks run inside the commit, on the abort and fail paths inside the Scheduler process, and must be total. |
-| `Photon.Durable` | boundary | unchanged | `settled/3` and `tool_result/3` (call the profile's hook if it has one), `abort_tx/3` (`abort/2` inside a commit). |
+| `Photon.Durable` | boundary | unchanged | `settled/3` and `tool_result/3` (call the profile's hook if it has one), `abort_tx/3` (`abort/2` inside a commit), `recent_entries/2` (runs `Queries.recent_entries/2`; `Photon.Threads` can't reach `Queries`, which the harness keeps inside). |
 | `Photon.Durable.Generation` | worker logic | unchanged | `settle/4` returns what it settled; each settle is followed by `Durable.settled/3` with the facts of section 3.1. |
 | `Photon.Durable.ToolTask` | worker logic | unchanged | `record/3` keeps the appended entry and calls `Durable.tool_result/3` with it. |
 | `Photon.Durable.Queries` | core | unchanged | `recent_entries/2`, `count_tool_results_since/3` (section 5.4). |

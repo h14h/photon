@@ -38,6 +38,24 @@ defmodule Photon.Durable.Queries do
     from(e in Entry, where: e.conversation_id == ^conversation_id, select: max(e.seq))
   end
 
+  @recent_kinds ~w(user assistant tool_result)
+
+  @doc """
+  A conversation's newest `limit` entries of kinds `"user"`, `"assistant"`
+  and `"tool_result"`, oldest first.
+  """
+  @spec recent_entries(String.t(), pos_integer()) :: Ecto.Query.t()
+  def recent_entries(conversation_id, limit) do
+    newest =
+      from(e in Entry,
+        where: e.conversation_id == ^conversation_id and e.kind in ^@recent_kinds,
+        order_by: [desc: e.seq],
+        limit: ^limit
+      )
+
+    from(e in subquery(newest), order_by: [asc: e.seq])
+  end
+
   @doc "A conversation's newest `limit` entries of `kind`, newest first."
   @spec last_entries(String.t(), String.t(), pos_integer()) :: Ecto.Query.t()
   def last_entries(conversation_id, kind, limit) do
