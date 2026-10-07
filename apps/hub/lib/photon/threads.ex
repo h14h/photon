@@ -78,6 +78,17 @@ defmodule Photon.Threads do
       `mark_all_seen/0`), and whether they resolved it (`resolve/1`,
       `reopen/1`; a new message clears it)
 
+  ## Signals to Blip
+
+  The same hook decides, in code, whether Blip hears about the settle
+  (`Photon.Signals.Rules.thread_update/2`, in the mode `Photon.Signals`
+  gives), and posts it into Blip's conversation in the same commit
+  (`Photon.Signals.post_tx/2`). Whose work it was comes from the settled
+  messages' sources: Blip's own messages, and firings of schedules Blip
+  made, are Blip's, and Blip hears how they end; everything else is the
+  owner's, and Blip hears only when it fails or ends asking the user
+  something. A stop is never a signal.
+
   There is no process here: the harness runs the conversations, and the
   rows hold the rest.
   """
@@ -90,6 +101,7 @@ defmodule Photon.Threads do
       Photon.Projects,
       Photon.Repo,
       Photon.Settings,
+      Photon.Signals,
       Photon.Skills,
       Photon.Transcript,
       PhotonCore,
@@ -102,9 +114,11 @@ defmodule Photon.Threads do
 
   import Ecto.Query
 
-  alias Photon.{Durable, MachineTools, Projects, Repo, Settings, Skills, Transcript}
+  alias Photon.{Durable, MachineTools, Projects, Repo, Settings, Signals, Skills, Transcript}
   alias Photon.Durable.{Entry, Submission, Tx}
   alias Photon.Projects.Project
+  alias Photon.Signals.Rules, as: SignalRules
+  alias Photon.Signals.Text, as: SignalText
   alias Photon.Threads.{Prompt, Rules, State, Thread, Titling, Tools}
 
   @profile "thread"
@@ -712,37 +726,94 @@ defmodule Photon.Threads do
   @impl true
   def on_settled(conversation, settled, tx), do: settled_tx(tx, conversation, settled)
 
-  # A generation settled what it placed (section 2.4). When the run ends
-  # with it, records how on the thread row, and announces it. It runs
+  # A generation settled what it placed (sections 2.4 and 3.2). When the
+  # run ends with it, records how on the thread row and announces it; in
+  # every case, posts the signal Blip hears about it, if any. It runs
   # inside the harness's commit, on a Stop or a failed task inside the
-  # Scheduler's, so it is total: a missing row or answer records less, and
-  # nothing here raises.
-  defp settled_tx(tx, conversation, %{ended?: true} = settled) do
+  # Scheduler's, so it is total: a missing row, project or answer records
+  # less, and nothing here raises.
+  defp settled_tx(tx, conversation, settled) do
     case get(conversation.id) do
       %Thread{} = thread ->
         text = run_text(conversation.id, settled)
-        status = settled.outcome
-
-        {_count, _rows} =
-          Thread
-          |> where([t], t.id == ^thread.id)
-          |> Repo.update_all(
-            set: [
-              last_run_status: status,
-              last_run_ended_at: DateTime.utc_now(),
-              last_run_asked: status == "done" and State.asks?(text),
-              last_run_note: State.note(status, text)
-            ]
-          )
-
-        Projects.threads_changed_tx(tx, thread.project_id)
+        :ok = record_end_tx(tx, thread, settled, text)
+        signal_tx(tx, thread, settled, text)
 
       nil ->
         :ok
     end
   end
 
-  defp settled_tx(_tx, _conversation, _settled), do: :ok
+  defp record_end_tx(tx, thread, %{ended?: true, outcome: status}, text) do
+    {_count, _rows} =
+      Thread
+      |> where([t], t.id == ^thread.id)
+      |> Repo.update_all(
+        set: [
+          last_run_status: status,
+          last_run_ended_at: DateTime.utc_now(),
+          last_run_asked: status == "done" and State.asks?(text),
+          last_run_note: State.note(status, text)
+        ]
+      )
+
+    Projects.threads_changed_tx(tx, thread.project_id)
+  end
+
+  defp record_end_tx(_tx, _thread, _settled, _text), do: :ok
+
+  # Whether Blip hears about this settle is decided by
+  # `Photon.Signals.Rules` from the settled submissions' sources; the
+  # signal names the thread and project as they are now.
+  defp signal_tx(tx, thread, settled, text) do
+    with kind when kind != nil <-
+           SignalRules.thread_update(signal_facts(settled, text), Signals.mode()),
+         %Project{} = project <- Projects.get(thread.project_id) do
+      post_tx(tx, kind, settled, text, place(thread, project))
+    else
+      _no_signal_or_no_project -> :ok
+    end
+  end
+
+  defp signal_facts(settled, text) do
+    outcome = Map.get(settled, :outcome)
+
+    %{
+      outcome: outcome,
+      asked?: outcome == "done" and State.asks?(text),
+      ended?: Map.get(settled, :ended?) == true,
+      sources: settled |> settled_submissions() |> Enum.map(&submission_source/1)
+    }
+  end
+
+  defp post_tx(tx, kind, settled, text, place) do
+    ids = for %Submission{id: id} <- settled_submissions(settled), do: id
+    key = SignalRules.key({:settle, ids, settled_task_id(settled)})
+    ref = SignalRules.update_ref(kind, key, place)
+    detail = if kind == :failed, do: text, else: State.note("done", text)
+    # The signal's submission is written in this commit; the hook has
+    # nothing to do with it, and `post_tx/2` returns no error.
+    _carrier = Signals.post_tx(tx, %{key: key, text: SignalText.update(ref, detail), ref: ref})
+    :ok
+  end
+
+  defp settled_submissions(settled), do: List.wrap(Map.get(settled, :submissions))
+
+  defp submission_source(%Submission{content: %{"source" => source}}), do: source
+  defp submission_source(_submission), do: nil
+
+  defp settled_task_id(%{task: %{id: id}}) when is_binary(id), do: id
+  defp settled_task_id(_settled), do: "unknown"
+
+  defp place(thread, project) do
+    %{
+      thread_id: thread.id,
+      title: thread.title,
+      project_id: project.id,
+      slug: project.slug,
+      project: project.name
+    }
+  end
 
   # The text a run's end is noted from: the answer for `"done"`, the
   # reason otherwise; nil when the answer entry is missing.

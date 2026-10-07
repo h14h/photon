@@ -13,7 +13,11 @@ defmodule Photon do
       their context files, the Markdown notes the user and the project's
       threads share
     * `Photon.Threads`: threads, the durable agent conversations inside a
-      project, and their `"thread"` profile for the durable harness
+      project, their state (worked out from stored facts), and their
+      `"thread"` profile for the durable harness
+    * `Photon.Signals`: what reaches Blip unasked, such as how the threads
+      it started end, posted into Blip's conversation by code; used by
+      the other contexts, not the web layer
     * `Photon.Skills`: skills, the instructions an agent loads when a task
       calls for them, written or installed by the user and turned on for
       Blip or per project
@@ -32,10 +36,10 @@ defmodule Photon do
       on the tailnet, or a password), and each node's own key
 
   None of them adds a process for a project, a thread, a skill, a
-  schedule or an operation: projects, context files and skills are rows,
-  a thread is a conversation in the durable harness, a schedule is a row
-  and a durable task waiting for its time, and an operation is a row its
-  tool call waits on.
+  schedule, a signal or an operation: projects, context files and skills
+  are rows, a thread is a conversation in the durable harness, a signal
+  is a message in Blip's, a schedule is a row and a durable task waiting
+  for its time, and an operation is a row its tool call waits on.
 
   Layers, after *Designing Elixir Systems with OTP*: each context's
   moduledoc names its pure core and its processes. The pure modules are
@@ -43,6 +47,7 @@ defmodule Photon do
   Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Page,
   MockScript}`, `Photon.Transcript` (what a conversation page shows),
   `Photon.Projects.Rules`, `Photon.Threads.{Rules, State, Prompt, MockScript}`,
+  `Photon.Signals.{Rules, Text}`,
   `Photon.Skills.{Rules, SkillMd, Source, Prompt, MockPhrases}`,
   `Photon.Schedules.Rules`,
   `Photon.Machines.{Rules, Roster}`,

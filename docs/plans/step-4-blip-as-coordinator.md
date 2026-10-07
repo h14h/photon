@@ -404,7 +404,8 @@ sources, not `started_by`. A stop is never a signal: the owner or Blip
 pressed it. `ask_blip` questions are signals of their own (section 4.3).
 
 Asking only counts when the run ended: a thread that asks but already has
-the owner's next message queued has its answer on the way.
+the owner's next message queued has its answer on the way. For Blip's
+work, such a run reads as `:finished`, so Blip still hears how it went.
 
 ### 3.3 Posting a signal
 
@@ -420,11 +421,13 @@ them:
   `Assistant.conversation_id/0` does today, moved as is.
 - `post_tx(tx, signal)` with `signal = %{key: String.t(), text: String.t(),
   ref: map()}`:
-  1. If Blip's conversation has a queued submission (`Tx.queued/2`)
+  1. A key already posted makes nothing: a submission with the request
+     ID `"signal:" <> key`, or a queued signal submission whose
+     `source["signals"]` has a ref with this `key`, is returned as it is.
+     Else, if Blip's conversation has a queued submission (`Tx.queued/2`)
      whose source kind is `"signal"` and whose refs are all of this
-     ref's kind (`"thread_update"` or `"question"`): when its
-     `source["signals"]` already has a ref with this `key`, nothing; else
-     append `text` as a new text part and `ref` to `source["signals"]`
+     ref's kind (`"thread_update"` or `"question"`), append `text` as a
+     new text part and `ref` to `source["signals"]`
      (`Tx.update_submission/3` on `content`). One queued message collects
      the updates that arrive while Blip is busy, and another the
      questions. A question never shares a message with an update, so a
@@ -1551,9 +1554,9 @@ No changes.
 | `Photon.Threads.MockScript` | core | unchanged | Section 8.1. |
 | `Photon.Threads.MockTitle` | core | unchanged | The titles of section 8.1. |
 | `Photon.Threads.Tools.AskBlip` | boundary (durable tool) | inside `Photon.Threads` | Section 4.3. |
-| `Photon.Signals` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Repo, PhotonCore], exports: [Rules, Text]` | `blip_conversation_id/0`, `blip_conversation_tx/1`, `post_tx/2`, `answer_tx/3`, `unpost_tx/2`, `notice_tx/3`, `mode/0`. Moduledoc: what reaches Blip unasked, the merge, the room for ambient mode. |
-| `Photon.Signals.Rules` | core | `use Boundary, type: :strict, deps: []` | `thread_update/2` over source maps (section 3.2), `blip_source?/1`, `key/1`, `merges?/2` (a queued carrier takes a ref only of its own kind, section 3.3). |
-| `Photon.Signals.Text` | core | `use Boundary, type: :strict, deps: []` | The texts of section 3.4, the answer note (4.5) and the notices (4.6, 4.7). |
+| `Photon.Signals` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, PhotonCore], exports: [Rules, Text]` (it reads and writes only through `Tx`; add `Photon.Repo` if a later task needs a query of its own) | `blip_conversation_id/0`, `blip_conversation_tx/1`, `post_tx/2`, `answer_tx/3`, `unpost_tx/2`, `notice_tx/3`, `mode/0`. Moduledoc: what reaches Blip unasked, the merge, the room for ambient mode. |
+| `Photon.Signals.Rules` | core | `use Boundary, type: :strict, deps: []` | `thread_update/2` over source maps (section 3.2), `blip_source?/1`, `key/1`, `update_ref/3` and `question_ref/3` (the refs of section 3.3, from a place map: thread ID and title, project ID, slug and name), `merges?/2` (a queued carrier takes a ref only of its own kind, section 3.3), `carries?/2` (a message carries a key), `merge/3` and `without/2` (add or take back one signal's part and ref, kept at the same index). |
+| `Photon.Signals.Text` | core | `use Boundary, type: :strict, deps: []` | The texts of section 3.4 (`update/2`, `question/2`), the answer note (4.5, `answer_note/1`) and the notices (4.6, 4.7: `escalated/1`, `withdrawn/1`), each taking a ref for the place. An update's detail is the stored run note (`State.note/2`, at most 280 characters) for finished and asking, and the raw reason, cut to 600, for failed. |
 | `Photon.Questions` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Repo, Photon.Signals, PhotonCore, Ecto], exports: [Question, Rules]` | `subscribe/0`, `get/1`, `by_task/1`, `open_by_thread/1` (thread IDs to their open questions, one query), `open/0`, `ask/1`, `answer/2` (the owner), `answer_tx/4`, `pass_tx/4`, `escalate/1`, `withdraw_tx/2`, `signal_key/1`, `check_ms/0`. Moduledoc: the states, the fenced ask, the relay, escalation. |
 | `Photon.Questions.Question` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 4.1. |
 | `Photon.Questions.Rules` | core | `use Boundary, type: :strict, deps: []` | `question/1`, `answer/1`, `step/2`, `message/3`, `askable?/1`, `escalate?/2`, `result/1` (section 4.2). |
@@ -2124,9 +2127,13 @@ C4. Signals. After C3.
 - `photon.ex` moduledoc; `.credo.exs` (`Rules`, `Text` in
   `FunctionalCore`; `Photon.Signals` in `api_modules`).
 - Tests: `test/core/signals/rules_test.exs`, `signals/text_test.exs`,
-  `test/boundary/signals_test.exs` (all but the Blip-made schedule case,
-  which needs C11, and the question-and-update case, which needs C5),
-  `assistant_test.exs`.
+  `test/boundary/signals_test.exs` (all but the question-and-update case,
+  which needs C5; the Blip-made schedule case inserts the schedule row
+  with `created_by: "blip"` directly, since only the firing's source
+  matters), `assistant_test.exs`.
+- `signals.ex` also has `unpost_tx/2` (section 3.3), and `signals/text.ex`
+  the answer note and notices; C5 adds `answer_tx/3` and `notice_tx/3`
+  over them.
 
 C5. Questions. After C4.
 - Migration `apps/hub/priv/repo/migrations/20261009010000_create_questions.exs`;
@@ -2233,8 +2240,10 @@ C11. Project schedules and skills for Blip. After C8.
   `assistant/mock_coordinator.ex` (their phrasings).
 - `conversation_components.ex`: labels.
 - Tests: `test/boundary/assistant_tools_test.exs` (with `asked_by`),
-  `schedules_test.exs` and `skills_test.exs` for the `_tx` functions, the
-  Blip-made project schedule case of `signals_test.exs`, the prompt test.
+  `schedules_test.exs` and `skills_test.exs` for the `_tx` functions, a
+  Blip-made project schedule case of `signals_test.exs` through the
+  `schedule` tool (C4 covers the firing's source with a row it inserts),
+  the prompt test.
 
 C12. The activity log's data. After C10 and C11 (its tests cover
 question runs and schedule origins).

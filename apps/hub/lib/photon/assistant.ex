@@ -1,3 +1,9 @@
+# This module is two things on purpose, as `Photon.Threads` is: the
+# assistant context's API, which the web pages use, and the `"assistant"`
+# profile. The profile alone reaches the model, Settings, the machine
+# tools, skills and the prompt, and splitting it out would only move the
+# same calls behind a facade.
+# credo:disable-for-next-line Credo.Check.Refactor.ModuleDependencies
 defmodule Photon.Assistant do
   @moduledoc """
   The assistant that lives on the hub: one long-running conversation the
@@ -39,6 +45,7 @@ defmodule Photon.Assistant do
       Photon.Projects,
       Photon.Schedules,
       Photon.Settings,
+      Photon.Signals,
       Photon.Skills,
       Photon.Threads,
       Photon.Transcript,
@@ -50,7 +57,19 @@ defmodule Photon.Assistant do
   @behaviour Photon.Durable.Profile
 
   alias Photon.Assistant.{Memory, Page, Prompt, Tools}
-  alias Photon.{Durable, MachineTools, Projects, Schedules, Settings, Skills, Threads, Transcript}
+
+  alias Photon.{
+    Durable,
+    MachineTools,
+    Projects,
+    Schedules,
+    Settings,
+    Signals,
+    Skills,
+    Threads,
+    Transcript
+  }
+
   alias Photon.Durable.{Entry, Submission}
   alias Photon.Projects.Project
   alias PhotonCore.Message
@@ -63,31 +82,12 @@ defmodule Photon.Assistant do
     Tools.LoadSkill
   ]
 
-  @doc "The assistant's conversation, created on first use."
+  @doc """
+  The assistant's conversation, created on first use. `Photon.Signals`
+  owns finding it, since threads post into it too.
+  """
   @spec conversation_id() :: String.t()
-  def conversation_id do
-    case Durable.doc("global", "assistant") do
-      %{"conversation_id" => id} -> id
-      _ -> Durable.commit(&ensure_conversation/1)
-    end
-  end
-
-  # Inside the commit, so two first uses still make one conversation.
-  defp ensure_conversation(tx) do
-    case Durable.Tx.get_doc(tx, "global", "assistant") do
-      %{"conversation_id" => id} ->
-        id
-
-      _ ->
-        conversation =
-          Durable.Tx.create_conversation(tx, %{profile: "assistant", title: "Assistant"})
-
-        _doc =
-          Durable.Tx.put_doc(tx, "global", "assistant", %{"conversation_id" => conversation.id})
-
-        conversation.id
-    end
-  end
+  defdelegate conversation_id, to: Signals, as: :blip_conversation_id
 
   @doc """
   Sends the user's message. With `page:` (from `page_at/1`), the page's
@@ -199,9 +199,9 @@ defmodule Photon.Assistant do
   @doc """
   Stops the current run and withdraws the user's queued messages.
   Background input that is waiting stays
-  (`Photon.Durable.Submission.background?/1`: scheduled prompts, and
-  later signals and relayed answers), since the work that sent it keeps
-  going.
+  (`Photon.Durable.Submission.background?/1`: scheduled prompts, signals
+  from threads (`Photon.Signals`) and relayed answers), since the work
+  that sent it keeps going.
   """
   @spec stop() :: :ok
   def stop do

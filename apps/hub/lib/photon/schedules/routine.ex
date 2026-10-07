@@ -16,8 +16,9 @@ defmodule Photon.Schedules.Routine do
   A firing (`fire_tx/3`, which run-now shares) is one commit: it reads the
   row, gathers the facts `Photon.Schedules.Rules.fire/2` needs (each only
   for an ID that is set), starts a thread, submits the prompt or skips,
-  records the outcome on the row and announces it. The step reads consent
-  and the clock before that commit. `Photon.Durable.Runtime.commit/2`
+  records the outcome on the row and announces it. The message a firing
+  sends carries the schedule's ID and who made it (`"created_by"`) as its
+  source. The step reads consent and the clock before that commit. `Photon.Durable.Runtime.commit/2`
   keeps all of it or none: a step whose task was marked for abort,
   finished or restarted meanwhile commits nothing, so a firing happens
   once and never after its schedule was edited or deleted.
@@ -197,7 +198,15 @@ defmodule Photon.Schedules.Routine do
   defp apply_decision(_tx, schedule, _target, {:skip, outcome, :quiet}, _request_id),
     do: {outcome, schedule.last_thread_id}
 
-  defp source(schedule), do: %{"kind" => "routine", "schedule_id" => schedule.id}
+  # Every firing names its schedule and who made it: threads a schedule
+  # Blip made starts or wakes are Blip's work, so Blip hears how they end
+  # (`Photon.Signals.Rules.blip_source?/1`).
+  defp source(schedule),
+    do: %{
+      "kind" => "routine",
+      "schedule_id" => schedule.id,
+      "created_by" => schedule.created_by
+    }
 
   ## The timer
 

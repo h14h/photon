@@ -82,6 +82,8 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Threads.MockScript",
                    "Photon.Threads.MockTitle",
                    "Photon.Threads.State",
+                   "Photon.Signals.Rules",
+                   "Photon.Signals.Text",
                    "Photon.Skills.Skill",
                    "Photon.Skills.Enablement",
                    "Photon.Skills.Rules",
@@ -171,6 +173,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Provision",
                    "Photon.Schedules",
                    "Photon.Settings",
+                   "Photon.Signals",
                    "Photon.Skills",
                    "Photon.Tailnet",
                    "Photon.Threads"

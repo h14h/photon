@@ -31,6 +31,14 @@ defmodule Photon.AssistantTest do
       })
   end
 
+  test "conversation_id/0 is Blip's conversation, which Photon.Signals finds", %{
+    conversation: c
+  } do
+    assert Photon.Signals.blip_conversation_id() == c
+    assert Assistant.conversation_id() == c
+    assert %Photon.Durable.Conversation{profile: "assistant"} = Durable.conversation(c)
+  end
+
   describe "tools" do
     test "lists machines", %{conversation: c} do
       fake_node("box")
@@ -87,9 +95,8 @@ defmodule Photon.AssistantTest do
       assert %{last_outcome: "skipped_consent"} = Repo.get!(Schedule, schedule.id)
     end
 
-    test "Stop withdraws the user's queued messages and keeps scheduled prompts", %{
-      conversation: c
-    } do
+    test "Stop withdraws the user's queued messages and keeps scheduled prompts, signals and answers",
+         %{conversation: c} do
       fake_node("box")
       {:ok, first} = Assistant.send("on box: $ sleep 30")
       assert Durable.busy?(c)
@@ -101,16 +108,25 @@ defmodule Photon.AssistantTest do
           source: %{"kind" => "routine", "schedule_id" => "sc_hello"}
         )
 
-      assert {mine.status, scheduled.status} == {"queued", "queued"}
-      assert Submission.background?(scheduled)
+      {:ok, signal} =
+        Durable.submit(c, "[Thread update] Garden / \"Fix the pump\" (c_1) finished.",
+          source: %{"kind" => "signal", "signals" => [%{"kind" => "thread_update"}]}
+        )
+
+      {:ok, answer} =
+        Durable.submit(c, "green", source: %{"kind" => "answer", "question_id" => "q_1"})
+
+      kept = [scheduled, signal, answer]
+      assert Enum.map([mine | kept], & &1.status) == List.duplicate("queued", 4)
+      assert Enum.all?(kept, &Submission.background?/1)
       refute Submission.background?(mine)
 
       Assistant.stop()
       assert %{status: "unanswered"} = await_settled(c, first.id)
       assert Repo.get!(Submission, mine.id).status == "withdrawn"
 
-      # The scheduled prompt runs once the stopped run has ended.
-      assert %{status: "done"} = await_settled(c, scheduled.id)
+      # The kept input runs once the stopped run has ended, one at a time.
+      for submission <- kept, do: assert(%{status: "done"} = await_settled(c, submission.id))
     end
   end
 

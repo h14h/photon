@@ -243,7 +243,13 @@ defmodule Photon.SchedulesTest do
       assert [%{id: ^thread_id}] = Threads.list(project.id)
       assert [first | _] = Durable.entries(thread_id)
       assert PhotonCore.Message.text_of(first.data["message"]) == "[Scheduled] Check the backups"
-      assert first.data["source"] == %{"kind" => "routine", "schedule_id" => schedule.id}
+
+      assert first.data["source"] == %{
+               "kind" => "routine",
+               "schedule_id" => schedule.id,
+               "created_by" => "owner"
+             }
+
       assert %TaskRecord{status: "done"} = Durable.task(schedule.task_id)
       assert %{state: :done, next_at: nil} = Schedules.get(schedule.id)
       idle!(thread_id)
@@ -591,7 +597,13 @@ defmodule Photon.SchedulesTest do
     assert Schedules.run_now(schedule.id) == {:ok, "sent"}
     assert_receive {:schedules_changed, nil}
     assert [entry] = scheduled(blip)
-    assert entry.data["source"] == %{"kind" => "routine", "schedule_id" => "sc_morning"}
+
+    assert entry.data["source"] == %{
+             "kind" => "routine",
+             "schedule_id" => "sc_morning",
+             "created_by" => "blip"
+           }
+
     assert [%{id: "sc_morning"}] = Schedules.list(:blip)
     idle!(blip)
   end
