@@ -39,23 +39,42 @@ defmodule Photon.Projects do
   message}` for the model, worded for the writer (a thread's ID or
   `"blip"`), so the tools check nothing.
 
+  ## Digest items
+
+  While ambient mode is on (`docs/plans/step-5-ambient-mode.md`, section
+  3), the owner's changes and a thread's file writes are collected for
+  Blip's next digest with `Photon.Signals.collect_tx/2`, inside the commit
+  that makes the change, which reads the mode there and collects nothing
+  in quiet mode:
+
+    * `"project_created"` from `create/1`, and `"purpose_changed"` from
+      an `update/2` that changes the name or the purpose
+    * `"file_written"` from `create_file/2`, `save_file/4` and
+      `delete_file/2` (writer `"user"`), and from a thread's
+      `write_file_tx/5` and `edit_file_tx/6` that succeed (the thread's ID)
+
+  What Blip does itself isn't collected: `create_tx/2`, which its
+  `start_project` tool calls, and the file tools with `"blip"` as writer.
+
   There is no process here: the rows hold the state and the Store's commit
   line orders the writes.
   """
 
   use Boundary,
-    deps: [Photon.Durable, Photon.Events, Photon.Repo, PhotonCore, Ecto],
+    deps: [Photon.Durable, Photon.Events, Photon.Repo, Photon.Signals, PhotonCore, Ecto],
     exports: [Project, ContextFile]
 
   import Ecto.Query
 
-  alias Photon.{Durable, Events, Repo}
+  alias Photon.{Durable, Events, Repo, Signals}
   alias Photon.Durable.Tx
   alias Photon.Projects.{ContextFile, Project, Rules}
 
   @topic "projects"
   @owner "owner"
   @blip "blip"
+  # How a digest item names the owner as a file's writer (section 3.2).
+  @user "user"
 
   @typedoc "Form errors: each field's message, e.g. `%{purpose: \"Say what the project is for.\"}`."
   @type field_errors :: %{optional(:name | :purpose | :content) => String.t()}
@@ -96,12 +115,20 @@ defmodule Photon.Projects do
   @doc """
   Creates a project from `params` (`purpose`, required, and `name`,
   optional; atom or string keys). Its slug comes from the name, with a
-  `-2`, `-3` suffix when another project has it.
+  `-2`, `-3` suffix when another project has it. In ambient mode it is
+  collected for the next digest (`"project_created"`).
   """
   @spec create(map()) :: {:ok, Project.t()} | {:error, field_errors()}
   def create(params) do
     with {:ok, _attrs} <- Rules.project(params, nil),
-         do: Durable.commit(&create_tx(&1, params))
+         do: Durable.commit(&owner_create_tx(&1, params))
+  end
+
+  defp owner_create_tx(tx, params) do
+    with {:ok, project} <- create_tx(tx, params) do
+      :ok = collect_tx(tx, "project_created", %{project_id: project.id})
+      {:ok, project}
+    end
   end
 
   @doc """
@@ -136,19 +163,27 @@ defmodule Photon.Projects do
   @doc """
   Changes a project's name and purpose from `params`; a field left out
   keeps its value, and a name cleared is made from the purpose again. The
-  slug stays.
+  slug stays. In ambient mode an update that changes the name or the
+  purpose is collected for the next digest (`"purpose_changed"`).
   """
   @spec update(String.t(), map()) :: {:ok, Project.t()} | {:error, field_errors() | :not_found}
   def update(project_id, params) do
     Durable.commit(fn tx ->
       with %Project{} = project <- get(project_id) || {:error, :not_found},
            {:ok, attrs} <- Rules.project(params, project) do
-        project = project |> Ecto.Changeset.change(attrs) |> Repo.update!()
+        changeset = Ecto.Changeset.change(project, attrs)
+        project = Repo.update!(changeset)
         :ok = Tx.announce(tx, @topic, {:projects_changed, project.id})
+        :ok = purpose_changed_tx(tx, project, changeset.changes)
         {:ok, project}
       end
     end)
   end
+
+  defp purpose_changed_tx(_tx, _project, changes) when changes == %{}, do: :ok
+
+  defp purpose_changed_tx(tx, project, _changes),
+    do: collect_tx(tx, "purpose_changed", %{project_id: project.id})
 
   @doc """
   Inside a commit that started a thread in project `project_id` or sent
@@ -216,7 +251,9 @@ defmodule Photon.Projects do
     * `%{name: message}` or `%{content: message}`: the name or content
       breaks a rule
 
-  A file deleted since the editor loaded it is created again.
+  A file deleted since the editor loaded it is created again. In ambient
+  mode a save is collected for the next digest (`"file_written"`, writer
+  `"user"`).
   """
   @spec save_file(String.t(), String.t(), String.t(), pos_integer() | nil) ::
           {:ok, ContextFile.t()} | {:error, save_error()}
@@ -234,7 +271,9 @@ defmodule Photon.Projects do
 
     with :ok <- project_exists(project_id),
          :ok <- Rules.save_check(current, version) do
-      {:ok, put_file(tx, current || new_file(project_id, name), content, @owner)}
+      file = put_file(tx, current || new_file(project_id, name), content, @owner)
+      :ok = file_written_tx(tx, file, @user, nil)
+      {:ok, file}
     else
       error -> {:error, error}
     end
@@ -243,7 +282,11 @@ defmodule Photon.Projects do
   defp project_exists(project_id),
     do: if(Repo.exists?(where(Project, [p], p.id == ^project_id)), do: :ok, else: :not_found)
 
-  @doc "Deletes a project's context file called `name`."
+  @doc """
+  Deletes a project's context file called `name`. In ambient mode it is
+  collected for the next digest (`"file_written"`, writer `"user"`, note
+  `"deleted"`).
+  """
   @spec delete_file(String.t(), String.t()) :: :ok | {:error, :not_found}
   def delete_file(project_id, name) do
     Durable.commit(fn tx ->
@@ -257,6 +300,8 @@ defmodule Photon.Projects do
               files_topic(project_id),
               {:project_files_changed, project_id, file.key}
             )
+
+          file_written_tx(tx, file, @user, "deleted")
 
         nil ->
           {:error, :not_found}
@@ -272,7 +317,8 @@ defmodule Photon.Projects do
   write wins), as written by `writer`: a thread's ID, or `"blip"`. Checks
   the name, the content and that the project is still there, and returns
   a message for the model when one fails, worded for the writer; a
-  refused write changes nothing.
+  refused write changes nothing. In ambient mode a thread's write is
+  collected for the next digest (`"file_written"`); Blip's isn't.
   """
   @spec write_file_tx(Tx.t(), String.t(), String.t(), String.t(), ContextFile.writer()) ::
           {:ok, %{file: ContextFile.t(), created?: boolean()}} | {:error, String.t()}
@@ -282,6 +328,7 @@ defmodule Photon.Projects do
          :ok <- project_for(writer, project_id) do
       current = get_file(project_id, name)
       file = put_file(tx, current || new_file(project_id, name), content, writer)
+      :ok = tool_written_tx(tx, file, writer)
       {:ok, %{file: file, created?: current == nil}}
     end
   end
@@ -292,7 +339,8 @@ defmodule Photon.Projects do
   `new_text`, as written by `writer` (a thread's ID, or `"blip"`). Returns
   a message for the model, worded for the writer, when the project or the
   file is missing, the passage isn't found exactly once or the result is
-  too long; a refused edit changes nothing.
+  too long; a refused edit changes nothing. In ambient mode a thread's
+  edit is collected for the next digest (`"file_written"`); Blip's isn't.
   """
   @spec edit_file_tx(
           Tx.t(),
@@ -311,7 +359,9 @@ defmodule Photon.Projects do
          {:ok, file} <- existing_file(project_id, name),
          {:ok, content} <- Rules.edit(file.name, file.content, old_text, new_text),
          :ok <- Rules.content(file.name, content) do
-      {:ok, put_file(tx, file, content, writer)}
+      file = put_file(tx, file, content, writer)
+      :ok = tool_written_tx(tx, file, writer)
+      {:ok, file}
     end
   end
 
@@ -340,6 +390,29 @@ defmodule Photon.Projects do
       "" -> {:error, "There's no #{name}. This project has no context files yet."}
       names -> {:error, "There's no #{name}. This project's context files are: #{names}."}
     end
+  end
+
+  ## Digest items
+
+  # A file tool's write is collected for a thread, never for Blip, which
+  # did it itself.
+  defp tool_written_tx(_tx, _file, @blip), do: :ok
+  defp tool_written_tx(tx, file, thread_id), do: file_written_tx(tx, file, thread_id, nil)
+
+  defp file_written_tx(tx, file, writer, note) do
+    collect_tx(tx, "file_written", %{
+      project_id: file.project_id,
+      name: file.name,
+      writer: writer,
+      note: note
+    })
+  end
+
+  # Each of these items is its own change, so its key is new every time;
+  # the digest folds them per project and file when it reads them.
+  defp collect_tx(tx, kind, fields) do
+    key = kind <> ":" <> PhotonCore.ID.new()
+    Signals.collect_tx(tx, Map.merge(fields, %{key: key, kind: kind}))
   end
 
   ## Writing

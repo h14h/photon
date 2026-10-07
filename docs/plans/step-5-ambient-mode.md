@@ -399,7 +399,9 @@ The call sites:
   `create_file/2`, `save_file/4` and `delete_file/2`, inside their
   commits: `"file_written"` with writer `"user"`.
 - `Projects.create/1` (not `create_tx/2`, which Blip's `start_project`
-  calls): `"project_created"`. `Projects.update/2`: `"purpose_changed"`.
+  calls): `"project_created"`. `Projects.update/2`: `"purpose_changed"`,
+  only when the save changes the name or the Purpose (a Save of the
+  same values is no change).
 - `Threads.start/2` (not `start_tx/4` from Blip's tools or a schedule):
   `"thread_started"`. `Threads.resolve/1` (not `reopen/1`): `"resolved"`.
 

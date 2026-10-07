@@ -96,7 +96,9 @@ defmodule Photon.Threads do
   owner's, and Blip hears only when it fails or ends asking the user
   something. A stop is never a signal. While ambient mode is on, the
   owner's run that finishes without asking is collected as a digest item
-  instead (`Photon.Signals.collect_tx/2`), in the same commit.
+  instead (`Photon.Signals.collect_tx/2`), in the same commit, and so are
+  a thread the owner starts (`start/2`, not `start_tx/4`, which Blip's
+  tools and schedules use) and the owner's Resolve (`resolve/1`).
 
   There is no process here: the harness runs the conversations, and the
   rows hold the rest.
@@ -197,9 +199,18 @@ defmodule Photon.Threads do
   from the message, and `started_by` from its source
   (`Photon.Threads.Rules.started_by/1`). Errors: `:blank` when the message has no
   text, `:not_found` when the project doesn't exist; either makes nothing.
+  In ambient mode a thread the owner starts is collected for the next
+  digest (`"thread_started"`), in the same commit.
   """
   @spec start(String.t(), String.t()) :: {:ok, Thread.t()} | {:error, :blank | :not_found}
-  def start(project_id, text), do: Durable.commit(&start_tx(&1, project_id, text, []))
+  def start(project_id, text), do: Durable.commit(&owner_start_tx(&1, project_id, text))
+
+  defp owner_start_tx(tx, project_id, text) do
+    with {:ok, thread} <- start_tx(tx, project_id, text, []) do
+      :ok = collect_tx(tx, "thread_started", thread)
+      {:ok, thread}
+    end
+  end
 
   @doc """
   `start/2` inside the caller's commit, for `Photon.Schedules` to start a
@@ -652,10 +663,22 @@ defmodule Photon.Threads do
   its next message, whatever its last run did. A running thread can be
   resolved; its state changes once the run ends. Input already queued
   for it starts a new run afterwards, which clears the mark again.
-  Announces it.
+  Announces it. In ambient mode it is collected for the next digest
+  (`"resolved"`), in the same commit.
   """
   @spec resolve(String.t()) :: :ok | {:error, :not_found}
-  def resolve(thread_id), do: Durable.commit(&resolved_tx(&1, thread_id, DateTime.utc_now()))
+  def resolve(thread_id), do: Durable.commit(&owner_resolve_tx(&1, thread_id))
+
+  defp owner_resolve_tx(tx, thread_id) do
+    case get(thread_id) do
+      %Thread{} = thread ->
+        :ok = set_resolved_tx(tx, thread, DateTime.utc_now())
+        collect_tx(tx, "resolved", thread)
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
 
   @doc "Takes back `resolve/1`, and announces it."
   @spec reopen(String.t()) :: :ok | {:error, :not_found}
@@ -663,13 +686,26 @@ defmodule Photon.Threads do
 
   defp resolved_tx(tx, thread_id, resolved_at) do
     case get(thread_id) do
-      %Thread{} = thread ->
-        _thread = Repo.update!(Ecto.Changeset.change(thread, resolved_at: resolved_at))
-        Projects.threads_changed_tx(tx, thread.project_id)
-
-      nil ->
-        {:error, :not_found}
+      %Thread{} = thread -> set_resolved_tx(tx, thread, resolved_at)
+      nil -> {:error, :not_found}
     end
+  end
+
+  defp set_resolved_tx(tx, thread, resolved_at) do
+    _thread = Repo.update!(Ecto.Changeset.change(thread, resolved_at: resolved_at))
+    Projects.threads_changed_tx(tx, thread.project_id)
+  end
+
+  # An owner's start or Resolve, collected for the next digest while
+  # ambient mode is on (`Photon.Signals.collect_tx/2` reads the mode in
+  # this commit). Each is its own change, so its key is new every time.
+  defp collect_tx(tx, kind, thread) do
+    Signals.collect_tx(tx, %{
+      key: kind <> ":" <> PhotonCore.ID.new(),
+      kind: kind,
+      thread_id: thread.id,
+      project_id: thread.project_id
+    })
   end
 
   @doc "Which of `thread_ids` are running."
