@@ -121,14 +121,14 @@ defmodule Photon.Assistant.MockAmbientTest do
   end
 
   describe "a digest" do
-    test "each new line becomes a reply line, and no tool is called" do
+    test "each new line becomes a paragraph of the reply, and no tool is called" do
       text = digest([pump(), gutters()], [seeds()])
       message = reply(text)
 
       assert Message.tool_calls(message) == []
 
       assert Message.text_of(message) ==
-               "Fix the pump in Garden finished: Replaced the fuse and the pump runs again.\n" <>
+               "Fix the pump in Garden finished: Replaced the fuse and the pump runs again.\n\n" <>
                  ~s{The schedule "check the gutters" in Garden stopped after an error.}
     end
 
@@ -137,7 +137,7 @@ defmodule Photon.Assistant.MockAmbientTest do
       quiet = %{pump() | note: nil}
 
       assert Message.text_of(reply(digest([quiet, own], []))) ==
-               "Fix the pump in Garden finished.\n" <>
+               "Fix the pump in Garden finished.\n\n" <>
                  ~s{Your schedule "water" stopped after an error.}
     end
 
@@ -168,14 +168,23 @@ defmodule Photon.Assistant.MockAmbientTest do
              - Fix the pump in Garden (c_123), stopped 4 days ago.
              - Gutters in House (c_456), failed 5 days ago.
              - Paint in House (c_789), waiting on you for 3 days.
+
              Say "tell <id>: ..." to pick one up, or press Resolve on it on Home to close it.\
              """
+    end
+
+    test "draws the closing sentence as its own paragraph, not part of the last item" do
+      html = review() |> reply() |> Message.text_of() |> Photon.Markdown.to_html()
+
+      assert html =~ ~r{</ul>\s*<p>Say }
+      refute html =~ ~r{days\.\s*Say }
     end
 
     test "leaves out the threads with a word to ignore, and with none left has nothing to tell" do
       assert Message.text_of(reply(review(), "- ignore: house")) == """
              These have sat for a while:
              - Fix the pump in Garden (c_123), stopped 4 days ago.
+
              Say "tell <id>: ..." to pick one up, or press Resolve on it on Home to close it.\
              """
 

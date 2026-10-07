@@ -1076,13 +1076,16 @@ Messages the owner didn't type (the last user message's text parts):
 - A `[Digest]` part: the memory lines `- ignore: <word>` (from the
   request's system text, as the question script reads memory) name words
   to ignore. Each line under "New to the user:" that contains none of
-  them, ignoring case, becomes a reply line: `Fix the pump in Garden
+  them, ignoring case, becomes a paragraph of the reply (a blank line
+  apart, since the panel's Markdown would run single lines together):
+  `Fix the pump in Garden
   finished: Replaced the fuse...` or `The schedule "check the gutters" in
   Garden stopped after an error.` Lines under "Already seen" are left
   out. No lines left: `[nothing to tell]`.
 - A `[Daily review]` part: the lines left after the same filter become
   `These have sat for a while:`, then one line each, `- Fix the pump in
-  Garden (c_123), stopped 4 days ago.`, then `Say "tell <id>: ..." to
+  Garden (c_123), stopped 4 days ago.`, then, after a blank line so
+  Markdown doesn't fold it into the last item, `Say "tell <id>: ..." to
   pick one up, or press Resolve on it on Home to close it.` The scripted
   reply shows IDs so the demo can name them; the real prompt tells Blip
   not to. No lines left: `[nothing to tell]`.

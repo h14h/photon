@@ -10,12 +10,13 @@ defmodule Photon.Assistant.MockAmbient do
   out: a line that contains one, ignoring case, isn't told.
 
     * A digest: each line under "New to the user:" left after the filter
-      becomes a reply line, `Fix the pump in Garden finished: Replaced the
+      becomes a paragraph of the reply, `Fix the pump in Garden finished: Replaced the
       fuse.` or `The schedule "check the gutters" in Garden stopped after
       an error.` Lines under "Already seen" are left out.
     * A review: the lines left after the filter become `These have sat
       for a while:`, one line each (`- Fix the pump in Garden (c_123),
-      stopped 4 days ago.`), and how to pick one up or close it. The
+      stopped 4 days ago.`), then, as a paragraph of its own, how to pick
+      one up or close it. The
       scripted reply shows IDs so a demo can name them; the real prompt
       tells Blip not to.
 
@@ -51,7 +52,7 @@ defmodule Photon.Assistant.MockAmbient do
       ignored = ignored(system(request))
 
       texts
-      |> Enum.flat_map(&reply_lines(&1, ignored))
+      |> Enum.flat_map(&reply_blocks(&1, ignored))
       |> reply()
     end
   end
@@ -67,27 +68,26 @@ defmodule Photon.Assistant.MockAmbient do
     end
   end
 
+  # Markdown paragraphs, a blank line apart, so the panel and the bubble
+  # draw each one on its own and not run together into one.
   defp reply([]), do: Message.assistant(@nothing_to_tell)
-  defp reply(lines), do: lines |> Enum.join("\n") |> Message.assistant()
+  defp reply(blocks), do: blocks |> Enum.join("\n\n") |> Message.assistant()
 
-  defp reply_lines("[Digest]" <> _rest = text, ignored) do
+  defp reply_blocks("[Digest]" <> _rest = text, ignored) do
     text
     |> block("New to the user:")
     |> kept(ignored)
     |> Enum.map(&digest_line/1)
   end
 
-  defp reply_lines("[Daily review]" <> _rest = text, ignored) do
+  defp reply_blocks("[Daily review]" <> _rest = text, ignored) do
     case text |> String.split("\n", parts: 2) |> tl() |> rows() |> kept(ignored) do
       [] ->
         []
 
       rows ->
-        List.flatten([
-          "These have sat for a while:",
-          Enum.map(rows, &review_line/1),
-          @pick_up
-        ])
+        list = Enum.map_join(rows, "\n", &review_line/1)
+        ["These have sat for a while:\n" <> list, @pick_up]
     end
   end
 
