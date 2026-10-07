@@ -351,6 +351,43 @@ defmodule Photon.DurableTest do
     end
   end
 
+  describe "Tx.count_tool_results_since/4" do
+    setup :conversation
+
+    test "counts ok results of the named tools after the last user entry of the given kinds",
+         %{conversation: c} do
+      user = fn kind ->
+        %{"message" => PhotonCore.Message.user("hi"), "source" => %{"kind" => kind}}
+      end
+
+      result = fn name, status -> %{"name" => name, "status" => status} end
+      count = fn -> Durable.commit(&Tx.count_tool_results_since(&1, c, ~w(a b), ~w(user))) end
+
+      # With no owner entry yet, it counts from the start.
+      Durable.commit(fn tx ->
+        _a = Tx.append(tx, c, "tool_result", result.("a", "ok"))
+        Tx.append(tx, c, "tool_result", result.("b", "ok"))
+      end)
+
+      assert count.() == 2
+
+      Durable.commit(fn tx ->
+        _user = Tx.append(tx, c, "user", user.("user"))
+        _a = Tx.append(tx, c, "tool_result", result.("a", "ok"))
+        _error = Tx.append(tx, c, "tool_result", result.("a", "error"))
+        _other = Tx.append(tx, c, "tool_result", result.("other", "ok"))
+        # A message from anyone else doesn't start the count again.
+        _signal = Tx.append(tx, c, "user", user.("signal"))
+        Tx.append(tx, c, "tool_result", result.("b", "ok"))
+      end)
+
+      assert count.() == 2
+
+      _user = Durable.commit(&Tx.append(&1, c, "user", user.("user")))
+      assert count.() == 0
+    end
+  end
+
   describe "recent_entries/2" do
     setup :conversation
 

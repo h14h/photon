@@ -11,7 +11,10 @@ defmodule Photon.Threads do
   A thread is one conversation under the `"thread"` profile, run by
   `Photon.Durable` like Blip's, and a row in `threads` that ties it to its
   project, with its title and when it last got a message (`active_at`).
-  Every thread belongs to a project. The user starts threads; a thread
+  Every thread belongs to a project. The user starts threads, and so does
+  Blip, whose `start_thread`, `message_thread` and `stop_thread` tools go
+  through `start_tx/4`, `send_tx/4` (with source `%{"kind" => "blip"}`)
+  and `stop_tx/2` inside the commit that records their result. A thread
   can't start one, schedule anything or touch Blip's memory, and its prompt
   says nothing about the user. What it needs to know of the user it asks
   Blip with `ask_blip` (`Photon.Threads.Tools.AskBlip`, through
@@ -370,6 +373,19 @@ defmodule Photon.Threads do
   def stop(thread_id) do
     _run = Durable.abort(thread_id)
     :ok
+  end
+
+  @doc """
+  `stop/1` inside the caller's commit, for Blip's `stop_thread` tool:
+  `:stopped` when the thread had a run to stop (it ends once the
+  harness has stopped it), `:idle` when it had none.
+  """
+  @spec stop_tx(Tx.t(), String.t()) :: :stopped | :idle
+  def stop_tx(tx, thread_id) do
+    case Durable.abort_tx(tx, thread_id) do
+      :idle -> :idle
+      _run -> :stopped
+    end
   end
 
   @doc "Withdraws a waiting message."

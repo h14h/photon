@@ -98,13 +98,22 @@ defmodule Photon.Projects do
   """
   @spec create(map()) :: {:ok, Project.t()} | {:error, field_errors()}
   def create(params) do
-    with {:ok, attrs} <- Rules.project(params, nil) do
-      id = PhotonCore.ID.new("p_")
-      {:ok, Durable.commit(&create_tx(&1, id, attrs))}
-    end
+    with {:ok, _attrs} <- Rules.project(params, nil),
+         do: Durable.commit(&create_tx(&1, params))
   end
 
-  defp create_tx(tx, id, attrs) do
+  @doc """
+  `create/1` inside the caller's commit, for Blip's `start_project` tool,
+  which makes the project in the commit that records its result. Errors
+  are `create/1`'s and make nothing, so the caller's commit can go on.
+  """
+  @spec create_tx(Tx.t(), map()) :: {:ok, Project.t()} | {:error, field_errors()}
+  def create_tx(tx, params) do
+    with {:ok, attrs} <- Rules.project(params, nil),
+         do: {:ok, insert_tx(tx, PhotonCore.ID.new("p_"), attrs)}
+  end
+
+  defp insert_tx(tx, id, attrs) do
     base = Rules.slug(attrs.name)
 
     slug = Rules.unique_slug(base, taken(base))

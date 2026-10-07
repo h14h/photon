@@ -31,8 +31,33 @@ defmodule Photon.Assistant.MockCoordinatorTest do
     end
   end
 
+  test "the phrasings that start and stop work call their tools" do
+    for {text, call} <- [
+          {"start project: Keep the beds watered.",
+           {"start_project", %{"purpose" => "Keep the beds watered."}}},
+          {"start thread in garden: on local: $ echo hi",
+           {"start_thread", %{"project" => "garden", "message" => "on local: $ echo hi"}}},
+          {"tell c_123: check the pump again",
+           {"message_thread", %{"thread" => "c_123", "message" => "check the pump again"}}},
+          {"stop thread c_123", {"stop_thread", %{"thread" => "c_123"}}}
+        ] do
+      assert calls(ask(text)) == [call], text
+    end
+  end
+
   test "each phrasing matches the whole message" do
-    for text <- ["projects please", "project", "threads in", "read thread", "the threads"] do
+    for text <- [
+          "projects please",
+          "project",
+          "threads in",
+          "read thread",
+          "the threads",
+          "start project",
+          "start thread in garden",
+          "tell c_123",
+          "stop thread",
+          "stop thread c_1 now"
+        ] do
       assert calls(ask(text)) == [], text
     end
   end
@@ -51,6 +76,8 @@ defmodule Photon.Assistant.MockCoordinatorTest do
     help = Message.text_of(ask("what can you do?"))
     assert help =~ "`projects` lists the projects"
     assert help =~ "`read thread <id>` reads one"
+    assert help =~ "`start thread in <slug>: <message>` starts a thread there"
+    assert help =~ "`stop thread <id>` stops one"
     assert help =~ MockCoordinator.help()
   end
 

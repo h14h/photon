@@ -16,7 +16,9 @@ defmodule Photon.Assistant.MockScript do
       loads one (`load_skill`)
     * the phrasings for its tools over projects and threads, in
       `Photon.Assistant.MockCoordinator`: `projects`, `project <slug>`,
-      `threads`, `threads in <slug>`, `read thread <id>`
+      `threads`, `threads in <slug>`, `read thread <id>`, `start project:
+      <purpose>`, `start thread in <slug>: <message>`, `tell <id>:
+      <message>`, `stop thread <id>`
 
   It reads the last text part of the user's message, which is what the
   user typed: a message sent from a page has the page's note in front of

@@ -38,6 +38,11 @@ config :photon, Photon.Durable,
 # docs/plans/step-4-blip-as-coordinator.md).
 config :photon, Photon.Threads, quiet_after_hours: 72
 
+# Between two of the owner's messages, Blip can start or message threads at
+# most this many times on its own, so a loop between Blip and a thread
+# stops in code (section 5.4 of docs/plans/step-4-blip-as-coordinator.md).
+config :photon, Photon.Assistant, unattended_limit: 10
+
 # A thread's ask_blip call checks this often whether Blip's run went past
 # its question without handling it, and if so passes it to the owner
 # (section 4.6 of docs/plans/step-4-blip-as-coordinator.md).

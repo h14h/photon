@@ -11,7 +11,11 @@ defmodule Photon.AssistantCoordinatorToolsTest do
 
   @moduletag :durable
 
-  alias Photon.{Assistant, Projects, Questions, Schedules, Skills, Threads}
+  import Ecto.Query, only: [from: 2]
+
+  alias Photon.{Assistant, Projects, Questions, Schedules, Signals, Skills, Threads}
+  alias Photon.Assistant.Tools
+  alias Photon.Durable.{Submission, TaskRecord, ToolAPI}
   alias PhotonCore.Message
 
   setup do
@@ -53,7 +57,10 @@ defmodule Photon.AssistantCoordinatorToolsTest do
     :ok = idle!(blip)
     {:ok, s} = Assistant.send(text)
     await_settled(blip, s.id)
+    last_result!(blip, name)
+  end
 
+  defp last_result!(blip, name) do
     entry =
       blip
       |> Durable.entries()
@@ -63,6 +70,73 @@ defmodule Photon.AssistantCoordinatorToolsTest do
     assert entry.data["name"] == name
     {Message.text_of(entry.data["message"]), entry.data}
   end
+
+  # Posts a signal into Blip's conversation whose text is one of the
+  # scripted Blip's phrasings, so the run it starts calls a tool as a run
+  # started by a thread update or a thread's question would. The scripted
+  # Blip reads the message's text and nothing else, and who asked comes
+  # from the ref's kind alone (`Photon.Assistant.Origin`).
+  defp post!(kind, text, thread_id) do
+    key = "test:#{System.unique_integer([:positive])}"
+
+    ref =
+      case kind do
+        :update -> %{"kind" => "thread_update", "status" => "finished"}
+        :question -> %{"kind" => "question", "question_id" => "q_" <> key}
+      end
+
+    ref = Map.merge(ref, %{"key" => key, "thread_id" => thread_id})
+    Durable.commit(&Signals.post_tx(&1, %{key: key, text: text, ref: ref}))
+  end
+
+  # Posts such a signal once Blip is idle, and returns the result of the
+  # tool call its run made.
+  defp signal_tool!(blip, kind, text, name, thread_id \\ "c_asking") do
+    :ok = idle!(blip)
+    signal = post!(kind, text, thread_id)
+    await_settled(blip, signal.id)
+    last_result!(blip, name)
+  end
+
+  defp fake_machine(name) do
+    {:ok, _owner} =
+      Registry.register(Photon.MachineRegistry, name, %{
+        "platform" => "test",
+        "workspace" => "/w",
+        "version" => "0",
+        "capabilities" => ["ops:2"]
+      })
+  end
+
+  # A thread the owner started, parked on a command that never finishes on
+  # `box`, a machine the test process plays.
+  defp parked_thread!(project) do
+    fake_machine("box")
+    {:ok, thread} = Threads.start(project.id, "on box: $ sleep 1000")
+    :ok = Threads.subscribe(thread.id)
+    await_entry(thread.id, &(&1.kind == "assistant"))
+    assert Durable.busy?(thread.id)
+    thread
+  end
+
+  # Blip's finished tool task for its newest call of `name`.
+  defp tool_task!(blip, name) do
+    query = from(t in TaskRecord, where: t.conversation_id == ^blip and t.kind == "tool")
+
+    query
+    |> Repo.all()
+    |> Enum.filter(&(&1.input["call"]["name"] == name))
+    |> Enum.max_by(& &1.inserted_at, DateTime)
+  end
+
+  defp submissions(thread_id),
+    do:
+      Repo.all(
+        from(s in Submission,
+          where: s.conversation_id == ^thread_id,
+          order_by: [asc: s.inserted_at, asc: s.id]
+        )
+      )
 
   describe "list_projects" do
     test "every project with its threads' states and its files", %{garden: garden, blip: blip} do
@@ -213,6 +287,254 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       {text, data} = tool!(blip, "read thread c_999", "read_thread")
       assert data["status"] == "error"
       assert text == "Error: There's no thread c_999. list_threads shows them."
+    end
+  end
+
+  describe "start_project" do
+    test "makes a project from a purpose", %{blip: blip} do
+      {text, data} = tool!(blip, "start project: Keep the bees healthy.", "start_project")
+      project = Projects.get(data["details"]["project_id"])
+      assert project.purpose == "Keep the bees healthy."
+      assert text == "Started #{project.slug} (#{project.name})."
+      assert data["details"]["slug"] == project.slug
+    end
+
+    test "a refused purpose comes back as the rules say, and makes nothing", %{blip: blip} do
+      before = length(Projects.list())
+      long = String.duplicate("bees ", 900)
+      {text, data} = tool!(blip, "start project: " <> long, "start_project")
+      assert data["status"] == "error"
+
+      assert text ==
+               "Error: purpose: Keep the purpose under 4,000 characters, " <>
+                 "and put the rest in a context file."
+
+      assert length(Projects.list()) == before
+    end
+  end
+
+  describe "start_thread" do
+    test "starts a thread as Blip's, once however often the call runs", %{
+      garden: garden,
+      blip: blip
+    } do
+      {text, data} = tool!(blip, "start thread in garden: files", "start_thread")
+      assert data["status"] == "ok"
+      assert [thread] = Threads.list(garden.id)
+      assert thread.started_by == "blip"
+
+      assert text ==
+               ~s(Started #{thread.id} "#{thread.title}" in garden. ) <>
+                 "You'll get an update when its run ends."
+
+      assert data["details"] == %{
+               "thread_id" => thread.id,
+               "title" => thread.title,
+               "project_id" => garden.id,
+               "slug" => "garden"
+             }
+
+      assert [%{content: %{"source" => %{"kind" => "blip"}}}] = submissions(thread.id)
+
+      # The call run again (as after a restart) finds the thread it made.
+      task = tool_task!(blip, "start_thread")
+      args = %{"project" => "garden", "message" => "files"}
+      {:commit, fun} = Tools.StartThread.execute(args, ToolAPI.new(task))
+      assert {:ok, _text, %{"thread_id" => thread_id}} = Durable.commit(fun)
+      assert thread_id == thread.id
+      assert [_one] = Threads.list(garden.id)
+      assert [_one] = submissions(thread.id)
+    end
+
+    test "an unknown project lists the slugs there are", %{blip: blip} do
+      {text, data} = tool!(blip, "start thread in shed: files", "start_thread")
+      assert data["status"] == "error"
+      assert text == "Error: There's no project called shed. Projects: garden, house."
+    end
+  end
+
+  describe "message_thread" do
+    test "sends Blip's message to an idle thread, and queues or steers into a busy one", %{
+      garden: garden,
+      house: house,
+      blip: blip
+    } do
+      idle = ended!(garden, "files")
+      {text, data} = tool!(blip, "tell #{idle.id}: files", "message_thread")
+      assert text == ~s(Sent to "#{idle.title}"; it's working on it.)
+
+      assert data["details"] == %{
+               "thread_id" => idle.id,
+               "title" => idle.title,
+               "project_id" => garden.id
+             }
+
+      assert [_first, %{content: %{"source" => %{"kind" => "blip"}}}] = submissions(idle.id)
+
+      busy = parked_thread!(house)
+      {text, _data} = tool!(blip, "tell #{busy.id}: files", "message_thread")
+      assert text == ~s(Queued for "#{busy.title}", behind its current run.)
+      assert [_running, %{status: "queued", mode: "follow_up"}] = submissions(busy.id)
+
+      # A steer, from a second call in the same owner's run.
+      task = tool_task!(blip, "message_thread")
+      args = %{"thread" => busy.id, "message" => "now", "when_busy" => "steer"}
+      {:commit, fun} = Tools.MessageThread.execute(args, ToolAPI.new(%{task | id: "t_steer"}))
+      assert {:ok, text, _details} = Durable.commit(fun)
+      assert text == ~s("#{busy.title}" will see it after its current step.)
+      assert [_running, _queued, %{status: "queued", mode: "steer"}] = submissions(busy.id)
+
+      :ok = Threads.stop(busy.id)
+      :ok = idle!(busy.id)
+    end
+
+    test "an unknown thread points to list_threads", %{blip: blip} do
+      {text, data} = tool!(blip, "tell c_999: files", "message_thread")
+      assert data["status"] == "error"
+      assert text == "Error: There's no thread c_999. list_threads shows them."
+    end
+  end
+
+  describe "stop_thread" do
+    test "stops a running thread, and says when there was nothing to stop", %{
+      garden: garden,
+      blip: blip
+    } do
+      busy = parked_thread!(garden)
+      {text, data} = tool!(blip, "stop thread #{busy.id}", "stop_thread")
+      assert text == ~s(Stopped "#{busy.title}".)
+      assert data["details"]["thread_id"] == busy.id
+      :ok = idle!(busy.id)
+      assert Threads.get(busy.id).last_run_status == "stopped"
+
+      {text, data} = tool!(blip, "stop thread #{busy.id}", "stop_thread")
+      assert data["status"] == "ok"
+      assert text == ~s("#{busy.title}" wasn't running; nothing to stop.)
+    end
+  end
+
+  describe "a thread's question" do
+    @refused "Error: A thread's question can't start or change work. " <>
+               "Answer it with answer_question, or ask the user with ask_owner."
+
+    test "keeps a run from starting or changing work, while reading works", %{
+      garden: garden,
+      blip: blip
+    } do
+      busy = parked_thread!(garden)
+      idle = ended!(garden, "files")
+      projects = length(Projects.list())
+
+      for {text, name} <- [
+            {"start project: Keep the bees healthy.", "start_project"},
+            {"start thread in garden: files", "start_thread"},
+            {"tell #{idle.id}: files", "message_thread"},
+            {"stop thread #{busy.id}", "stop_thread"}
+          ] do
+        {result, data} = signal_tool!(blip, :question, text, name)
+        assert {data["status"], result} == {"error", @refused}, name
+      end
+
+      assert length(Projects.list()) == projects
+      assert [_busy, _idle] = Threads.list(garden.id)
+      assert [_first] = submissions(idle.id)
+      assert Durable.busy?(busy.id)
+
+      {_text, data} = signal_tool!(blip, :question, "project garden", "read_project")
+      assert data["status"] == "ok"
+
+      :ok = Threads.stop(busy.id)
+      :ok = idle!(busy.id)
+    end
+
+    test "the owner's steer in the same run lifts the limits", %{garden: garden, blip: blip} do
+      fake_machine("box")
+      :ok = idle!(blip)
+      _question = post!(:question, "on box: $ sleep 1000", "c_asking")
+      await_entry(blip, &(&1.kind == "assistant"))
+
+      {:ok, steer} = Assistant.send("start thread in garden: files", when_busy: "steer")
+
+      # The steer is placed after the tool round, which ends when its call is stopped.
+      shell = tool_task!(blip, "shell")
+      _aborted = Durable.abort_task(shell.id)
+      await_settled(blip, steer.id)
+
+      {_text, data} = last_result!(blip, "start_thread")
+      assert data["status"] == "ok"
+      assert [%{started_by: "blip"}] = Threads.list(garden.id)
+    end
+
+    test "a question that arrives next to an update gets a run of its own, still limited", %{
+      garden: garden,
+      blip: blip
+    } do
+      fake_machine("box")
+      :ok = idle!(blip)
+      {:ok, parked} = Assistant.send("on box: $ sleep 1000")
+      await_entry(blip, &(&1.kind == "assistant"))
+
+      update = post!(:update, "projects", "c_done")
+      question = post!(:question, "start thread in garden: files", "c_asking")
+      assert update.id != question.id
+
+      :ok = Assistant.stop()
+      await_settled(blip, parked.id)
+      await_settled(blip, update.id)
+      await_settled(blip, question.id)
+
+      {text, _data} = last_result!(blip, "start_thread")
+      assert text == @refused
+      assert Threads.list(garden.id) == []
+    end
+  end
+
+  describe "the unattended limit" do
+    setup do
+      previous = Application.get_env(:photon, Photon.Assistant, [])
+      Application.put_env(:photon, Photon.Assistant, unattended_limit: 2)
+      on_exit(fn -> Application.put_env(:photon, Photon.Assistant, previous) end)
+    end
+
+    # Blip messages `thread` from a run a thread update started, and the
+    # thread's run (and the update it posts back to Blip) end.
+    defp follow_up!(blip, thread) do
+      result =
+        signal_tool!(blip, :update, "tell #{thread.id}: files", "message_thread", thread.id)
+
+      :ok = idle!(thread.id)
+      :ok = idle!(blip)
+      result
+    end
+
+    test "stops Blip messaging threads on its own until the owner writes", %{
+      garden: garden,
+      blip: blip
+    } do
+      thread = ended!(garden, "files")
+
+      assert {_text, %{"status" => "ok"}} = follow_up!(blip, thread)
+      assert {_text, %{"status" => "ok"}} = follow_up!(blip, thread)
+      assert length(submissions(thread.id)) == 3
+
+      {text, data} = follow_up!(blip, thread)
+      assert data["status"] == "error"
+
+      assert text ==
+               "Error: You've started or messaged threads 2 times since the user last wrote " <>
+                 "to you. Tell them what's going on and wait for them."
+
+      assert length(submissions(thread.id)) == 3
+
+      # The owner's own runs are never refused, and their message starts
+      # the count again.
+      {_text, data} = tool!(blip, "tell #{thread.id}: files", "message_thread")
+      assert data["status"] == "ok"
+      :ok = idle!(thread.id)
+      :ok = idle!(blip)
+
+      assert {_text, %{"status" => "ok"}} = follow_up!(blip, thread)
+      assert length(submissions(thread.id)) == 5
     end
   end
 end

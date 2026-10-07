@@ -372,6 +372,16 @@ defmodule Photon.Durable.Tx do
   def queued(%__MODULE__{}, conversation_id, mode \\ nil),
     do: Repo.all(Queries.queued(conversation_id, mode))
 
+  @doc """
+  How many `"ok"` results of the tools in `names` the conversation has
+  after its last user entry whose source kind is one of `source_kinds`
+  (`Photon.Durable.Queries.count_tool_results_since/3`).
+  """
+  @spec count_tool_results_since(t(), String.t(), [String.t()], [String.t()]) ::
+          non_neg_integer()
+  def count_tool_results_since(%__MODULE__{}, conversation_id, names, source_kinds),
+    do: Repo.one(Queries.count_tool_results_since(conversation_id, names, source_kinds))
+
   ## Signals
 
   @doc "Records a signal (once per key) and wakes tasks waiting on it."

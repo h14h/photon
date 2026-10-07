@@ -9,6 +9,10 @@ defmodule Photon.Assistant.MockCoordinator do
     * `project <slug>` reads one (`read_project`)
     * `threads` and `threads in <slug>` list threads (`list_threads`)
     * `read thread <id>` reads one (`read_thread`)
+    * `start project: <purpose>` starts a project (`start_project`)
+    * `start thread in <slug>: <message>` starts a thread (`start_thread`)
+    * `tell <id>: <message>` messages a thread (`message_thread`)
+    * `stop thread <id>` stops one (`stop_thread`)
 
   After a tool result, the script's usual relay prints it.
   """
@@ -25,15 +29,21 @@ defmodule Photon.Assistant.MockCoordinator do
   @help """
   - `projects` lists the projects, and `project <slug>` reads one, like `project garden`
   - `threads` or `threads in <slug>` lists threads, and `read thread <id>` reads one
+  - `start project: <purpose>` starts a project
+  - `start thread in <slug>: <message>` starts a thread there, like `start thread in garden: files`
+  - `tell <id>: <message>` messages a thread, and `stop thread <id>` stops one
   """
 
   @doc """
   The phrasings, in the order the script tries them, each with the reply
-  its captures make. `request` is the model request; the read phrasings
+  its captures make. `request` is the model request; these phrasings
   don't look at it.
   """
   @spec phrasings(map()) :: [phrasing()]
-  def phrasings(_request) do
+  def phrasings(_request), do: read_phrasings() ++ work_phrasings()
+
+  # The read tools' phrasings.
+  defp read_phrasings do
     [
       {~r/\A(?:list )?projects\z/i,
        fn [] -> call("list_projects", %{}, "Here are the projects.") end},
@@ -42,6 +52,17 @@ defmodule Photon.Assistant.MockCoordinator do
        fn [] -> call("list_threads", %{}, "Here are the threads.") end},
       {~r/\Athreads in\s+(\S+)\z/i, fn [slug] -> threads_in(slug) end},
       {~r/\Aread thread\s+(\S+)\z/i, fn [id] -> read_thread(id) end}
+    ]
+  end
+
+  # The phrasings of the tools that start and stop work.
+  defp work_phrasings do
+    [
+      {~r/\Astart project\s*:\s*(.+)\z/is, fn [purpose] -> start_project(purpose) end},
+      {~r/\Astart thread in\s+(\S+?)\s*:\s*(.+)\z/is,
+       fn [slug, message] -> start_thread(slug, message) end},
+      {~r/\Atell\s+(\S+?)\s*:\s*(.+)\z/is, fn [id, message] -> tell(id, message) end},
+      {~r/\Astop thread\s+(\S+)\z/i, fn [id] -> stop_thread(id) end}
     ]
   end
 
@@ -55,6 +76,27 @@ defmodule Photon.Assistant.MockCoordinator do
     do: call("list_threads", %{"project" => slug}, "Here are the threads in #{slug}.")
 
   defp read_thread(id), do: call("read_thread", %{"thread" => id}, "Reading #{id}.")
+
+  defp start_project(purpose),
+    do: call("start_project", %{"purpose" => String.trim(purpose)}, "Starting a project.")
+
+  defp start_thread(slug, message),
+    do:
+      call(
+        "start_thread",
+        %{"project" => slug, "message" => String.trim(message)},
+        "Starting a thread in #{slug}."
+      )
+
+  defp tell(id, message),
+    do:
+      call(
+        "message_thread",
+        %{"thread" => id, "message" => String.trim(message)},
+        "Telling #{id}."
+      )
+
+  defp stop_thread(id), do: call("stop_thread", %{"thread" => id}, "Stopping #{id}.")
 
   defp call(tool, args, intro), do: Message.assistant(intro, [Mock.call(tool, args)])
 end

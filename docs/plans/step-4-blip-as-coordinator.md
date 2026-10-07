@@ -854,6 +854,14 @@ All in `apps/hub/lib/photon/assistant/tools/`, one module each:
 | `write_context_file` | `project`, `name`, `content` | `Projects.write_file_tx(tx, project_id, name, content, "blip")` | `Created notes.md in garden (1,234 characters).` or `Wrote ...` |
 | `edit_context_file` | `project`, `name`, `old_text`, `new_text` | `Projects.edit_file_tx(..., "blip")` | `Edited notes.md in garden.` |
 
+`start_thread` and `message_thread` refuse an empty message (`The
+message is empty; say what the thread should do.` / `The message is
+empty.`), and say `That project no longer exists.` or `That thread no
+longer exists.` when it went between the lookup and the commit. Their
+details, and `stop_thread`'s, carry `"thread_id"`, `"title"` and
+`"project_id"` (`start_thread` also `"slug"`, for its link);
+`start_project`'s carry `"project_id"`, `"slug"` and `"name"`.
+
 Supporting changes:
 
 - `Projects.create_tx/2` becomes public (today `create/1` wraps a private
@@ -986,11 +994,18 @@ owner input anywhere (section 3.7). So `start_thread` and
 Blip's `start_thread` and `message_thread` results with status `ok` in
 its conversation since its last user entry whose source kind is
 `"user"` or `"answer"` (`Assistant.unattended_count_tx/1`, one query
-through a new `Durable.Queries.count_tool_results_since/3`). At
+through a new `Durable.Queries.count_tool_results_since/3`, which takes
+the conversation, the tool names and the owner's source kinds and finds
+the last such entry in a subquery; `Tx.count_tool_results_since/4` runs
+it inside the commit, since `Photon.Assistant` can't reach `Queries`). At
 `unattended_limit` (`config :photon, Photon.Assistant, unattended_limit:
 10`) they refuse: `You've started or messaged threads 10 times since the
 user last wrote to you. Tell them what's going on and wait for them.`
-`Origin.unattended_ok?(origin, count, limit)` is the pure check. Runs the
+`Origin.unattended_ok?(origin, count, limit)` is the pure check, and
+`Assistant.may_act_tx(tx, task, :change | :start)` is the one check
+each tool makes inside its commit: `:change` refuses in a restricted
+run, `:start` also at the limit (`Assistant.unattended_limit/0` reads
+the config). Runs the
 owner typed into are never counted against or refused.
 
 ### 5.5 Project schedules and project skills
@@ -1533,10 +1548,10 @@ labels.
 | `ask_blip` | Asking Blip: <question, one line> | Asked Blip: <question> | Stopped asking Blip: <question> / Couldn't ask Blip: <question> |
 | `list_projects`, `read_project` | Looking over projects / garden | Looked over ... | Stopped looking over ... / Couldn't look over ... |
 | `list_threads`, `read_thread` | Checking threads (in garden) / Reading c_123 | Checked threads (in garden) / Read "Fix the pump" | Stopped checking threads / Couldn't read c_999 |
-| `start_project` | Starting a project | Started the project garden | |
-| `start_thread` | Starting a thread in garden | Started "Check the backups" in garden (linked) | |
-| `message_thread` | Messaging "Fix the pump" | Messaged "Fix the pump" | |
-| `stop_thread` | Stopping "Fix the pump" | Stopped "Fix the pump" | |
+| `start_project` | Starting a project | Started the project garden | Stopped starting a project / Couldn't start a project |
+| `start_thread` | Starting a thread in garden | Started "Check the backups" in garden (linked) | Stopped starting a thread in garden / Couldn't start a thread in garden |
+| `message_thread` | Messaging c_123 | Messaged "Fix the pump" | Stopped messaging c_123 / Couldn't message c_123 |
+| `stop_thread` | Stopping c_123 | Stopped "Fix the pump" | Didn't stop c_123 / Couldn't stop c_123 |
 | Blip's file tools | as the thread's, with "in garden" | | |
 | `answer_question` | Answering "Fix the pump" | Answered "Fix the pump" | |
 | `ask_owner` | the question card (10.6) | | |
@@ -1566,6 +1581,7 @@ No changes.
 | `Photon.Durable.Generation` | worker logic | unchanged | `settle/4` returns what it settled; each settle is followed by `Durable.settled/3` with the facts of section 3.1. |
 | `Photon.Durable.ToolTask` | worker logic | unchanged | `record/3` keeps the appended entry and calls `Durable.tool_result/3` with it. |
 | `Photon.Durable.Queries` | core | unchanged | `recent_entries/2`, `count_tool_results_since/3` (section 5.4). |
+| `Photon.Durable.Tx` | boundary (inside a commit) | unchanged | `count_tool_results_since/4` runs the query above inside the caller's commit, for `Assistant.unattended_count_tx/1`. |
 | `Photon.Durable.Submission` | data | unchanged | `background?/1` for `"routine"`, `"signal"`, `"answer"`. |
 
 ### 11.3 apps/hub: threads, signals and questions
@@ -1591,9 +1607,9 @@ No changes.
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Assistant` | boundary (API and the `"assistant"` profile) | deps add `Photon.Activity`, `Photon.Questions`, `Photon.Signals`; `exports: [Notice]` | `conversation_id/0` delegates to `Signals`; `answer/2` (the panel's reply chip, through `Questions.answer/2`); `find_project/1`, `find_thread/1` for the tools; `origin_tx/2`; `unattended_count_tx/1`; `on_tool_result/4` and `on_settled/3` (`settled_tx/3`) record activity; the tool list (sections 5.2 to 5.5). It goes past `ModuleDependencies`' 20, as `Photon.Threads` did in step 3; disable the check on the module with the same reason (it is the context's API and the profile). |
+| `Photon.Assistant` | boundary (API and the `"assistant"` profile) | deps add `Photon.Activity`, `Photon.Questions`, `Photon.Signals`; `exports: [Notice]` | `conversation_id/0` delegates to `Signals`; `answer/2` (the panel's reply chip, through `Questions.answer/2`); `find_project/1`, `find_thread/1` for the tools; `origin_tx/2` (takes the generation or one of its tool tasks); `unattended_count_tx/1`; `unattended_limit/0`; `may_act_tx/3` (the refusals of section 5.4, which the tools that start or change work call in their commit); `on_tool_result/4` and `on_settled/3` (`settled_tx/3`) record activity; the tool list (sections 5.2 to 5.5). It goes past `ModuleDependencies`' 20, as `Photon.Threads` did in step 3; disable the check on the module with the same reason (it is the context's API and the profile). |
 | `Photon.Assistant.Prompt` | core | unchanged | Section 5.6. |
-| `Photon.Assistant.Origin` | core | `use Boundary, type: :strict, deps: []` | `of/1`, `for_call/3`, `unattended_ok?/3` (section 5.4). |
+| `Photon.Assistant.Origin` | core | `use Boundary, type: :strict, deps: [PhotonCore]` (`for_call/3` decodes the raw arguments with `PhotonCore.Message.arguments/1`) | `of/1`, `for_call/3`, `unattended_ok?/3` (section 5.4), and the two refusals' words, `restricted_message/0` and `unattended_message/1`. |
 | `Photon.Assistant.Readout` | core | `use Boundary, type: :strict, deps: [Photon.Threads, PhotonCore]` (it reaches `Threads.State` through the parent's export, as prompts reach `Skills.Prompt`) | The read tools' texts (section 5.2): `projects/3`, `project/2` (schedules come in with their `when` text, which the tool gets from `Schedules.when_text/1`), `threads/2`, `thread/3` over recent entries (takes `now`), `unknown_project/2`, `unknown_thread/1`, and `state_names/0` and `state_named/1` for `list_threads`' `state` argument. |
 | `Photon.Assistant.MockCoordinator` | core | `use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]` | Section 8.2: `phrasings/1`, and `help/0`, the lines `MockScript`'s help text includes. |
 | `Photon.Assistant.MockScript` | core | deps add `Photon.Assistant.MockCoordinator` (same boundary) | Tries `MockCoordinator.phrasings/1`; help text. |
@@ -2215,8 +2231,10 @@ unattended limit. After C4 and C7.
 - New `apps/hub/lib/photon/assistant/origin.ex` (`of/1`, `for_call/3`,
   `unattended_ok?/3`, section 5.4), `assistant/tools/start_project.ex`,
   `start_thread.ex`, `message_thread.ex`, `stop_thread.ex`;
-  `assistant.ex` (`origin_tx/2`, `unattended_count_tx/1`);
-  `durable/queries.ex` (`count_tool_results_since/3`); `projects.ex`
+  `assistant.ex` (`origin_tx/2`, `unattended_count_tx/1`,
+  `unattended_limit/0`, `may_act_tx/3`);
+  `durable/queries.ex` (`count_tool_results_since/3`) and `durable/tx.ex`
+  (`count_tool_results_since/4`); `projects.ex`
   (`create_tx/2`); `threads.ex` (`stop_tx/2`, the `"blip"` source);
   `assistant/mock_coordinator.ex` (their phrasings). `config/config.exs`:
   `unattended_limit`.
@@ -2225,7 +2243,13 @@ unattended limit. After C4 and C7.
 - Tests: `test/core/assistant/origin_test.exs`, these tools, the question
   refusals (with and without an owner steer) and the unattended limit in
   `assistant_coordinator_tools_test.exs`, the Blip-started thread's
-  signal in `signals_test.exs`.
+  signal in `signals_test.exs`. Until C10 the scripted Blip doesn't act
+  on signals, so the runs a question or an update starts are made by
+  posting a signal (`Signals.post_tx/2`) whose text is one of the
+  scripted phrasings and whose ref is a question or an update: who
+  asked comes from the ref's kind alone. The owner's steer is placed
+  after a tool round that ends when the test stops its parked call
+  (`Durable.abort_task/2`).
 
 C9. Blip's context file tools. After C8 (they refuse on a question, so
 they need `Origin`).

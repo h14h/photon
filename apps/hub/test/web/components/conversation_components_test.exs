@@ -1,7 +1,8 @@
 defmodule PhotonWeb.ConversationComponentsTest do
   @moduledoc """
   The conversation pieces Blip's panel and a thread page share: the
-  context-file, `load_skill`, `ask_blip` and Blip's read calls' lines, the ID prefix
+  context-file, `load_skill`, `ask_blip` and Blip's read and work calls'
+  lines, the ID prefix
   that keeps two conversations on one page apart, and images loaded from
   the page's own route.
   """
@@ -162,6 +163,65 @@ defmodule PhotonWeb.ConversationComponentsTest do
 
       assert label(action(call("read_thread", %{"thread" => "c_1"}, "c1"), stopped)) ==
                "Stopped reading c_1"
+    end
+  end
+
+  describe "Blip's calls that start and stop work" do
+    test "say what they act on, in the present while they run" do
+      thread = %{"thread_id" => "c_9", "title" => "Fix the pump", "project_id" => "p_1"}
+
+      for {tool, args, details, running, done} <- [
+            {"start_project", %{"purpose" => "Water the beds."},
+             %{"project_id" => "p_1", "slug" => "garden"}, "Starting a project",
+             "Started the project garden"},
+            {"start_thread", %{"project" => "garden", "message" => "files"},
+             Map.put(thread, "slug", "garden"), "Starting a thread in garden",
+             ~s(Started "Fix the pump" in garden)},
+            {"message_thread", %{"thread" => "c_9", "message" => "again"}, thread,
+             "Messaging c_9", ~s(Messaged "Fix the pump")},
+            {"stop_thread", %{"thread" => "c_9"}, thread, "Stopping c_9",
+             ~s(Stopped "Fix the pump")}
+          ] do
+        call = call(tool, args, "c1")
+        assert label(action(call, nil)) == running
+        assert label(action(call, ok("c1", "Text.", details))) == done
+      end
+    end
+
+    test "a thread Blip started links to its page" do
+      call = call("start_thread", %{"project" => "garden", "message" => "files"}, "c1")
+      details = %{"thread_id" => "c_9", "title" => "Fix the pump", "slug" => "garden"}
+      html = action(call, ok("c1", "Started.", details))
+
+      assert html |> LazyHTML.query("summary a") |> LazyHTML.attribute("href") ==
+               ["/projects/garden/threads/c_9"]
+
+      running = action(call, nil)
+      assert running |> LazyHTML.query("summary a") |> Enum.empty?()
+    end
+
+    test "a call that was refused, or stopped, says so" do
+      error = %{
+        "message" => Message.tool_result("c1", "Error: A thread's question can't start work."),
+        "status" => "error",
+        "details" => %{},
+        "entry_id" => "e_1"
+      }
+
+      stopped = %{error | "status" => "aborted"}
+      start = call("start_thread", %{"project" => "garden", "message" => "files"}, "c1")
+      assert label(action(start, error)) == "Couldn't start a thread in garden"
+      assert label(action(start, stopped)) == "Stopped starting a thread in garden"
+      assert label(action(call("start_project", %{}, "c1"), error)) == "Couldn't start a project"
+
+      assert label(action(call("message_thread", %{"thread" => "c_1"}, "c1"), error)) ==
+               "Couldn't message c_1"
+
+      assert label(action(call("stop_thread", %{"thread" => "c_1"}, "c1"), error)) ==
+               "Couldn't stop c_1"
+
+      assert label(action(call("stop_thread", %{"thread" => "c_1"}, "c1"), stopped)) ==
+               "Didn't stop c_1"
     end
   end
 

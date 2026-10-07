@@ -44,6 +44,7 @@ defmodule PhotonWeb.ConversationComponents do
 
   @file_tools ~w(list_context_files read_context_file write_context_file edit_context_file)
   @read_tools ~w(list_projects read_project list_threads read_thread)
+  @work_tools ~w(start_project start_thread message_thread stop_thread)
 
   @doc "One entry of the conversation: a message, an answer with its calls, an error or a reset."
   attr :entry, :map, required: true
@@ -366,6 +367,22 @@ defmodule PhotonWeb.ConversationComponents do
     """
   end
 
+  def action_label(%{name: name} = assigns) when name in @work_tools do
+    {verb, subject, rest} = work_words(name, assigns.args, assigns.details, assigns.status)
+
+    assigns =
+      assign(assigns,
+        verb: verb,
+        subject: truncate(subject),
+        rest: rest,
+        href: work_href(name, assigns.status, assigns.details)
+      )
+
+    ~H"""
+    <span phx-no-format>{@verb}<span :if={@subject != ""}> <.link :if={@href} navigate={@href} class="font-medium text-ink hover:underline">{@subject}</.link><span :if={!@href} class="font-medium text-ink">{@subject}</span></span>{@rest}</span>
+    """
+  end
+
   def action_label(assigns) do
     assigns = assign(assigns, :text, label_text(assigns.name, assigns.args))
 
@@ -401,15 +418,15 @@ defmodule PhotonWeb.ConversationComponents do
   # (a project's slug, a thread's title in quotes), from the result's
   # details or else the arguments.
   defp read_words("list_projects", _args, _details, status),
-    do: {read_verb(status, "Looking over", "Looked over", "look over"), "projects"}
+    do: {status_verb(status, "Looking over", "Looked over", "look over"), "projects"}
 
   defp read_words("read_project", args, details, status),
     do:
-      {read_verb(status, "Looking over", "Looked over", "look over"),
+      {status_verb(status, "Looking over", "Looked over", "look over"),
        details["slug"] || args["project"]}
 
   defp read_words("list_threads", args, details, status) do
-    verb = read_verb(status, "Checking threads", "Checked threads", "check threads")
+    verb = status_verb(status, "Checking threads", "Checked threads", "check threads")
 
     case details["slug"] || args["project"] do
       project when is_binary(project) -> {verb <> " in", project}
@@ -418,7 +435,7 @@ defmodule PhotonWeb.ConversationComponents do
   end
 
   defp read_words("read_thread", args, details, status) do
-    verb = read_verb(status, "Reading", "Read", "read")
+    verb = status_verb(status, "Reading", "Read", "read")
 
     case details["title"] do
       title when is_binary(title) -> {verb, ~s("#{title}")}
@@ -426,10 +443,58 @@ defmodule PhotonWeb.ConversationComponents do
     end
   end
 
-  defp read_verb(:pending, running, _done, _base), do: running
-  defp read_verb(:error, _running, _done, base), do: "Couldn't " <> base
-  defp read_verb(:stopped, running, _done, _base), do: "Stopped " <> String.downcase(running)
-  defp read_verb(_done, _running, done, _base), do: done
+  # Blip's tools that start and stop work: the verb, what it acted on (a
+  # project's slug, a thread's title in quotes, or its ID while the call
+  # runs), and the words after it.
+  defp work_words("start_project", _args, details, status) do
+    case {status, details["slug"]} do
+      {:done, slug} when is_binary(slug) -> {"Started the project", slug, ""}
+      _running -> {status_verb(status, "Starting", "Started", "start") <> " a project", "", ""}
+    end
+  end
+
+  defp work_words("start_thread", args, details, status) do
+    project = details["slug"] || args["project"]
+    verb = status_verb(status, "Starting", "Started", "start") <> " a thread"
+
+    case {status, details["title"], project} do
+      {:done, title, slug} when is_binary(title) -> {"Started", ~s("#{title}"), " in #{slug}"}
+      {_status, _title, slug} when is_binary(slug) -> {verb <> " in", slug, ""}
+      _nowhere -> {verb, "", ""}
+    end
+  end
+
+  defp work_words("message_thread", args, details, status),
+    do: {status_verb(status, "Messaging", "Messaged", "message"), thread_name(args, details), ""}
+
+  defp work_words("stop_thread", args, details, status) do
+    verb =
+      case status do
+        :stopped -> "Didn't stop"
+        status -> status_verb(status, "Stopping", "Stopped", "stop")
+      end
+
+    {verb, thread_name(args, details), ""}
+  end
+
+  # A thread Blip started links to its page.
+  defp work_href("start_thread", :done, %{"slug" => slug, "thread_id" => id})
+       when is_binary(slug) and is_binary(id),
+       do: ~p"/projects/#{slug}/threads/#{id}"
+
+  defp work_href(_name, _status, _details), do: nil
+
+  defp thread_name(args, details) do
+    case details["title"] do
+      title when is_binary(title) -> ~s("#{title}")
+      _none -> args["thread"]
+    end
+  end
+
+  defp status_verb(:pending, running, _done, _base), do: running
+  defp status_verb(:error, _running, _done, base), do: "Couldn't " <> base
+  defp status_verb(:stopped, running, _done, _base), do: "Stopped " <> String.downcase(running)
+  defp status_verb(_done, _running, done, _base), do: done
 
   # Listing names no file; the others name the one they touched.
   defp file_verb("list_context_files", :pending), do: "Checking the context files"
@@ -454,6 +519,10 @@ defmodule PhotonWeb.ConversationComponents do
   defp action_icon(name) when name in ~w(list_projects read_project), do: "hero-folder-micro"
   defp action_icon("list_threads"), do: "hero-queue-list-micro"
   defp action_icon("read_thread"), do: "hero-chat-bubble-left-right-micro"
+  defp action_icon("start_project"), do: "hero-folder-plus-micro"
+  defp action_icon("start_thread"), do: "hero-play-circle-micro"
+  defp action_icon("message_thread"), do: "hero-paper-airplane-micro"
+  defp action_icon("stop_thread"), do: "hero-stop-circle-micro"
 
   defp action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
     do: "hero-clock-micro"

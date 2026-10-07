@@ -127,6 +127,24 @@ defmodule Photon.SignalsTest do
       assert %{status: "done"} = await_settled(blip, signal.id)
     end
 
+    test "a thread Blip starts with start_thread posts an update when it finishes", %{
+      project: project,
+      blip: blip
+    } do
+      {:ok, asked} = Assistant.send("start thread in garden: files")
+      assert %{status: "done"} = await_settled(blip, asked.id)
+      assert [thread] = Threads.list(project.id)
+      assert thread.started_by == "blip"
+      idle!(thread.id)
+
+      assert [signal] = signals(blip)
+      assert [%{"status" => "finished", "thread_id" => thread_id}] = refs(signal)
+      assert thread_id == thread.id
+      assert [text] = parts(signal)
+      assert text =~ ~s{[Thread update] Garden / "files" (#{thread.id}) finished.}
+      assert %{status: "done"} = await_settled(blip, signal.id)
+    end
+
     test "an owner's thread that finishes posts nothing", %{project: project, blip: blip} do
       _thread = ended!(project, "files")
       assert signals(blip) == []

@@ -17,7 +17,19 @@ defmodule Photon.Assistant do
   loads one. It sees every project and thread with its read tools
   (`list_projects`, `read_project`, `list_threads`, `read_thread`),
   which find what they name through `find_project/1` and `find_thread/1`
-  and put their texts together in `Photon.Assistant.Readout`.
+  and put their texts together in `Photon.Assistant.Readout`. It starts
+  projects and threads, messages threads and stops them
+  (`start_project`, `start_thread`, `message_thread`, `stop_thread`),
+  each inside the commit that records its result.
+
+  Who asked for a run is read from the sources of the messages it
+  answers (`origin_tx/2`, `Photon.Assistant.Origin`): the owner, a
+  schedule, Blip's own follow-up on a thread update, or a thread's
+  `ask_blip` question. A run that carries a question the owner hasn't
+  written into can't start, wake or stop work, and between two of the
+  owner's messages Blip can start or message threads only
+  `unattended_limit/0` times on its own (`may_act_tx/3`), so a loop
+  between Blip and a thread stops in code.
 
   This module is the assistant's API, which the web pages use, and its
   `Photon.Durable.Profile`. Behind it, by layer:
@@ -27,6 +39,7 @@ defmodule Photon.Assistant do
       page the user has open, and the note of it the model sees),
       `Photon.Assistant.Notice` (what Blip says unasked),
       `Photon.Assistant.Readout` (what the read tools say),
+      `Photon.Assistant.Origin` (who asked for a run, and what it may do),
       `Photon.Assistant.MockScript` and `Photon.Assistant.MockCoordinator`
       (the mock model)
     * boundary: the tools in `Photon.Assistant.Tools`; the machine tools
@@ -59,7 +72,7 @@ defmodule Photon.Assistant do
 
   @behaviour Photon.Durable.Profile
 
-  alias Photon.Assistant.{Memory, Page, Prompt, Readout, Tools}
+  alias Photon.Assistant.{Memory, Origin, Page, Prompt, Readout, Tools}
 
   alias Photon.{
     Durable,
@@ -73,7 +86,7 @@ defmodule Photon.Assistant do
     Transcript
   }
 
-  alias Photon.Durable.{Entry, Submission}
+  alias Photon.Durable.{Entry, Submission, TaskRecord, Tx}
   alias Photon.Projects.Project
   alias Photon.Threads.Thread
   alias PhotonCore.Message
@@ -87,8 +100,23 @@ defmodule Photon.Assistant do
     Tools.ListProjects,
     Tools.ReadProject,
     Tools.ListThreads,
-    Tools.ReadThread
+    Tools.ReadThread,
+    Tools.StartProject,
+    Tools.StartThread,
+    Tools.MessageThread,
+    Tools.StopThread
   ]
+
+  # The tools that start or wake threads, which the unattended limit counts.
+  @unattended_tools ~w(start_thread message_thread)
+
+  # The source kinds of a message from the owner, which end an unattended
+  # stretch: what they typed, and their answer to a question.
+  @owner_kinds ~w(user answer)
+
+  # How many times Blip may start or message threads between two of the
+  # owner's messages, when the config doesn't say (section 5.4).
+  @unattended_limit 10
 
   @doc """
   The assistant's conversation, created on first use. `Photon.Signals`
@@ -235,6 +263,85 @@ defmodule Photon.Assistant do
     case Threads.get(id) do
       %Thread{} = thread -> {:ok, thread}
       nil -> {:error, Readout.unknown_thread(id)}
+    end
+  end
+
+  ## Who asked, and what a run may do
+
+  @doc """
+  Who asked for the run `task` belongs to (`Photon.Assistant.Origin.of/1`),
+  from the sources of the submissions its generation answers, read
+  inside the caller's commit. `task` is the generation or one of its tool
+  calls. Total, since the activity log's hooks call it on the harness's
+  abort and fail paths: a missing task or submission is left out, and no
+  sources make `by: "unknown"`.
+  """
+  @spec origin_tx(Tx.t(), TaskRecord.t() | nil) :: Origin.t()
+  def origin_tx(tx, task) do
+    sources =
+      case generation_tx(tx, task) do
+        %TaskRecord{checkpoint: %{"submissions" => ids}} when is_list(ids) ->
+          for id <- ids, is_binary(id), %Submission{} = s <- [Tx.get_submission(tx, id)] do
+            s.content["source"]
+          end
+
+        _none ->
+          []
+      end
+
+    Origin.of(sources)
+  end
+
+  defp generation_tx(_tx, %TaskRecord{kind: "generation"} = task), do: task
+
+  defp generation_tx(tx, %TaskRecord{owner_task_id: id}) when is_binary(id),
+    do: Tx.get_task(tx, id)
+
+  defp generation_tx(_tx, _task), do: nil
+
+  @doc """
+  How many times Blip has started or messaged a thread (ok
+  `start_thread` and `message_thread` results) since the owner last
+  wrote to it (a message they typed, or their answer to a question),
+  inside the caller's commit. One query.
+  """
+  @spec unattended_count_tx(Tx.t()) :: non_neg_integer()
+  def unattended_count_tx(tx) do
+    blip = Signals.blip_conversation_tx(tx)
+    Tx.count_tool_results_since(tx, blip, @unattended_tools, @owner_kinds)
+  end
+
+  @doc """
+  How many times Blip may start or message threads on its own between
+  two of the owner's messages (`config :photon, Photon.Assistant,
+  unattended_limit: 10`).
+  """
+  @spec unattended_limit() :: non_neg_integer()
+  def unattended_limit,
+    do: Application.get_env(:photon, __MODULE__, [])[:unattended_limit] || @unattended_limit
+
+  @doc """
+  Whether Blip's tool call `task` may act, inside the commit that records
+  its result: `:change` for the tools that change a project or stop or
+  schedule work, which a thread's question forbids (`restricted?`);
+  `:start` for the tools that start or wake a thread, which the
+  unattended limit bounds too. `:ok`, or `{:error, message}` for the
+  model.
+  """
+  @spec may_act_tx(Tx.t(), TaskRecord.t(), :change | :start) :: :ok | {:error, String.t()}
+  def may_act_tx(tx, task, kind) do
+    origin = origin_tx(tx, task)
+
+    cond do
+      origin.restricted? ->
+        {:error, Origin.restricted_message()}
+
+      kind == :start and
+          not Origin.unattended_ok?(origin, unattended_count_tx(tx), unattended_limit()) ->
+        {:error, Origin.unattended_message(unattended_limit())}
+
+      true ->
+        :ok
     end
   end
 

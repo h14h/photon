@@ -68,6 +68,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Assistant.Page",
                    "Photon.Assistant.Readout",
                    "Photon.Assistant.MockCoordinator",
+                   "Photon.Assistant.Origin",
                    "Photon.Machines.Op",
                    "Photon.Machines.Rules",
                    "Photon.Machines.Roster",
