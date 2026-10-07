@@ -1944,10 +1944,12 @@ What to add, following the code in sections 3 and 4:
 - `ToolTypes` may include `"ask"`: a tool call that is `ask_blip`.
 - Variables: `q` (the question row of ask call `t`: `"none"`, `"asked"`,
   `"with_owner"`, `"answered"`, `"withdrawn"`), `qsub` (its carrier in
-  Blip's conversation: `"none"`, `"queued"`, `"placed"`, `"settled"`),
-  and ghosts `answers` (answers accepted per question), `lateAnswer` (an
-  answer accepted after a withdraw), `hooked` and `dupHook` (settles the
-  hook ran for, and a second run for one).
+  Blip's conversation: `"none"`, `"queued"`, `"placed"`, `"settled"`,
+  `"withdrawn"`), and ghosts `asks` (question rows inserted per call),
+  `answers` (answers accepted per question), `lateAnswer` (an answer
+  accepted after a withdraw), `qResult` (the call ended with its
+  answer), `hooked` and `dupHook` (settles the hook ran for, and a
+  second run for one).
 - Actions:
   - `QAsk`: the ask commit. Inserts `q[t] = "asked"` and `qsub[t] =
     "queued"` only while the task is unfinished and not marked for abort;
@@ -1958,20 +1960,24 @@ What to add, following the code in sections 3 and 4:
     placed by a Blip run, then settled whether or not Blip acted. Blip
     itself isn't modeled further: its run is any interleaving of these
     and the next two.
-  - `BlipAnswer`, `BlipPass`: while the carrier is placed, one commit
-    applying `Rules.step/2` (an answer records the signal). `BlipAnswer`
-    may also fire on a `"with_owner"` question at any time, standing for
-    Blip relaying what the owner typed (`{:blip, true}`); the origin
-    check that refuses `{:blip, false}` is pure and not modeled.
+  - `BlipAnswer`, `BlipPass`: one commit applying `Rules.step/2` (an
+    answer records the signal), at any time after the question was
+    asked, not only while the carrier is placed: `list_threads` and
+    `read_thread` show open questions, so Blip can name one in any run.
+    On a `"with_owner"` question `BlipAnswer` stands for Blip relaying
+    what the owner typed (`{:blip, true}`); the origin check that
+    refuses `{:blip, false}` is pure and not modeled.
   - `OwnerAnswer`: any time, one commit applying `{:answer, :owner}`.
     `BugAnswerAnyStatus` skips the status check.
-  - `QResume`: the call's resume. Answered: a `{:commit, ...}` that
-    records the answer as the call's result. With the owner: park on the
-    signal alone. Asked with the carrier settled: the escalation commit
-    (its own, unfenced, re-checking the status), then park. Time is
-    abstract, as for machine calls: the `until` may pass whenever the
-    question is asked, and escalation is enabled once the carrier is
-    settled.
+  - `QResume`: the call's resume. Answered: the answer as the call's
+    ok result (section 4.3's `{:ok, ...}`; an answered question never
+    changes again, so reading it outside the commit is safe). With the
+    owner: park on the signal alone. Asked with the carrier settled or
+    withdrawn: the escalation commit (its own, unfenced, re-checking the
+    status), then park. Time is abstract, as for machine calls: the
+    `until` may pass whenever the question is asked, bounded by
+    `MaxRechecks`, and again once the carrier has settled, so the
+    escalation is always reached.
   - The existing abort and fail paths run `on_interrupt/2` for an ask
     call: `"asked"` or `"with_owner"` become `"withdrawn"`, a queued
     carrier is withdrawn.
@@ -1989,24 +1995,28 @@ What to add, following the code in sections 3 and 4:
     `q[t] = "answered"`.
   - `HookOnce`: `~dupHook`.
 - Liveness (with weak fairness on the Scheduler, steps, `QResume`,
-  `BlipSettle` and the escalation):
+  `BlipPlace`, `BlipSettle` and the escalation; `PlacedSettles` with an
+  ask call also needs the owner to answer eventually, since a question
+  with the owner waits with no limit, so `Durable-ask-live.cfg` uses
+  `SpecOwnerAnswers`, which adds weak fairness on `OwnerAnswer`):
   - `AnsweredCallEnds`: `q[t] = "answered"` with the call parked leads to
     the call finished.
   - `UnhandledReachesOwner`: `q[t] = "asked"` with `qsub[t] = "settled"`
     leads to `q[t] # "asked"`.
-  - `CallEndClosesQuestion`: the call finished leads to `q[t] \in
-    {"answered", "withdrawn"}` (immediate, since `on_interrupt/2` runs in
-    the ending commit, but stated so a later change can't break it).
+  - `CallEndClosesQuestion`: the call finished leads to `q[t] \notin
+    {"asked", "with_owner"}` (immediate, since `on_interrupt/2` runs in
+    the ending commit, but stated so a later change can't break it; a
+    call stopped before it asked has no question).
 
 Configs (every existing `Durable*.cfg` gets `"ask"` left out of
 `ToolTypes` and both new bug switches `FALSE`, and must reach its old
-state count):
+state count; the six main safety configs also check `HookOnce`):
 
 | Config | Shape | Checks |
 |---|---|---|
-| `Durable-ask.cfg` | 1 user input, `ToolTypes = {"ask"}`, `NTools = 1`, `MaxCalls = 1`, 1 hub crash, 1 Scheduler crash, 1 step crash, 1 Stop | the safety set and the five new invariants |
-| `Durable-ask-live.cfg` | the same without crashes, with `PROPERTIES` | the three liveness properties, `PlacedSettles`, `NoRunningForever` |
-| `Durable-ask-mixed.cfg` | `ToolTypes = {"ask", "machine"}`, `NTools = 2`, `MaxCalls = 2`, 1 Stop | the safety set: two parked calls of different kinds in one round |
+| `Durable-ask.cfg` | 1 user input, `ToolTypes = {"ask"}`, `NTools = 1`, `MaxCalls = 1`, 1 hub crash, 1 Scheduler crash, 1 step crash, 1 Stop | the safety set and the six new invariants |
+| `Durable-ask-live.cfg` | the same, under `SpecOwnerAnswers`, with `PROPERTIES` | the three liveness properties, `PlacedSettles`, `NoRunningForever` |
+| `Durable-ask-mixed.cfg` | `ToolTypes = {"ask", "machine"}`, `NTools = 2`, `MaxCalls = 2`, 1 hub crash, 1 Stop | the safety set and the new invariants: two parked calls of different kinds in one round |
 | `Durable-bug-ask-unfenced.cfg` | `Durable-ask.cfg` with `BugAskUnfenced = TRUE` | expected to fail `NoOpenQuestionAfterCall` |
 | `Durable-bug-answer-twice.cfg` | `Durable-ask.cfg` with `BugAnswerAnyStatus = TRUE` | expected to fail `AnswerOnce` or `NoAnswerAfterWithdraw` |
 
@@ -2026,6 +2036,15 @@ is modeled, the new actions, the code they follow:
 If TLC finds a problem in sections 3 or 4, fix the plan before C2
 starts; C2 (the hook) and everything after it wait for C1 for that
 reason.
+
+C1's result: TLC found no problem in sections 3 or 4, which stand as
+written. Modeling them settled the four points above that differ from
+this section's first draft (the carrier's `"withdrawn"`, Blip naming a
+question in any run, `SpecOwnerAnswers` for `PlacedSettles`, the
+answered branch as an ok result), and the crashes were cheap enough to
+keep in `Durable-ask-live.cfg` and a hub crash in
+`Durable-ask-mixed.cfg`. Counts and traces are in
+`specs/tla/Durable.md`.
 
 What the spec leaves out, and `Durable.md` says so: the content of
 answers, Blip's reasoning, signal merging (a merged carrier is one
