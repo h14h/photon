@@ -1,10 +1,12 @@
 defmodule PhotonWeb.Layouts do
   @moduledoc """
-  The app shell: a sidebar with Home, Activity (everything Blip did), the
-  projects, each with its most recently active threads and any running
-  one, Machines (how many are online, linking to the nodes page), Skills
-  and Settings; the page fills the rest. On small screens the sidebar folds into a drawer behind a top
-  bar. The sidebar's data is `@shell`, kept current by `PhotonWeb.Shell`.
+  The app shell: a sidebar with Home (with how many threads need the
+  owner), Activity (everything Blip did), the projects, each with its most
+  recently active threads and any running one, each thread marked with
+  its state (`PhotonWeb.CoreComponents.state_mark/1`), Machines (how many
+  are online, linking to the nodes page), Skills and Settings; the page
+  fills the rest. On small screens the sidebar folds into a drawer behind
+  a top bar. The sidebar's data is `@shell`, kept current by `PhotonWeb.Shell`.
 
   Blip floats over all of it: `PhotonWeb.BlipLive`, rendered here once and
   sticky, so it and its conversation stay put while you move between pages.
@@ -98,6 +100,16 @@ defmodule PhotonWeb.Layouts do
     <nav class="space-y-0.5 px-2.5">
       <.nav_item navigate={~p"/"} icon="hero-home" active={@active == :home} id="nav-home">
         Home
+        <:trailing>
+          <span
+            :if={@shell.needs_you > 0}
+            id="nav-home-count"
+            title={PhotonWeb.ThreadText.summary(@shell.needs_you)}
+            class="min-w-5 rounded-full bg-warn-soft px-1.5 py-px text-center text-[11px] font-semibold tabular-nums text-ink"
+          >
+            {@shell.needs_you}
+          </span>
+        </:trailing>
       </.nav_item>
       <.nav_item
         navigate={~p"/activity"}
@@ -254,6 +266,7 @@ defmodule PhotonWeb.Layouts do
           navigate={~p"/projects/#{@slug}/threads/#{thread.id}"}
           id={"side-thread-#{thread.id}"}
           data-running={thread.running? && "true"}
+          data-state={thread.state}
           aria-current={@active == {:thread, @slug, thread.id} && "page"}
           class={[
             "flex items-center gap-2 rounded-lg py-1 pr-2.5 pl-9 text-[13px] transition",
@@ -263,7 +276,7 @@ defmodule PhotonWeb.Layouts do
           title={thread.title}
         >
           <span class="min-w-0 flex-1 truncate">{thread.title}</span>
-          <.dot :if={thread.running?} status={:busy} class="size-1.5" />
+          <.state_mark state={thread.state} class="size-3.5" />
         </.link>
         <.link
           :if={@entry.more > 0}

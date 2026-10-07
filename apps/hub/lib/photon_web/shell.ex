@@ -14,6 +14,11 @@ defmodule PhotonWeb.Shell do
   ones), and `@shell` is rendered by `Layouts.app`, outside each page's
   own template.
 
+  Each listed thread carries its `state` (`Photon.Threads.State`), which
+  the sidebar shows as a mark. `@shell.needs_you` is how many threads need
+  the owner (`Photon.Threads.needs_you_count/0`: waiting on them, failed,
+  or finished and not looked at), the count on Home.
+
   The machines are `Photon.Machines.roster/0`: the connected nodes, and the
   known ones (a key that isn't revoked) offline.
 
@@ -22,12 +27,16 @@ defmodule PhotonWeb.Shell do
     * `:nodes_changed`, `{:node_keys_changed, _}`, `{:settings_changed, _}`
       and `{:chatgpt_changed, _}` rebuild everything.
     * `{:projects_changed, _}` (a project created or changed, a thread
-      started or sent a message) rebuilds the sidebar.
+      started, sent a message, ended a run, seen or resolved) and
+      `{:questions_changed, _}` (a thread's `ask_blip` question asked,
+      passed on, answered or withdrawn) rebuild the sidebar and the count.
     * `{:durable_tasks, tasks}` rebuilds the sidebar only when one of
       `tasks` belongs to a listed thread, so a busy hub doesn't re-read it
       on every task change (rule 73). A thread that isn't listed can only
       start running through a message, which announces
-      `{:projects_changed, _}` first.
+      `{:projects_changed, _}` first. A task change alone never moves the
+      count: a run starts with a message and ends through the settle hook,
+      which both announce `{:projects_changed, _}`.
 
   Every message continues to the page, which may want it too.
   """
@@ -35,7 +44,7 @@ defmodule PhotonWeb.Shell do
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView
 
-  alias Photon.{Assistant, ChatGPT, Machines, NodeKeys, Projects, Settings, Threads}
+  alias Photon.{Assistant, ChatGPT, Machines, NodeKeys, Projects, Questions, Settings, Threads}
 
   # Threads listed under each project, besides the running ones.
   @threads_per_project 5
@@ -49,6 +58,7 @@ defmodule PhotonWeb.Shell do
       Settings.subscribe()
       ChatGPT.subscribe()
       Projects.subscribe()
+      Questions.subscribe()
       Assistant.subscribe_tasks()
     end
 
@@ -64,7 +74,10 @@ defmodule PhotonWeb.Shell do
   end
 
   defp handle_info({:projects_changed, _project_id}, socket),
-    do: {:cont, refresh_sidebar(socket)}
+    do: {:cont, refresh_board(socket)}
+
+  defp handle_info({:questions_changed, _thread_id}, socket),
+    do: {:cont, refresh_board(socket)}
 
   defp handle_info({:durable_tasks, tasks}, socket) do
     if listed_task?(socket.assigns.shell, tasks),
@@ -76,6 +89,9 @@ defmodule PhotonWeb.Shell do
 
   defp refresh_sidebar(socket),
     do: assign(socket, :shell, Map.merge(socket.assigns.shell, sidebar()))
+
+  defp refresh_board(socket),
+    do: assign(socket, :shell, Map.merge(socket.assigns.shell, board()))
 
   defp listed_task?(shell, tasks) do
     listed = for %{threads: threads} <- shell.projects, thread <- threads, do: thread.id
@@ -95,9 +111,12 @@ defmodule PhotonWeb.Shell do
         chatgpt: chatgpt,
         model_ready: ChatGPT.ready?(chatgpt)
       },
-      sidebar()
+      board()
     )
   end
+
+  # The sidebar and the count of threads that need the owner.
+  defp board, do: Map.put(sidebar(), :needs_you, Threads.needs_you_count())
 
   defp sidebar do
     projects = Threads.sidebar(@threads_per_project)

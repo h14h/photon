@@ -244,4 +244,175 @@ defmodule Photon.Threads.StateTest do
       assert State.note(nil, "text") == nil
     end
   end
+
+  describe "last_activity/1" do
+    test "is the later of the last message and the last run's end" do
+      assert State.last_activity(%{active_at: ago(5), last_run_ended_at: ago(2)}) == ago(2)
+      assert State.last_activity(%{active_at: ago(1), last_run_ended_at: ago(2)}) == ago(1)
+      assert State.last_activity(%{active_at: ago(3), last_run_ended_at: nil}) == ago(3)
+      assert State.last_activity(%{}) == nil
+    end
+  end
+
+  describe "sections/1" do
+    # A board entry: thread `id` in `state`, with its row's facts and
+    # open questions.
+    defp board_entry(id, state, thread \\ [], questions \\ []) do
+      %{
+        id: id,
+        state: state,
+        thread:
+          Map.merge(
+            %{id: id, active_at: ago(1), last_run_ended_at: nil, last_run_status: nil},
+            Map.new(thread)
+          ),
+        project: %{id: "p_1", slug: "garden", name: "Garden"},
+        questions: questions
+      }
+    end
+
+    defp open_question(id, status, at, overrides \\ []) do
+      Map.merge(
+        %{id: id, status: status, inserted_at: at, passed_at: nil},
+        Map.new(overrides)
+      )
+    end
+
+    defp ids(rows), do: Enum.map(rows, & &1.thread.id)
+
+    test "puts each state in its section, and idle threads in none" do
+      board = [
+        board_entry("c_run", :running),
+        board_entry("c_ask", :asking, [], [open_question("q_1", "asked", ago(1))]),
+        board_entry("c_wait", :waiting, last_run_status: "done", last_run_ended_at: ago(2)),
+        board_entry("c_fail", :failed, last_run_status: "failed", last_run_ended_at: ago(3)),
+        board_entry("c_unread", :unread, last_run_status: "done", last_run_ended_at: ago(4)),
+        board_entry("c_quiet", :quiet, last_run_status: "stopped", last_run_ended_at: ago(100)),
+        board_entry("c_idle", :idle, last_run_status: "done", last_run_ended_at: ago(100))
+      ]
+
+      sections = State.sections(board)
+
+      assert [%{kind: :thread, id: "c_wait"}] = sections.waiting
+      assert ids(sections.failed.rows) == ["c_fail"]
+      assert ids(sections.unread.rows) == ["c_unread"]
+      assert ids(sections.running) == ["c_run", "c_ask"]
+      assert ids(sections.quiet.rows) == ["c_quiet"]
+      assert sections.needs_you == 3
+
+      refute "c_idle" in (ids(sections.running) ++ ids(sections.quiet.rows))
+    end
+
+    test "nothing on the board is empty sections" do
+      assert State.sections([]) == %{
+               needs_you: 0,
+               waiting: [],
+               failed: %{rows: [], more: 0},
+               unread: %{rows: [], more: 0},
+               running: [],
+               quiet: %{rows: [], more: 0}
+             }
+    end
+
+    test "Waiting on you lists each question with the owner and asking threads, longest wait first" do
+      two =
+        board_entry("c_two", :waiting, [], [
+          open_question("q_late", "with_owner", ago(9), passed_at: ago(1)),
+          open_question("q_early", "with_owner", ago(9), passed_at: ago(6)),
+          open_question("q_blip", "asked", ago(2))
+        ])
+
+      asked = board_entry("c_asked", :waiting, last_run_status: "done", last_run_ended_at: ago(3))
+
+      sections = State.sections([two, asked])
+
+      assert Enum.map(sections.waiting, &{&1.kind, &1.id}) == [
+               {:question, "q_early"},
+               {:thread, "c_asked"},
+               {:question, "q_late"}
+             ]
+
+      assert hd(sections.waiting).entry.thread.id == "c_two"
+      # Two questions from one thread are one thread that needs the owner.
+      assert sections.needs_you == 2
+    end
+
+    test "a waiting thread with a question with the owner has no row of its own" do
+      thread =
+        board_entry("c_1", :waiting, [last_run_status: "done", last_run_ended_at: ago(5)], [
+          open_question("q_1", "with_owner", ago(2), passed_at: ago(1))
+        ])
+
+      assert [%{kind: :question, id: "q_1"}] = State.sections([thread]).waiting
+    end
+
+    test "Failed and Finished are newest first" do
+      board =
+        for {id, hours} <- [{"c_old", 30}, {"c_new", 1}, {"c_mid", 5}],
+            do: board_entry(id, :failed, last_run_status: "failed", last_run_ended_at: ago(hours))
+
+      assert ids(State.sections(board).failed.rows) == ["c_new", "c_mid", "c_old"]
+
+      unread = Enum.map(board, &%{&1 | state: :unread})
+      assert ids(State.sections(unread).unread.rows) == ["c_new", "c_mid", "c_old"]
+    end
+
+    test "Running is the working threads, longest running first, then those asking Blip" do
+      board = [
+        board_entry("c_ask_new", :asking, [], [open_question("q_2", "asked", ago(1))]),
+        board_entry("c_run_new", :running, active_at: ago(1)),
+        board_entry("c_ask_old", :asking, [], [open_question("q_1", "asked", ago(5))]),
+        board_entry("c_run_old", :running, active_at: ago(4))
+      ]
+
+      assert ids(State.sections(board).running) ==
+               ["c_run_old", "c_run_new", "c_ask_old", "c_ask_new"]
+    end
+
+    test "Gone quiet is the oldest activity first" do
+      board = [
+        board_entry("c_a", :quiet, active_at: ago(80), last_run_ended_at: ago(75)),
+        board_entry("c_b", :quiet, active_at: ago(200), last_run_ended_at: ago(190)),
+        board_entry("c_c", :quiet, active_at: ago(100), last_run_ended_at: nil)
+      ]
+
+      assert ids(State.sections(board).quiet.rows) == ["c_b", "c_c", "c_a"]
+    end
+
+    test "cuts Failed and Finished at 20 and Gone quiet at 10, with how many more" do
+      many = fn state, count ->
+        for n <- 1..count,
+            do:
+              board_entry("c_#{state}_#{n}", state, last_run_ended_at: ago(n), active_at: ago(n))
+      end
+
+      sections = State.sections(many.(:failed, 24) ++ many.(:unread, 21) ++ many.(:quiet, 22))
+
+      assert %{rows: failed, more: 4} = sections.failed
+      assert length(failed) == 20
+      assert hd(failed).thread.id == "c_failed_1"
+
+      assert %{rows: unread, more: 1} = sections.unread
+      assert length(unread) == 20
+
+      assert %{rows: quiet, more: 12} = sections.quiet
+      assert length(quiet) == 10
+      assert hd(quiet).thread.id == "c_quiet_22"
+
+      # The count is every thread, not just those shown.
+      assert sections.needs_you == 45
+    end
+
+    test "Waiting on you and Running are never cut" do
+      board =
+        for n <- 1..30,
+            do:
+              board_entry("c_#{n}", :waiting, last_run_status: "done", last_run_ended_at: ago(n))
+
+      assert length(State.sections(board).waiting) == 30
+
+      running = for n <- 1..30, do: board_entry("c_r#{n}", :running)
+      assert length(State.sections(running).running) == 30
+    end
+  end
 end

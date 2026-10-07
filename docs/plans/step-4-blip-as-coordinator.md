@@ -266,7 +266,7 @@ whatever the number of threads (rule 73):
   queries: threads joined to projects,
   `Durable.busy_in_profile("thread")`, and `Questions.open_by_thread/1`
   for the threads' open questions. The pages sort and cut it
-  (`State.sections/2`, section 10.3).
+  (`State.sections/1`, section 10.3).
 - `state(thread_id)`: one thread's entry of the same shape, or nil.
 - `needs_you_count()`: how many threads are `:waiting`, `:failed` or
   `:unread` (not `:asking`: Blip has those), for the sidebar's badge. It runs `board(:all)` and counts;
@@ -1428,8 +1428,10 @@ arrive in task C13 with minimal pages, before anything links to them.
 `PhotonWeb.HomeLive` at `/`, with `active={:home}`. Header "Home", and a
 subtitle `#home-summary`: "3 things need you." / "1 thing needs you." /
 "Nothing needs you right now." It reads `Threads.board(:all)`, whose
-entries carry each thread's open questions, and `State.sections(board,
-now)` (pure) groups them:
+entries carry each thread's open questions, and `State.sections(board)`
+(pure) groups them. It takes no time: the board's states are already
+worked out at the time it was read, and every order is by a time stored
+on the thread or the question.
 
 | Section | ID | Rows | Each row | Order, limit |
 |---|---|---|---|---|
@@ -1440,8 +1442,21 @@ now)` (pure) groups them:
 | Gone quiet | `#quiet` (`#quiet-list`) | `#quiet-<thread id>` | project / thread, "Stopped" and the last activity, `Resolve` (`#quiet-<id>-resolve`) | oldest activity first; at most 10, then "and 12 more" |
 | Blip's schedules | `#schedules` (`#schedule-list`) | today's rows | unchanged from the overview | as today |
 
-The first three sit under one heading, "Needs you" (`#needs-you`). The
-times are `local_time/1`.
+The first three sit under one heading, "Needs you" (`#needs-you`), each
+with the state's mark and a count in its head. The times are
+`local_time/1`. A running row's "since" is the thread's last message
+(`active_at`), which started or steered the run. A quiet row says
+"Stopped" (or "Idle" when no run of it ever ended) and "last active" with
+`State.last_activity/1`. Each row also has `-project` and `-thread`
+links, a `-detail` line and an `-at` time under its row ID, and a cut
+list ends with `#failed-more`, `#unread-more` or `#quiet-more`. A
+question row's text is `#question-<id>-text`, and a question the hub
+passed on adds `#question-<id>-note`.
+
+The summary counts threads, as the sidebar's badge does (`needs_you`
+from `sections/1`, the same as `Threads.needs_you_count/0`): a thread
+with two questions with the owner is one thing that needs you, though
+it has two rows.
 
 Empty states:
 
@@ -1450,7 +1465,8 @@ Empty states:
   each of the three is hidden while it is empty.
 - Running: `#no-running`, "Nothing running."
 - Gone quiet: the section is hidden while empty.
-- No projects at all: `#home-start`, "Start a project for work that takes
+- No projects at all: `#home-start`, in place of Needs you and Running
+  (with no projects there are no threads), "Start a project for work that takes
   more than one message, or ask Blip for anything." with `Start a
   project` (`#home-new-project`, to `/projects/new`); with no machines
   either, a second line "Add a machine from the Nodes page so Blip and
@@ -1479,7 +1495,15 @@ re-read renders the rows with their drafts. A draft goes when its
 question is answered or closes.
 
 The page's words come from `PhotonWeb.ThreadText` (pure): `state/1`
-(the labels), `summary/1`, `more/1` ("and 4 more").
+(the labels), `summary/1`, `more/1` ("and 4 more"), `marked_read/1`
+(the flash), `quiet/1` ("Stopped" or "Idle") and `one_line/1` (a
+question on one line).
+
+The marks are one component, `PhotonWeb.CoreComponents.state_mark/1`,
+shared by the sidebar, the home page and (in C15) the project page, with
+`data-mark` set to the state and the state's words as its title and
+label. `dot/1` gains a still `:accent` status for unread; the waiting dot
+is the warn colour with a halo, so it isn't read as the accent.
 
 ### 10.4 The thread page
 
@@ -1654,7 +1678,7 @@ No changes.
 |---|---|---|---|
 | `Photon.Threads` | boundary (API and the `"thread"` profile, no process) | deps add `Photon.Questions`, `Photon.Signals`; `exports: [Thread, State]` | `board/1`, `state/1`, `needs_you_count/0`, `mark_seen/1`, `mark_all_seen/0`, `resolve/1`, `reopen/1`, `stop_tx/2`, `recent_entries/2`, `describe_files/2`, `read_file_text/3`; `on_settled/3` (`settled_tx/3`: facts, announcement, signal); `start_tx/4` sets `started_by`; `start_tx/4` and `send_tx/4` clear `resolved_at`; the tool list adds `Tools.AskBlip`. Moduledoc: the state facts, the hook, the signal filter. |
 | `Photon.Threads.Thread` | data | unchanged | The seven new fields (section 2.1). |
-| `Photon.Threads.State` | core | `use Boundary, type: :strict, deps: []` | `of/3` (with `:asking`), `asks?/1`, `note/2`, `label/2`, `unseen?/1` (rule 7's test, which `mark_seen/1` shares), `sections/2` (section 2.2, 10.3). |
+| `Photon.Threads.State` | core | `use Boundary, type: :strict, deps: []` | `of/3` (with `:asking`), `asks?/1`, `note/2`, `label/2`, `unseen?/1` (rule 7's test, which `mark_seen/1` shares), `last_activity/1` (rule 8's last activity, which the home page's quiet rows show), `sections/1` (section 2.2, 10.3). |
 | `Photon.Threads.Rules` | core | unchanged | `started_by/1`; the file listing and read header take the viewer (section 5.2). |
 | `Photon.Threads.Prompt` | core | unchanged | The two lines of section 4.7. |
 | `Photon.Threads.MockScript` | core | unchanged | Section 8.1. |
@@ -1706,7 +1730,8 @@ No changes.
 | `PhotonWeb.Shell` | boundary (LiveView hook) | `needs_you` in `@shell`; subscribes to `"questions"`. |
 | `PhotonWeb.HomeLive` | server (LiveView) | Section 10.3. Replaces `PhotonWeb.OverviewLive`, which is deleted with its test (the schedule tests move to `home_live_test.exs`). Talks to `Threads`, `Questions`, `Assistant`, `Schedules`. |
 | `PhotonWeb.ActivityLive` | server (LiveView) | Section 10.7. Talks to `Activity`, `Threads`, `Projects`. |
-| `PhotonWeb.ThreadText` | functional core (web formatting) | State words, the summary, "and 4 more". |
+| `PhotonWeb.ThreadText` | functional core (web formatting) | State words, the summary, "and 4 more", the Mark all read flash, a quiet row's word, a question on one line. |
+| `PhotonWeb.CoreComponents` | boundary (UI components) | `state_mark/1` (a thread's state as a mark, section 10.3) and `dot/1`'s `:accent` status. |
 | `PhotonWeb.ActivityText` | functional core (web formatting) | The filter's options and a row's origin words. |
 | `PhotonWeb.ProjectText` | functional core | `writer/2` names Blip (section 7). |
 | `PhotonWeb.ThreadLive` | server | Section 10.4. |
@@ -1760,7 +1785,7 @@ children first: `activity questions schedules threads ...`.
   plain question, one in bold, one in quotes, a question followed by a
   code block, a question in the middle with a statement after, no
   question, empty text, nil); `note/2` for each status, the
-  280-character cut and nil text; `sections/2` (grouping, order, asking
+  280-character cut and nil text; `sections/1` (grouping, order, asking
   threads after working ones in Running, the limits and the "more"
   counts).
 - `threads/rules_test.exs`: `started_by/1`; the file listing from Blip's
@@ -2405,7 +2430,7 @@ dependencies.
 C14. The home page. After C5 and C13.
 - `apps/hub/lib/photon_web/live/home_live.ex` (section 10.3); new
   `apps/hub/lib/photon_web/thread_text.ex`; `threads/state.ex`
-  (`sections/2`, if C3 left it out); `shell.ex` (`needs_you`, the
+  (`sections/1`, if C3 left it out); `shell.ex` (`needs_you`, the
   questions subscription); `layouts.ex` (`#nav-home-count`, the thread
   marks, including Asking Blip).
 - `.credo.exs`: `PhotonWeb.ThreadText` in `FunctionalCore`.

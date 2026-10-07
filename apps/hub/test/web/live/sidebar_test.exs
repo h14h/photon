@@ -14,7 +14,7 @@ defmodule PhotonWeb.SidebarTest do
 
   import Phoenix.LiveViewTest
 
-  alias Photon.{Machines, Projects, Threads}
+  alias Photon.{Assistant, Machines, Projects, Questions, Threads}
 
   @moduletag :durable
 
@@ -100,6 +100,60 @@ defmodule PhotonWeb.SidebarTest do
 
     {:ok, view, _html} = live(conn, ~p"/")
     assert has_element?(view, "#sign-in-banner[href='/settings']", "Sign in with ChatGPT")
+  end
+
+  test "Home counts the threads that need you, and each thread is marked with its state", %{
+    view: view
+  } do
+    refute has_element?(view, "#nav-home-count")
+
+    # Blip waits on a command that never finishes, so a thread's question
+    # stays with it and the thread stays asking.
+    fake_machine("box")
+    {:ok, _parked} = Assistant.send("on box: $ sleep 1000")
+    project = project!("Garden")
+    :ok = Questions.subscribe()
+
+    waiting = idle_thread!(project, "ask me: which zone should I water first")
+    failed = idle_thread!(project, "fail: the pump is unplugged")
+    unread = idle_thread!(project, "files")
+    {:ok, asking} = Threads.start(project.id, "ask blip: which deploy branch?")
+    asking_id = asking.id
+    assert_receive {:questions_changed, ^asking_id}, 5_000
+    _ = settled(view)
+
+    # Waiting on you, failed and unread count; asking Blip doesn't.
+    assert has_element?(view, "#nav-home-count", "3")
+    assert has_element?(view, "#nav-home-count[title='3 things need you.']")
+
+    for {id, state, words} <- [
+          {asking.id, "asking", "Asking Blip"},
+          {waiting, "waiting", "Waiting on you"},
+          {failed, "failed", "Failed"},
+          {unread, "unread", "Finished"}
+        ] do
+      assert has_element?(view, "#side-thread-#{id}[data-state=#{state}]")
+      assert has_element?(view, ~s(#side-thread-#{id} [data-mark=#{state}][title="#{words}"]))
+    end
+
+    # The thread asking Blip is busy, but doesn't show the running dot.
+    refute has_element?(view, "#side-thread-#{asking.id} [data-mark=running]")
+
+    :ok = Threads.resolve(failed)
+    :ok = Threads.mark_seen(unread)
+    _ = settled(view)
+
+    assert has_element?(view, "#nav-home-count", "1")
+    assert has_element?(view, "#side-thread-#{failed}[data-state=idle]")
+    refute has_element?(view, "#side-thread-#{failed} [data-mark]")
+
+    :ok = Threads.resolve(waiting)
+    _ = settled(view)
+    refute has_element?(view, "#nav-home-count")
+
+    # Stop the thread asking Blip, so no run outlives the test.
+    Threads.stop(asking.id)
+    idle!(asking.id)
   end
 
   test "a project made elsewhere appears, with a + to start a thread", %{view: view} do

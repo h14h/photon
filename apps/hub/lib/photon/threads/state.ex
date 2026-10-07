@@ -28,6 +28,13 @@ defmodule Photon.Threads.State do
   question to the user, and `note/2` makes the short note stored with it.
   Both are total: they take any term and return a value, since they run
   inside the harness's settle hook (section 3.1).
+
+  `sections/1` groups the board (`Photon.Threads.board/1`) into the home
+  page's sections (section 10.3): what waits on the owner (questions
+  passed to them, and threads whose last answer asked), failed and
+  finished threads, what is running (threads waiting on Blip after the
+  ones at work), and threads gone quiet, each in its order and cut to its
+  limit with a count of the rest.
   """
 
   # Functional core: no processes, no I/O. The time comes in as an argument.
@@ -58,8 +65,51 @@ defmodule Photon.Threads.State do
   @typedoc "`quiet_after`: how many seconds without activity make a stopped thread quiet."
   @type opts :: %{quiet_after: non_neg_integer()}
 
+  @typedoc """
+  A thread on the board as `sections/1` reads it: its state, its row
+  (`thread`, with the facts of section 2.1 and `active_at`) and its open
+  questions (maps with `id`, `status`, `inserted_at` and `passed_at`).
+  Any other keys go along with it.
+  """
+  @type entry :: %{
+          required(:state) => t(),
+          required(:thread) => map(),
+          required(:questions) => [map()],
+          optional(atom()) => term()
+        }
+
+  @typedoc """
+  A row of the home page's Waiting on you list: a question with the owner
+  (`id` is the question's) or a thread whose last answer asked (`id` is
+  the thread's), with its board entry.
+  """
+  @type waiting_row ::
+          %{kind: :question, id: String.t(), question: map(), entry: entry()}
+          | %{kind: :thread, id: String.t(), entry: entry()}
+
+  @typedoc "A section cut to its limit: the rows shown and how many more there are."
+  @type cut :: %{rows: [entry()], more: non_neg_integer()}
+
+  @typedoc """
+  The home page's sections (`sections/1`), and `needs_you`, how many
+  threads are waiting on the owner, failed or unread.
+  """
+  @type sections :: %{
+          needs_you: non_neg_integer(),
+          waiting: [waiting_row()],
+          failed: cut(),
+          unread: cut(),
+          running: [entry()],
+          quiet: cut()
+        }
+
   # The longest note stored with a run's end.
   @note_limit 280
+
+  # How many rows the home page's cut sections show (section 10.3).
+  @failed_limit 20
+  @unread_limit 20
+  @quiet_limit 10
 
   @doc "The thread's state at `now`, by the first rule of the moduledoc's list that holds."
   @spec of(facts(), DateTime.t(), opts()) :: t()
@@ -105,11 +155,123 @@ defmodule Photon.Threads.State do
     end
   end
 
-  # The later of the thread's last message and its last run's end.
-  defp last_activity(%{active_at: active_at, last_run_ended_at: ended_at}) do
-    [active_at, ended_at]
+  @doc """
+  When anything last happened on a thread: the later of its last message
+  (`active_at`) and its last run's end, or nil when it has neither. A
+  thread row or a facts map both work.
+  """
+  @spec last_activity(map()) :: DateTime.t() | nil
+  def last_activity(facts) do
+    [Map.get(facts, :active_at), Map.get(facts, :last_run_ended_at)]
     |> Enum.filter(&match?(%DateTime{}, &1))
     |> Enum.max(DateTime, fn -> nil end)
+  end
+
+  @doc """
+  The board's entries grouped into the home page's sections (section
+  10.3 of `docs/plans/step-4-blip-as-coordinator.md`):
+
+    * `waiting`: every open question that is with the owner, and every
+      thread waiting on the owner without one (its last answer asked),
+      the longest wait first: a question from when it was passed on, a
+      thread from when its run ended. All of them.
+    * `failed` and `unread`: the failed threads and the finished ones not
+      yet looked at, the most recent run end first, at most
+      #{@failed_limit} each.
+    * `running`: the threads at work, the longest running first (by their
+      last message, which started or steered the run), then the threads
+      waiting on Blip, the oldest question first. All of them.
+    * `quiet`: the threads gone quiet, the oldest activity first, at most
+      #{@quiet_limit}.
+
+  A cut section gives the rows shown and how many more there are.
+  `needs_you` counts the threads that are waiting, failed or unread,
+  each once however many questions it has, as the sidebar's badge does.
+  Idle threads are in no section.
+  """
+  @spec sections([entry()]) :: sections()
+  def sections(board) do
+    by_state = Enum.group_by(board, & &1.state)
+    failed = in_state(by_state, :failed)
+    unread = in_state(by_state, :unread)
+    waiting = in_state(by_state, :waiting)
+
+    %{
+      needs_you: length(waiting) + length(failed) + length(unread),
+      waiting: waiting_rows(board),
+      failed: newest_first(failed, @failed_limit),
+      unread: newest_first(unread, @unread_limit),
+      running: running_rows(by_state),
+      quiet: quiet_rows(by_state)
+    }
+  end
+
+  defp in_state(by_state, state), do: Map.get(by_state, state, [])
+
+  # Failed or unread threads, the most recent run end first, cut.
+  defp newest_first(entries, limit), do: entries |> sort_by(&ended_at/1, :desc) |> cut(limit)
+
+  defp quiet_rows(by_state) do
+    by_state
+    |> in_state(:quiet)
+    |> sort_by(&last_activity(&1.thread), :asc)
+    |> cut(@quiet_limit)
+  end
+
+  # The threads at work, the longest running first, then those waiting on
+  # Blip, the oldest question first.
+  defp running_rows(by_state) do
+    working = by_state |> in_state(:running) |> sort_by(&active_at/1, :asc)
+    asking = by_state |> in_state(:asking) |> sort_by(&first_asked_at/1, :asc)
+    working ++ asking
+  end
+
+  # The questions with the owner, from any thread, and the waiting threads
+  # that have none, the longest wait first.
+  defp waiting_rows(board) do
+    questions =
+      for entry <- board,
+          question <- entry.questions,
+          question.status == "with_owner",
+          do: %{kind: :question, id: question.id, question: question, entry: entry}
+
+    asking =
+      for %{state: :waiting} = entry <- board,
+          not Enum.any?(entry.questions, &(&1.status == "with_owner")),
+          do: %{kind: :thread, id: entry.thread.id, entry: entry}
+
+    sort_by(questions ++ asking, &waiting_since/1, :asc)
+  end
+
+  defp waiting_since(%{kind: :question, question: question}),
+    do: Map.get(question, :passed_at) || Map.get(question, :inserted_at)
+
+  defp waiting_since(%{kind: :thread, entry: entry}),
+    do: ended_at(entry) || active_at(entry)
+
+  defp ended_at(entry), do: Map.get(entry.thread, :last_run_ended_at)
+  defp active_at(entry), do: Map.get(entry.thread, :active_at)
+
+  defp first_asked_at(entry) do
+    entry.questions
+    |> Enum.filter(&(&1.status == "asked"))
+    |> Enum.map(&Map.get(&1, :inserted_at))
+    |> Enum.filter(&match?(%DateTime{}, &1))
+    |> Enum.min(DateTime, fn -> nil end)
+  end
+
+  # Sorted by a time, where one not known counts as the oldest;
+  # `Enum.sort_by/3` is stable, so equal times keep the board's order.
+  defp sort_by(rows, time, order) do
+    Enum.sort_by(rows, &sort_key(time.(&1)), order)
+  end
+
+  defp sort_key(%DateTime{} = at), do: DateTime.to_unix(at, :microsecond)
+  defp sort_key(_unknown), do: 0
+
+  defp cut(rows, limit) do
+    {shown, rest} = Enum.split(rows, limit)
+    %{rows: shown, more: length(rest)}
   end
 
   @doc """

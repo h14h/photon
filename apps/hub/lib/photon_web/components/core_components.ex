@@ -328,7 +328,7 @@ defmodule PhotonWeb.CoreComponents do
     """
   end
 
-  @doc "A small status dot: `ok`, `busy` (breathing amber), `warn`, `bad` or `off`."
+  @doc "A small status dot: `ok`, `busy` (breathing amber), `accent` (still), `warn`, `bad` or `off`."
   attr :status, :atom, default: :off
   attr :class, :any, default: nil
 
@@ -339,11 +339,59 @@ defmodule PhotonWeb.CoreComponents do
       "inline-block size-2 shrink-0 rounded-full",
       @status == :ok && "bg-ok shadow-[0_0_0_3px] shadow-ok/15",
       @status == :busy && "animate-breathe bg-accent shadow-[0_0_0_3px] shadow-accent/20",
+      @status == :accent && "bg-accent",
       @status == :warn && "bg-warn",
       @status == :bad && "bg-bad",
       @status == :off && "border border-ink-faint/60",
       @class
     ]} />
+    """
+  end
+
+  @doc """
+  A thread's state as a small mark (section 10.2 of
+  `docs/plans/step-4-blip-as-coordinator.md`): the breathing dot while it
+  runs, a speech bubble while it waits on Blip (so it doesn't look like
+  work), an amber dot with a halo when it waits on the owner, a red dot
+  when it failed, a still accent dot when it finished unread, and nothing
+  when it is quiet or idle. Its tooltip and label are the state's words
+  (`PhotonWeb.ThreadText.state/1`).
+  """
+  attr :state, :atom, required: true, doc: "a `Photon.Threads.State.t()`"
+  attr :id, :string, default: nil
+  attr :class, :any, default: nil
+
+  @spec state_mark(map()) :: Phoenix.LiveView.Rendered.t()
+  def state_mark(%{state: state} = assigns) when state in [:quiet, :idle] do
+    ~H""
+  end
+
+  def state_mark(assigns) do
+    assigns = assign(assigns, :words, PhotonWeb.ThreadText.state(assigns.state))
+
+    ~H"""
+    <span
+      id={@id}
+      role="img"
+      aria-label={@words}
+      title={@words}
+      data-mark={@state}
+      class={["inline-flex shrink-0 items-center justify-center", @class]}
+    >
+      <.icon
+        :if={@state == :asking}
+        name="hero-chat-bubble-oval-left-ellipsis-micro"
+        class="size-3.5 text-accent-strong"
+      />
+      <.dot :if={@state == :running} status={:busy} class="size-1.5" />
+      <.dot
+        :if={@state == :waiting}
+        status={:warn}
+        class="size-1.5 shadow-[0_0_0_3px] shadow-warn/25"
+      />
+      <.dot :if={@state == :failed} status={:bad} class="size-1.5" />
+      <.dot :if={@state == :unread} status={:accent} class="size-1.5" />
+    </span>
     """
   end
 
