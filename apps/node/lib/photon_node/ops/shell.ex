@@ -61,6 +61,12 @@ defmodule PhotonNode.Ops.Shell do
   143 and recovery would report the command `completed` with partial
   output.
 
+  A canceled snapshot carries what the command printed before the kill,
+  bounded as a finished command's output is (`"result"` with `"out"` and
+  `"err"`, and no exit code), so the hub can still show it once the call
+  that ran it has been stopped. A command that never started, or whose
+  files can't be read, has none.
+
   A cancel writes a `canceled` file before it kills the group, for the
   same reason: if the executor or the node dies before the `canceled`
   snapshot is stored, the resumed operation finds the marker and reports
@@ -558,14 +564,32 @@ defmodule PhotonNode.Ops.Shell do
 
     kill_group(state, state.op["state"]["pgid"], fn state ->
       state =
-        checkpoint(state, "canceled", %{
-          "phase" => "",
-          "pgid" => 0,
-          "terminal_error" => "shell operation canceled"
-        })
+        checkpoint(
+          state,
+          "canceled",
+          Map.merge(printed(state.op), %{
+            "phase" => "",
+            "pgid" => 0,
+            "terminal_error" => "shell operation canceled"
+          })
+        )
 
       {:stop, :normal, state}
     end)
+  end
+
+  # What a canceled command printed before the kill, bounded as a finished
+  # one's output is; nothing when it never started (no files) or they
+  # can't be read.
+  defp printed(op) do
+    limit = op["max_output_length"] || Output.default_limit()
+
+    with {:ok, out, _out_size, _out_truncated} <- bounded_file(out_path(op), limit),
+         {:ok, err, _err_size, _err_truncated} <- bounded_file(err_path(op), limit) do
+      %{"result" => %{"out" => out, "err" => err}}
+    else
+      {:error, _reason} -> %{}
+    end
   end
 
   defp fail(state, message) do

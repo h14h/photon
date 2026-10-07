@@ -216,6 +216,19 @@ defmodule PhotonWeb.ThreadLiveTest do
       assert has_element?(view, "#{action}[data-status=stopped] summary", "Stopped")
       assert has_element?(view, "#{action} summary [data-machine=box]")
       assert has_element?(view, "#{action}-tail pre", "tick 1")
+
+      # The machine's last word on the canceled command says what it
+      # printed, so a reload shows it too.
+      canceled =
+        MachineOps.snapshot(op_id, "canceled", %{
+          "terminal_error" => "shell operation canceled",
+          "result" => %{"out" => "tick 1\ntick 2\n", "err" => ""}
+        })
+
+      {_pushes, _routes} = Machines.snapshot("box", canceled, %{})
+      reloaded = thread_page(conn, project, thread)
+      assert has_element?(reloaded, "#{action}[data-status=stopped]")
+      assert has_element?(reloaded, "#{action}-tail pre", ~r/tick 1\s+tick 2/)
     end
 
     test "an image loads from the thread's own route", %{conn: conn, project: project} do

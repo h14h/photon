@@ -18,7 +18,9 @@ defmodule PhotonWeb.ConversationView do
     from the `tool_output` live events (the hub stores none of it, so a page
     opened mid-command shows output from then on), dropped when the result
     comes, unless the call was stopped (then it stays, as all there is to
-    show of what it did; a page opened later has none of it);
+    show of what it did). A page opened later starts from what the
+    machine sent of a stopped call's output when it stopped
+    (`Photon.Machines.stopped_outputs/1`, the `outputs:` option);
   - `live` and `shown`: the in-flight answer, and its finished blocks;
   - `empty?`, `busy`, `queued`, and the composer's `mode` and `form`;
   - `questions`: where each question the conversation put to the owner
@@ -52,7 +54,8 @@ defmodule PhotonWeb.ConversationView do
 
   @doc """
   Sets up a conversation's assigns and its `:entries` stream from its
-  entries. Options: `busy:` and `queued:` (both required), `titles:`, the
+  entries. Options: `busy:` and `queued:` (both required), `outputs:`,
+  the output stopped calls printed, by call ID (none without it), `titles:`, the
   current titles of the threads the entries and the queued messages
   name (`Photon.Transcript.thread_ids/1`; none without it), and
   `dom_id:`, a function from an entry to its DOM ID (the stream's
@@ -71,7 +74,7 @@ defmodule PhotonWeb.ConversationView do
       mentions: Enum.reduce(entries, %{}, &add_mentions(&2, &1, calls)),
       questions: Transcript.questions(entries, queued),
       cards: Enum.reduce(entries, %{}, &add_card(&2, &1, calls)),
-      outputs: %{},
+      outputs: Keyword.get(opts, :outputs, %{}),
       empty?: Transcript.empty?(entries),
       live: nil,
       shown: nil,

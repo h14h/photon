@@ -26,6 +26,11 @@ defmodule Photon.Machines.Rules do
     * 8: `on_claim/1` closes a finished row and hands over its snapshot
     * 9: `insert?/2` lets `Machines.start/1` insert a row only for a live
       tool task
+
+  A row whose call ended another way (it has `cancel`, or it closes on a
+  cancel) keeps what the command printed (`output/1`), from the op's
+  terminal snapshot, so the page can still show a stopped call's output
+  after a reload.
   """
 
   # Functional core: no processes, no I/O.
@@ -34,6 +39,10 @@ defmodule Photon.Machines.Rules do
   alias Photon.Machines.Op
   alias PhotonCore.Operation
   alias PhotonCore.Operation.Wire
+
+  # How much of a stopped command's output a row keeps: what the page
+  # shows of a running call (`Photon.Transcript.tool_output/2`).
+  @output_tail 8_000
 
   # Durable task statuses that are not yet terminal (`Photon.Durable.TaskRecord`).
   @unfinished_tasks ~w(pending running waiting)
@@ -115,8 +124,8 @@ defmodule Photon.Machines.Rules do
   def on_snapshot(_row_or_nil, _machine, %{"id" => id} = snapshot),
     do: {:none, [if(Operation.terminal?(snapshot), do: Wire.ack(id), else: Wire.cancel(id))]}
 
-  defp finish(%Op{cancel: true}, _snapshot),
-    do: %{status: "closed", confirmed: true, result: nil}
+  defp finish(%Op{cancel: true}, snapshot),
+    do: %{status: "closed", confirmed: true, result: nil, output: output(snapshot)}
 
   defp finish(%Op{}, snapshot), do: %{status: "finished", confirmed: true, result: snapshot}
 
@@ -139,7 +148,9 @@ defmodule Photon.Machines.Rules do
   def on_cancel(%Op{status: "open"} = row, online?),
     do: {canceled(row), cancel_push(row, online?)}
 
-  def on_cancel(%Op{status: "finished"}, _online?), do: {closed(), []}
+  def on_cancel(%Op{status: "finished", result: snapshot}, _online?),
+    do: {Map.put(closed(), :output, output(snapshot)), []}
+
   def on_cancel(_row, _online?), do: {:none, []}
 
   @doc """
@@ -157,6 +168,31 @@ defmodule Photon.Machines.Rules do
   def on_abandon(row, online?) do
     {write, pushes} = on_cancel(row, online?)
     {:abandoned, facts(row, online?), write, pushes}
+  end
+
+  @doc """
+  What a shell command printed, from its terminal snapshot: stdout, then
+  stderr, the last #{@output_tail} characters of them; nil when it
+  printed nothing or the snapshot carries no output (an image, a command
+  that never started, a node too old to send it).
+  """
+  @spec output(Operation.t() | nil) :: String.t() | nil
+  def output(%{"state" => %{"result" => %{} = result}}) do
+    printed =
+      [result["out"], result["err"]]
+      |> Enum.filter(&(is_binary(&1) and &1 != ""))
+      |> Enum.map_join("\n", &String.trim_trailing(&1, "\n"))
+
+    if printed == "", do: nil, else: tail(printed)
+  end
+
+  def output(_snapshot), do: nil
+
+  defp tail(text) do
+    case String.length(text) - @output_tail do
+      over when over > 0 -> String.slice(text, over..-1//1)
+      _short -> text
+    end
   end
 
   defp facts(%Op{} = row, online?),

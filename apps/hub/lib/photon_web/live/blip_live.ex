@@ -77,7 +77,7 @@ defmodule PhotonWeb.BlipLive do
 
   import PhotonWeb.ConversationComponents
 
-  alias Photon.{Assistant, Markdown, Questions, Threads, Transcript}
+  alias Photon.{Assistant, Machines, Markdown, Questions, Threads, Transcript}
   alias Photon.Assistant.Notice
   alias PhotonWeb.ConversationView
 
@@ -123,6 +123,7 @@ defmodule PhotonWeb.BlipLive do
       |> ConversationView.mount_conversation(entries,
         busy: Assistant.busy?(conversation),
         queued: queued,
+        outputs: Machines.stopped_outputs(conversation),
         titles: read_titles(named)
       )
 

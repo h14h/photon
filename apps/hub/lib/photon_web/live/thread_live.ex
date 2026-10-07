@@ -77,7 +77,7 @@ defmodule PhotonWeb.ThreadLive do
 
   import PhotonWeb.ConversationComponents
 
-  alias Photon.{Markdown, Projects, Questions, Threads, Transcript}
+  alias Photon.{Machines, Markdown, Projects, Questions, Threads, Transcript}
   alias Photon.Projects.Project
   alias Photon.Threads.Thread
   alias PhotonWeb.{ConversationView, ThreadText}
@@ -127,6 +127,7 @@ defmodule PhotonWeb.ThreadLive do
     |> ConversationView.mount_conversation(Threads.entries(id),
       busy: Threads.busy?(id),
       queued: Threads.queued(id),
+      outputs: Machines.stopped_outputs(id),
       dom_id: &"thread-entry-#{&1.id}"
     )
     |> look()

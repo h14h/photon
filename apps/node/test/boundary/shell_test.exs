@@ -143,6 +143,27 @@ defmodule PhotonNode.Ops.ShellTest do
     assert File.exists?(marker)
   end
 
+  test "a canceled command's snapshot keeps what it printed before the kill", context do
+    pattern = "sleep 65.#{System.unique_integer([:positive])}"
+    on_exit(fn -> kill_all(pattern) end)
+    op = shell("echo before; echo oops >&2; #{pattern}", context)
+
+    {:ok, pid} = Ops.add(op, owner())
+    await_pgid()
+    assert_receive {:output, _id, "out", "before\n"}, 5_000
+    assert_receive {:output, _id, "err", "oops\n"}, 5_000
+    send(pid, :cancel)
+
+    assert %{
+             "state" => %{
+               "terminal_error" => "shell operation canceled",
+               "result" => %{"out" => "before\n", "err" => "oops\n"}
+             }
+           } = await_status("canceled")
+
+    assert gone?(pattern)
+  end
+
   # Coordinator F8: a cancel that arrived before the wrapper's "pid" line
   # didn't kill the command, so the stop never finished.
   test "a cancel that arrives before the command's PID is known still kills it", context do

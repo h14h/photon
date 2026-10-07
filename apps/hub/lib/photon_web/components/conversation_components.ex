@@ -20,7 +20,8 @@ defmodule PhotonWeb.ConversationComponents do
   (`Photon.Transcript.machine_action/4`). A long command is cut short on
   screen; the verb and the machine never are. A stopped call keeps the
   output it printed before the stop in view under its line, since its
-  result only says it was stopped. The context-file calls
+  result only says it was stopped, after a reload too (the page mounts
+  with what the machine sent of it when it stopped). The context-file calls
   read "Checked the context files", "Read notes.md", "Wrote notes.md" and
   "Edited notes.md", in the present while they run. Blip's read tools
   read "Looked over projects", "Looked over garden", "Checked threads"

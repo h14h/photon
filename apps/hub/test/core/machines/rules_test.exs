@@ -30,6 +30,10 @@ defmodule Photon.Machines.RulesTest do
   defp snapshot(status, id \\ @id),
     do: %{"id" => id, "type" => "shell", "version" => 1, "status" => status, "state" => %{}}
 
+  # A terminal snapshot of a command that printed `out` and `err`.
+  defp printed(status, out, err),
+    do: put_in(snapshot(status)["state"], %{"result" => %{"out" => out, "err" => err}})
+
   @terminal ~w(completed failed canceled)
   @running ~w(ready awaiting canceling)
 
@@ -123,8 +127,18 @@ defmodule Photon.Machines.RulesTest do
     test "a terminal snapshot closes a canceled open row without keeping it" do
       for status <- @terminal do
         assert Rules.on_snapshot(row(cancel: true), "mm1", snapshot(status)) ==
-                 {{:finish, %{status: "closed", confirmed: true, result: nil}}, [Wire.ack(@id)]}
+                 {{:finish, %{status: "closed", confirmed: true, result: nil, output: nil}},
+                  [Wire.ack(@id)]}
       end
+    end
+
+    test "a canceled open row keeps what the command printed before it stopped" do
+      snap = printed("canceled", "tick 1\ntick 2\n", "")
+
+      assert Rules.on_snapshot(row(cancel: true), "mm1", snap) ==
+               {{:finish,
+                 %{status: "closed", confirmed: true, result: nil, output: "tick 1\ntick 2"}},
+                [Wire.ack(@id)]}
     end
 
     test "a finished or closed row: acked again if terminal, canceled if not" do
@@ -182,17 +196,48 @@ defmodule Photon.Machines.RulesTest do
       assert Rules.on_cancel(row(cancel: true), false) == {:none, []}
     end
 
-    test "a finished row closes and drops its snapshot" do
+    test "a finished row closes and drops its snapshot, keeping what the command printed" do
       finished = row(status: "finished", result: snapshot("completed"))
 
       for online <- [true, false],
-          do: assert(Rules.on_cancel(finished, online) == {%{status: "closed", result: nil}, []})
+          do:
+            assert(
+              Rules.on_cancel(finished, online) ==
+                {%{status: "closed", result: nil, output: nil}, []}
+            )
+
+      printed = row(status: "finished", result: printed("completed", "done\n", ""))
+
+      assert Rules.on_cancel(printed, true) ==
+               {%{status: "closed", result: nil, output: "done"}, []}
     end
 
     test "a closed row or no row changes nothing" do
       for row <- [row(status: "closed"), nil],
           online <- [true, false],
           do: assert(Rules.on_cancel(row, online) == {:none, []})
+    end
+  end
+
+  describe "output/1" do
+    test "stdout then stderr, without their last line breaks" do
+      assert Rules.output(printed("canceled", "a\nb\n", "oops\n")) == "a\nb\noops"
+      assert Rules.output(printed("canceled", "", "oops")) == "oops"
+      assert Rules.output(printed("completed", "a", nil)) == "a"
+    end
+
+    test "the last 8,000 characters" do
+      long = String.duplicate("x", 9_000) <> "end"
+      output = Rules.output(printed("canceled", long, ""))
+      assert String.length(output) == 8_000
+      assert String.ends_with?(output, "end")
+    end
+
+    test "nothing printed, or no output in the snapshot, is nil" do
+      assert Rules.output(printed("canceled", "", "")) == nil
+      assert Rules.output(snapshot("canceled")) == nil
+      assert Rules.output(%{"state" => %{"result" => %{"mime" => "image/png"}}}) == nil
+      assert Rules.output(nil) == nil
     end
   end
 
