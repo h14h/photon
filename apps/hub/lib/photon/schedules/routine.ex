@@ -104,9 +104,9 @@ defmodule Photon.Schedules.Routine do
   # nothing in quiet mode.
   defp collect_stopped_tx(tx, schedule, task_id, reason) do
     Signals.collect_tx(tx, %{
-      key: "schedule:#{task_id}:failed",
       kind: "schedule_stopped",
       schedule_id: schedule.id,
+      task_id: task_id,
       project_id: schedule.project_id,
       note: reason
     })

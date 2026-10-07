@@ -504,7 +504,7 @@ defmodule Photon.ThreadsTest do
       for item <- Repo.all(query), do: {item.kind, item.thread_id, item.project_id}
     end
 
-    test "with ambient mode on, the owner's start and Resolve each collect one", %{
+    test "with ambient mode on, the owner's start and Resolve collect one per thread", %{
       project: project
     } do
       ambient!(true)
@@ -515,11 +515,15 @@ defmodule Photon.ThreadsTest do
       assert Threads.reopen(id) == :ok
       assert Threads.resolve(id) == :ok
 
+      # The second Resolve replaces the first.
       assert [
                {"thread_started", id, project.id},
-               {"resolved", id, project.id},
                {"resolved", id, project.id}
              ] == items(["thread_started", "resolved"])
+
+      other = idle_thread!(project, "hello again")
+      assert Threads.resolve(other) == :ok
+      assert length(items(["thread_started", "resolved"])) == 4
     end
 
     test "a refused start or Resolve, and a schedule's start, collect nothing", %{

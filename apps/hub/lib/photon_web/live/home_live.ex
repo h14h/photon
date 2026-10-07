@@ -40,11 +40,12 @@ defmodule PhotonWeb.HomeLive do
   Ambient mode (section 7.3 of `docs/plans/step-5-ambient-mode.md`) adds
   only warnings and marks. Under the header, one line with a link to
   Settings says when a timer stopped after an error or, failing that,
-  when digests and reviews are skipping because schedules can't use the
-  owner's plan. A Failed, Waiting on you or Gone quiet thread row raised
+  when digests and reviews are skipping because Blip isn't signed in to
+  ChatGPT or schedules can't use the owner's plan. A Failed, Waiting on you or Gone quiet thread row raised
   in Blip's daily review since it was last touched says so
-  (`PhotonWeb.AmbientText.reviewed?/1`). `Photon.Ambient.status/0` is read
-  on mount and on `{:ambient_changed}` (`Photon.Ambient.subscribe/0`); the
+  (`PhotonWeb.AmbientText.reviewed?/1`). `Photon.Ambient.brief/0`, which
+  reads no items or board, is read on mount and on `{:ambient_changed}` (`Photon.Ambient.subscribe/0`),
+  `{:chatgpt_changed, _}` and `{:settings_changed, _}`; the
   marks come with the board, so its re-reads cover them. Everything else
   the shell passes on is ignored.
   """
@@ -145,6 +146,11 @@ defmodule PhotonWeb.HomeLive do
   def handle_info({:schedules_changed, nil}, socket), do: {:noreply, load_schedules(socket)}
   def handle_info({:ambient_changed}, socket), do: {:noreply, load_ambient(socket)}
 
+  # Signing in to ChatGPT again, or giving consent, ends a skipping
+  # warning (through PhotonWeb.Shell's subscriptions).
+  def handle_info({:chatgpt_changed, _status}, socket), do: {:noreply, load_ambient(socket)}
+  def handle_info({:settings_changed, _settings}, socket), do: {:noreply, load_ambient(socket)}
+
   def handle_info(:tick, socket) do
     tick()
     {:noreply, load_board(socket)}
@@ -200,14 +206,12 @@ defmodule PhotonWeb.HomeLive do
   # board. A stopped timer goes first: saving Settings, which it asks for,
   # then shows the consent warning if that still applies.
   defp load_ambient(socket) do
-    ambient = Ambient.status()
+    ambient = Ambient.brief()
 
     warning =
-      cond do
-        AmbientText.home_stopped?(ambient) -> :stopped
-        AmbientText.skipping?(ambient) -> :consent
-        true -> nil
-      end
+      if AmbientText.home_stopped?(ambient),
+        do: :stopped,
+        else: AmbientText.skipping(ambient)
 
     assign(socket, ambient_warning: warning)
   end
@@ -230,7 +234,14 @@ defmodule PhotonWeb.HomeLive do
           </.header>
 
           <.ambient_warning :if={@ambient_warning == :consent} id="ambient-consent" tone="warn">
-            {AmbientText.skipping()}
+            {AmbientText.skipping_text(:consent)}
+          </.ambient_warning>
+          <.ambient_warning
+            :if={@ambient_warning == :signed_out}
+            id="ambient-signed-out"
+            tone="warn"
+          >
+            {AmbientText.skipping_text(:signed_out)}
           </.ambient_warning>
           <.ambient_warning :if={@ambient_warning == :stopped} id="ambient-stopped" tone="bad">
             {AmbientText.home_stopped()}

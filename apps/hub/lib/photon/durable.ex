@@ -321,14 +321,19 @@ defmodule Photon.Durable do
 
   @doc "Withdraws a queued submission."
   @spec withdraw(String.t()) :: Submission.t() | nil
-  def withdraw(submission_id) do
-    Store.commit(fn tx ->
-      submission = Tx.get_submission(tx, submission_id)
+  def withdraw(submission_id), do: Store.commit(&withdraw_tx(&1, submission_id))
 
-      if Inbox.withdrawable?(submission),
-        do: Tx.update_submission(tx, submission, status: "withdrawn"),
-        else: submission
-    end)
+  @doc """
+  `withdraw/1` inside the caller's commit: the submission as it is now,
+  withdrawn when it could be, or nil when there is none.
+  """
+  @spec withdraw_tx(Tx.t(), String.t()) :: Submission.t() | nil
+  def withdraw_tx(tx, submission_id) do
+    submission = Tx.get_submission(tx, submission_id)
+
+    if Inbox.withdrawable?(submission),
+      do: Tx.update_submission(tx, submission, status: "withdrawn"),
+      else: submission
   end
 
   @doc """

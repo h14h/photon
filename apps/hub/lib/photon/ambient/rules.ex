@@ -11,8 +11,8 @@ defmodule Photon.Ambient.Rules do
     * The timers: `next_firing/3` is the next time on a timer's grid
       after a firing (missed slots are skipped, not fired in a burst), and
       `next_review/2` the next 09:00 at the owner's UTC offset.
-    * A firing: `firing/1` decides whether it skips (off, no consent, the
-      last one still queued); `digest/3` sorts the pending items into new,
+    * A firing: `firing/1` decides whether it skips (off, Blip can't
+      reach its model, no consent, the last one still queued); `digest/3` sorts the pending items into new,
       smaller and gone against the board; `review/3` picks the threads
       the daily review lists. `last_touch/1` is when a thread was last
       touched, for the review.
@@ -80,10 +80,15 @@ defmodule Photon.Ambient.Rules do
 
   @typedoc """
   What the digest names besides the board: `prompts`, the schedules that
-  still exist, by ID; `projects`, every project (with `id`, `slug` and
-  `name`).
+  still exist, by ID; `tasks`, their current routine task, by ID (a
+  schedule missing here is taken to still have the task that failed);
+  `projects`, every project (with `id`, `slug` and `name`).
   """
-  @type places :: %{prompts: %{optional(String.t()) => String.t()}, projects: [map()]}
+  @type places :: %{
+          required(:prompts) => %{optional(String.t()) => String.t()},
+          optional(:tasks) => %{optional(String.t()) => String.t() | nil},
+          required(:projects) => [map()]
+        }
 
   @typedoc """
   One line of a digest: the item's kind, whether it is new to the owner,
@@ -162,8 +167,18 @@ defmodule Photon.Ambient.Rules do
           quiet_after: non_neg_integer()
         }
 
-  @typedoc "What a firing knows before it reads the items (`firing/1`)."
-  @type firing_facts :: %{on?: boolean(), allowed?: boolean(), queued?: boolean()}
+  @typedoc """
+  What a firing knows before it reads the items (`firing/1`): whether
+  ambient mode is on, whether Blip can reach its model (`thinks?`: signed
+  in with plan use, or the scripted model), whether Settings lets
+  schedules use the owner's plan, and whether the last one still waits.
+  """
+  @type firing_facts :: %{
+          on?: boolean(),
+          thinks?: boolean(),
+          allowed?: boolean(),
+          queued?: boolean()
+        }
 
   ## The setting
 
@@ -303,14 +318,18 @@ defmodule Photon.Ambient.Rules do
   ## A firing
 
   @doc """
-  Whether a firing goes ahead, in order: ambient mode off is `"off"`; no
+  Whether a firing goes ahead, in order: ambient mode off is `"off"`;
+  Blip unable to reach its model (signed out of ChatGPT, or plan use not
+  allowed) is `"skipped_model"`, since its run could only fail; no
   consent to use the owner's plan is `"skipped_consent"`; the last digest
-  or review still queued in Blip's inbox is `"skipped_queued"`.
+  or review still queued in Blip's inbox is `"skipped_queued"`. Every
+  skip leaves the items and the review marks as they are.
   """
   @spec firing(firing_facts()) :: :go | {:skip, String.t()}
   def firing(facts) do
     cond do
       Map.get(facts, :on?) != true -> {:skip, "off"}
+      Map.get(facts, :thinks?) != true -> {:skip, "skipped_model"}
       Map.get(facts, :allowed?) != true -> {:skip, "skipped_consent"}
       Map.get(facts, :queued?) == true -> {:skip, "skipped_queued"}
       true -> :go
@@ -325,7 +344,8 @@ defmodule Photon.Ambient.Rules do
 
     * `"finished"`: new while its thread reads `:unread`, else smaller;
       gone with the thread
-    * `"schedule_stopped"`: new while the schedule exists, else gone
+    * `"schedule_stopped"`: new while the schedule exists and still has
+      the task that failed; gone once it is deleted or saved again
     * `"file_written"`: smaller; gone with the project
     * `"project_created"`, `"purpose_changed"`: smaller; gone with the
       project
@@ -370,7 +390,8 @@ defmodule Photon.Ambient.Rules do
     %{
       threads: Map.new(board, &{entry_id(&1), &1}),
       projects: projects(Map.get(places, :projects, [])),
-      prompts: Map.get(places, :prompts, %{})
+      prompts: Map.get(places, :prompts, %{}),
+      tasks: Map.get(places, :tasks, %{})
     }
   end
 
@@ -436,20 +457,29 @@ defmodule Photon.Ambient.Rules do
   defp schedule_row(item, lookup) do
     schedule_id = Map.get(item, :schedule_id)
 
-    case Map.fetch(lookup.prompts, schedule_id) do
-      {:ok, prompt} ->
-        project = Map.get(lookup.projects, Map.get(item, :project_id))
+    with {:ok, prompt} <- Map.fetch(lookup.prompts, schedule_id),
+         true <- failed_task_current?(item, lookup.tasks) do
+      project = Map.get(lookup.projects, Map.get(item, :project_id))
 
-        row =
-          item
-          |> row(true, nil)
-          |> Map.merge(project_fields(project))
-          |> Map.merge(%{schedule_id: schedule_id, prompt: prompt, reason: Map.get(item, :note)})
+      row =
+        item
+        |> row(true, nil)
+        |> Map.merge(project_fields(project))
+        |> Map.merge(%{schedule_id: schedule_id, prompt: prompt, reason: Map.get(item, :note)})
 
-        {{"schedule_stopped", schedule_id}, row}
+      {{"schedule_stopped", schedule_id}, row}
+    else
+      _gone_or_saved_again -> :gone
+    end
+  end
 
-      :error ->
-        :gone
+  # Whether the schedule still has the routine task whose failure the item
+  # records. An item that names no task, or a schedule `tasks` doesn't
+  # list, counts as current.
+  defp failed_task_current?(item, tasks) do
+    case {Map.get(item, :task_id), Map.fetch(tasks, Map.get(item, :schedule_id))} do
+      {task_id, {:ok, current}} when is_binary(task_id) -> current == task_id
+      _unknown -> true
     end
   end
 

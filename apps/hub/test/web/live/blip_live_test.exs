@@ -1151,6 +1151,79 @@ defmodule PhotonWeb.BlipLiveTest do
       assert has_element?(blip, "#blip-unread", "1")
     end
 
+    test "a quiet digest's run hides what it said on the way, once it ends untold", %{
+      conn: conn,
+      blip: blip,
+      conversation: c
+    } do
+      append = fn kind, data -> Durable.commit(&Durable.Tx.append(&1, c, kind, data)) end
+
+      _digest =
+        append.("user", %{
+          "message" => Message.user("[Digest] ..."),
+          "source" => %{"kind" => "signal", "signals" => [%{"kind" => "digest", "items" => []}]}
+        })
+
+      call = %{"id" => "call_1", "name" => "list_machines", "arguments" => %{}}
+      checking = append.("assistant", %{"message" => Message.assistant("Let me look.", [call])})
+
+      # With the panel closed, what it says on the way isn't a bubble.
+      assert bubbles(blip) == []
+      refute has_element?(blip, "#blip-unread")
+
+      render_hook(blip, "panel", %{"to" => "open"})
+      assert has_element?(blip, "#entries-#{checking.id}", "Let me look.")
+      refute has_element?(blip, "#entries-#{checking.id}.hidden")
+
+      _result =
+        append.("tool_result", %{
+          "message" => Message.tool_result("call_1", "No machines."),
+          "name" => "list_machines",
+          "status" => "ok",
+          "details" => %{}
+        })
+
+      _told = append.("assistant", %{"message" => Message.assistant("[nothing to tell]", [])})
+      _ = render(blip)
+      assert has_element?(blip, "#entries-#{checking.id}.hidden")
+
+      # A reload draws it hidden too.
+      {:ok, view, _html} = live(conn, ~p"/")
+      again = find_live_child(view, "blip")
+      assert has_element?(again, "#entries-#{checking.id}.hidden")
+    end
+
+    test "withdrawing a queued review from its chip clears its threads' marks", %{
+      blip: blip,
+      project: project,
+      conversation: c
+    } do
+      thread = finished!(project)
+      :ok = busy(%{blip: blip, conversation: c})
+      render_hook(blip, "panel", %{"to" => "open"})
+
+      ref = %{
+        "kind" => "review",
+        "key" => "review:test:1",
+        "items" => [%{"thread_id" => thread.id, "title" => thread.title, "state" => "quiet"}],
+        "more" => 0
+      }
+
+      submission =
+        Durable.commit(fn tx ->
+          :ok = Threads.mark_reviewed_tx(tx, [thread.id], DateTime.utc_now())
+          Signals.post_tx(tx, %{key: "review:test:1", text: "[Daily review] ...", ref: ref})
+        end)
+
+      _ = render(blip)
+      assert has_element?(blip, "#queued-#{submission.id}", "Daily review: 1 thread")
+      assert %DateTime{} = Threads.get(thread.id).reviewed_at
+
+      blip |> element("#queued-#{submission.id} button") |> render_click()
+      refute has_element?(blip, "#queued-#{submission.id}")
+      assert Threads.get(thread.id).reviewed_at == nil
+    end
+
     test "a digest waiting in Blip's inbox shows as a chip", %{
       blip: blip,
       project: project,

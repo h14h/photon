@@ -38,13 +38,30 @@ defmodule PhotonWeb.AmbientText do
   end
 
   @doc """
-  Whether to warn that digests and reviews will skip: ambient mode is on,
-  Settings doesn't let schedules use the owner's plan, and the hub isn't
-  on the scripted model (which needs no consent).
+  Whether to warn that digests and reviews will skip for consent: ambient
+  mode is on, Blip can reach its model (otherwise `needs_model?/1` says
+  so instead, and the consent box isn't on the page), Settings doesn't let
+  schedules use the owner's plan, and the hub isn't on the scripted model
+  (which needs no consent).
   """
   @spec needs_consent?(Ambient.status()) :: boolean()
-  def needs_consent?(%{on?: on?, consent?: consent?, scripted?: scripted?}),
-    do: on? and not consent? and not scripted?
+  def needs_consent?(%{on?: on?, thinks?: thinks?, consent?: consent?, scripted?: scripted?}),
+    do: on? and thinks? and not consent? and not scripted?
+
+  @doc """
+  Whether to warn that digests and reviews will skip because Blip can't
+  reach ChatGPT (signed out, or plan use not allowed): ambient mode is on
+  and Blip can't think.
+  """
+  @spec needs_model?(Ambient.status()) :: boolean()
+  def needs_model?(%{on?: on?, thinks?: thinks?}), do: on? and not thinks?
+
+  @doc "The warning shown while it is on but Blip can't reach ChatGPT."
+  @spec needs_model() :: String.t()
+  def needs_model do
+    "Blip isn't signed in to ChatGPT, so digests and reviews skip until you sign in again " <>
+      "above. You can still turn ambient mode off here."
+  end
 
   @doc """
   The form's ambient values from the saved setting, for merging into the
@@ -94,22 +111,23 @@ defmodule PhotonWeb.AmbientText do
 
   @doc """
   What waits for the next digest, counted by the digest's own rule:
-  changes new to the owner, and smaller ones that only ride along.
+  changes new to the owner, and the ones they have seen or made
+  themselves, which only go along with something new.
   """
   @spec pending(%{new: non_neg_integer(), smaller: non_neg_integer()}) :: String.t()
   def pending(%{new: 0, smaller: 0}), do: "Nothing new yet."
 
-  def pending(%{new: 0, smaller: smaller}) do
-    verb = if smaller == 1, do: "waits", else: "wait"
-    "#{count(smaller, "smaller change")} #{verb} for the next digest with something new."
+  def pending(%{new: 0, smaller: seen}) do
+    verb = if seen == 1, do: "waits", else: "wait"
+
+    "Nothing new yet. #{count(seen, "change")} you've seen or made yourself #{verb} " <>
+      "for the next digest with something new."
   end
 
   def pending(%{new: new, smaller: 0}), do: "#{count(new, "change")} waiting."
 
-  def pending(%{new: new, smaller: smaller}) do
-    ones = if smaller == 1, do: "smaller one", else: "smaller ones"
-    "#{count(new, "change")} waiting, and #{smaller} #{ones}."
-  end
+  def pending(%{new: new, smaller: seen}),
+    do: "#{count(new, "change")} waiting, and #{seen} you've seen or made yourself."
 
   @doc ~S"""
   The heading of a last firing, before its time: "Last digest" or "Last
@@ -134,6 +152,7 @@ defmodule PhotonWeb.AmbientText do
   def last("digest", %{outcome: "skipped_nothing"}), do: "nothing new, skipped."
   def last(_review, %{outcome: "skipped_nothing"}), do: "no threads to review, skipped."
   def last(_job, %{outcome: "skipped_consent"}), do: "skipped, schedules can't use your plan."
+  def last(_job, %{outcome: "skipped_model"}), do: "skipped, Blip wasn't signed in to ChatGPT."
 
   def last(_job, %{outcome: "skipped_queued"}),
     do: "Blip still had the last one waiting, skipped."
@@ -180,28 +199,41 @@ defmodule PhotonWeb.AmbientText do
   def ran(_review, %{outcome: "skipped_nothing"}), do: "No threads need a review."
   def ran(_review, %{outcome: "skipped_queued"}), do: "Blip still has the last review waiting."
   def ran(_job, %{outcome: "skipped_consent"}), do: "Skipped: schedules can't use your plan."
+  def ran(_job, %{outcome: "skipped_model"}), do: "Skipped: Blip isn't signed in to ChatGPT."
   def ran(_job, _result), do: "Done."
 
   @doc """
-  Whether the home page warns that digests and reviews are skipping for
-  consent: ambient mode is on, the last digest or the last review was
-  skipped because schedules can't use the owner's plan, and Settings still
-  doesn't let them. Once the owner allows it, the warning goes before the
-  next firing.
+  Why the home page warns that digests and reviews are skipping, or nil:
+  ambient mode is on, and the last digest or the last review was skipped
+  because Blip wasn't signed in to ChatGPT and it still isn't
+  (`:signed_out`), or because schedules couldn't use the owner's plan and
+  Settings still doesn't let them (`:consent`). Once the owner signs in or
+  allows it, the warning goes before the next firing.
   """
-  @spec skipping?(Ambient.status()) :: boolean()
-  def skipping?(%{on?: true, consent?: false, last_digest: digest, last_review: review}),
-    do: Enum.any?([digest, review], &match?(%{outcome: "skipped_consent"}, &1))
+  @spec skipping(Ambient.brief()) :: :signed_out | :consent | nil
+  def skipping(%{on?: true} = status) do
+    cond do
+      not status.thinks? and skipped?(status, "skipped_model") -> :signed_out
+      not status.consent? and skipped?(status, "skipped_consent") -> :consent
+      true -> nil
+    end
+  end
 
-  def skipping?(_status), do: false
+  def skipping(_status), do: nil
 
-  @doc "The home page's warning while digests and reviews skip for consent."
-  @spec skipping() :: String.t()
-  def skipping,
+  @doc "The home page's warning while digests and reviews skip (`skipping/1`)."
+  @spec skipping_text(:signed_out | :consent) :: String.t()
+  def skipping_text(:signed_out),
+    do: "Digests and reviews are skipping: Blip isn't signed in to ChatGPT."
+
+  def skipping_text(:consent),
     do: "Digests and reviews are skipping: schedules can't use your plan while you're away."
 
+  defp skipped?(%{last_digest: digest, last_review: review}, outcome),
+    do: Enum.any?([digest, review], &match?(%{outcome: ^outcome}, &1))
+
   @doc "Whether the home page warns that a timer stopped after an error."
-  @spec home_stopped?(Ambient.status()) :: boolean()
+  @spec home_stopped?(Ambient.brief()) :: boolean()
   def home_stopped?(%{on?: true, stopped: %{}}), do: true
   def home_stopped?(_status), do: false
 

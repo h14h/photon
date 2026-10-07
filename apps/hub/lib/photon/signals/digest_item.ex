@@ -2,11 +2,13 @@ defmodule Photon.Signals.DigestItem do
   @moduledoc """
   A change waiting for the next digest (section 3.2 of
   `docs/plans/step-5-ambient-mode.md`), collected only while ambient mode
-  is on and deleted in the commit that posts the digest carrying it.
+  is on. The commit that posts a digest marks the items it carries
+  (`digest_key`); they are deleted when Blip's run on that digest
+  answers or is stopped, and wait again when the run fails.
 
-    * `key` - what makes it once: the settle's signal key
-      (`Photon.Signals.Rules.key/1`), `"schedule:<task id>:failed"`, or
-      `"<kind>:<random id>"` for the smaller kinds
+    * `key` - its subject (`Photon.Signals.Rules.item_key/1`): one row per
+      thread and kind, schedule, project and file, or project and kind,
+      which a newer change to the same subject replaces
     * `kind` - `"finished"`, `"schedule_stopped"`, `"file_written"`,
       `"project_created"`, `"purpose_changed"`, `"thread_started"` or
       `"resolved"`
@@ -14,8 +16,12 @@ defmodule Photon.Signals.DigestItem do
       when it names none (`project_id` is nil for Blip's own schedule)
     * `name`, `writer` - a context file's name, and who wrote it: a
       thread's ID or `"user"`
+    * `task_id` - a stopped schedule's failed routine task: the item is
+      news only while the schedule still has that task
     * `note` - at most 600 characters: the run's note, the schedule's
       failure reason, or `"deleted"` for a deleted file
+    * `digest_key` - the key of the posted digest that carries it, or nil
+      while it waits for one
 
   The IDs are plain strings, not foreign keys, and titles and names are
   read when the digest is written, so a renamed thread reads with its new
@@ -36,7 +42,9 @@ defmodule Photon.Signals.DigestItem do
           schedule_id: String.t() | nil,
           name: String.t() | nil,
           writer: String.t() | nil,
+          task_id: String.t() | nil,
           note: String.t() | nil,
+          digest_key: String.t() | nil,
           inserted_at: DateTime.t() | nil
         }
 
@@ -49,7 +57,9 @@ defmodule Photon.Signals.DigestItem do
     field(:schedule_id, :string)
     field(:name, :string)
     field(:writer, :string)
+    field(:task_id, :string)
     field(:note, :string)
+    field(:digest_key, :string)
     field(:inserted_at, :utc_datetime_usec)
   end
 end

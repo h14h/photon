@@ -188,6 +188,25 @@ defmodule Photon.Schedules do
     |> Map.new()
   end
 
+  @doc """
+  The prompt and current routine task of schedules `ids`, by ID; an ID
+  with no schedule is left out. Ambient mode's digest reads it: a
+  schedule that stopped is news only while it still has the task that
+  failed, so one saved again since is not.
+  """
+  @spec lookup([String.t()]) :: %{
+          optional(String.t()) => %{prompt: String.t(), task_id: String.t() | nil}
+        }
+  def lookup([]), do: %{}
+
+  def lookup(ids) do
+    Schedule
+    |> where([s], s.id in ^ids)
+    |> select([s], {s.id, %{prompt: s.prompt, task_id: s.task_id}})
+    |> Repo.all()
+    |> Map.new()
+  end
+
   defp listed(schedule, task) do
     {next_at, state} = state(task)
     %{id: schedule.id, schedule: schedule, next_at: next_at, state: state}

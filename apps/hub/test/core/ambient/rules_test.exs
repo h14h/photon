@@ -214,16 +214,20 @@ defmodule Photon.Ambient.RulesTest do
   end
 
   describe "firing/1" do
-    test "off, then no consent, then queued, in that order" do
-      assert Rules.firing(%{on?: false, allowed?: false, queued?: true}) == {:skip, "off"}
+    test "off, then no model, then no consent, then queued, in that order" do
+      assert Rules.firing(%{on?: false, thinks?: false, allowed?: false, queued?: true}) ==
+               {:skip, "off"}
 
-      assert Rules.firing(%{on?: true, allowed?: false, queued?: true}) ==
+      assert Rules.firing(%{on?: true, thinks?: false, allowed?: false, queued?: true}) ==
+               {:skip, "skipped_model"}
+
+      assert Rules.firing(%{on?: true, thinks?: true, allowed?: false, queued?: true}) ==
                {:skip, "skipped_consent"}
 
-      assert Rules.firing(%{on?: true, allowed?: true, queued?: true}) ==
+      assert Rules.firing(%{on?: true, thinks?: true, allowed?: true, queued?: true}) ==
                {:skip, "skipped_queued"}
 
-      assert Rules.firing(%{on?: true, allowed?: true, queued?: false}) == :go
+      assert Rules.firing(%{on?: true, thinks?: true, allowed?: true, queued?: false}) == :go
     end
   end
 
@@ -283,6 +287,19 @@ defmodule Photon.Ambient.RulesTest do
                Rules.digest([item], [], @places).new
 
       assert Rules.digest([item], [], %{@places | prompts: %{}}).gone == ["i1"]
+    end
+
+    test "a schedule item is new while the schedule still has the task that failed" do
+      item =
+        item("i1", "schedule_stopped", schedule_id: "sc_9", task_id: "t_1", note: "boom")
+
+      still = Map.put(@places, :tasks, %{"sc_9" => "t_1"})
+      assert [%{schedule_id: "sc_9", new?: true}] = Rules.digest([item], [], still).new
+
+      # Saved again since: the schedule runs on a new task, so the failure
+      # is no longer news.
+      saved = Map.put(@places, :tasks, %{"sc_9" => "t_2"})
+      assert %{new: [], smaller: [], gone: ["i1"]} = Rules.digest([item], [], saved)
     end
 
     test "Blip's own schedule has no project" do

@@ -82,6 +82,7 @@ defmodule Photon.Assistant do
   use Boundary,
     deps: [
       Photon.Activity,
+      Photon.Ambient,
       Photon.ChatGPT,
       Photon.Durable,
       Photon.MachineTools,
@@ -104,6 +105,7 @@ defmodule Photon.Assistant do
 
   alias Photon.{
     Activity,
+    Ambient,
     Durable,
     MachineTools,
     Projects,
@@ -522,11 +524,19 @@ defmodule Photon.Assistant do
   @spec queued(String.t()) :: [Submission.t()]
   def queued(conversation_id), do: Durable.queued(conversation_id)
 
-  @doc "Withdraws a waiting message."
+  @doc """
+  Withdraws a waiting message, in one commit with what that means for a
+  digest or a daily review (`Photon.Ambient.withdrawn_tx/2`: its items
+  go, its threads lose their review mark).
+  """
   @spec withdraw(String.t()) :: :ok
   def withdraw(submission_id) do
-    _submission = Durable.withdraw(submission_id)
-    :ok
+    Durable.commit(fn tx ->
+      case Durable.withdraw_tx(tx, submission_id) do
+        %Submission{status: "withdrawn"} = submission -> Ambient.withdrawn_tx(tx, submission)
+        _not_withdrawn -> :ok
+      end
+    end)
   end
 
   @doc "Starts a fresh context; earlier messages stay but the model stops seeing them."
@@ -600,9 +610,16 @@ defmodule Photon.Assistant do
   what Blip did, and the reply isn't for the owner), answers with no
   text, and an answer of `[nothing to tell]` to a digest or review
   (`Photon.Transcript.nothing_to_tell?/1`) record nothing.
+
+  First, in the same commit, a settled digest or review is used up or
+  given back (`Photon.Ambient.settled_tx/2`): a digest's items go once
+  Blip has read it, and wait for the next digest when its run failed.
   """
   @impl true
-  def on_settled(conversation, settled, tx), do: settled_tx(tx, conversation, settled)
+  def on_settled(conversation, settled, tx) do
+    :ok = Ambient.settled_tx(tx, settled)
+    settled_tx(tx, conversation, settled)
+  end
 
   defp settled_tx(tx, conversation, %{outcome: "done", answer_entry_id: entry_id} = settled)
        when is_binary(entry_id) do

@@ -339,7 +339,9 @@ defmodule PhotonWeb.SettingsLiveTest do
       query = from(t in Thread, where: t.id == ^thread)
       {1, _rows} = Repo.update_all(query, set: [last_run_ended_at: at, active_at: at])
 
-      :ok = Durable.subscribe(blip)
+      # The failure reached Blip as an update; the review goes once Blip is
+      # done with it, rather than queueing behind it.
+      idle!(blip)
       view |> element("#ambient-review-now") |> render_click()
 
       assert has_element?(view, "#flash-info", "Sent Blip a review of 1 thread.")
@@ -356,7 +358,12 @@ defmodule PhotonWeb.SettingsLiveTest do
 
       thread = ended!(project, "files")
       settled(view)
-      assert has_element?(view, "#ambient-pending", "1 change waiting, and 1 smaller one.")
+
+      assert has_element?(
+               view,
+               "#ambient-pending",
+               "1 change waiting, and 1 you've seen or made yourself."
+             )
 
       assert Threads.mark_seen(thread) == :ok
       settled(view)
@@ -364,8 +371,36 @@ defmodule PhotonWeb.SettingsLiveTest do
       assert has_element?(
                view,
                "#ambient-pending",
-               "2 smaller changes wait for the next digest with something new."
+               "Nothing new yet. 2 changes you've seen or made yourself wait for the next " <>
+                 "digest with something new."
              )
+    end
+
+    test "signed out while it is on, it shows only the switch, and can be turned off", %{
+      conn: conn
+    } do
+      :ok = Ambient.configure(%{"ambient" => "true"})
+      Application.put_env(:photon, :mock_model, false)
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      assert has_element?(view, "#ambient #settings_ambient[checked]")
+
+      assert has_element?(
+               view,
+               "#ambient-needs-model",
+               "Blip isn't signed in to ChatGPT, so digests and reviews skip"
+             )
+
+      assert has_element?(view, "#ambient-state")
+      refute has_element?(view, "#settings_ambient_every")
+      refute has_element?(view, "#settings_utc_offset")
+      refute has_element?(view, "#ambient-try")
+      refute has_element?(view, "#ambient-needs-consent")
+
+      save(view, %{ambient: "false"})
+      refute Ambient.status().on?
+      # Off and signed out: nothing left to show.
+      refute has_element?(view, "#ambient")
     end
 
     test "a schedule that stops is a change waiting", %{view: view, project: project} do

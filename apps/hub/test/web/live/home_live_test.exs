@@ -26,6 +26,7 @@ defmodule PhotonWeb.HomeLiveTest do
   alias Photon.{
     Ambient,
     Assistant,
+    ChatGPT,
     Durable,
     Machines,
     Projects,
@@ -88,6 +89,18 @@ defmodule PhotonWeb.HomeLiveTest do
       do: await_change(thread_id, fn _changes -> not Threads.busy?(thread_id) end)
 
     thread_id
+  end
+
+  # Waits until Blip has nothing running, so what is posted next starts
+  # its run rather than queueing.
+  defp blip_idle! do
+    blip = Assistant.conversation_id()
+    :ok = Durable.subscribe(blip)
+
+    if Durable.busy?(blip),
+      do: await_change(blip, fn _changes -> not Durable.busy?(blip) end)
+
+    :ok
   end
 
   # Starts a thread whose run waits on a shell call on `box`; returns its ID.
@@ -616,7 +629,13 @@ defmodule PhotonWeb.HomeLiveTest do
     } do
       ambient_on!()
       view = home(conn)
-      firing = %{allowed?: false, key: "digest:test:0", now: System.system_time(:millisecond)}
+
+      firing = %{
+        thinks?: true,
+        allowed?: false,
+        key: "digest:test:0",
+        now: System.system_time(:millisecond)
+      }
 
       assert %{outcome: "skipped_consent"} =
                Durable.commit(&Ambient.fire_tx(&1, "digest", firing))
@@ -631,11 +650,39 @@ defmodule PhotonWeb.HomeLiveTest do
 
       assert has_element?(view, "#ambient-settings[href='/settings']")
 
-      # As the Settings page's Save: the file, then ambient mode's commit.
+      # The Settings page's Save writes the file first, which announces
+      # the change; the warning goes with it.
       _settings = Settings.save(%{"scheduled_work" => "true"})
-      :ok = Ambient.configure(%{})
       _ = render(view)
       refute has_element?(view, "#ambient-consent")
+    end
+
+    test "warns while digests skip because Blip isn't signed in, until it is again", %{
+      conn: conn
+    } do
+      ambient_on!()
+      Application.put_env(:photon, :mock_model, false)
+      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+      view = home(conn)
+
+      assert %{outcome: "skipped_model"} = Ambient.digest_now()
+      _ = render(view)
+
+      assert has_element?(
+               view,
+               "#ambient-signed-out",
+               "Digests and reviews are skipping: Blip isn't signed in to ChatGPT."
+             )
+
+      assert has_element?(view, "#ambient-settings[href='/settings']")
+      refute has_element?(view, "#ambient-consent")
+
+      # Blip can think again (here, the scripted model): the next ChatGPT
+      # change the page hears takes the warning down.
+      Application.put_env(:photon, :mock_model, true)
+      send(view.pid, {:chatgpt_changed, ChatGPT.status()})
+      _ = render(view)
+      refute has_element?(view, "#ambient-signed-out")
     end
 
     test "a row raised in Blip's review says so, and not before", %{conn: conn} do
@@ -659,6 +706,9 @@ defmodule PhotonWeb.HomeLiveTest do
       assert has_element?(view, "#waiting-#{waiting}")
       refute has_element?(view, "[id$='-reviewed']")
 
+      # The failure and the question reached Blip as updates; the review
+      # is sent once Blip is done with them, not queued behind them.
+      blip_idle!()
       assert %{outcome: "sent", count: 3} = Ambient.review_now()
       %Thread{reviewed_at: reviewed_at} = Threads.get(stopped)
       _ = settled(view)

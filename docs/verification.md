@@ -238,11 +238,14 @@ item from a settle is written in the settle hook's commit, which
 What step 5 claims beyond that is each one commit's work, true by the
 serial commit line and checked by boundary tests instead:
 
-- A digest posts its message and deletes every item it read in one
-  commit, so no item is reported twice or lost
-  (`test/boundary/ambient_test.exs`: "posts what is new with the smaller
-  changes, and deletes every item it read"; a second digest while the
-  first waits skips and keeps the items).
+- A digest posts its message and marks every item it read as carried in
+  one commit, so no item is reported twice; the commit that settles
+  Blip's run on it deletes them, or gives them back when the run failed,
+  so none is lost (`test/boundary/ambient_test.exs`: "posts what is new
+  with the smaller changes, and uses up every item once Blip answers",
+  "a digest whose run fails gives its items back for the next one", "a
+  review whose run fails clears its threads' marks"; a second digest
+  while the first waits skips and keeps the items).
 - Turning ambient mode off retires both timers, deletes the items,
   withdraws a queued digest or review and clears that review's marks in
   one commit ("turning it off retires both timers, deletes the items and
@@ -255,9 +258,10 @@ serial commit line and checked by boundary tests instead:
 - Every collector reads the mode in its own commit, so nothing is
   collected while it is off (the cases with ambient mode off in
   `signals_test.exs`, `threads_test.exs`, `projects_test.exs` and
-  `schedules_test.exs`), and a settle makes one item per key, at the
+  `schedules_test.exs`), and a settle makes one item per thread, at the
   run's end ("a run that answers two queued inputs makes one item, at
-  its end").
+  its end"). Every item is keyed by its subject, so the table holds at
+  most one row per subject ("collect_tx/2 keeps one row per subject").
 - `collect_tx/2` and the timer's `on_fail/3` run on the harness's hook
   paths and are total ("collect_tx/2 makes one row per key, announces
   each insert, and is total"; "on_fail/3 for a task the doc no longer

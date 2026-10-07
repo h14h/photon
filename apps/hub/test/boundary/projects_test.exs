@@ -298,27 +298,34 @@ defmodule Photon.ProjectsTest do
       for i <- Repo.all(query), do: {i.kind, i.project_id, i.name, i.writer, i.note}
     end
 
-    test "with ambient mode on, the owner's project and file changes each collect one" do
+    test "with ambient mode on, the owner's project and file changes collect one per subject" do
       ambient!(true)
       p = project!()
       assert [{"project_created", p.id, nil, nil, nil}] == items()
 
       {:ok, _project} = Projects.update(p.id, %{"purpose" => "Keep the garden green."})
       {:ok, _file} = Projects.create_file(p.id, %{"name" => "notes", "content" => "a"})
+      assert length(items()) == 3
+
+      # The same file saved and deleted: its row is replaced by the newest
+      # change, so the table holds one row for it however often it changes.
       {:ok, _file} = Projects.save_file(p.id, "notes.md", "b", 1)
       assert Projects.delete_file(p.id, "notes") == :ok
 
       assert [
                {"project_created", p.id, nil, nil, nil},
                {"purpose_changed", p.id, nil, nil, nil},
-               {"file_written", p.id, "notes.md", "user", nil},
-               {"file_written", p.id, "notes.md", "user", nil},
                {"file_written", p.id, "notes.md", "user", "deleted"}
              ] == items()
 
       keys = Repo.all(from(i in DigestItem, select: i.key))
-      assert length(Enum.uniq(keys)) == 5
-      assert Enum.any?(keys, &String.starts_with?(&1, "purpose_changed:"))
+
+      assert Enum.sort(keys) ==
+               Enum.sort([
+                 "project_created:" <> p.id,
+                 "purpose_changed:" <> p.id,
+                 "file_written:#{p.id}:notes.md"
+               ])
     end
 
     test "an update that changes nothing, and a refused change, collect nothing" do
@@ -339,18 +346,17 @@ defmodule Photon.ProjectsTest do
       assert [{"file_written", p.id, "notes.md", "user", nil}] == items()
     end
 
-    test "a thread's write and edit collect one each, under the thread's ID" do
+    test "a thread's writes and edits to one file collect one row, under the thread's ID" do
       p = project!()
       ambient!(true)
 
       {:ok, _written} = write(p.id, "notes", "zone 2")
-      {:ok, _edited} = edit(p.id, "notes", "2", "3")
+      assert [{"file_written", p.id, "notes.md", "c_thread", nil}] == items()
+
+      for n <- 3..20, do: {:ok, _edited} = edit(p.id, "notes", "#{n - 1}", "#{n}")
       {:error, _message} = edit(p.id, "notes", "nowhere", "x")
 
-      assert [
-               {"file_written", p.id, "notes.md", "c_thread", nil},
-               {"file_written", p.id, "notes.md", "c_thread", nil}
-             ] == items()
+      assert [{"file_written", p.id, "notes.md", "c_thread", nil}] == items()
     end
 
     test "Blip's writes and projects collect nothing" do

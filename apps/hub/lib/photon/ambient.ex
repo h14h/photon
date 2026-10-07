@@ -34,22 +34,35 @@ defmodule Photon.Ambient do
 
   `fire_tx/3` is every read and write of one firing, inside the caller's
   commit, so a firing the fence ignores leaves everything as it was. It
-  skips while ambient mode is off, while Settings doesn't let schedules
-  use the owner's plan, and while the last digest (or review) still waits
-  in Blip's inbox (`Photon.Ambient.Rules.firing/1`). Otherwise:
+  skips while ambient mode is off, while Blip can't reach its model
+  (signed out of ChatGPT, or plan use not allowed), while Settings
+  doesn't let schedules use the owner's plan, and while the last digest
+  (or review) still waits in Blip's inbox
+  (`Photon.Ambient.Rules.firing/1`). Otherwise:
 
     * a digest reads the pending items (`Photon.Signals.pending_tx/1`,
       collected where each change is made) and sorts them against the
       board (`Photon.Ambient.Rules.digest/3`). With nothing new to the
       owner it posts nothing; the smaller items wait. With something new
-      it posts one `[Digest]` signal (`Photon.Ambient.Text`) and deletes
-      every item it read, in the same commit, so none is reported twice
-      or lost.
+      it posts one `[Digest]` signal (`Photon.Ambient.Text`) and marks
+      every item it read as carried by it, in the same commit, so none is
+      reported twice.
     * a review picks the threads untouched for `quiet_after`
       (`Photon.Ambient.Rules.review/3`), posts one `[Daily review]`
       signal, and marks them reviewed (`Photon.Threads.mark_reviewed_tx/3`),
       so each is raised once per quiet spell and again after
       `review_again_days`.
+
+  ## After Blip's run
+
+  What a digest carried is used up only when Blip has read it.
+  `settled_tx/2`, from Blip's settle hook, deletes a digest's items when
+  the run on it answers or the owner stops it; when the run fails (the
+  request failed, or the round limit), the items wait for the next
+  digest again and a review's threads lose their mark, since Blip never
+  told the owner about them. A digest or review the owner withdraws from
+  Blip's inbox (`withdrawn_tx/2`) is dropped as turning ambient mode off
+  drops it: its items are deleted, and its threads lose their mark.
 
   Either records its outcome on the doc and announces `{:ambient_changed}`.
   `digest_now/0` and `review_now/0` run the same firing in a commit of
@@ -78,6 +91,7 @@ defmodule Photon.Ambient do
 
   use Boundary,
     deps: [
+      Photon.ChatGPT,
       Photon.Durable,
       Photon.Events,
       Photon.Projects,
@@ -90,8 +104,9 @@ defmodule Photon.Ambient do
     exports: []
 
   alias Photon.Ambient.{Rules, Text, Timer}
-  alias Photon.{Durable, Events, Projects, Schedules, Settings, Signals, Threads}
-  alias Photon.Durable.{TaskRecord, Tx}
+  alias Photon.{ChatGPT, Durable, Events, Projects, Schedules, Settings, Signals, Threads}
+  alias Photon.Durable.{Submission, TaskRecord, Tx}
+  alias Photon.Signals.Rules, as: SignalRules
 
   @jobs ["digest", "review"]
 
@@ -108,16 +123,17 @@ defmodule Photon.Ambient do
   @type job :: String.t()
 
   @typedoc """
-  What a firing goes on, read before its commit: whether it may use the
-  owner's plan (`allowed?`), the key of the signal it posts, and the
-  clock.
+  What a firing goes on, read before its commit: whether Blip can reach
+  its model (`thinks?`), whether it may use the owner's plan
+  (`allowed?`), the key of the signal it posts, and the clock.
   """
-  @type firing :: %{allowed?: boolean(), key: String.t(), now: ms()}
+  @type firing :: %{thinks?: boolean(), allowed?: boolean(), key: String.t(), now: ms()}
 
   @typedoc """
   What a firing did: when, its outcome (`"sent"`, `"queued"`,
-  `"skipped_nothing"`, `"skipped_consent"`, `"skipped_queued"` or `"off"`)
-  and how many changes or threads it carried (0 when it posted nothing).
+  `"skipped_nothing"`, `"skipped_model"`, `"skipped_consent"`,
+  `"skipped_queued"` or `"off"`) and how many changes or threads it
+  carried (0 when it posted nothing).
   """
   @type result :: %{at: DateTime.t(), outcome: String.t(), count: non_neg_integer()}
 
@@ -125,11 +141,11 @@ defmodule Photon.Ambient do
   @type stopped :: %{job: job(), reason: String.t()}
 
   @typedoc """
-  What the Settings and home pages show (section 7.2): the setting, the
-  timers' next times (nil when not running), the pending items counted by
-  the digest's own rule, the last firing of each, a timer that stopped,
-  whether Settings lets schedules use the owner's plan, and whether the
-  hub runs the scripted model.
+  What the Settings page shows (section 7.2): the setting, the timers'
+  next times (nil when not running), the pending items counted by the
+  digest's own rule, the last firing of each, a timer that stopped,
+  whether Settings lets schedules use the owner's plan, whether Blip can
+  reach its model, and whether the hub runs the scripted model.
   """
   @type status :: %{
           on?: boolean(),
@@ -141,6 +157,21 @@ defmodule Photon.Ambient do
           last_review: result() | nil,
           stopped: stopped() | nil,
           consent?: boolean(),
+          thinks?: boolean(),
+          scripted?: boolean()
+        }
+
+  @typedoc """
+  What the home page's warnings read (`brief/0`): `t:status/0` without
+  the timers' next times and the pending counts.
+  """
+  @type brief :: %{
+          on?: boolean(),
+          last_digest: result() | nil,
+          last_review: result() | nil,
+          stopped: stopped() | nil,
+          consent?: boolean(),
+          thinks?: boolean(),
           scripted?: boolean()
         }
 
@@ -165,19 +196,43 @@ defmodule Photon.Ambient do
     doc = Signals.ambient_doc()
     config = Rules.config(%{}, doc)
 
-    %{
-      on?: config.on?,
+    doc
+    |> brief_of()
+    |> Map.merge(%{
       every_minutes: config.every_minutes,
       next_digest_at: next_at(Map.get(doc, "digest_task_id")),
       next_review_at: next_at(Map.get(doc, "review_task_id")),
-      pending: pending(config.on?),
+      pending: pending(config.on?)
+    })
+  end
+
+  @doc """
+  What the home page's warnings need (`t:brief/0`): the setting, the last
+  firings, a stopped timer, consent and whether Blip can think. Unlike
+  `status/0` it reads no items and no board, so a page can call it on
+  every `{:ambient_changed}`.
+  """
+  @spec brief() :: brief()
+  def brief, do: brief_of(Signals.ambient_doc())
+
+  defp brief_of(doc) do
+    %{
+      on?: Rules.config(%{}, doc).on?,
       last_digest: result(Map.get(doc, "last_digest")),
       last_review: result(Map.get(doc, "last_review")),
       stopped: stopped(Map.get(doc, "stopped")),
       consent?: Settings.scheduled_work?(Settings.load()),
+      thinks?: thinks?(),
       scripted?: scripted?()
     }
   end
+
+  @doc false
+  # Whether Blip can reach its model now: signed in to ChatGPT with plan
+  # use allowed, or the scripted model. A firing reads it before its
+  # commit, as it reads consent.
+  @spec thinks?() :: boolean()
+  def thinks?, do: ChatGPT.ready?(ChatGPT.status())
 
   # A live timer's next time, from its task (rule 15).
   defp next_at(nil), do: nil
@@ -336,20 +391,77 @@ defmodule Photon.Ambient do
     task.id
   end
 
-  # Everything pending when it is turned off: the items, and a digest or
-  # review Blip hasn't seen, whose threads lose their review mark.
+  # Everything pending when it is turned off: the items, carried or not,
+  # and a digest or review Blip hasn't seen, whose threads lose their
+  # review mark.
   defp clear_tx(tx) do
     :ok = Signals.drop_items_tx(tx, :all)
-
-    thread_ids =
-      for %{"kind" => "review", "items" => items} when is_list(items) <-
-            Signals.withdraw_ambient_tx(tx),
-          %{"thread_id" => thread_id} when is_binary(thread_id) <- items,
-          uniq: true,
-          do: thread_id
-
-    Threads.unmark_reviewed_tx(tx, thread_ids)
+    thread_ids = Enum.flat_map(Signals.withdraw_ambient_tx(tx), &review_threads/1)
+    Threads.unmark_reviewed_tx(tx, Enum.uniq(thread_ids))
   end
+
+  # The threads a review ref listed; none for any other ref.
+  defp review_threads(%{"kind" => "review", "items" => items}) when is_list(items),
+    do: for(%{"thread_id" => id} when is_binary(id) <- items, do: id)
+
+  defp review_threads(_ref), do: []
+
+  ## After Blip's run
+
+  @doc """
+  What a settle of Blip's run means for the digests and reviews it
+  closed, inside the settle's commit (Blip's `on_settled/3`):
+
+    * a digest the run answered, or that the owner stopped: the items it
+      carries are deleted
+    * a digest whose run failed (the request failed, the round limit, the
+      task failed): its items wait for the next digest again
+    * a review whose run failed: its threads lose their review mark, so
+      Home doesn't say they were in a review Blip never told the owner
+      about, and the next review lists them
+
+  Total, as the settle hook must be: anything else does nothing.
+  """
+  @spec settled_tx(Tx.t(), map()) :: :ok
+  def settled_tx(tx, %{outcome: outcome, submissions: submissions}) when is_list(submissions) do
+    Enum.each(submissions, &(:ok = settled_ref_tx(tx, outcome, ambient_ref(&1))))
+  end
+
+  def settled_tx(_tx, _settled), do: :ok
+
+  defp settled_ref_tx(tx, "failed", %{"kind" => "digest", "key" => key}) when is_binary(key),
+    do: Signals.release_items_tx(tx, key)
+
+  defp settled_ref_tx(tx, _done_or_stopped, %{"kind" => "digest", "key" => key})
+       when is_binary(key),
+       do: Signals.drop_carried_tx(tx, key)
+
+  defp settled_ref_tx(tx, "failed", %{"kind" => "review"} = ref),
+    do: Threads.unmark_reviewed_tx(tx, review_threads(ref))
+
+  defp settled_ref_tx(_tx, _outcome, _ref), do: :ok
+
+  @doc """
+  What withdrawing `submission` from Blip's inbox means, inside the
+  commit that withdrew it: a digest's items are deleted, and a review's
+  threads lose their review mark, as turning ambient mode off does. Blip
+  never read it. Anything else does nothing.
+  """
+  @spec withdrawn_tx(Tx.t(), Submission.t()) :: :ok
+  def withdrawn_tx(tx, %Submission{status: "withdrawn"} = submission) do
+    case ambient_ref(submission) do
+      %{"kind" => "digest", "key" => key} when is_binary(key) -> Signals.drop_carried_tx(tx, key)
+      %{"kind" => "review"} = ref -> Threads.unmark_reviewed_tx(tx, review_threads(ref))
+      _other -> :ok
+    end
+  end
+
+  def withdrawn_tx(_tx, _submission), do: :ok
+
+  defp ambient_ref(%Submission{content: %{"source" => source}}),
+    do: SignalRules.ambient_ref(source)
+
+  defp ambient_ref(_submission), do: nil
 
   # The doc a Save leaves. Arming clears a stopped timer's warning, and so
   # does turning it off; turning it on starts the digest's window afresh,
@@ -383,6 +495,7 @@ defmodule Photon.Ambient do
 
   defp fire_now(job) do
     firing = %{
+      thinks?: thinks?(),
       allowed?: true,
       key: "#{job}:now:#{PhotonCore.ID.new()}",
       now: System.system_time(:millisecond)
@@ -402,6 +515,7 @@ defmodule Photon.Ambient do
 
     facts = %{
       on?: doc["on"] == true,
+      thinks?: firing.thinks?,
       allowed?: firing.allowed?,
       queued?: Signals.queued_ambient?(tx, job)
     }
@@ -437,9 +551,12 @@ defmodule Photon.Ambient do
             older: Text.digest_older(digest, at)
           })
 
-        # Every item it read goes: those shown, those counted, those
-        # folded into a newer one about the same subject, and those gone.
-        :ok = Signals.drop_items_tx(tx, Enum.map(items, & &1.id))
+        # Every item it read goes with it: those shown, those counted and
+        # those folded into a newer one about the same subject wait for
+        # Blip's run to settle (`settled_tx/2`); those gone are deleted.
+        carried = Enum.map(items, & &1.id) -- digest.gone
+        :ok = Signals.carry_items_tx(tx, carried, firing.key)
+        :ok = Signals.drop_items_tx(tx, digest.gone)
         :ok = put_doc_tx(tx, Map.put(doc, "last_sent_at", iso(firing.now)))
         {outcome, length(digest.new) + digest.more_new + smaller_count(digest)}
     end
@@ -467,11 +584,17 @@ defmodule Photon.Ambient do
     end
   end
 
-  # What the digest names besides the board: the prompts of the schedules
-  # its items name that still exist, and every project.
+  # What the digest names besides the board: the prompts and current tasks
+  # of the schedules its items name that still exist, and every project.
   defp places(items) do
     schedule_ids = for %{schedule_id: id} when is_binary(id) <- items, uniq: true, do: id
-    %{prompts: Schedules.prompts(schedule_ids), projects: Projects.list()}
+    schedules = Schedules.lookup(schedule_ids)
+
+    %{
+      prompts: Map.new(schedules, fn {id, schedule} -> {id, schedule.prompt} end),
+      tasks: Map.new(schedules, fn {id, schedule} -> {id, schedule.task_id} end),
+      projects: Projects.list()
+    }
   end
 
   # A stopped thread's line quotes its latest answer; failed and waiting

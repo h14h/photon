@@ -162,9 +162,15 @@ A new section in `PhotonWeb.SettingsLive`'s form, `#ambient`, after the
 Model section and before the Blip section. It shows whenever Blip can
 think (`ChatGPT.ready?/1`: signed in with plan use, or the scripted
 model), unlike the Model section, which needs a ChatGPT sign-in; so it
-shows with `PHOTON_MOCK_MODEL=1`. When it doesn't show, its fields
-aren't in the form, and a Save leaves ambient mode as it was (section
-2.3).
+shows with `PHOTON_MOCK_MODEL=1`. It also shows while the saved setting
+is on and Blip can't think (signed out, or plan use not allowed), so
+ambient mode can always be turned off: then it has only the checkbox,
+the hint, the status block and `#ambient-needs-model` ("Blip isn't
+signed in to ChatGPT, so digests and reviews skip until you sign in
+again above. You can still turn ambient mode off here."); the interval,
+the offset and the run-now buttons are left out and keep what was
+saved. When it doesn't show, its fields aren't in the form, and a Save
+leaves ambient mode as it was (section 2.3).
 
 - Heading: "Ambient mode".
 - Checkbox `settings[ambient]` (`#settings_ambient`), label: "Let Blip
@@ -188,8 +194,8 @@ aren't in the form, and a Save leaves ambient mode as it was (section
   every time in the browser's zone (`PhotonWeb.TimeComponents`), so the
   review's 09:00 is the browser's 09:00 too. No value (the hook didn't
   run) keeps what the doc has.
-- `#ambient-needs-consent`, shown when the saved setting is on, consent is
-  off and the hub isn't on the scripted model: "Schedules can't use your
+- `#ambient-needs-consent`, shown when the saved setting is on, Blip can
+  think, consent is off and the hub isn't on the scripted model: "Schedules can't use your
   plan while you're away, so digests and reviews will skip. Turn on "Let
   schedules use my plan while I'm away" above." (The Model section is the
   one above it; with no sign-in there is no consent to give, and the
@@ -197,14 +203,17 @@ aren't in the form, and a Save leaves ambient mode as it was (section
 - While the saved setting is on, a short status block `#ambient-state`:
   - `#ambient-next`: "Next digest around <local_time>; next review
     <local_time>."
-  - `#ambient-pending`: "2 changes waiting, and 3 smaller ones.", "2
-    changes waiting.", "3 smaller changes wait for the next digest with
-    something new." or "Nothing new yet." The counts are worked out with
-    the digest's own rule (section 3.3 step 5), so they match what a
-    digest would send.
+  - `#ambient-pending`: "2 changes waiting, and 3 you've seen or made
+    yourself.", "2 changes waiting.", "Nothing new yet. 3 changes you've
+    seen or made yourself wait for the next digest with something new."
+    or "Nothing new yet." The counts are worked out with the digest's own
+    rule (section 3.3 step 5), so they match what a digest would send.
+    ("Smaller" is this plan's word for the second kind; the owner never
+    reads it.)
   - `#ambient-last-digest` and `#ambient-last-review`, when there was
     one: "Last digest <local_time>: sent 3 changes." / "...: nothing new,
     skipped." / "...: skipped, schedules can't use your plan." / "...:
+    skipped, Blip wasn't signed in to ChatGPT." / "...:
     Blip still had the last one waiting, skipped." A queued one reads
     "sent 3 changes, after what Blip was doing."; a review "sent 2
     threads." or "no threads to review, skipped."
@@ -327,7 +336,7 @@ New to the owner (a digest is sent when at least one stands):
 | Item kind | Collected when | New to the owner at digest time when |
 |---|---|---|
 | `"finished"` | a run of the owner's thread (the owner's message, or a firing of a schedule the owner made) ends `"done"` without asking anything (`Signals.Rules.thread_update/2` in `:ambient` mode returns `:digest`) | the thread still reads `:unread` (finished and not opened since) |
-| `"schedule_stopped"` | a schedule's routine task fails (`Photon.Schedules.Routine.on_fail/3`), any schedule, Blip's or a project's | the schedule still exists |
+| `"schedule_stopped"` | a schedule's routine task fails (`Photon.Schedules.Routine.on_fail/3`), any schedule, Blip's or a project's | the schedule still exists and still has the task that failed; once the owner saves it again (a new task) or deletes it, the item is gone |
 
 Smaller changes (they ride along, never trigger a digest on their own):
 
@@ -362,28 +371,37 @@ A new table, `digest_items` (migration
 | Column | Type | Notes |
 |---|---|---|
 | `id` | string, primary key | `di_<suffix>` |
-| `key` | string, not null, unique index | what makes it once: the settle's signal key (`"settle:<submission id>"`, `Signals.Rules.key/1`), `"schedule:<task id>:failed"`, or `"<kind>:<random id>"` for the smaller kinds |
+| `key` | string, not null, unique index | its subject (`Signals.Rules.item_key/1`): `"<kind>:<thread id>"` for `"finished"`, `"thread_started"` and `"resolved"`, `"schedule_stopped:<schedule id>"`, `"file_written:<project id>:<name>"`, `"<kind>:<project id>"` for `"project_created"` and `"purpose_changed"`. A newer change to the same subject replaces the row, so the table holds at most one row per subject however long digests skip |
 | `kind` | string, not null | one of the kinds in section 3.1 |
 | `thread_id` | string, null | |
 | `project_id` | string, null | nil for Blip's own schedule |
 | `schedule_id` | string, null | |
 | `name` | string, null | a context file's name |
 | `writer` | string, null | a file's writer: a thread's ID or `"user"` |
+| `task_id` | string, null | a `"schedule_stopped"` item's failed routine task |
+| `digest_key` | string, null, indexed | the key of the posted digest that carries the item, nil while it waits |
 | `note` | string, null | at most 600 characters: the run's note (`State.note/2`), the routine's failure reason, or `"deleted"` for a deleted file |
 | `inserted_at` | `utc_datetime_usec`, not null | indexed |
 
 No foreign keys: an item whose thread, project or schedule is gone is
-dropped at digest time. Titles and names are read then, not stored, so a
+dropped at digest time. `task_id` and `digest_key` came with the build's
+review (section 17), in a migration of their own,
+`20261010020000_digest_items_carried.exs`, so a database that already
+ran the first one picks them up. Titles and names are read then, not stored, so a
 renamed thread reads with its new title.
 
 The same migration adds `reviewed_at` (`utc_datetime_usec`, null) to
 `threads` (section 4.2).
 
-`Signals.collect_tx(tx, item)` with `item = %{key:, kind:, thread_id:,
-project_id:, schedule_id:, name:, writer:, note:}` (missing fields nil)
-inserts the row when `mode_tx(tx) == :ambient`, and does nothing
-otherwise or when the key exists (`on_conflict: :nothing` on `key`). When
-it inserts, it announces `{:ambient_changed}` on `"ambient"`
+`Signals.collect_tx(tx, item)` with `item = %{kind:, thread_id:,
+project_id:, schedule_id:, task_id:, name:, writer:, note:}` (missing
+fields nil) works out the key from the item's subject and writes the
+row when `mode_tx(tx) == :ambient`, and does nothing otherwise or when
+the item lacks its subject. A row with the same key, waiting or carried
+by a digest Blip is still reading, is replaced (`on_conflict` replaces
+every field but the ID and key, and sets `digest_key` back to nil), so
+the newer change waits for the next digest. When it writes, it
+announces `{:ambient_changed}` on `"ambient"`
 (`Signals.ambient_topic/0`), so the Settings page's counts follow every
 kind of item, a failed schedule's included. It returns `:ok`. It runs on
 the harness's hook paths (the settle hook runs in the Scheduler's abort
@@ -397,12 +415,12 @@ The call sites:
 - `Threads.settled_tx/3`: today it asks
   `SignalRules.thread_update(facts, Signals.mode())`. It now passes
   `Signals.mode_tx(tx)`, so the mode is read in the settle's own commit.
-  A result of `:digest` calls `Signals.collect_tx/2` with the settle's
-  key, `"finished"`, the thread and project, and `State.note("done",
-  text)`. Any other kind posts as today.
+  A result of `:digest` calls `Signals.collect_tx/2` with
+  `"finished"`, the thread and project, and `State.note("done", text)`.
+  Any other kind posts as today.
 - `Schedules.Routine.on_fail/3`: after recording the failure on the row
-  it still carries, `"schedule_stopped"` with the schedule and its
-  project, and the reason.
+  it still carries, `"schedule_stopped"` with the schedule, the failed
+  task, its project, and the reason.
 - `Projects.write_file_tx/5` and `edit_file_tx/6`, after a write that
   succeeded, when the writer isn't `"blip"`: `"file_written"`.
   `create_file/2`, `save_file/4` and `delete_file/2`, inside their
@@ -431,20 +449,24 @@ The digest timer is a durable task of kind `"ambient"` with input
 `%{"job" => "digest", "first_at" => ms, "every_ms" => ms}`; its steps are
 the routine's shape (section 6). Each firing, `Ambient.fire_tx(tx,
 "digest", firing)` runs in the step's fenced commit, with `firing =
-%{allowed?: Schedules.consent?(), key: "digest:<task id>:<runs>", now:
-ms}` read before the commit, as `Routine` reads consent and the clock:
+%{thinks?: Ambient.thinks?(), allowed?: Schedules.consent?(), key:
+"digest:<task id>:<runs>", now: ms}` read before the commit, as
+`Routine` reads consent and the clock (`thinks?` is
+`ChatGPT.ready?(ChatGPT.status())`):
 
 1. Read the doc. Not on (only reachable through `digest_now/0`, since a
    retired timer's commit is fenced out): outcome `"off"`, and nothing
    is written (step 8 is skipped too).
-2. Not `allowed?`: outcome `"skipped_consent"`. Items stay.
+2. Not `thinks?` (signed out of ChatGPT, or plan use not allowed):
+   outcome `"skipped_model"`. Items stay. Blip's run could only fail.
+   Not `allowed?`: outcome `"skipped_consent"`. Items stay.
 3. A digest message is still queued in Blip's inbox
    (`Signals.queued_ambient?(tx, "digest")`): outcome `"skipped_queued"`.
    Items stay, and go in the next one.
 4. Read every pending item (`Signals.pending_tx/1`, oldest first), the
    board (`Threads.board(:all)`, three queries), and the places the
-   items name: the prompts of the schedules that still exist
-   (`Schedules.prompts/1`) and every project's slug and name
+   items name: the prompts and current tasks of the schedules that still
+   exist (`Schedules.lookup/1`) and every project's slug and name
    (`Projects.list/0`).
 5. `Ambient.Rules.digest(items, board, places)` sorts each item into new,
    smaller or gone, by the tables of section 3.1. It keeps one item per
@@ -464,7 +486,8 @@ ms}` read before the commit, as `Routine` reads consent and the clock:
    the rest, outcome `"skipped_nothing"`. No message, no model run.
 7. New rows: post one signal (`Signals.post_tx/2`) with key
    `firing.key`, the text, ref and older stub of section 3.4; delete
-   every item it read; outcome `"sent"` when Blip was idle
+   the gone items and mark every other item it read as carried by it
+   (`Signals.carry_items_tx/3`, `digest_key`); outcome `"sent"` when Blip was idle
    (`Tx.active_run/2` is nil), else `"queued"`. Write `"last_sent_at"`.
 8. Write `"last_digest"` (`at`, `outcome`, `count`: new plus smaller, with
    the more counts) on the doc and announce `{:ambient_changed}`.
@@ -479,8 +502,19 @@ comes back, then keeps to the interval.
 Every read and write of a firing is inside the step's commit, so a
 firing that the fence ignores (the timer was retired, or the step is a
 leftover from before a Scheduler restart) leaves the items for the next
-one and posts nothing. A posted digest and the deletion of the items it
-carries are one commit: no item is reported twice or lost.
+one and posts nothing. A posted digest and the marking of the items it
+carries are one commit: no item is reported twice.
+
+The items a digest carries are used up only once Blip has read it.
+Blip's settle hook (`Assistant.on_settled/3`) calls
+`Ambient.settled_tx/2` in the settle's commit: when the run on a digest
+answers, or the owner stops it, its items are deleted
+(`Signals.drop_carried_tx/2`); when it fails (the request failed, the
+round limit, the task failed) they wait for the next digest again
+(`Signals.release_items_tx/2`, which announces). A digest withdrawn from
+Blip's inbox (`Assistant.withdraw/1`, one commit with
+`Ambient.withdrawn_tx/2`) drops its items, as turning ambient mode off
+does.
 
 `Ambient.digest_now/0` runs the same `fire_tx/3` in a commit of its own,
 with `allowed?: true` and key `"digest:now:<random id>"`, and returns
@@ -649,7 +683,7 @@ many more. None: the review is skipped (outcome `"skipped_nothing"`), no
 message, no model run.
 
 `Ambient.fire_tx(tx, "review", firing)` follows the digest's steps 1 to
-3 (off, consent, a review still queued), then reads the board, applies
+3 (off, Blip can't think, consent, a review still queued), then reads the board, applies
 `review/3`, and for each stopped (`:quiet`) row it shows reads the
 thread's latest answer (`Threads.latest_answer/1`, at most 10 reads) for
 the text; failed and waiting lines use the board's detail. Its
@@ -661,7 +695,11 @@ showed (`Threads.mark_reviewed_tx(tx, ids, now)`, which announces
 `"last_review"` on the doc. Threads past the cut keep their
 `reviewed_at` and come in the next review. If ambient mode is turned off
 while the review still waits in Blip's inbox, the off commit clears
-those marks again (section 2.3).
+those marks again (section 2.3). So does the owner withdrawing the
+review from Blip's inbox (`Ambient.withdrawn_tx/2`), and Blip's run on
+it failing (`Ambient.settled_tx/2`): Blip never told the owner about
+those threads, so Home doesn't say they were in a review, and the next
+review lists them.
 
 `reviewed_at` is a fact (when a review listed the thread), not a state:
 `State.of/3` doesn't read it, and a thread raised in a review stays in
@@ -815,6 +853,10 @@ then. `Photon.Transcript.nothing_to_tell?(text)` is true when the trimmed
 text, lowercased, with a trailing `.` removed, is `[nothing to tell]`.
 
 - `Assistant.Notice`: an answer for which it is true makes no notice.
+  In a run that only reports (`report_only?`), an answer that makes tool
+  calls makes none either: what Blip says on the way ("Let me check the
+  pump thread.") isn't for the owner, and the run may yet end
+  `[nothing to tell]`. Only its final answer can speak.
 - `Assistant.settled_tx/3`: no `kind: "message"` activity row for it.
 - Blip's panel draws nothing for it: the stream item is an empty
   `<div id="message-<entry id>" class="hidden">`, so the stream keeps one
@@ -822,8 +864,14 @@ text, lowercased, with a trailing `.` removed, is `[nothing to tell]`.
   spacing leaves no gap (`Transcript.untold?/1`: an assistant entry whose
   text is nothing to tell and that makes no call; the components draw it
   so only with `hide_untold`, which Blip's panel passes and a thread's
-  page doesn't). A quiet digest leaves only its own collapsed line
-  (section 7.4).
+  page doesn't). Neither does it draw what that run said on the way:
+  when a digest's or review's run nobody else wrote into ends
+  `[nothing to tell]`, `Transcript.untold_run/2` names its earlier
+  answers (with their calls, whose results are drawn inside them), and
+  the panel hides their stream wrappers too (`@hidden`, drawn again when
+  the answer comes in a later batch). A quiet digest leaves only its own
+  collapsed line (section 7.4), as `Durable.Context` leaves the whole
+  run out of later requests.
 
 The check doesn't look at who asked: the owner never gets that answer
 from a run they typed into, and if they do, an empty reply is fine.
@@ -858,7 +906,8 @@ rather than reinvented, and the same for both jobs:
 
 - `step("start", task, runtime)`: wait until `first_at`, phase
   `"fire"`, checkpoint `%{"next_at" => first_at, "runs" => 0}`.
-- `step("fire", task, runtime)`: read consent and the clock, then
+- `step("fire", task, runtime)`: read whether Blip can think
+  (`Ambient.thinks?/0`), consent and the clock, then
   `Runtime.commit(runtime, fn tx -> ... end)` runs `Ambient.fire_tx/3`
   and returns the next wait, `{:wait, %{"until" => next}, "fire",
   %{"next_at" => next, "runs" => runs + 1}}`, with `next` from
@@ -920,13 +969,13 @@ Section 2.2 has the section's elements and words. Behaviour:
 
 `Ambient.status/0` returns `%{on?:, every_minutes:, next_digest_at:,
 next_review_at:, pending: %{new: n, smaller: n}, last_digest:,
-last_review:, stopped:, consent?:, scripted?:}`, with `last_digest` and
+last_review:, stopped:, consent?:, thinks?:, scripted?:}`, with `last_digest` and
 `last_review` as `%{at: DateTime.t(), outcome:, count:}` (nil before
 the first) and `stopped` as `%{job:, reason:}` or nil. `consent?` is the
 Settings consent alone, without the scripted model. `pending` comes from
 `Ambient.Rules.digest/3` over the pending items and the board (section
 3.3 step 5), so opening a finished thread moves it from "changes
-waiting" to "smaller", and the page never claims a change that "Send a
+waiting" to "you've seen or made yourself", and the page never claims a change that "Send a
 digest now" then calls nothing new.
 
 ### 7.3 The home page
@@ -939,20 +988,28 @@ digest now" then calls nothing new.
   skipping: schedules can't use your plan while you're away." with a
   link `#ambient-settings` ("Settings", to `/settings`). Without the
   consent check, a review skipped for consent would keep the warning up
-  for a day after the owner gave it (`AmbientText.skipping?/1`).
+  for a day after the owner gave it (`AmbientText.skipping/1`).
+- When the last digest or review was skipped because Blip wasn't signed
+  in to ChatGPT (`"skipped_model"`) and it still isn't,
+  `#ambient-signed-out`: "Digests and reviews are skipping: Blip isn't
+  signed in to ChatGPT." with the same link. The Settings page it links
+  to shows the Ambient mode switch in that state (section 2.2).
 - When a timer failed, `#ambient-stopped`: "Ambient mode stopped after
   an error. Save settings to start it again." with the same link
-  (`AmbientText.home_stopped?/1`). At most one of the two lines shows, the
+  (`AmbientText.home_stopped?/1`). At most one of the lines shows, the
   stopped one first, so the link's ID stays unique; the Save it asks for
-  then shows the consent line if that still applies.
+  then shows a skipping line if one still applies.
 - The Failed, Waiting on you (thread rows) and Gone quiet rows of a thread
   raised in a review since its last touch get a line `#<row id>-reviewed`
   with a `hero-eye-micro` icon: "In Blip's review <local_time>"
   (`#<row id>-reviewed-at`). `AmbientText.reviewed?(entry)` decides it
   from `reviewed_at` and the last touch.
-- It reads `Ambient.status/0` on mount and on `{:ambient_changed}`
-  (`Ambient.subscribe/0`). The board's `{:projects_changed, _}` re-read
-  already covers `reviewed_at`.
+- It reads `Ambient.brief/0` (the status without the pending counts and
+  next times, so no items or board) on mount, on `{:ambient_changed}`
+  (`Ambient.subscribe/0`) and on `{:chatgpt_changed, _}` and
+  `{:settings_changed, _}` (through `PhotonWeb.Shell`), so signing in
+  again or giving consent takes a warning down. The board's
+  `{:projects_changed, _}` re-read already covers `reviewed_at`.
 
 ### 7.4 Blip's panel
 
@@ -962,7 +1019,7 @@ digest now" then calls nothing new.
   `ambient_message/1` instead of the thread lines, `#message-<entry id>`:
   one muted line with an icon (`hero-newspaper-micro` for a digest,
   `hero-sun-micro` for a review) and the heading
-  `#message-<entry id>-heading`: "Digest: 3 new, 6 smaller" or "Daily
+  `#message-<entry id>-heading`: "Digest: 3 new, 6 you've seen" or "Daily
   review: 2 threads". It is a `<details>`; opened, it lists one line per
   item, `#message-<entry id>-item-<n>`: the project and thread (linked,
   as the signal lines are), then "finished", "stopped after an error",
@@ -1058,12 +1115,13 @@ its local node.
    30; echo pump fixed` and send it. Go Home straight away, without
    opening the thread again. After about 30 seconds the thread is listed
    under Finished.
-3. Open Settings: it says "1 change waiting, and 2 smaller ones." (the
+3. Open Settings: it says "1 change waiting, and 2 you've seen or made
+   yourself." (the
    new project and the thread's start ride along). Press "Send a digest
    now". The flash says "Sent Blip a digest of 3 changes." (the count is
    new plus smaller, as `"last_digest"` records it). Blip's bubble says
    the thread in Garden finished. Open Blip's panel: above the reply is
-   a faint "Digest: 1 new, 2 smaller" line (section 7.4's heading); tap
+   a faint "Digest: 1 new, 2 you've seen" line (section 7.4's heading); tap
    it to see the thread, with the project and the thread's start under
    "Already seen, or done by you".
 4. Press "Send a digest now" again: "Nothing new since the last digest."
@@ -1071,8 +1129,9 @@ its local node.
 5. In Blip's panel, send `remember ignore: pump`. On Garden's page press
    New thread and send `on local: $ sleep 30; echo pump checked`, then go
    Home and wait for it under Finished. Settings says "1 change waiting,
-   and 1 smaller one." Press "Send a digest now" ("Sent Blip a digest of
-   2 changes."): Blip's panel shows only a new "Digest: 1 new, 1 smaller"
+   and 1 you've seen or made yourself." Press "Send a digest now" ("Sent
+   Blip a digest of 2 changes."): Blip's panel shows only a new "Digest:
+   1 new, 1 you've seen"
    line, with no reply under it, and no bubble appears.
 6. On Garden's page press New thread and send `on local: $ sleep 600`;
    on the thread's page press Stop. Press New thread again and send
@@ -1124,19 +1183,19 @@ No changes.
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Signals` | boundary (API, no process) | deps add `Photon.Repo`, `Ecto`; exports add `DigestItem` | `mode/0` and `mode_tx/1` read the doc; `ambient_doc/0`, `ambient_doc_tx/1`, `put_ambient_doc_tx/2`; `ambient_topic/0`; `collect_tx/2` (total, announces on insert), `pending_tx/1`, `pending/0`, `drop_items_tx/2` (IDs or `:all`); `queued_ambient?/2`; `withdraw_ambient_tx/1` (returns the withdrawn refs); `post_tx/2` takes an optional `older:`. Moduledoc: the mode, the items, who writes the doc. |
+| `Photon.Signals` | boundary (API, no process) | deps add `Photon.Repo`, `Ecto`; exports add `DigestItem` | `mode/0` and `mode_tx/1` read the doc; `ambient_doc/0`, `ambient_doc_tx/1`, `put_ambient_doc_tx/2`; `ambient_topic/0`; `collect_tx/2` (total, keyed by subject, replaces an older row, announces on write), `pending_tx/1`, `pending/0` (not carried), `drop_items_tx/2` (IDs or `:all`), `carry_items_tx/3`, `drop_carried_tx/2`, `release_items_tx/2`; `queued_ambient?/2`; `withdraw_ambient_tx/1` (returns the withdrawn refs); `post_tx/2` takes an optional `older:`. Moduledoc: the mode, the items, who writes the doc. |
 | `Photon.Signals.DigestItem` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 3.2. |
-| `Photon.Signals.Rules` | core | unchanged | `mode` type adds `:ambient`; `thread_update/2`'s `:ambient` clause returns `:digest` for an owner's finished run (section 3.2); `ambient_kind/1` (a source's `"digest"` or `"review"` ref kind, or nil), for `queued_ambient?/2` and `withdraw_ambient_tx/1`. |
+| `Photon.Signals.Rules` | core | unchanged | `mode` type adds `:ambient`; `thread_update/2`'s `:ambient` clause returns `:digest` for an owner's finished run (section 3.2); `ambient_kind/1` (a source's `"digest"` or `"review"` ref kind, or nil), for `queued_ambient?/2` and `withdraw_ambient_tx/1`; `ambient_ref/1` (that ref); `item_key/1` (a digest item's subject key). |
 | `Photon.Projects` | boundary | deps add `Photon.Signals` | Collects `"file_written"`, `"project_created"`, `"purpose_changed"` (section 3.2). |
 | `Photon.Threads` | boundary | unchanged | `settled_tx/3` reads `Signals.mode_tx/1` and collects `"finished"`; `start/2` collects `"thread_started"`, `resolve/1` collects `"resolved"`. |
-| `Photon.Schedules` | boundary | deps add `Photon.Signals` | `Routine.on_fail/3` collects `"schedule_stopped"`. |
+| `Photon.Schedules` | boundary | deps add `Photon.Signals` | `Routine.on_fail/3` collects `"schedule_stopped"` with the failed task; `lookup/1` (prompt and current task by schedule ID) for the digest. |
 
 ### 10.4 apps/hub: the ambient context
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Ambient` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Projects, Photon.Schedules, Photon.Settings, Photon.Signals, Photon.Threads, PhotonCore], exports: []` | `status/0`, `subscribe/0`, `configure/1`, `digest_now/0`, `review_now/0`, `fire_tx/3` (`@doc false`, for the timer and tests, as `Routine.fire_tx/3` is), `every_options/0` (the three intervals). Moduledoc: the doc, the timers, collection, the fence, what turning off cancels, the cost bounds. |
-| `Photon.Ambient.Rules` | core | `use Boundary, type: :strict, deps: [Photon.Threads]` (it reaches `Threads.State` through the parent's export, as `Assistant.Readout` does) | `config/2` (`%{on?:, every_minutes:, offset_minutes:}`), `changes/3` (`%{digest: action, review: action, clear?:, turned_on?:}`, each action `:keep`, `:arm`, `:rearm` (retire the live one, then arm) or `:retire`), `next_firing/3`, `next_review/2`, `digest/3` (places: `%{prompts: %{id => prompt}, projects: [project]}`), `review/3` (`%{rows:, more:, quiet_after:}`), `last_touch/1`, `firing/1` (the skip decisions of section 3.3 steps 1 to 3 from `%{on?:, allowed?:, queued?:}`: `:go` or `{:skip, outcome}`), `every_options/0`. Takes the time as an argument. |
+| `Photon.Ambient` | boundary (API, no process) | `use Boundary, deps: [Photon.ChatGPT, Photon.Durable, Photon.Events, Photon.Projects, Photon.Schedules, Photon.Settings, Photon.Signals, Photon.Threads, PhotonCore], exports: []` | `status/0`, `brief/0` (Home's warnings), `thinks?/0` (`@doc false`), `settled_tx/2` and `withdrawn_tx/2` (Blip's settle and withdraw), `subscribe/0`, `configure/1`, `digest_now/0`, `review_now/0`, `fire_tx/3` (`@doc false`, for the timer and tests, as `Routine.fire_tx/3` is), `every_options/0` (the three intervals). Moduledoc: the doc, the timers, collection, the fence, what turning off cancels, the cost bounds. |
+| `Photon.Ambient.Rules` | core | `use Boundary, type: :strict, deps: [Photon.Threads]` (it reaches `Threads.State` through the parent's export, as `Assistant.Readout` does) | `config/2` (`%{on?:, every_minutes:, offset_minutes:}`), `changes/3` (`%{digest: action, review: action, clear?:, turned_on?:}`, each action `:keep`, `:arm`, `:rearm` (retire the live one, then arm) or `:retire`), `next_firing/3`, `next_review/2`, `digest/3` (places: `%{prompts: %{id => prompt}, tasks: %{id => task_id}, projects: [project]}`), `review/3` (`%{rows:, more:, quiet_after:}`), `last_touch/1`, `firing/1` (the skip decisions of section 3.3 steps 1 to 3 from `%{on?:, thinks?:, allowed?:, queued?:}`: `:go` or `{:skip, outcome}`), `every_options/0`. Takes the time as an argument. |
 | `Photon.Ambient.Text` | core | `use Boundary, type: :strict, deps: []` | `digest/2` (the digest and the doc), `digest_ref/2` (the digest and the key), `digest_older/2`, `review/3` (the review, the latest answers by thread ID, now), `review_ref/2`, `review_older/2`, `ago/2` (sections 3.4, 4.4). |
 | `Photon.Ambient.Timer` | worker logic (task kind) | inside `Photon.Ambient` | Section 6; `task/2` (a timer's task attributes for a job and `%{first_at:, every_ms:, version:}`, which `configure/1` and the tests use). Its `on_fail/3` writes through `Ambient.stopped_tx/4` (`@doc false`). |
 | `Photon.Threads` | boundary | unchanged | `mark_reviewed_tx/3`, `unmark_reviewed_tx/2`, `quiet_after/0` (the quiet threshold in seconds, which the state and the review share). |
@@ -1146,15 +1205,15 @@ No changes.
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Assistant` | boundary | unchanged (already depends on `Photon.Signals` and `Photon.Threads`) | `may_act_tx/3` with `report_only?`; `system_prompt/1` passes the mode; `settled_tx/3` skips `[nothing to tell]`. |
+| `Photon.Assistant` | boundary | deps add `Photon.Ambient` | `may_act_tx/3` with `report_only?`; `system_prompt/1` passes the mode; `settled_tx/3` skips `[nothing to tell]`; `on_settled/3` calls `Ambient.settled_tx/2` first; `withdraw/1` is one commit with `Ambient.withdrawn_tx/2` (`Durable.withdraw_tx/2`). |
 | `Photon.Assistant.Origin` | core | unchanged | Digest and review refs (section 5.1), `report_only?`, `report_only_message/0`. |
 | `Photon.Assistant.Prompt` | core | unchanged | `system_prompt/5` (section 5.5). |
-| `Photon.Assistant.Notice` | core | unchanged | No notice for `[nothing to tell]`. |
+| `Photon.Assistant.Notice` | core | unchanged | No notice for `[nothing to tell]`, nor for an answer with calls in a report-only run. |
 | `Photon.Assistant.MockAmbient` | core | `use Boundary, type: :strict, deps: [PhotonCore]` | Section 8.1: `unasked/2`, `help/0`. |
 | `Photon.Assistant.MockCoordinator` | core | deps add `Photon.Assistant.MockAmbient` | `unasked/2` tries `MockAmbient` first. |
 | `Photon.Assistant.MockScript` | core | deps add `Photon.Assistant.MockAmbient` | Help text. |
 | `Photon.Activity.Rules` | core | unchanged | `origin_label/2` for `"digest"` and `"review"`. |
-| `Photon.Transcript` | core | unchanged | `nothing_to_tell?/1`, `untold?/1`, `ambient_ref/1`, `ambient_lines/3` (the ref, the titles and when it was posted), `ambient_heading/1`, `ambient_more/1`, `ambient_chip/1`; `source_threads/1` reads digest and review items. |
+| `Photon.Transcript` | core | unchanged | `nothing_to_tell?/1`, `untold?/1`, `ambient_ref/1`, `ambient_lines/3` (the ref, the titles and when it was posted), `ambient_heading/1`, `ambient_more/1`, `ambient_chip/1`, `untold_run/2` (what a quiet digest's run said on the way); `source_threads/1` reads digest and review items. |
 | `Photon` | root | exports add `Ambient` | Moduledoc names `Photon.Ambient` and its pure modules. |
 
 ### 10.6 apps/hub: web
@@ -1163,7 +1222,7 @@ No changes.
 |---|---|---|
 | `PhotonWeb.SettingsLive` | server (LiveView) | Section 7.2, and the `.UtcOffset` colocated hook. |
 | `PhotonWeb.HomeLive` | server | Section 7.3. |
-| `PhotonWeb.AmbientText` | functional core (web formatting) | The hint words, `form_values/1`, the interval labels, `next/1`, `last/2` (a last outcome as words), `pending/1`, `ran/2` (the flashes), `needs_consent?/1`, `reviewed?/1`, and Home's `skipping?/1`, `skipping/0`, `home_stopped?/1`, `home_stopped/0`. |
+| `PhotonWeb.AmbientText` | functional core (web formatting) | The hint words, `form_values/1`, the interval labels, `next/1`, `last/2` (a last outcome as words), `pending/1`, `ran/2` (the flashes), `needs_consent?/1`, `needs_model?/1`, `needs_model/0`, `reviewed?/1`, and Home's `skipping/1`, `skipping_text/1`, `home_stopped?/1`, `home_stopped/0`. |
 | `PhotonWeb.ConversationComponents` | boundary (UI components) | `ambient_message/1`, the empty nothing-to-tell element (`entry/1`'s `hide_untold`), the queued chip. |
 | `PhotonWeb.ActivityText` | functional core (web formatting) | `wanted/1` reads no schedule for a follow-up whose `origin_id` is `"digest"` or `"review"`. |
 
@@ -1450,6 +1509,14 @@ The reasons, against what made the earlier steps need one:
 - The `Durable.Context` change is in the pure function that builds model
   input. It changes what a request contains, not which commits happen
   or in what order.
+- The build's review (section 17) kept this. A digest's items are now
+  used up in the commit that settles Blip's run on it, through the
+  profile's settle hook, which `HookOnce` already checks runs once per
+  settle; a withdrawn digest or review is handled in the withdraw's own
+  single commit; whether Blip can reach its model is read before the
+  firing's commit, as consent is. No firing gains a second commit, and
+  nothing commits outside a fence on a task's behalf, so no TLC config
+  was rerun.
 
 What would change this: a firing split over two commits, a write a
 firing makes outside its step's commit, or a timer that posts and then
@@ -1769,3 +1836,63 @@ the suggested fixes was rejected.
     could say it. Real. Applied: M6 leaves the nothing-to-tell activity
     case to M7, and M10's panel test appends the answer with
     `Tx.append` (sections 11.2, 11.3, 14).
+
+## 17. Review of the build
+
+A review of the finished build raised eleven findings, five of them
+duplicates of others. Each was checked against the code; all were real,
+and all were applied.
+
+1. A digest or review was used up when it was posted, so a Blip run that
+   failed lost it (major). Real: the posting commit deleted the items and
+   set `reviewed_at`, and a failed request settles its submissions
+   `"unanswered"` with no retry. Applied: a digest marks its items as
+   carried (`digest_key`) instead of deleting them; Blip's settle hook
+   (`Ambient.settled_tx/2`) deletes them when the run answers or is
+   stopped, and gives them back to wait when it fails; a failed review's
+   threads lose their mark (sections 3.3, 4.2). A migration of its own
+   adds the columns. Boundary tests run a digest and a review into a
+   failing request (the hub signed out) and check the items wait again
+   and the marks are gone.
+2. Timers kept firing while Blip couldn't reach its model, and Settings
+   then hid the only off switch (raised three times, major and minor).
+   Real: firings checked only the consent flag, and the Ambient section
+   rendered only while `ChatGPT.ready?/1`. Applied: a firing reads
+   `thinks?` before its commit and skips with `"skipped_model"`, keeping
+   items and marks; Settings shows the switch, the status and
+   `#ambient-needs-model` while ambient mode is on and Blip can't think;
+   Home shows `#ambient-signed-out` (sections 2.2, 3.3, 6, 7.3). Core,
+   boundary and LiveView tests.
+3. A stopped schedule stayed news after the owner saved it again. Real:
+   the item was new while the schedule row existed, and a Save keeps the
+   ID. Applied: the item stores the failed task (`task_id`), and it is
+   new only while the schedule still has that task; once saved again it
+   is gone (section 3.1). `Schedules.lookup/1` gives the current tasks.
+4. `digest_items` grew without bound while digests skipped (raised
+   twice), and every item made Home re-read all of them. Real: the
+   smaller kinds had random keys, and only a posted digest deleted folded
+   rows. Applied: every item is keyed by its subject
+   (`Signals.Rules.item_key/1`) and a newer change replaces the row, so
+   the table holds at most one row per thread, schedule, project or file;
+   Home reads `Ambient.brief/0`, which reads no items or board (sections
+   3.2, 7.3). Tests: a hundred writes to one file leave one row.
+5. The Settings and Home LiveView review tests raced Blip's failure
+   update, so the gate was flaky (major). Real: reproduced, 1 failure in
+   3 runs. Applied: both tests wait for Blip to be idle before running
+   the review.
+6. Withdrawing a queued review from Blip's chip left its threads marked.
+   Real. Applied: `Assistant.withdraw/1` is one commit with
+   `Ambient.withdrawn_tx/2`, which clears a review's marks and drops a
+   digest's carried items, as turning ambient mode off does (section
+   4.2), with a BlipLive test that withdraws from the chip.
+7. A digest Blip had nothing to say about could still put a bubble and
+   call rows on screen. Real: only the final `[nothing to tell]` entry
+   was silenced. Applied: in a report-only run an answer with tool calls
+   is never a notice, and when such a run ends untold the panel hides
+   what it said on the way (`Transcript.untold_run/2`), across batches
+   and on reload (section 5.4).
+8. "Smaller" reached the owner. Real. Applied: the panel's heading reads
+   "Digest: 1 new, 6 you've seen", the chip "Digest: 6 changes you've
+   seen", and Settings "2 changes waiting, and 6 you've seen or made
+   yourself." (sections 2.2, 7.4, 8.4). The word stays in this plan and
+   in what Blip reads.

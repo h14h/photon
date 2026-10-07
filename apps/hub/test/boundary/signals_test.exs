@@ -392,12 +392,10 @@ defmodule Photon.SignalsTest do
       ambient!(true)
       thread = ended!(project, "files")
 
-      [first | _] = Repo.all(from(s in Submission, where: s.conversation_id == ^thread.id))
-
       assert [%DigestItem{kind: "finished", id: "di_" <> _} = item] = items()
 
       assert {item.key, item.thread_id, item.project_id} ==
-               {"settle:" <> first.id, thread.id, project.id}
+               {"finished:" <> thread.id, thread.id, project.id}
 
       assert item.note == "This project has no context files yet."
       assert signals(blip) == []
@@ -416,8 +414,11 @@ defmodule Photon.SignalsTest do
       {[{"op.ack", _ack}], _routes} = Machines.snapshot("box", snapshot(op_id, "completed"), %{})
       idle!(thread.id)
 
-      assert [%DigestItem{kind: "finished", key: key}] = items()
-      assert key == "settle:" <> second.id
+      # The second input's answer, the run's last.
+      assert [%DigestItem{kind: "finished", key: key, note: note}] = items()
+      assert key == "finished:" <> thread.id
+      assert note == "This project has no context files yet."
+      refute Repo.get(Submission, second.id).status == "queued"
     end
 
     test "Blip's thread posts its update and makes no item; a failure posts and makes none", %{
@@ -438,43 +439,89 @@ defmodule Photon.SignalsTest do
 
     test "with ambient mode off nothing is collected", %{project: project} do
       _thread = ended!(project, "files")
-      assert collect!(%{key: "resolved:1", kind: "resolved", thread_id: "c_1"}) == :ok
+      assert collect!(%{kind: "resolved", thread_id: "c_1"}) == :ok
       ambient!(false)
       _thread = ended!(project, "files")
-      assert collect!(%{key: "resolved:2", kind: "resolved", thread_id: "c_1"}) == :ok
+      assert collect!(%{kind: "resolved", thread_id: "c_2"}) == :ok
       assert items() == []
     end
 
-    test "collect_tx/2 makes one row per key, announces each insert, and is total" do
+    test "collect_tx/2 keeps one row per subject, the newest, announces each, and is total" do
       ambient!(true)
       :ok = Photon.Events.subscribe(Signals.ambient_topic())
 
-      item = %{key: "file_written:1", kind: "file_written", project_id: "p_1", name: "notes.md"}
+      item = %{kind: "file_written", project_id: "p_1", name: "notes.md"}
       assert collect!(Map.put(item, :writer, "user")) == :ok
       assert_receive {:ambient_changed}
-      assert collect!(Map.put(item, :writer, "c_9")) == :ok
-      refute_receive {:ambient_changed}, 50
+      [%DigestItem{id: id}] = items()
 
-      assert [%DigestItem{writer: "user", name: "notes.md", thread_id: nil, note: nil}] = items()
+      # A thread writing the same file a hundred times leaves one row, its
+      # last write's.
+      for _n <- 1..100, do: assert(collect!(Map.put(item, :writer, "c_9")) == :ok)
+      assert_receive {:ambient_changed}
 
-      # Junk collects nothing and never raises; a long note is cut.
-      for junk <- [nil, "x", %{}, %{key: "k", kind: "nope"}, %{key: nil, kind: "resolved"}],
+      assert [%DigestItem{id: ^id, key: "file_written:p_1:notes.md", writer: "c_9"}] = items()
+
+      # Another file is another subject.
+      assert collect!(Map.merge(item, %{name: "plan.md", writer: "user"})) == :ok
+      assert length(items()) == 2
+
+      # Junk collects nothing and never raises: no kind, an unknown kind,
+      # or no subject (a field that isn't text is nil). A long note is cut.
+      for junk <- [
+            nil,
+            "x",
+            %{},
+            %{kind: "nope", thread_id: "c_1"},
+            %{kind: "resolved"},
+            %{kind: "schedule_stopped", schedule_id: 5}
+          ],
           do: assert(collect!(junk) == :ok)
 
+      assert length(items()) == 2
       long = String.duplicate("a", 700)
 
-      assert collect!(%{key: "s:1", kind: "schedule_stopped", schedule_id: 5, note: long}) ==
+      assert collect!(%{kind: "schedule_stopped", schedule_id: "sc_1", task_id: 7, note: long}) ==
                :ok
 
-      assert [_file, %DigestItem{kind: "schedule_stopped", schedule_id: nil, note: note}] =
-               items()
+      assert %DigestItem{key: "schedule_stopped:sc_1", task_id: nil, note: note} =
+               Enum.find(items(), &(&1.kind == "schedule_stopped"))
 
       assert String.length(note) == 600
     end
 
+    test "a digest carries its items until they are dropped or released" do
+      ambient!(true)
+      for n <- 1..3, do: collect!(%{kind: "resolved", thread_id: "c_#{n}"})
+      [one, two, three] = items()
+      :ok = Photon.Events.subscribe(Signals.ambient_topic())
+
+      assert Durable.commit(&Signals.carry_items_tx(&1, [one.id, two.id], "digest:t_1:0")) == :ok
+      assert Enum.map(Signals.pending(), & &1.id) == [three.id]
+
+      # A change to a carried subject waits for the next digest; the digest
+      # that carried the older one doesn't take it.
+      assert collect!(%{kind: "resolved", thread_id: "c_2"}) == :ok
+      assert_receive {:ambient_changed}
+      assert Enum.sort(Enum.map(Signals.pending(), & &1.thread_id)) == ["c_2", "c_3"]
+
+      # Blip's run failed: what it still carries waits again, announced.
+      assert Durable.commit(&Signals.release_items_tx(&1, "digest:t_1:0")) == :ok
+      assert_receive {:ambient_changed}
+      assert length(Signals.pending()) == 3
+
+      # Carried again, and read: gone. Releasing nothing announces nothing.
+      ids = Enum.map(items(), & &1.id)
+      :ok = Durable.commit(&Signals.carry_items_tx(&1, ids, "digest:t_1:1"))
+      assert Durable.commit(&Signals.drop_carried_tx(&1, "digest:t_1:1")) == :ok
+      assert items() == []
+      assert Durable.commit(&Signals.release_items_tx(&1, "digest:t_1:1")) == :ok
+      refute_receive {:ambient_changed}, 50
+    end
+
     test "drop_items_tx/2 deletes the given items, or all" do
       ambient!(true)
-      for n <- 1..3, do: collect!(%{key: "resolved:#{n}", kind: "resolved", thread_id: "c_#{n}"})
+      for n <- 1..3, do: collect!(%{kind: "resolved", thread_id: "c_#{n}"})
       [one, _two, three] = items()
 
       assert Durable.commit(&Signals.drop_items_tx(&1, [one.id, three.id])) == :ok

@@ -44,7 +44,7 @@ defmodule PhotonWeb.ConversationComponents do
   line. A queued signal message's chip names the threads it is from.
 
   In ambient mode a digest or a daily review is a signal message too. It
-  shows as one collapsed line, "Digest: 3 new, 6 smaller" or "Daily
+  shows as one collapsed line, "Digest: 3 new, 6 you've seen" or "Daily
   review: 2 threads", which opens to a line per item it carried
   (`ambient_message/1`): the owner reads Blip's reply, not the raw
   digest, unless they open it. Waiting in Blip's inbox, its chip says the
@@ -385,7 +385,7 @@ defmodule PhotonWeb.ConversationComponents do
   @doc """
   A digest or a daily review in Blip's conversation (ambient mode), as one
   muted line that opens: its heading (`#<id>-heading`), "Digest: 3 new, 6
-  smaller" or "Daily review: 2 threads", and opened, a line per item it
+  you've seen" or "Daily review: 2 threads", and opened, a line per item it
   lists (`#<id>-item-<n>`, `Photon.Transcript.ambient_lines/3`): the
   project and the thread (linked, under its current title), the context
   file, schedule or project, and what happened. A digest's changes the

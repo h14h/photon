@@ -553,10 +553,18 @@ defmodule Photon.SchedulesTest do
       assert_receive {:ambient_changed}
 
       assert [%DigestItem{kind: "schedule_stopped"} = item] = Repo.all(DigestItem)
-      key = "schedule:#{saved.task_id}:failed"
 
-      assert {item.key, item.schedule_id, item.project_id, item.note} ==
-               {key, schedule.id, project.id, "the project no longer exists"}
+      assert {item.key, item.schedule_id, item.task_id, item.project_id, item.note} ==
+               {"schedule_stopped:" <> schedule.id, schedule.id, saved.task_id, project.id,
+                "the project no longer exists"}
+
+      # The digest asks which task each schedule has now, to tell a
+      # schedule saved again since.
+      assert Schedules.lookup([schedule.id, "sc_missing"]) == %{
+               schedule.id => %{prompt: saved.prompt, task_id: saved.task_id}
+             }
+
+      assert Schedules.lookup([]) == %{}
     end
 
     test "changes nothing for a task the row no longer names", %{project: project} do

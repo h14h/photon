@@ -42,7 +42,8 @@ defmodule Photon.Transcript do
       its reply to a digest or daily review with nothing worth the
       owner's attention, which makes no bubble and no activity row, and
       whether an entry is such an answer, which Blip's panel draws as
-      nothing (`untold?/1`)
+      nothing (`untold?/1`), along with what that run said on the way
+      (`untold_run/2`)
     * a digest or daily review in Blip's panel (ambient mode): the ref a
       signal message carries (`ambient_ref/1`), its collapsed line
       (`ambient_heading/1`), the lines it opens to (`ambient_lines/3`,
@@ -176,6 +177,51 @@ defmodule Photon.Transcript do
     do: Message.tool_calls(message) == [] and nothing_to_tell?(Message.text_of(message))
 
   def untold?(_entry), do: false
+
+  @typedoc """
+  What `untold_run/2` carries from one batch to the next: whether the
+  run in progress is a digest's or review's alone (`ambient?`), the IDs
+  of the answers it made on the way, and whether the last run ended.
+  """
+  @type untold_state :: %{ambient?: boolean(), ids: [String.t()], ended?: boolean()}
+
+  @doc "The state before any entry, for `untold_run/2`: no run in progress."
+  @spec untold_initial() :: untold_state()
+  def untold_initial, do: %{ambient?: false, ids: [], ended?: true}
+
+  @doc """
+  What else Blip's panel hides in a batch of entries that follows the
+  batches `state` has seen: when a digest's or daily review's run that
+  nobody else wrote into ends `[nothing to tell]` (`untold?/1`), the
+  answers it made on the way (their text and tool calls, with the
+  results drawn inside them). The owner wasn't told anything, so the
+  panel leaves only the digest's own line, as Blip's later requests
+  leave the whole run out. Returns those answers' IDs, which may be
+  from earlier batches, and the state for the next batch.
+  """
+  @spec untold_run([Entry.t() | map()], untold_state()) :: {[String.t()], untold_state()}
+  def untold_run(entries, state), do: Enum.flat_map_reduce(entries, state, &untold_step/2)
+
+  # A user entry starts the next run, or joins the one in progress (an
+  # owner's steer), which is then no longer the digest's alone.
+  defp untold_step(%{kind: "user", data: data}, %{ended?: true}),
+    do: {[], %{ambient?: ambient_ref(data["source"]) != nil, ids: [], ended?: false}}
+
+  defp untold_step(%{kind: "user"}, state), do: {[], %{state | ambient?: false}}
+
+  defp untold_step(%{kind: "assistant", id: id, data: %{"message" => message}} = entry, state) do
+    cond do
+      Message.tool_calls(message) != [] -> {[], %{state | ids: [id | state.ids]}}
+      state.ambient? and untold?(entry) -> {state.ids, %{state | ids: [], ended?: true}}
+      true -> {[], %{state | ids: [], ended?: true}}
+    end
+  end
+
+  # The hub's notices about questions come between runs' entries; any
+  # other error ends the run.
+  defp untold_step(%{kind: "error", data: %{"notice" => true}}, state), do: {[], state}
+  defp untold_step(%{kind: "error"}, state), do: {[], %{state | ids: [], ended?: true}}
+  defp untold_step(_entry, state), do: {[], state}
 
   @doc "Whether an entry is shown in the conversation on its own."
   @spec shown?(Entry.t()) :: boolean()
@@ -336,17 +382,18 @@ defmodule Photon.Transcript do
   def ambient_ref(_source), do: nil
 
   @doc ~S"""
-  A digest's or daily review's collapsed line: "Digest: 3 new, 6
-  smaller" (counting the items it shows and the ones it had no room
-  for), or "Daily review: 2 threads".
+  A digest's or daily review's collapsed line: "Digest: 3 new, 6 you've
+  seen" (counting the items it shows and the ones it had no room for;
+  the second count is what its opened list calls "Already seen, or done
+  by you"), or "Daily review: 2 threads".
   """
   @spec ambient_heading(map()) :: String.t()
   def ambient_heading(%{"kind" => "digest"} = ref) do
     case digest_counts(ref) do
       {0, 0} -> "Digest"
       {new, 0} -> "Digest: #{new} new"
-      {0, smaller} -> "Digest: #{smaller} smaller"
-      {new, smaller} -> "Digest: #{new} new, #{smaller} smaller"
+      {0, seen} -> "Digest: #{seen} you've seen"
+      {new, seen} -> "Digest: #{new} new, #{seen} you've seen"
     end
   end
 
@@ -364,7 +411,7 @@ defmodule Photon.Transcript do
   def ambient_chip(%{"kind" => "digest"} = ref) do
     case digest_counts(ref) do
       {0, 0} -> "Digest"
-      {0, smaller} -> "Digest: " <> count(smaller, "smaller change")
+      {0, seen} -> "Digest: " <> count(seen, "change") <> " you've seen"
       {new, _smaller} -> "Digest: " <> count(new, "new change")
     end
   end

@@ -234,7 +234,9 @@ The home page shows the state layer directly ("needs you", "running",
 >
 > The setting is in Settings, under Ambient mode: a switch, off by
 > default, and how often the digest comes (every hour, 3 hours or 6
-> hours; 3 by default). The section shows whenever Blip can think. The
+> hours; 3 by default). The section shows whenever Blip can think, and
+> while ambient mode is on even when Blip can't, so it can always be
+> turned off. The
 > setting lives in the hub's database rather than the settings file, so
 > turning it on or off and starting or stopping its two timers happen in
 > one step. Off, Blip hears exactly what quiet mode lets through, its
@@ -247,11 +249,14 @@ The home page shows the state layer directly ("needs you", "running",
 > resolved. At each interval the digest timer reads that list. Only a
 > finished run you haven't opened yet, or a stopped schedule, can send a
 > digest. Everything else rides along in compact form, and with nothing
-> new there is no message and no model run; the smaller changes wait for
-> the next digest that has something new. A digest is one message in
-> Blip's conversation, at most 20 new and 15 smaller changes, and the
-> changes it carries are cleared in the same commit that posts it, so
-> none is reported twice or lost.
+> new there is no message and no model run; the changes you've seen or
+> made yourself wait for the next digest that has something new. The
+> list keeps one entry per thread, schedule, project or file, the newest,
+> so it stays small however long digests skip. A schedule you saved again
+> after it stopped is no longer news. A digest is one message in Blip's
+> conversation, at most 20 new and 15 other changes. The changes it
+> carries are cleared once Blip has answered it, and wait for the next
+> digest if Blip's run failed, so none is reported twice or lost.
 >
 > The daily review comes around 09:00 at your browser's UTC offset,
 > which Settings sends with every Save. It lists threads that are
@@ -275,7 +280,8 @@ The home page shows the state layer directly ("needs you", "running",
 >
 > When nothing is worth saying, Blip answers `[nothing to tell]`. That
 > makes no bubble and no activity row, and draws nothing in the panel
-> beyond the digest's own line.
+> beyond the digest's own line: what Blip said and checked on the way is
+> hidden too, and only its final answer in such a run can make a bubble.
 >
 > Blip's conversation is cleared only when you press Fresh context, so
 > digests would otherwise make every later request bigger. Once a later
@@ -285,10 +291,13 @@ The home page shows the state layer directly ("needs you", "running",
 >
 > Each digest and review is a run on your ChatGPT plan, so both obey the
 > consent for scheduled work in Settings: while schedules can't use your
-> plan, they skip, and Settings and Home say so. A digest or review also
-> skips while the last one still waits for Blip. Turning ambient mode off
-> stops both timers, drops what was waiting, and takes back a digest or
-> review Blip hasn't started on.
+> plan, they skip, and Settings and Home say so. They also skip while
+> Blip isn't signed in to ChatGPT, since its run could only fail. A
+> digest or review also skips while the last one still waits for Blip.
+> A review whose run failed, or that you withdraw from Blip's inbox,
+> clears its threads' marks so the next review lists them again.
+> Turning ambient mode off stops both timers, drops what was waiting,
+> and takes back a digest or review Blip hasn't started on.
 
 ## Hub and nodes
 

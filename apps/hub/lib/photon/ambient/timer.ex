@@ -13,7 +13,8 @@ defmodule Photon.Ambient.Timer do
   commit that turns ambient mode on or changes it, and retires it in the
   commit that turns it off or replaces it.
 
-  A firing reads consent and the clock, then runs `Photon.Ambient.fire_tx/3`
+  A firing reads whether Blip can reach its model, consent and the clock,
+  then runs `Photon.Ambient.fire_tx/3`
   and its next wait in one `Photon.Durable.Runtime.commit/2`: a step whose
   task was retired, or that is left over from before a Scheduler restart,
   commits nothing. The signal's key is the task and its run count, so a
@@ -68,6 +69,7 @@ defmodule Photon.Ambient.Timer do
     runs = task.checkpoint["runs"] || 0
 
     firing = %{
+      thinks?: Ambient.thinks?(),
       allowed?: Schedules.consent?(),
       key: "#{job}:#{task.id}:#{runs}",
       now: System.system_time(:millisecond)

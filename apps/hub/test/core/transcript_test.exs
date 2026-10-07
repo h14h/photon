@@ -159,6 +159,72 @@ defmodule Photon.TranscriptTest do
       refute Transcript.untold?(user_entry("[nothing to tell]"))
       refute Transcript.untold?(%{})
     end
+
+    defp digest_entry(id, kind \\ "digest") do
+      entry(
+        "user",
+        %{
+          "message" => Message.user("[Digest] ..."),
+          "source" => %{"kind" => "signal", "signals" => [%{"kind" => kind}]}
+        },
+        id: id
+      )
+    end
+
+    defp checking(id, call_id),
+      do: assistant_entry("Let me check.", [call("read_thread", %{}, call_id)], id: id)
+
+    test "hides what a quiet digest's or review's run said on the way, across batches" do
+      for kind <- ["digest", "review"] do
+        {first, state} =
+          Transcript.untold_run(
+            [digest_entry("e_1", kind), checking("e_2", "c1"), tool_result_entry("c1", "...")],
+            Transcript.untold_initial()
+          )
+
+        {second, state} =
+          Transcript.untold_run(
+            [checking("e_4", "c2"), assistant_entry("[nothing to tell]", [], id: "e_5")],
+            state
+          )
+
+        assert first == []
+        assert Enum.sort(second) == ["e_2", "e_4"]
+        assert state.ended?
+      end
+    end
+
+    test "keeps it when the run told something, failed, or isn't a digest's alone" do
+      told = [digest_entry("e_1"), checking("e_2", "c1"), assistant_entry("Pump fixed.")]
+      failed = [digest_entry("e_1"), checking("e_2", "c1"), entry("error", %{"message" => "x"})]
+
+      steered = [
+        digest_entry("e_1"),
+        checking("e_2", "c1"),
+        user_entry("and the pump?"),
+        assistant_entry("[nothing to tell]")
+      ]
+
+      typed = [user_entry("hi"), checking("e_2", "c1"), assistant_entry("[nothing to tell]")]
+
+      for entries <- [told, failed, steered, typed] do
+        assert {[], %{ended?: true}} = Transcript.untold_run(entries, Transcript.untold_initial())
+      end
+
+      # A question's notice between the run's entries doesn't end it.
+      notice = entry("error", %{"message" => "Passed on.", "notice" => true})
+
+      assert {["e_2"], _state} =
+               Transcript.untold_run(
+                 [
+                   digest_entry("e_1"),
+                   checking("e_2", "c1"),
+                   notice,
+                   assistant_entry("[nothing to tell]")
+                 ],
+                 Transcript.untold_initial()
+               )
+    end
   end
 
   describe "the in-flight answer" do
@@ -850,7 +916,7 @@ defmodule Photon.TranscriptTest do
     end
 
     test "a digest's heading, chip and the rest it carried" do
-      assert Transcript.ambient_heading(@digest) == "Digest: 7 new, 10 smaller"
+      assert Transcript.ambient_heading(@digest) == "Digest: 7 new, 10 you've seen"
       assert Transcript.ambient_chip(@digest) == "Digest: 7 new changes"
       assert Transcript.ambient_more(@digest) == "And 7 more."
 
@@ -860,8 +926,8 @@ defmodule Photon.TranscriptTest do
       assert Transcript.ambient_more(one) == nil
 
       smaller = %{"kind" => "digest", "items" => [%{"new" => false}], "more_smaller" => 1}
-      assert Transcript.ambient_heading(smaller) == "Digest: 2 smaller"
-      assert Transcript.ambient_chip(smaller) == "Digest: 2 smaller changes"
+      assert Transcript.ambient_heading(smaller) == "Digest: 2 you've seen"
+      assert Transcript.ambient_chip(smaller) == "Digest: 2 changes you've seen"
 
       assert Transcript.ambient_heading(%{"kind" => "digest"}) == "Digest"
       assert Transcript.ambient_chip(%{"kind" => "digest", "more" => "x"}) == "Digest"

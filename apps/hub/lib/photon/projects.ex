@@ -408,12 +408,9 @@ defmodule Photon.Projects do
     })
   end
 
-  # Each of these items is its own change, so its key is new every time;
-  # the digest folds them per project and file when it reads them.
-  defp collect_tx(tx, kind, fields) do
-    key = kind <> ":" <> PhotonCore.ID.new()
-    Signals.collect_tx(tx, Map.merge(fields, %{key: key, kind: kind}))
-  end
+  # Keyed by subject (`Photon.Signals.Rules.item_key/1`): a newer write
+  # to the same file, or edit of the same project, replaces the older row.
+  defp collect_tx(tx, kind, fields), do: Signals.collect_tx(tx, Map.put(fields, :kind, kind))
 
   ## Writing
 

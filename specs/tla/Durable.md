@@ -614,8 +614,13 @@ config was rerun, and the counts under "Results" stand.
   commit, which `HookOnce` already checks runs once per settle; and the
   other items are written inside the owner's or the file tool's existing
   commit.
-* The new claims are each about one commit. A digest posts and deletes
-  the items it carries together, so no item is reported twice or lost.
+* The new claims are each about one commit. A digest posts and marks
+  the items it carries together, so no item is reported twice; the
+  commit that settles Blip's run on it deletes them, or gives them back
+  when the run failed, so none is lost. That commit is the settle hook's
+  (`Ambient.settled_tx/2` from Blip's `on_settled/3`), which `HookOnce`
+  covers, and withdrawing a queued digest or review is the withdraw's
+  own single commit.
   The off commit retires both timers, deletes the items, withdraws a
   queued digest or review and clears the withdrawn review's marks
   together, and every collector reads the mode in its own commit, so

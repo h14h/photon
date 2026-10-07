@@ -564,7 +564,7 @@ defmodule PhotonWeb.ConversationComponentsTest do
       html = entry_html(entry, titles: %{"c_1" => "Fix the pump"})
       text = fn selector -> html |> LazyHTML.query(selector) |> LazyHTML.text() |> squish() end
 
-      assert text.("#message-e_1-heading") == "Digest: 1 new, 2 smaller"
+      assert text.("#message-e_1-heading") == "Digest: 1 new, 2 you've seen"
       assert [_details] = Enum.to_list(LazyHTML.query(html, "#message-e_1 details"))
       assert text.("#message-e_1-item-0") == "Garden / Fix the pump finished"
 

@@ -710,10 +710,10 @@ defmodule Photon.Threads do
 
   # An owner's start or Resolve, collected for the next digest while
   # ambient mode is on (`Photon.Signals.collect_tx/2` reads the mode in
-  # this commit). Each is its own change, so its key is new every time.
+  # this commit). One row per thread and kind: a second Resolve replaces
+  # the first.
   defp collect_tx(tx, kind, thread) do
     Signals.collect_tx(tx, %{
-      key: kind <> ":" <> PhotonCore.ID.new(),
       kind: kind,
       thread_id: thread.id,
       project_id: thread.project_id
@@ -986,7 +986,7 @@ defmodule Photon.Threads do
   # `Photon.Signals.Rules` from the settled submissions' sources, in the
   # mode read in this commit; the signal names the thread and project as
   # they are now. In ambient mode the owner's finished run is a digest
-  # item instead, under the key its signal would have had.
+  # item instead, which replaces an earlier finish of the same thread.
   defp signal_tx(tx, thread, settled, text) do
     case SignalRules.thread_update(signal_facts(settled, text), Signals.mode_tx(tx)) do
       nil ->
@@ -994,7 +994,6 @@ defmodule Photon.Threads do
 
       :digest ->
         Signals.collect_tx(tx, %{
-          key: settle_key(settled),
           kind: "finished",
           thread_id: thread.id,
           project_id: thread.project_id,

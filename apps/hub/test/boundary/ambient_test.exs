@@ -23,9 +23,10 @@ defmodule Photon.AmbientTest do
   import Ecto.Query, only: [from: 2]
   import Photon.Eventually
 
-  alias Photon.{Ambient, Assistant, Projects, Signals, Threads}
+  alias Photon.{Ambient, Assistant, Projects, Schedules, Signals, Threads}
   alias Photon.Ambient.{Rules, Timer}
   alias Photon.Durable.{Runtime, Scheduler, Store, Submission, TaskRecord, Tx}
+  alias Photon.Schedules.Routine
   alias Photon.Signals.DigestItem
   alias Photon.Threads.Thread
   alias PhotonCore.Message
@@ -292,10 +293,11 @@ defmodule Photon.AmbientTest do
       assert doc()["last_sent_at"] == nil
     end
 
-    test "posts what is new with the smaller changes, and deletes every item it read", %{
-      project: project,
-      blip: blip
-    } do
+    test "posts what is new with the smaller changes, and uses up every item once Blip answers",
+         %{
+           project: project,
+           blip: blip
+         } do
       on!()
       thread = ended!(project, "files")
       assert [%{kind: "thread_started"}, %{kind: "finished"}] = items()
@@ -304,7 +306,9 @@ defmodule Photon.AmbientTest do
       :ok = Ambient.subscribe()
       assert %{outcome: "sent", count: 2, at: at} = Ambient.digest_now()
       assert_receive {:ambient_changed}
-      assert items() == []
+      # Carried by the digest until Blip's run on it settles.
+      assert Signals.pending() == []
+      assert Enum.all?(items(), &String.starts_with?(&1.digest_key, "digest:now:"))
 
       assert [digest] = posted(blip, "digest")
       assert text(digest) =~ ~r/^\[Digest\] Since ambient mode was turned on/
@@ -329,6 +333,7 @@ defmodule Photon.AmbientTest do
       assert %{"outcome" => "sent", "count" => 2} = doc()["last_digest"]
       assert %{last_digest: %{outcome: "sent", count: 2}} = Ambient.status()
       idle!(blip)
+      assert items() == []
 
       # The next one has nothing new.
       assert %{outcome: "skipped_nothing"} = Ambient.digest_now()
@@ -375,13 +380,50 @@ defmodule Photon.AmbientTest do
       _thread = ended!(project, "files")
       assert %{outcome: "queued"} = Ambient.digest_now()
       _thread = ended!(project, "files again")
-      waiting = items()
+      waiting = Signals.pending()
       assert length(waiting) == 2
 
       assert %{outcome: "skipped_queued", count: 0} = Ambient.digest_now()
-      assert items() == waiting
+      assert Signals.pending() == waiting
       assert [_digest] = posted(blip, "digest")
       unpark_blip!(blip, parked)
+    end
+
+    test "a stopped schedule is news until the owner saves it again", %{
+      project: project,
+      blip: blip
+    } do
+      on!()
+      at = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+
+      params = %{
+        "prompt" => "Check the gutters",
+        "at" => at,
+        "repeat" => "every",
+        "every" => "1",
+        "unit" => "days",
+        "target" => "new_thread"
+      }
+
+      {:ok, schedule} = Schedules.create({:project, project.id}, params)
+      task = Durable.task(schedule.task_id)
+
+      :ok =
+        Durable.commit(fn tx ->
+          _failed = Tx.finish(tx, task, "failed", %{"status" => "failed", "reason" => "boom"})
+          Routine.on_fail(task, "boom", tx)
+        end)
+
+      assert [%{kind: "schedule_stopped", task_id: task_id}] = items()
+      assert task_id == task.id
+      assert Ambient.status().pending == %{new: 1, smaller: 0}
+
+      # Saved again: it runs on a new task, so its failure is no longer news.
+      {:ok, _saved} = Schedules.update(schedule.id, params, schedule.version)
+      assert Ambient.status().pending == %{new: 0, smaller: 0}
+      assert %{outcome: "skipped_nothing"} = Ambient.digest_now()
+      assert posted(blip, "digest") == []
+      assert items() == []
     end
 
     test "with ambient mode off it does nothing", %{blip: blip} do
@@ -395,7 +437,13 @@ defmodule Photon.AmbientTest do
   test "a firing without consent skips and keeps the items", %{project: project, blip: blip} do
     on!()
     _thread = ended!(project, "files")
-    firing = %{allowed?: false, key: "digest:test:0", now: System.system_time(:millisecond)}
+
+    firing = %{
+      thinks?: true,
+      allowed?: false,
+      key: "digest:test:0",
+      now: System.system_time(:millisecond)
+    }
 
     assert %{outcome: "skipped_consent"} = Durable.commit(&Ambient.fire_tx(&1, "digest", firing))
     assert length(items()) == 2
@@ -403,6 +451,126 @@ defmodule Photon.AmbientTest do
     assert %{"outcome" => "skipped_consent"} = doc()["last_digest"]
     assert doc()["last_sent_at"] == nil
     assert %{last_digest: %{outcome: "skipped_consent"}} = Ambient.status()
+  end
+
+  describe "when Blip can't think" do
+    setup do
+      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+      :ok
+    end
+
+    # As if the owner signed out of ChatGPT, or a token refresh failed: the
+    # hub leaves the scripted model, and nobody is signed in.
+    defp signed_out!, do: Application.put_env(:photon, :mock_model, false)
+
+    test "a firing skips, posts nothing, and keeps the items and the marks", %{
+      project: project,
+      blip: blip
+    } do
+      failed = ended!(project, "fail: the ladder is missing")
+      _at = backdate!(failed, 4)
+      idle!(blip)
+      on!()
+      _thread = ended!(project, "files")
+      signed_out!()
+
+      assert %{outcome: "skipped_model", count: 0} = Ambient.digest_now()
+      assert %{outcome: "skipped_model", count: 0} = Ambient.review_now()
+      assert length(Signals.pending()) == 2
+      assert Threads.get(failed).reviewed_at == nil
+      assert posted(blip, "digest") == [] and posted(blip, "review") == []
+      assert %{"outcome" => "skipped_model"} = doc()["last_digest"]
+
+      assert %{thinks?: false, last_review: %{outcome: "skipped_model"}} = Ambient.brief()
+    end
+
+    test "a digest whose run fails gives its items back for the next one", %{
+      project: project,
+      blip: blip
+    } do
+      on!()
+      parked = park_blip!(blip)
+      thread = ended!(project, "files")
+      assert %{outcome: "queued"} = Ambient.digest_now()
+      assert Signals.pending() == []
+
+      # Blip reaches the digest after its sign-in lapsed: the request fails.
+      signed_out!()
+      unpark_blip!(blip, parked)
+      [digest] = posted(blip, "digest")
+      assert %{status: "unanswered"} = await_settled(blip, digest.id)
+      idle!(blip)
+
+      assert [%{kind: "thread_started"}, %{kind: "finished", thread_id: ^thread}] =
+               Signals.pending()
+
+      # Signed in again, the next digest carries them.
+      Application.put_env(:photon, :mock_model, true)
+      assert %{outcome: "sent", count: 2} = Ambient.digest_now()
+      idle!(blip)
+      assert items() == []
+    end
+
+    test "a review whose run fails clears its threads' marks", %{
+      project: project,
+      blip: blip
+    } do
+      failed = ended!(project, "fail: the ladder is missing")
+      _at = backdate!(failed, 4)
+      idle!(blip)
+      on!()
+      parked = park_blip!(blip)
+      assert %{outcome: "queued", count: 1} = Ambient.review_now()
+      assert %DateTime{} = Threads.get(failed).reviewed_at
+
+      signed_out!()
+      unpark_blip!(blip, parked)
+      [review] = posted(blip, "review")
+      assert %{status: "unanswered"} = await_settled(blip, review.id)
+      idle!(blip)
+
+      assert Threads.get(failed).reviewed_at == nil
+    end
+  end
+
+  describe "withdrawing a queued digest or review" do
+    test "a withdrawn review clears its threads' marks", %{project: project, blip: blip} do
+      failed = ended!(project, "fail: the ladder is missing")
+      _at = backdate!(failed, 4)
+      idle!(blip)
+      on!()
+      parked = park_blip!(blip)
+      assert %{outcome: "queued"} = Ambient.review_now()
+      [review] = posted(blip, "review")
+      assert %DateTime{} = Threads.get(failed).reviewed_at
+
+      assert Assistant.withdraw(review.id) == :ok
+      assert Repo.get!(Submission, review.id).status == "withdrawn"
+      assert Threads.get(failed).reviewed_at == nil
+
+      # The next review lists it again.
+      unpark_blip!(blip, parked)
+      assert %{outcome: "sent", count: 1} = Ambient.review_now()
+      idle!(blip)
+    end
+
+    test "a withdrawn digest drops what it carried, and leaves what came since", %{
+      project: project,
+      blip: blip
+    } do
+      on!()
+      parked = park_blip!(blip)
+      _thread = ended!(project, "files")
+      assert %{outcome: "queued"} = Ambient.digest_now()
+      [digest] = posted(blip, "digest")
+      later = ended!(project, "files again")
+
+      assert Assistant.withdraw(digest.id) == :ok
+      assert Repo.get!(Submission, digest.id).status == "withdrawn"
+      assert Enum.map(items(), & &1.thread_id) == [later, later]
+      assert Enum.all?(items(), &is_nil(&1.digest_key))
+      unpark_blip!(blip, parked)
+    end
   end
 
   ## The timers
@@ -424,12 +592,13 @@ defmodule Photon.AmbientTest do
 
       assert [digest] = posted(blip, "digest")
       assert ref(digest)["key"] == "digest:#{task.id}:0"
-      assert items() == []
+      assert Signals.pending() == []
 
       waited = eventually(fn -> waiting(task.id) end)
       assert waited.checkpoint == %{"next_at" => first_at + @hour, "runs" => 1}
       assert %{"outcome" => "sent"} = doc()["last_digest"]
       idle!(blip)
+      assert items() == []
     end
 
     test "a timer waiting for its time is still waiting after a restart" do

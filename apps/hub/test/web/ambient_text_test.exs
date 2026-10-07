@@ -26,6 +26,7 @@ defmodule PhotonWeb.AmbientTextTest do
         last_review: nil,
         stopped: nil,
         consent?: true,
+        thinks?: true,
         scripted?: false
       },
       overrides
@@ -48,6 +49,9 @@ defmodule PhotonWeb.AmbientTextTest do
 
     assert AmbientText.last("digest", result("skipped_queued")) ==
              "Blip still had the last one waiting, skipped."
+
+    assert AmbientText.last("digest", result("skipped_model")) ==
+             "skipped, Blip wasn't signed in to ChatGPT."
 
     assert AmbientText.last("digest", result("off")) == "ambient mode was off."
     assert AmbientText.last("digest", result("something_new")) == "ran."
@@ -92,24 +96,33 @@ defmodule PhotonWeb.AmbientTextTest do
 
     assert AmbientText.ran("digest", result("skipped_consent")) ==
              "Skipped: schedules can't use your plan."
+
+    assert AmbientText.ran("review", result("skipped_model")) ==
+             "Skipped: Blip isn't signed in to ChatGPT."
   end
 
-  test "pending/1 says what waits, for each mix of new and smaller" do
+  test "pending/1 says what waits, new and seen, in the owner's words" do
     assert AmbientText.pending(%{new: 0, smaller: 0}) == "Nothing new yet."
     assert AmbientText.pending(%{new: 2, smaller: 0}) == "2 changes waiting."
     assert AmbientText.pending(%{new: 1, smaller: 0}) == "1 change waiting."
 
     assert AmbientText.pending(%{new: 2, smaller: 3}) ==
-             "2 changes waiting, and 3 smaller ones."
+             "2 changes waiting, and 3 you've seen or made yourself."
 
     assert AmbientText.pending(%{new: 1, smaller: 1}) ==
-             "1 change waiting, and 1 smaller one."
+             "1 change waiting, and 1 you've seen or made yourself."
 
     assert AmbientText.pending(%{new: 0, smaller: 3}) ==
-             "3 smaller changes wait for the next digest with something new."
+             "Nothing new yet. 3 changes you've seen or made yourself wait for the next " <>
+               "digest with something new."
 
     assert AmbientText.pending(%{new: 0, smaller: 1}) ==
-             "1 smaller change waits for the next digest with something new."
+             "Nothing new yet. 1 change you've seen or made yourself waits for the next " <>
+               "digest with something new."
+
+    for n <- [0, 1, 3],
+        new <- [0, 2],
+        do: refute(AmbientText.pending(%{new: new, smaller: n}) =~ "smaller")
   end
 
   test "next/1 is a sentence with a part for each running timer" do
@@ -138,28 +151,55 @@ defmodule PhotonWeb.AmbientTextTest do
     refute AmbientText.needs_consent?(status(%{on?: false, consent?: false}))
     refute AmbientText.needs_consent?(status(%{consent?: true}))
     refute AmbientText.needs_consent?(status(%{consent?: false, scripted?: true}))
+    # Signed out, the consent box isn't on the page; needs_model?/1 warns.
+    refute AmbientText.needs_consent?(status(%{consent?: false, thinks?: false}))
     assert AmbientText.needs_consent() =~ "Let schedules use my plan while I'm away"
   end
 
-  test "skipping?/1 warns Home while the last digest or review skipped for consent" do
+  test "needs_model?/1 warns while it is on and Blip can't reach ChatGPT" do
+    assert AmbientText.needs_model?(status(%{thinks?: false}))
+    refute AmbientText.needs_model?(status(%{on?: false, thinks?: false}))
+    refute AmbientText.needs_model?(status(%{}))
+    assert AmbientText.needs_model() =~ "skip until you sign in again"
+  end
+
+  test "skipping/1 warns Home while the last digest or review skipped for consent" do
     skipped = result("skipped_consent")
 
-    assert AmbientText.skipping?(status(%{consent?: false, last_digest: skipped}))
+    assert AmbientText.skipping(status(%{consent?: false, last_digest: skipped})) == :consent
 
-    assert AmbientText.skipping?(
+    assert AmbientText.skipping(
              status(%{consent?: false, last_digest: result("sent", 2), last_review: skipped})
-           )
+           ) == :consent
 
     # Not once the owner allows it, nor while it is off, nor for other skips.
-    refute AmbientText.skipping?(status(%{consent?: true, last_review: skipped}))
-    refute AmbientText.skipping?(status(%{on?: false, consent?: false, last_digest: skipped}))
+    assert AmbientText.skipping(status(%{consent?: true, last_review: skipped})) == nil
 
-    refute AmbientText.skipping?(
+    assert AmbientText.skipping(status(%{on?: false, consent?: false, last_digest: skipped})) ==
+             nil
+
+    assert AmbientText.skipping(
              status(%{consent?: false, last_digest: result("skipped_nothing")})
-           )
+           ) == nil
 
-    refute AmbientText.skipping?(status(%{consent?: false}))
-    assert AmbientText.skipping() =~ "schedules can't use your plan while you're away"
+    assert AmbientText.skipping(status(%{consent?: false})) == nil
+
+    assert AmbientText.skipping_text(:consent) =~
+             "schedules can't use your plan while you're away"
+  end
+
+  test "skipping/1 warns Home while digests skip because Blip isn't signed in" do
+    skipped = result("skipped_model")
+
+    assert AmbientText.skipping(status(%{thinks?: false, last_review: skipped})) == :signed_out
+    # Signed in again: the warning goes before the next firing.
+    assert AmbientText.skipping(status(%{last_review: skipped})) == nil
+
+    assert AmbientText.skipping(status(%{on?: false, thinks?: false, last_review: skipped})) ==
+             nil
+
+    assert AmbientText.skipping_text(:signed_out) ==
+             "Digests and reviews are skipping: Blip isn't signed in to ChatGPT."
   end
 
   test "home_stopped?/1 warns Home while a timer is stopped" do

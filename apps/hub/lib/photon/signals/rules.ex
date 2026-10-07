@@ -15,7 +15,9 @@ defmodule Photon.Signals.Rules do
   not from who started the thread.
 
   `ambient_kind/1` tells a digest or a daily review message from the
-  other signal messages, so `Photon.Signals` can find one still queued.
+  other signal messages, so `Photon.Signals` can find one still queued,
+  and `ambient_ref/1` reads its ref. `item_key/1` is a digest item's
+  subject, which makes one row per subject.
 
   A signal is one text part and one ref in a `"signal"` message to Blip.
   `merges?/2` says whether a queued message takes another signal: only
@@ -111,6 +113,48 @@ defmodule Photon.Signals.Rules do
       do: kind
 
   def ambient_kind(_source), do: nil
+
+  @doc """
+  The digest or review ref a message with `source` carries (its first
+  ref, as `ambient_kind/1` reads it), or nil for any other message.
+  """
+  @spec ambient_ref(term()) :: ref() | nil
+  def ambient_ref(%{"signals" => [ref | _rest]} = source) do
+    if ambient_kind(source), do: ref
+  end
+
+  def ambient_ref(_source), do: nil
+
+  @doc """
+  A digest item's key: its subject (section 3.2 of
+  `docs/plans/step-5-ambient-mode.md`), so one subject holds one row and
+  a newer change to it replaces the older one:
+
+    * `"finished"`, `"thread_started"`, `"resolved"`: `"<kind>:<thread id>"`
+    * `"schedule_stopped"`: `"schedule_stopped:<schedule id>"`
+    * `"file_written"`: `"file_written:<project id>:<file name>"`
+    * `"project_created"`, `"purpose_changed"`: `"<kind>:<project id>"`
+
+  Nil when the item lacks what its kind is about, or its kind is unknown.
+  """
+  @spec item_key(term()) :: String.t() | nil
+  def item_key(%{kind: kind} = item) when kind in ["finished", "thread_started", "resolved"],
+    do: join([kind, Map.get(item, :thread_id)])
+
+  def item_key(%{kind: "schedule_stopped"} = item),
+    do: join(["schedule_stopped", Map.get(item, :schedule_id)])
+
+  def item_key(%{kind: "file_written"} = item),
+    do: join(["file_written", Map.get(item, :project_id), Map.get(item, :name)])
+
+  def item_key(%{kind: kind} = item) when kind in ["project_created", "purpose_changed"],
+    do: join([kind, Map.get(item, :project_id)])
+
+  def item_key(_item), do: nil
+
+  defp join(parts) do
+    if Enum.all?(parts, &(is_binary(&1) and &1 != "")), do: Enum.join(parts, ":")
+  end
 
   @doc """
   Whether input came from Blip: a message Blip sent (source kind

@@ -44,13 +44,19 @@ defmodule Photon.Signals do
   While it is on, the changes Blip doesn't hear about at once are
   collected as digest items (`Photon.Signals.DigestItem`, section 3.2):
   `collect_tx/2` runs inside the commit that makes each change, reads the
-  mode there, and inserts nothing in quiet mode, so turning ambient mode
-  off in one commit stops collection from the next. A digest reads them
-  (`pending_tx/1`) and deletes what it carried (`drop_items_tx/2`) in the
-  commit that posts it. `queued_ambient?/2` says whether a digest or
-  review still waits in Blip's inbox, and `withdraw_ambient_tx/1` takes
-  them back when ambient mode is turned off. Every insert announces
-  `{:ambient_changed}` on `ambient_topic/0`.
+  mode there, and writes nothing in quiet mode, so turning ambient mode
+  off in one commit stops collection from the next. An item's key is its
+  subject (`Photon.Signals.Rules.item_key/1`), and a newer change to the
+  same subject replaces the row, so the table holds at most one row per
+  thread, schedule, project or file however long digests skip (rule 73).
+  A digest reads the items waiting (`pending_tx/1`) and marks those it
+  carries with its key (`carry_items_tx/3`) in the commit that posts it;
+  when Blip's run on it settles they are deleted (`drop_carried_tx/2`),
+  or wait again if the run failed (`release_items_tx/2`).
+  `queued_ambient?/2` says whether a digest or review still waits in
+  Blip's inbox, and `withdraw_ambient_tx/1` takes them back when ambient
+  mode is turned off. Every write announces `{:ambient_changed}` on
+  `ambient_topic/0`.
 
   There is no process here: signals are submissions in Blip's
   conversation, the items are rows, and the harness runs them.
@@ -71,7 +77,22 @@ defmodule Photon.Signals do
 
   @item_kinds ~w(finished schedule_stopped file_written project_created purpose_changed thread_started resolved)
 
-  @item_fields [:thread_id, :project_id, :schedule_id, :name, :writer]
+  @item_fields [:thread_id, :project_id, :schedule_id, :task_id, :name, :writer]
+
+  # What a newer change to the same subject replaces: everything but the
+  # row's ID and key.
+  @replaced [
+    :kind,
+    :thread_id,
+    :project_id,
+    :schedule_id,
+    :task_id,
+    :name,
+    :writer,
+    :note,
+    :digest_key,
+    :inserted_at
+  ]
 
   @note_limit 600
 
@@ -110,15 +131,16 @@ defmodule Photon.Signals do
 
   @typedoc """
   A digest item to collect (section 3.2 of
-  `docs/plans/step-5-ambient-mode.md`): its `key` and `kind`, and what it
-  names; missing fields are nil.
+  `docs/plans/step-5-ambient-mode.md`): its `kind`, and what it names;
+  missing fields are nil. Its key is worked out from them
+  (`Photon.Signals.Rules.item_key/1`).
   """
   @type item :: %{
-          required(:key) => String.t(),
           required(:kind) => String.t(),
           optional(:thread_id) => String.t() | nil,
           optional(:project_id) => String.t() | nil,
           optional(:schedule_id) => String.t() | nil,
+          optional(:task_id) => String.t() | nil,
           optional(:name) => String.t() | nil,
           optional(:writer) => String.t() | nil,
           optional(:note) => String.t() | nil
@@ -159,43 +181,50 @@ defmodule Photon.Signals do
   ## Digest items
 
   @doc """
-  Collects `item` for the next digest, inside the caller's commit: inserts
-  it while ambient mode is on (read in this commit) and its key is new,
-  and then announces `{:ambient_changed}`; does nothing otherwise. It
-  runs on the harness's hook paths (the settle hook in the Scheduler's
-  abort and fail commits, a routine's `on_fail/3`), so it is total: a
-  missing or non-text field is nil, a note longer than 600 characters is
-  cut, an item without a key or with an unknown kind collects nothing,
-  and it never raises.
+  Collects `item` for the next digest, inside the caller's commit, while
+  ambient mode is on (read in this commit), and then announces
+  `{:ambient_changed}`; does nothing otherwise. Its key is its subject
+  (`Photon.Signals.Rules.item_key/1`): a row already there for the same
+  subject, waiting or carried by a digest Blip is still reading, is
+  replaced by this one, which waits for the next digest. It runs on the
+  harness's hook paths (the settle hook in the Scheduler's abort and
+  fail commits, a routine's `on_fail/3`), so it is total: a missing or
+  non-text field is nil, a note longer than 600 characters is cut, an
+  item with an unknown kind or without its subject collects nothing, and
+  it never raises.
   """
   @spec collect_tx(Tx.t(), item() | term()) :: :ok
   def collect_tx(tx, item) do
-    with %{key: key, kind: kind} = fields <- item_fields(item),
-         :ambient <- mode_tx(tx),
-         false <- DigestItem |> where([i], i.key == ^key) |> Repo.exists?() do
-      # Repo.insert!/2 raises on a failed insert; the key was checked
-      # above in this commit, so on_conflict only guards a repeat.
+    with %{key: _key} = fields <- item_fields(item),
+         :ambient <- mode_tx(tx) do
+      # Repo.insert!/2 raises on a failed write, which rolls the commit
+      # back; a row with the same subject is replaced, not doubled.
       _item =
         DigestItem
-        |> struct!(Map.merge(fields, %{id: PhotonCore.ID.new("di_"), kind: kind}))
-        |> Repo.insert!(on_conflict: :nothing, conflict_target: [:key])
+        |> struct!(Map.put(fields, :id, PhotonCore.ID.new("di_")))
+        |> Repo.insert!(on_conflict: {:replace, @replaced}, conflict_target: [:key])
 
       Tx.announce(tx, @ambient_topic, {:ambient_changed})
     else
-      _invalid_quiet_or_known -> :ok
+      _invalid_or_quiet -> :ok
     end
   end
 
-  defp item_fields(%{key: key, kind: kind} = item)
-       when is_binary(key) and key != "" and kind in @item_kinds do
-    fields = Map.new(@item_fields, &{&1, text(Map.get(item, &1))})
+  defp item_fields(%{kind: kind} = item) when kind in @item_kinds do
+    fields = @item_fields |> Map.new(&{&1, text(Map.get(item, &1))}) |> Map.put(:kind, kind)
 
-    Map.merge(fields, %{
-      key: key,
-      kind: kind,
-      note: note(Map.get(item, :note)),
-      inserted_at: DateTime.utc_now()
-    })
+    case Rules.item_key(fields) do
+      nil ->
+        nil
+
+      key ->
+        Map.merge(fields, %{
+          key: key,
+          note: note(Map.get(item, :note)),
+          digest_key: nil,
+          inserted_at: DateTime.utc_now()
+        })
+    end
   end
 
   defp item_fields(_item), do: nil
@@ -206,17 +235,25 @@ defmodule Photon.Signals do
   defp note(value) when is_binary(value) and value != "", do: String.slice(value, 0, @note_limit)
   defp note(_value), do: nil
 
-  @doc "The digest items waiting, oldest first, inside the caller's commit."
+  @doc """
+  The digest items waiting, oldest first, inside the caller's commit: not
+  those a posted digest carries.
+  """
   @spec pending_tx(Tx.t()) :: [DigestItem.t()]
   def pending_tx(%Tx{}), do: pending()
 
   @doc "The digest items waiting, oldest first."
   @spec pending() :: [DigestItem.t()]
-  def pending, do: DigestItem |> order_by([i], asc: i.inserted_at, asc: i.id) |> Repo.all()
+  def pending do
+    DigestItem
+    |> where([i], is_nil(i.digest_key))
+    |> order_by([i], asc: i.inserted_at, asc: i.id)
+    |> Repo.all()
+  end
 
   @doc """
   Deletes digest items inside the caller's commit: those with the given
-  IDs, or every one (`:all`).
+  IDs, or every one (`:all`), carried or not.
   """
   @spec drop_items_tx(Tx.t(), [String.t()] | :all) :: :ok
   def drop_items_tx(%Tx{}, :all) do
@@ -229,6 +266,46 @@ defmodule Photon.Signals do
   def drop_items_tx(%Tx{}, ids) when is_list(ids) do
     {_count, _rows} = DigestItem |> where([i], i.id in ^ids) |> Repo.delete_all()
     :ok
+  end
+
+  @doc """
+  Marks the items with the given IDs as carried by the digest with key
+  `digest_key`, inside the commit that posts it: they no longer wait,
+  and go when Blip's run on that digest settles.
+  """
+  @spec carry_items_tx(Tx.t(), [String.t()], String.t()) :: :ok
+  def carry_items_tx(%Tx{}, [], _digest_key), do: :ok
+
+  def carry_items_tx(%Tx{}, ids, digest_key) when is_list(ids) and is_binary(digest_key) do
+    query = where(DigestItem, [i], i.id in ^ids)
+    {_count, _rows} = Repo.update_all(query, set: [digest_key: digest_key])
+    :ok
+  end
+
+  @doc """
+  Deletes the items the digest with key `digest_key` carries, inside the
+  commit that settles Blip's run on it: Blip read them.
+  """
+  @spec drop_carried_tx(Tx.t(), String.t()) :: :ok
+  def drop_carried_tx(%Tx{}, digest_key) when is_binary(digest_key) do
+    {_count, _rows} = DigestItem |> where([i], i.digest_key == ^digest_key) |> Repo.delete_all()
+    :ok
+  end
+
+  @doc """
+  Puts the items the digest with key `digest_key` carries back to wait
+  for the next digest, inside the commit that settles Blip's run on it
+  without an answer, and announces `{:ambient_changed}` when there were
+  any: Blip never told the owner about them.
+  """
+  @spec release_items_tx(Tx.t(), String.t()) :: :ok
+  def release_items_tx(tx, digest_key) when is_binary(digest_key) do
+    query = where(DigestItem, [i], i.digest_key == ^digest_key)
+
+    case Repo.update_all(query, set: [digest_key: nil]) do
+      {0, _rows} -> :ok
+      {_count, _rows} -> Tx.announce(tx, @ambient_topic, {:ambient_changed})
+    end
   end
 
   @doc """

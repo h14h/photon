@@ -9,8 +9,11 @@ defmodule PhotonWeb.SettingsLive do
   is part of the same form but saved by `Photon.Ambient.configure/1`,
   after the settings file: its setting is a durable doc, written in the
   commit that arms or retires its timers. The section shows whenever Blip
-  can think; when it doesn't, the form carries none of its fields and a
-  Save leaves it as it was. The form starts from the saved settings merged
+  can think, and while ambient mode is on even when it can't (signed out
+  of ChatGPT, or plan use not allowed), so it can always be turned off:
+  then it shows only the switch, its status and a warning that digests
+  and reviews skip. When it doesn't show, the form carries none of its
+  fields and a Save leaves it as it was. The form starts from the saved settings merged
   with the setting's values (`PhotonWeb.AmbientText.form_values/1`), on
   mount and after every Save, so a Save sends the switch back as it is. A
   colocated hook fills in the browser's UTC offset, which the review's
@@ -190,7 +193,10 @@ defmodule PhotonWeb.SettingsLive do
 
   @impl true
   def handle_info({:chatgpt_changed, status}, socket) do
-    {:noreply, socket |> assign(chatgpt: status) |> load_models(status)}
+    {:noreply,
+     socket
+     |> assign(chatgpt: status, ambient: Ambient.status())
+     |> load_models(status)}
   end
 
   def handle_info({:durable, "global", changes}, socket) do
@@ -312,7 +318,12 @@ defmodule PhotonWeb.SettingsLive do
               </div>
             </section>
 
-            <.ambient_section :if={@thinks?} form={@form} ambient={@ambient} />
+            <.ambient_section
+              :if={@thinks? or @ambient.on?}
+              form={@form}
+              ambient={@ambient}
+              thinks?={@thinks?}
+            />
 
             <section class="space-y-5 rounded-2xl border border-line bg-surface p-5 shadow-xs">
               <h2 class="text-[13px] font-semibold text-ink">Blip</h2>
@@ -401,7 +412,10 @@ defmodule PhotonWeb.SettingsLive do
 
   attr :form, :any, required: true
   attr :ambient, :map, required: true
+  attr :thinks?, :boolean, required: true
 
+  # Without a model, only the switch, the warning and the status: the
+  # interval, the offset and the run-now buttons keep what was saved.
   defp ambient_section(assigns) do
     ~H"""
     <section id="ambient" class="space-y-5 rounded-2xl border border-line bg-surface p-5 shadow-xs">
@@ -417,7 +431,15 @@ defmodule PhotonWeb.SettingsLive do
           {AmbientText.hint()}
         </p>
       </div>
+      <p
+        :if={!@thinks?}
+        id="ambient-needs-model"
+        class="rounded-lg bg-warn-soft px-3 py-2 text-[13px] leading-relaxed text-ink"
+      >
+        {AmbientText.needs_model()}
+      </p>
       <.input
+        :if={@thinks?}
         field={@form[:ambient_every]}
         type="select"
         label="Digest"
@@ -426,6 +448,7 @@ defmodule PhotonWeb.SettingsLive do
       <%!-- The browser's UTC offset, which the review's 09:00 follows. Empty
       until the hook runs, and an empty one keeps what was saved. --%>
       <input
+        :if={@thinks?}
         type="hidden"
         id="settings_utc_offset"
         name="settings[utc_offset]"
@@ -441,7 +464,7 @@ defmodule PhotonWeb.SettingsLive do
         }
       </script>
       <p
-        :if={AmbientText.needs_consent?(@ambient)}
+        :if={@thinks? and AmbientText.needs_consent?(@ambient)}
         id="ambient-needs-consent"
         class="rounded-lg bg-warn-soft px-3 py-2 text-[13px] leading-relaxed text-ink"
       >
@@ -449,7 +472,7 @@ defmodule PhotonWeb.SettingsLive do
       </p>
       <.ambient_state :if={@ambient.on?} ambient={@ambient} />
       <div
-        :if={@ambient.scripted?}
+        :if={@thinks? and @ambient.scripted?}
         id="ambient-try"
         class="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4"
       >
