@@ -961,7 +961,10 @@ Section 2.2 has the section's elements and words. Behaviour:
   return): "Sent Blip a digest of 3 changes.",
   "Nothing new since the last digest.", "Blip still has the last digest
   waiting.", "Sent Blip a review of 2 threads.", "No threads need a
-  review.", "Turn on ambient mode first."
+  review.", "Turn on ambient mode first." A press that sent nothing
+  because something has to change first (off, no consent, Blip signed
+  out) flashes as an error (`AmbientText.ran_kind/1`), not with the
+  check mark of a done thing.
 - `{:ambient_changed}` (every collected item, firing and configure) and
   `{:projects_changed, _}` (a thread opened or resolved changes what is
   new) re-read the status, so the counts and the last outcomes follow

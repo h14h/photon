@@ -203,6 +203,18 @@ defmodule PhotonWeb.AmbientText do
   def ran(_job, _result), do: "Done."
 
   @doc """
+  The flash's kind for `ran/2`'s words: `:error` when nothing was sent
+  because something has to change first (ambient mode is off, or Blip
+  can't use the plan), so the flash doesn't show a check mark for it;
+  else `:info`.
+  """
+  @spec ran_kind(Ambient.result()) :: :info | :error
+  def ran_kind(%{outcome: outcome}) when outcome in ~w(off skipped_consent skipped_model),
+    do: :error
+
+  def ran_kind(_result), do: :info
+
+  @doc """
   Why the home page warns that digests and reviews are skipping, or nil:
   ambient mode is on, and the last digest or the last review was skipped
   because Blip wasn't signed in to ChatGPT and it still isn't

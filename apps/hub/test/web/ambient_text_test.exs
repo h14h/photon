@@ -101,6 +101,14 @@ defmodule PhotonWeb.AmbientTextTest do
              "Skipped: Blip isn't signed in to ChatGPT."
   end
 
+  test "ran_kind/1 marks a run-now that needs something changed first as an error" do
+    for outcome <- ~w(off skipped_consent skipped_model),
+        do: assert(AmbientText.ran_kind(result(outcome)) == :error)
+
+    for outcome <- ~w(sent queued skipped_nothing skipped_queued),
+        do: assert(AmbientText.ran_kind(result(outcome)) == :info)
+  end
+
   test "pending/1 says what waits, new and seen, in the owner's words" do
     assert AmbientText.pending(%{new: 0, smaller: 0}) == "Nothing new yet."
     assert AmbientText.pending(%{new: 2, smaller: 0}) == "2 changes waiting."

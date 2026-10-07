@@ -306,7 +306,8 @@ defmodule PhotonWeb.SettingsLiveTest do
 
     test "a run-now button while it is off asks to turn it on first", %{view: view} do
       view |> element("#ambient-digest-now") |> render_click()
-      assert has_element?(view, "#flash-info", "Turn on ambient mode first.")
+      assert has_element?(view, "#flash-error", "Turn on ambient mode first.")
+      refute has_element?(view, "#flash-info")
     end
 
     test "sending a digest with a finished thread sends it to Blip", %{

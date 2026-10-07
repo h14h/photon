@@ -185,7 +185,7 @@ defmodule PhotonWeb.SettingsLive do
       {:noreply,
        socket
        |> assign(ambient: Ambient.status())
-       |> put_flash(:info, AmbientText.ran(job, result))}
+       |> put_flash(AmbientText.ran_kind(result), AmbientText.ran(job, result))}
     else
       {:noreply, socket}
     end
