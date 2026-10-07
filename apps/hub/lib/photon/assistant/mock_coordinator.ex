@@ -20,6 +20,14 @@ defmodule Photon.Assistant.MockCoordinator do
       several lines, as the whole file (`write_context_file`)
     * `edit <slug>/<name>: <old> => <new>` changes one passage
       (`edit_context_file`)
+    * `in <n> minutes in <slug>: <prompt>` and `every <n> minutes in
+      <slug>: <prompt>` schedule work in a project, a new thread each
+      time (`schedule` with `project`), and `schedules in <slug>` lists
+      a project's schedules (`list_schedules`); `cancel schedule <id>`
+      cancels any schedule (`cancel_schedule`)
+    * `all skills` lists every skill (`list_skills`), and `turn on <skill>
+      in <slug>` or `turn off <skill> in <slug>` turns one on or off for
+      a project (`set_project_skill`)
     * `answer <question id>: <text>` answers a thread's question
       (`answer_question`), and `answer: <text>` answers the newest
       question this conversation asked the owner about (the last
@@ -61,6 +69,9 @@ defmodule Photon.Assistant.MockCoordinator do
   - `files in <slug>` lists a project's context files, and `read <slug>/<name>` reads one
   - `write <slug>/<name>: <text>` writes a whole file, like `write garden/notes.md: hello`
   - `edit <slug>/<name>: <old text> => <new text>` changes one passage
+  - `in 5 minutes in <slug>: <prompt>` or `every 60 minutes in <slug>: <prompt>` schedules a new thread there, and `schedules in <slug>` lists a project's schedules
+  - `cancel schedule <id>` cancels a schedule, mine or a project's
+  - `all skills` lists every skill, and `turn on <skill> in <slug>` or `turn off <skill> in <slug>` sets one for a project
   - `answer <question id>: <text>` answers a thread's question, and `answer: <text>` the last one I asked you about
   - a thread's question is answered from my memory when a `- <key>: <value>` line's key is in it, else passed to you; one ending in `(prose)` gets a plain reply
   """
@@ -72,7 +83,11 @@ defmodule Photon.Assistant.MockCoordinator do
   """
   @spec phrasings(map()) :: [phrasing()]
   def phrasings(request),
-    do: read_phrasings() ++ work_phrasings() ++ file_phrasings() ++ question_phrasings(request)
+    do:
+      read_phrasings() ++
+        work_phrasings() ++
+        file_phrasings() ++
+        schedule_phrasings() ++ skill_phrasings() ++ question_phrasings(request)
 
   # The read tools' phrasings.
   defp read_phrasings do
@@ -106,6 +121,27 @@ defmodule Photon.Assistant.MockCoordinator do
       {~r/\Aread\s+([^\s\/]+)\/([^\s\/:]+)\z/i, &read_file/1},
       {~r/\Awrite\s+([^\s\/]+)\/([^\s\/:]+)\s*:\s*(.*)\z/s, &write_file/1},
       {~r/\Aedit\s+([^\s\/]+)\/([^\s\/:]+)\s*:\s*(.+?)\s*=>\s*(.*)\z/s, &edit_file/1}
+    ]
+  end
+
+  # The phrasings for a project's schedules, and cancelling any schedule.
+  # Blip's own (`in <n> minutes: <prompt>`, `schedules`) are the script's.
+  defp schedule_phrasings do
+    [
+      {~r/\Ain\s+(\d+)\s+minutes?\s+in\s+(\S+?)\s*:\s*(.+)\z/s, &schedule_in(&1, "in_minutes")},
+      {~r/\Aevery\s+(\d+)\s+minutes?\s+in\s+(\S+?)\s*:\s*(.+)\z/s,
+       &schedule_in(&1, "every_minutes")},
+      {~r/\Aschedules in\s+(\S+)\z/i, fn [slug] -> schedules_in(slug) end},
+      {~r/\Acancel schedule\s+(\S+)\z/i,
+       fn [id] -> call("cancel_schedule", %{"schedule_id" => id}, "Cancelling #{id}.") end}
+    ]
+  end
+
+  # The phrasings for skills: every skill, and one on or off for a project.
+  defp skill_phrasings do
+    [
+      {~r/\Aall skills\z/i, fn [] -> call("list_skills", %{}, "Here are the skills.") end},
+      {~r/\Aturn (on|off)\s+(\S+)\s+in\s+(\S+)\z/i, &set_skill/1}
     ]
   end
 
@@ -181,6 +217,32 @@ defmodule Photon.Assistant.MockCoordinator do
         %{"project" => slug, "name" => name, "old_text" => old_text, "new_text" => new_text},
         "Editing #{name} in #{slug}."
       )
+
+  defp schedule_in([minutes, slug, prompt], key),
+    do:
+      call(
+        "schedule",
+        %{"prompt" => String.trim(prompt), key => String.to_integer(minutes), "project" => slug},
+        "Scheduling it in #{slug}."
+      )
+
+  defp schedules_in(slug),
+    do:
+      call(
+        "list_schedules",
+        %{"project" => slug},
+        "Here's what's scheduled in #{slug}."
+      )
+
+  defp set_skill([on, skill, slug]) do
+    on? = String.downcase(on) == "on"
+
+    call(
+      "set_project_skill",
+      %{"project" => slug, "skill" => skill, "on" => on?},
+      "Turning #{String.downcase(on)} #{skill} in #{slug}."
+    )
+  end
 
   defp answer(id, text),
     do:

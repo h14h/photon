@@ -48,7 +48,12 @@ defmodule PhotonWeb.OverviewLiveTest do
 
     {:ok, schedule} =
       Durable.commit(
-        &Schedules.blip_schedule_tx(&1, Assistant.conversation_id(), args, request_id, now)
+        &Schedules.tool_schedule_tx(
+          &1,
+          {:blip, Assistant.conversation_id()},
+          args,
+          %{asked_by: "owner", request_id: request_id, now: now}
+        )
       )
 
     schedule

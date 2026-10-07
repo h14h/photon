@@ -9,9 +9,9 @@ defmodule Photon.AssistantToolsTest do
 
   import Photon.Fixtures, only: [call: 2, tool_task: 2]
 
+  alias Photon.{Assistant, Projects, Schedules, Skills, Threads}
   alias Photon.Assistant.Tools
   alias Photon.Durable.{ToolAPI, Tx}
-  alias Photon.{Projects, Schedules}
   alias Photon.Schedules.{Routine, Schedule}
 
   @moduletag :durable
@@ -140,7 +140,7 @@ defmodule Photon.AssistantToolsTest do
       assert listed =~ ~s(- #{id}: next )
       assert listed =~ ~s(, every 30 min: "ping")
 
-      assert cancel.(id) == {:ok, "Cancelled #{id}."}
+      assert cancel.(id) == {:ok, "Cancelled #{id}.", %{"schedule_id" => id}}
       assert Schedules.get(id) == nil
       assert Durable.task(task_id).abort_requested
       assert {:ok, "No schedules. (Now: " <> _} = list.()
@@ -164,34 +164,310 @@ defmodule Photon.AssistantToolsTest do
       assert listed =~ "- #{id}: stopped after an error (boom); it won't run again until you"
       assert listed =~ ~s(, every 30 min: "ping")
 
-      assert run(Tools.CancelSchedule, %{"schedule_id" => id}, api(ctx, "cancel")) ==
-               {:ok, "Cancelled #{id}."}
+      assert {:ok, "Cancelled " <> _, _details} =
+               run(Tools.CancelSchedule, %{"schedule_id" => id}, api(ctx, "cancel"))
     end
 
-    test "leave a project's schedules alone", ctx do
-      {:ok, project} =
+    test "the schedule tool says where each kind posts" do
+      assert Tools.Schedule.description() =~
+               ~s(Without project, it's a reminder to yourself: when it's due, it arrives here)
+
+      assert Tools.Schedule.description() =~
+               "With project, it's work in that project: each time it starts a new thread there"
+    end
+  end
+
+  describe "project schedules" do
+    setup :conversation
+
+    setup do
+      {:ok, garden} =
         Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
 
-      {:ok, theirs} =
-        Schedules.create({:project, project.id}, %{
-          "prompt" => "Check the backups",
-          "at" => DateTime.utc_now() |> DateTime.add(1, :hour) |> DateTime.to_iso8601(),
-          "repeat" => "once",
-          "target" => "new_thread"
-        })
-
-      assert {:ok, "No schedules. (Now: " <> _} = run(Tools.ListSchedules, %{}, api(ctx, "list"))
-
-      assert run(Tools.CancelSchedule, %{"schedule_id" => theirs.id}, api(ctx, "cancel")) ==
-               {:error, "There is no schedule #{theirs.id}."}
-
-      assert %{state: :waiting} = Schedules.get(theirs.id)
+      {:ok, house} = Projects.create(%{"purpose" => "Fix things.", "name" => "House"})
+      :ok = Schedules.subscribe()
+      %{garden: garden, house: house}
     end
 
-    test "the schedule tool says it posts to Blip's own conversation" do
-      assert Tools.Schedule.description() =~
-               "It posts here, in your own conversation; it can't schedule work in a project."
+    test "start a new thread each time, as Blip's, outside any run Blip's own",
+         %{
+           garden: garden
+         } = ctx do
+      args = %{
+        "prompt" => "Water zone 2",
+        "at" => "2035-01-01T09:00:00Z",
+        "every_minutes" => 1440,
+        "project" => "garden"
+      }
+
+      assert {:ok, text, details} = schedule(ctx, args, "t_p1")
+      assert_receive {:schedules_changed, garden_id} when garden_id == garden.id
+
+      assert text =~
+               ~r/\AScheduled sc_\w+: first at 2035-01-01 09:00 UTC, then every 1440 minutes, in garden, starting a new thread each time\.\z/
+
+      assert %{"schedule_id" => id, "project_id" => project_id, "slug" => "garden"} = details
+      assert project_id == garden.id
+      refute Map.has_key?(details, "thread_id")
+
+      assert %{state: :waiting, schedule: row} = Schedules.get(id)
+
+      # The fixture's call has no run behind it, so the owner didn't ask.
+      assert %Schedule{
+               project_id: ^project_id,
+               conversation_id: nil,
+               prompt: "Water zone 2",
+               every_minutes: 1440,
+               created_by: "blip",
+               asked_by: "blip"
+             } = row
+
+      assert [%{id: ^id}] = Schedules.list({:project, garden.id})
+      assert Schedules.list(:blip) == []
+
+      # A rerun of the call makes nothing new.
+      assert {:ok, ^text, ^details} = schedule(ctx, args, "t_p1")
+      assert [_one] = Schedules.list({:project, garden.id})
     end
+
+    test "wake a thread in the project", %{garden: garden} = ctx do
+      thread = idle_thread!(garden)
+
+      args = %{
+        "prompt" => "Check the pump",
+        "in_minutes" => 30,
+        "project" => garden.id,
+        "thread" => " #{thread.id} "
+      }
+
+      assert {:ok, text, %{"thread_id" => thread_id} = details} = schedule(ctx, args, "t_p2")
+      assert thread_id == thread.id
+      assert details["slug"] == "garden"
+      assert text =~ ~s(, in garden, waking #{thread.id} "#{thread.title}".)
+      refute text =~ "each time"
+
+      assert %Schedule{conversation_id: ^thread_id, project_id: project_id} =
+               Repo.get!(Schedule, details["schedule_id"])
+
+      assert project_id == garden.id
+    end
+
+    test "refuse a thread from another project, a thread without a project, and an unknown project",
+         %{house: house} = ctx do
+      theirs = idle_thread!(house)
+
+      assert schedule(
+               ctx,
+               %{
+                 "prompt" => "p",
+                 "in_minutes" => 5,
+                 "project" => "garden",
+                 "thread" => theirs.id
+               },
+               "t_bad"
+             ) == {:error, "#{theirs.id} isn't a thread in garden."}
+
+      assert schedule(ctx, %{"prompt" => "p", "in_minutes" => 5, "thread" => theirs.id}, "t_bad") ==
+               {:error, "Give project too: the slug of the project #{theirs.id} is in."}
+
+      assert schedule(ctx, %{"prompt" => "p", "in_minutes" => 5, "project" => "gardn"}, "t_bad") ==
+               {:error, "There's no project called gardn. Projects: garden, house."}
+
+      assert schedule(ctx, %{"prompt" => "p", "project" => "garden"}, "t_bad") ==
+               {:error, "Give in_minutes or at."}
+
+      assert Schedules.list({:project, house.id}) == []
+      refute_received {:schedules_changed, _}
+    end
+
+    test "are listed with their targets, and cancelled by ID", %{garden: garden} = ctx do
+      list = &run(Tools.ListSchedules, &1, api(ctx, "list"))
+      cancel = &run(Tools.CancelSchedule, %{"schedule_id" => &1}, api(ctx, "cancel"))
+
+      assert {:ok, "No schedules in garden. (Now: " <> _, %{"slug" => "garden"}} =
+               list.(%{"project" => "garden"})
+
+      thread = idle_thread!(garden)
+
+      {:ok, _, %{"schedule_id" => new}} =
+        schedule(ctx, %{"prompt" => "Water", "in_minutes" => 5, "project" => "garden"}, "t_l1")
+
+      {:ok, _, %{"schedule_id" => woken}} =
+        schedule(
+          ctx,
+          %{
+            "prompt" => "Pump",
+            "in_minutes" => 10,
+            "every_minutes" => 60,
+            "project" => "garden",
+            "thread" => thread.id
+          },
+          "t_l2"
+        )
+
+      {:ok, listed, details} = list.(%{"project" => "garden"})
+      assert details == %{"project_id" => garden.id, "slug" => "garden"}
+      assert listed =~ "Schedules in garden:\n"
+      assert listed =~ ~s(- #{new}: first at )
+      assert listed =~ ~s(starts a new thread each time: "Water")
+      assert listed =~ ~s(wakes #{thread.id} "#{thread.title}": "Pump")
+
+      # Blip's own list leaves the project's out.
+      assert {:ok, "No schedules. (Now: " <> _} = list.(%{})
+
+      task_id = Repo.get!(Schedule, new).task_id
+
+      assert cancel.(new) ==
+               {:ok, "Cancelled #{new} in garden.",
+                %{"schedule_id" => new, "project_id" => garden.id, "slug" => "garden"}}
+
+      assert_receive {:schedules_changed, garden_id} when garden_id == garden.id
+      assert Schedules.get(new) == nil
+      assert Durable.task(task_id).abort_requested
+      assert [%{id: ^woken}] = Schedules.list({:project, garden.id})
+    end
+
+    test "made in a run the owner wrote to are asked by the owner; in a scheduled run, by Blip",
+         %{conversation: c, garden: garden} do
+      :ok = Durable.subscribe(c)
+      {:ok, s} = Assistant.send("every 60 minutes in garden: Water zone 2")
+      await_settled(c, s.id)
+
+      assert [%{schedule: %Schedule{prompt: "Water zone 2"} = owners}] =
+               Schedules.list({:project, garden.id})
+
+      assert {owners.created_by, owners.asked_by} == {"blip", "owner"}
+
+      # One of Blip's own schedules fires a prompt that makes another.
+      Repo.insert!(%Schedule{
+        id: "sc_morning",
+        conversation_id: c,
+        prompt: "in 30 minutes in garden: Check the pump",
+        first_at: DateTime.utc_now() |> DateTime.add(1, :day),
+        version: 1,
+        created_by: "blip",
+        asked_by: "owner"
+      })
+
+      assert Schedules.run_now("sc_morning") == {:ok, "sent"}
+
+      await_entry(
+        c,
+        &(&1.kind == "tool_result" and &1.data["name"] == "schedule" and
+            &1.data["details"]["schedule_id"] != owners.id)
+      )
+
+      if Durable.busy?(c), do: await_change(c, fn _changes -> not Durable.busy?(c) end)
+
+      assert %Schedule{asked_by: "blip", created_by: "blip"} =
+               Repo.get_by!(Schedule, prompt: "Check the pump")
+    end
+  end
+
+  describe "skills" do
+    setup :conversation
+
+    setup do
+      {:ok, garden} =
+        Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+
+      :ok = Skills.subscribe()
+      %{garden: garden}
+    end
+
+    defp skill!(name, description \\ "Fill in PDF forms."),
+      do:
+        elem(
+          Skills.create(%{
+            "name" => name,
+            "description" => description,
+            "instructions" => "# #{name}\n\nDo it."
+          }),
+          1
+        )
+
+    defp set(ctx, args), do: run(Tools.SetProjectSkill, args, api(ctx, "set_project_skill"))
+
+    test "list_skills shows every skill and where it is on", %{garden: garden} = ctx do
+      assert run(Tools.ListSkills, %{}, api(ctx, "list_skills")) == {:ok, "No skills yet."}
+
+      pdf = skill!("pdf-forms")
+      _notes = skill!("release-notes", "Write release notes")
+      :ok = Skills.enable(pdf.id, :blip)
+      :ok = Skills.enable(pdf.id, {:project, garden.id})
+
+      assert run(Tools.ListSkills, %{}, api(ctx, "list_skills")) ==
+               {:ok,
+                "pdf-forms: Fill in PDF forms. On for: you, garden.\n" <>
+                  "release-notes: Write release notes. Off everywhere."}
+    end
+
+    test "set_project_skill turns a skill on and off for a project, once",
+         %{garden: garden} = ctx do
+      pdf = skill!("pdf-forms")
+      pdf_id = pdf.id
+      # Its creation's announcement.
+      assert_receive {:skills_changed, ^pdf_id}
+      on = %{"project" => "garden", "skill" => " PDF-forms ", "on" => true}
+
+      assert set(ctx, on) ==
+               {:ok, "Turned on pdf-forms for garden.",
+                %{
+                  "project_id" => garden.id,
+                  "slug" => "garden",
+                  "skill" => "pdf-forms",
+                  "on" => true
+                }}
+
+      assert_receive {:skills_changed, ^pdf_id}
+      assert [%{name: "pdf-forms"}] = Skills.enabled({:project, garden.id})
+      assert Skills.enabled(:blip) == []
+
+      # Already on: nothing changes, nothing is announced.
+      assert {:ok, "Turned on pdf-forms for garden.", _} = set(ctx, on)
+      refute_received {:skills_changed, _}
+
+      assert {:ok, "Turned off pdf-forms for garden.", %{"on" => false}} =
+               set(ctx, %{on | "on" => false})
+
+      assert_receive {:skills_changed, ^pdf_id}
+      assert Skills.enabled({:project, garden.id}) == []
+    end
+
+    test "set_project_skill refuses an unknown skill or project, and a 31st skill",
+         %{
+           garden: garden
+         } = ctx do
+      assert set(ctx, %{"project" => "garden", "skill" => "pdf-form", "on" => true}) ==
+               {:error, "There's no skill called pdf-form. There are no skills yet."}
+
+      _pdf = skill!("pdf-forms")
+      _notes = skill!("release-notes")
+
+      assert set(ctx, %{"project" => "garden", "skill" => "pdf-form", "on" => true}) ==
+               {:error, "There's no skill called pdf-form. Skills: pdf-forms, release-notes."}
+
+      assert set(ctx, %{"project" => "gardn", "skill" => "pdf-forms", "on" => true}) ==
+               {:error, "There's no project called gardn. Projects: garden."}
+
+      for n <- 1..30, do: :ok = Skills.enable(skill!("skill-#{n}").id, {:project, garden.id})
+
+      assert {:error, "30 skills are on here already." <> _} =
+               set(ctx, %{"project" => "garden", "skill" => "pdf-forms", "on" => true})
+
+      assert length(Skills.enabled({:project, garden.id})) == 30
+    end
+  end
+
+  # A thread in `project` whose first run has ended.
+  defp idle_thread!(project) do
+    {:ok, thread} = Threads.start(project.id, "files")
+    :ok = Durable.subscribe(thread.id)
+
+    if Durable.busy?(thread.id),
+      do: await_change(thread.id, fn _changes -> not Durable.busy?(thread.id) end)
+
+    thread
   end
 
   defp ms(datetime), do: DateTime.to_unix(datetime, :millisecond)

@@ -4,11 +4,14 @@ defmodule Photon.Assistant.Readout do
   `docs/plans/step-4-blip-as-coordinator.md`): `list_projects`
   (`projects/3`), `read_project` (`project/2`), `list_threads`
   (`threads/2`) and `read_thread` (`thread/3`), what its file tools say
-  after a write or an edit (`file_written/4`, `file_edited/2`), and the
-  words for a project, thread or question that isn't there
-  (`unknown_project/2`, `unknown_thread/1`, `unknown_question/2`). Its file tools' listing and read text are the
-  threads' (`Photon.Threads.describe_files/2`, `read_file_text/3`), seen
-  from Blip's side.
+  after a write or an edit (`file_written/4`, `file_edited/2`), what its
+  schedule and skill tools say (`scheduled/3`, `schedules/4` for a
+  project's, `skills/1`, `skill_set/3`), and the words for a project,
+  thread, question or skill that isn't there (`unknown_project/2`,
+  `unknown_thread/1`, `unknown_question/2`, `unknown_skill/2`). Its file
+  tools' listing and read text are the threads'
+  (`Photon.Threads.describe_files/2`, `read_file_text/3`), seen from
+  Blip's side.
 
   It takes the rows, the board entries (`Photon.Threads.board/1`) and the
   time, all passed in. A thread's state reads as `Photon.Threads.State.label/2`
@@ -72,6 +75,23 @@ defmodule Photon.Assistant.Readout do
           thread_id: String.t() | nil
         }
 
+  @typedoc """
+  Where a project schedule from Blip's `schedule` tool fires: the
+  project's slug, the thread it wakes (nil for a new thread each time)
+  and whether it repeats.
+  """
+  @type schedule_place :: %{
+          slug: String.t(),
+          thread: %{id: String.t(), title: String.t()} | nil,
+          repeats?: boolean()
+        }
+
+  @typedoc """
+  A skill as `list_skills` shows it: its name, description and where it
+  is on, as Blip names the places (`you`, or a project's slug).
+  """
+  @type skill :: %{name: String.t(), description: String.t(), on_for: [String.t()]}
+
   @typedoc "What `read_project` shows besides the project: its files, threads, schedules and skills on."
   @type project_facts :: %{
           files: [file()],
@@ -106,6 +126,8 @@ defmodule Photon.Assistant.Readout do
   @thread_limit 40
   # The longest purpose sentence `list_projects` shows.
   @purpose_limit 120
+  # The longest skill description `list_skills` shows.
+  @description_limit 200
   # The longest question a thread's line shows.
   @question_limit 280
   # `read_thread`: the longest item, and the most characters of items.
@@ -167,7 +189,8 @@ defmodule Photon.Assistant.Readout do
   defp files_count(1), do: "1 context file."
   defp files_count(n), do: "#{n} context files."
 
-  # A name as a sentence: with a full stop unless it ends in one already.
+  # A name or a description as a sentence: with a full stop unless it ends
+  # in one already.
   defp sentence(text) do
     if String.ends_with?(text, [".", "!", "?"]), do: text, else: text <> "."
   end
@@ -539,6 +562,76 @@ defmodule Photon.Assistant.Readout do
   @spec file_edited(String.t(), String.t()) :: String.t()
   def file_edited(name, slug), do: "Edited #{name} in #{slug}."
 
+  ## Schedules
+
+  @doc """
+  What Blip's `schedule` tool says once it made schedule `id`, firing
+  `when_text` (`Photon.Schedules.when_text/1`). Blip's own:
+  `Scheduled sc_9: first at 2026-10-10 09:00 UTC.` A project's adds the
+  place: `..., then every 1440 minutes, in garden, starting a new thread
+  each time.`, or `..., in garden, waking c_123 "Fix the pump".` for one
+  that wakes a thread (`each time` only when it repeats).
+  """
+  @spec scheduled(String.t(), String.t(), schedule_place() | nil) :: String.t()
+  def scheduled(id, when_text, nil), do: "Scheduled #{id}: #{when_text}."
+
+  def scheduled(id, when_text, %{slug: slug} = place),
+    do: "Scheduled #{id}: #{when_text}, in #{slug}, #{place_words(place)}."
+
+  defp place_words(place) do
+    each = if place.repeats?, do: " each time", else: ""
+
+    case place.thread do
+      nil -> "starting a new thread" <> each
+      %{id: id, title: title} -> ~s(waking #{id} "#{title}") <> each
+    end
+  end
+
+  @doc """
+  What `list_schedules` says for project `slug`: the time now, then each
+  schedule as `read_project` lists it (its ID, when, next time or why it
+  stopped, its target and prompt), or `No schedules in garden.` `titles`
+  are the project's thread titles by ID, for the threads schedules wake.
+  """
+  @spec schedules(String.t(), [schedule()], %{optional(String.t()) => String.t()}, DateTime.t()) ::
+          String.t()
+  def schedules(slug, [], _titles, now), do: "No schedules in #{slug}. (Now: #{time(now)}.)"
+
+  def schedules(slug, schedules, titles, now) do
+    "Now: #{time(now)}.\nSchedules in #{slug}:\n" <>
+      Enum.map_join(schedules, "\n", &schedule_line(&1, titles))
+  end
+
+  ## Skills
+
+  @doc """
+  What `list_skills` says: one line per skill, by name, with its
+  description and where it is on (`you` for Blip, a project's slug):
+  `pdf-forms: Fill in PDF forms. On for: you, garden.`, or `Off
+  everywhere.` A long description is cut at #{@description_limit}
+  characters. `No skills yet.` with none.
+  """
+  @spec skills([skill()]) :: String.t()
+  def skills([]), do: "No skills yet."
+
+  def skills(skills) do
+    Enum.map_join(skills, "\n", fn skill ->
+      description = skill.description |> one_line() |> cut_words(@description_limit)
+      "#{skill.name}: #{sentence(description)} #{on_for(skill.on_for)}"
+    end)
+  end
+
+  defp on_for([]), do: "Off everywhere."
+  defp on_for(places), do: "On for: #{Enum.join(places, ", ")}."
+
+  @doc """
+  What `set_project_skill` says: `Turned on pdf-forms for garden.` or
+  `Turned off pdf-forms for garden.`
+  """
+  @spec skill_set(String.t(), String.t(), boolean()) :: String.t()
+  def skill_set(name, slug, true), do: "Turned on #{name} for #{slug}."
+  def skill_set(name, slug, false), do: "Turned off #{name} for #{slug}."
+
   ## Unknown names
 
   @doc """
@@ -551,6 +644,16 @@ defmodule Photon.Assistant.Readout do
 
   def unknown_project(name, slugs),
     do: "There's no project called #{name}. Projects: #{Enum.join(slugs, ", ")}."
+
+  @doc """
+  The error for a `skill` argument that names no skill, listing the
+  skills there are.
+  """
+  @spec unknown_skill(String.t(), [String.t()]) :: String.t()
+  def unknown_skill(name, []), do: "There's no skill called #{name}. There are no skills yet."
+
+  def unknown_skill(name, names),
+    do: "There's no skill called #{name}. Skills: #{Enum.join(names, ", ")}."
 
   @doc "The error for a `thread` argument that names no thread."
   @spec unknown_thread(String.t()) :: String.t()

@@ -20,7 +20,11 @@ defmodule Photon.Assistant.MockScript do
       <purpose>`, `start thread in <slug>: <message>`, `tell <id>:
       <message>`, `stop thread <id>`, `files in <slug>`, `read
       <slug>/<name>`, `write <slug>/<name>: <text>`, `edit <slug>/<name>:
-      <old> => <new>`, `answer <question id>: <text>`, `answer: <text>`
+      <old> => <new>`, `in <n> minutes in <slug>: <prompt>`, `every <n>
+      minutes in <slug>: <prompt>`, `schedules in <slug>`, `cancel schedule
+      <id>`, `all skills`,
+      `turn on <skill> in <slug>`, `turn off <skill> in <slug>`, `answer
+      <question id>: <text>`, `answer: <text>`
 
   It reads the last text part of the user's message, which is what the
   user typed: a message sent from a page has the page's note in front of

@@ -154,6 +154,18 @@ defmodule Photon.Assistant.OriginTest do
     end
   end
 
+  describe "asked_by/1" do
+    test "the owner when they typed into the run, else Blip" do
+      assert Origin.asked_by(Origin.of([@user])) == "owner"
+      assert Origin.asked_by(Origin.of([@user, carrying([question("q_1", "c_1")])])) == "owner"
+      assert Origin.asked_by(Origin.of([@answer])) == "blip"
+      assert Origin.asked_by(Origin.of([routine("owner")])) == "blip"
+      assert Origin.asked_by(Origin.of([carrying([update("c_1")])])) == "blip"
+      assert Origin.asked_by(Origin.of([])) == "blip"
+      assert Origin.asked_by(nil) == "blip"
+    end
+  end
+
   test "the refusals say what to do instead" do
     assert Origin.restricted_message() ==
              "A thread's question can't start or change work. " <>

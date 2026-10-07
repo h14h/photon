@@ -247,7 +247,8 @@ defmodule Photon.SchedulesTest do
       assert first.data["source"] == %{
                "kind" => "routine",
                "schedule_id" => schedule.id,
-               "created_by" => "owner"
+               "created_by" => "owner",
+               "asked_by" => nil
              }
 
       assert %TaskRecord{status: "done"} = Durable.task(schedule.task_id)
@@ -581,6 +582,128 @@ defmodule Photon.SchedulesTest do
     idle!(thread_id)
   end
 
+  describe "Blip's tool" do
+    defp tool!(target, args, asked_by, request_id) do
+      now = System.system_time(:millisecond)
+
+      made = %{asked_by: asked_by, request_id: request_id, now: now}
+      Durable.commit(&Schedules.tool_schedule_tx(&1, target, args, made))
+    end
+
+    defp blip_idle! do
+      blip = Assistant.conversation_id()
+      :ok = Durable.subscribe(blip)
+
+      if Durable.busy?(blip),
+        do: await_change(blip, fn _changes -> not Durable.busy?(blip) end)
+
+      :ok
+    end
+
+    test "makes a project schedule like the form's, as Blip's, and its firings say who and why",
+         %{project: project} do
+      assert {:ok, %Schedule{} = schedule} =
+               tool!(
+                 {:project, project.id, nil},
+                 %{"prompt" => "files", "in_minutes" => 60, "every_minutes" => 60},
+                 "owner",
+                 "schedule:t_tool"
+               )
+
+      project_id = project.id
+      assert_receive {:schedules_changed, ^project_id}
+
+      assert %Schedule{
+               project_id: ^project_id,
+               conversation_id: nil,
+               created_by: "blip",
+               asked_by: "owner",
+               every_minutes: 60
+             } = schedule
+
+      assert Durable.task(schedule.task_id).request_id == "schedule:t_tool"
+      assert [%{id: id}] = Schedules.list({:project, project.id})
+      assert id == schedule.id
+
+      assert Schedules.run_now(schedule.id) == {:ok, "started"}
+      [thread] = Threads.list(project.id)
+      assert [first | _] = Durable.entries(thread.id)
+
+      assert first.data["source"] == %{
+               "kind" => "routine",
+               "schedule_id" => schedule.id,
+               "created_by" => "blip",
+               "asked_by" => "owner"
+             }
+
+      idle!(thread.id)
+      :ok = blip_idle!()
+    end
+
+    test "wakes one of the project's threads, and refuses one that isn't", %{project: project} do
+      thread_id = project |> start!("files") |> idle!()
+      {:ok, other} = Projects.create(%{"purpose" => "Fix things.", "name" => "House"})
+      theirs = other |> start!("files") |> idle!()
+      args = %{"prompt" => "files", "in_minutes" => 60}
+
+      assert {:ok, %Schedule{conversation_id: ^thread_id, asked_by: "blip"}} =
+               tool!({:project, project.id, thread_id}, args, "blip", "schedule:t_wake")
+
+      assert tool!({:project, project.id, theirs}, args, "blip", "schedule:t_theirs") ==
+               {:error, "#{theirs} isn't a thread in garden."}
+
+      assert tool!({:project, "p_gone", nil}, args, "blip", "schedule:t_gone") ==
+               {:error, "That project no longer exists."}
+
+      assert [_one] = Schedules.list({:project, project.id})
+      assert Schedules.list({:project, other.id}) == []
+    end
+
+    test "makes one of Blip's own, posting into its conversation" do
+      blip = Assistant.conversation_id()
+
+      assert {:ok, %Schedule{project_id: nil, conversation_id: ^blip, asked_by: "owner"}} =
+               tool!({:blip, blip}, %{"prompt" => "ping", "in_minutes" => 60}, "owner", "s:t_own")
+
+      assert_receive {:schedules_changed, nil}
+    end
+  end
+
+  describe "delete_tx/3" do
+    test ":any deletes Blip's or a project's; :blip and a project's scope only their own", %{
+      project: project
+    } do
+      theirs = create!(project)
+      blip = Assistant.conversation_id()
+
+      {:ok, own} =
+        Durable.commit(
+          &Schedules.tool_schedule_tx(
+            &1,
+            {:blip, blip},
+            %{"prompt" => "ping", "in_minutes" => 60},
+            %{
+              asked_by: "owner",
+              request_id: "schedule:t_del",
+              now: System.system_time(:millisecond)
+            }
+          )
+        )
+
+      assert Durable.commit(&Schedules.delete_tx(&1, theirs.id, :blip)) == {:error, :not_found}
+
+      assert Durable.commit(&Schedules.delete_tx(&1, own.id, {:project, project.id})) ==
+               {:error, :not_found}
+
+      assert Durable.commit(&Schedules.delete_tx(&1, theirs.id, :any)) == :ok
+      assert Durable.commit(&Schedules.delete_tx(&1, own.id, :any)) == :ok
+      assert Durable.commit(&Schedules.delete_tx(&1, own.id, :any)) == {:error, :not_found}
+      assert Schedules.get(theirs.id) == nil
+      assert Schedules.get(own.id) == nil
+      assert Durable.task(theirs.task_id).abort_requested
+    end
+  end
+
   test "a schedule of Blip's posts into Blip's conversation" do
     blip = Assistant.conversation_id()
 
@@ -591,7 +714,8 @@ defmodule Photon.SchedulesTest do
         prompt: "Review the day",
         first_at: DateTime.utc_now(),
         version: 1,
-        created_by: "blip"
+        created_by: "blip",
+        asked_by: "owner"
       })
 
     assert Schedules.run_now(schedule.id) == {:ok, "sent"}
@@ -601,7 +725,8 @@ defmodule Photon.SchedulesTest do
     assert entry.data["source"] == %{
              "kind" => "routine",
              "schedule_id" => "sc_morning",
-             "created_by" => "blip"
+             "created_by" => "blip",
+             "asked_by" => "owner"
            }
 
     assert [%{id: "sc_morning"}] = Schedules.list(:blip)

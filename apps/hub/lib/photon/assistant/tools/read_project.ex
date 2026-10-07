@@ -3,14 +3,14 @@ defmodule Photon.Assistant.Tools.ReadProject do
   Blip's `read_project` tool (section 5.2 of
   `docs/plans/step-4-blip-as-coordinator.md`): one project's name, slug
   and whole purpose, its context files, its threads with their states,
-  its schedules and the skills turned on for it
-  (`Photon.Assistant.Readout.project/2`). The details name the project,
+  its schedules but one-offs that fired (`Photon.Assistant.project_schedules/1`)
+  and the skills turned on for it (`Photon.Assistant.Readout.project/2`). The details name the project,
   for the line in Blip's panel. It changes nothing, so a rerun after a
   restart is safe.
   """
   @behaviour Photon.Durable.Tool
 
-  alias Photon.{Assistant, Projects, Schedules, Skills, Threads}
+  alias Photon.{Assistant, Projects, Skills, Threads}
   alias Photon.Assistant.Readout
 
   @impl true
@@ -47,23 +47,12 @@ defmodule Photon.Assistant.Tools.ReadProject do
       facts = %{
         files: Projects.list_files(project.id),
         board: Threads.board(scope),
-        schedules: Enum.map(Schedules.list(scope), &schedule/1),
+        schedules: Assistant.project_schedules(project.id),
         skills: Enum.map(Skills.enabled(scope), & &1.name)
       }
 
       {:ok, Readout.project(project, facts),
        %{"project_id" => project.id, "slug" => project.slug}}
     end
-  end
-
-  defp schedule(%{schedule: schedule} = listed) do
-    %{
-      id: schedule.id,
-      when: Schedules.when_text(schedule),
-      state: listed.state,
-      next_at: listed.next_at,
-      prompt: schedule.prompt,
-      thread_id: schedule.conversation_id
-    }
   end
 end

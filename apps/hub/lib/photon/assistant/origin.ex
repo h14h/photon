@@ -151,6 +151,17 @@ defmodule Photon.Assistant.Origin do
   defp arguments(_args), do: :error
 
   @doc """
+  Why a schedule Blip makes in a run of `origin` was made, for its
+  `asked_by`: `"owner"` when the owner typed into the run, `"blip"`
+  otherwise (Blip set it up on its own, say from a schedule's firing or
+  a thread update). Its firings then read as a schedule or as Blip's
+  follow-up (`of/1`).
+  """
+  @spec asked_by(t() | term()) :: String.t()
+  def asked_by(%{owner_wrote?: true}), do: "owner"
+  def asked_by(_origin), do: "blip"
+
+  @doc """
   Whether Blip may start or message one more thread in a run of
   `origin`, having done so `count` times since the owner last wrote to
   it, with at most `limit` allowed: always in a run the owner typed

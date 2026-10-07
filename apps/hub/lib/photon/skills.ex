@@ -38,6 +38,11 @@ defmodule Photon.Skills do
   is and what the answers mean). Neither writes anything; `install/2`
   does, from the preview form and the candidate.
 
+  Blip turns skills on and off for a project with its `set_project_skill`
+  tool, through `enable_tx/3` and `disable_tx/3` inside the commit that
+  records the call's result. Blip's own set stays the owner's to change,
+  on the Skills page.
+
   There is no process here: the rows hold the state and the Store's
   commit line orders the writes. `fetch/1` runs in its caller's process
   (the install page's `start_async` task).
@@ -366,40 +371,49 @@ defmodule Photon.Skills do
   project doesn't exist or the scope has 30 skills on.
   """
   @spec enable(String.t(), scope()) :: :ok | {:error, :not_found | String.t()}
-  def enable(skill_id, scope) do
+  def enable(skill_id, scope), do: Durable.commit(&enable_tx(&1, skill_id, scope))
+
+  @doc """
+  `enable/2` inside the caller's commit: Blip's `set_project_skill` tool
+  turns a skill on in the commit that records its result.
+  """
+  @spec enable_tx(Tx.t(), String.t(), scope()) :: :ok | {:error, :not_found | String.t()}
+  def enable_tx(tx, skill_id, scope) do
     column = scope_column(scope)
 
-    Durable.commit(fn tx ->
-      with {:ok, _skill} <- fetch_skill(skill_id),
-           :ok <- scope_exists(scope),
-           false <- on?(skill_id, column),
-           :ok <- Rules.enable_check(Repo.aggregate(in_scope(column), :count)) do
-        _enablement = Repo.insert!(%Enablement{skill_id: skill_id, scope: column})
-        announce(tx, skill_id)
-      else
-        true -> :ok
-        error -> error
-      end
-    end)
+    with {:ok, _skill} <- fetch_skill(skill_id),
+         :ok <- scope_exists(scope),
+         false <- on?(skill_id, column),
+         :ok <- column |> in_scope() |> Repo.aggregate(:count) |> Rules.enable_check() do
+      _enablement = Repo.insert!(%Enablement{skill_id: skill_id, scope: column})
+      announce(tx, skill_id)
+    else
+      true -> :ok
+      error -> error
+    end
   end
 
   @doc "Turns skill `skill_id` off in `scope`. Does nothing when it isn't on."
   @spec disable(String.t(), scope()) :: :ok
-  def disable(skill_id, scope) do
-    column = scope_column(scope)
+  def disable(skill_id, scope), do: Durable.commit(&disable_tx(&1, skill_id, scope))
 
-    Durable.commit(fn tx ->
-      deleted =
-        column
-        |> in_scope()
-        |> where([e], e.skill_id == ^skill_id)
-        |> Repo.delete_all()
+  @doc """
+  `disable/2` inside the caller's commit, for Blip's `set_project_skill`
+  tool.
+  """
+  @spec disable_tx(Tx.t(), String.t(), scope()) :: :ok
+  def disable_tx(tx, skill_id, scope) do
+    deleted =
+      scope
+      |> scope_column()
+      |> in_scope()
+      |> where([e], e.skill_id == ^skill_id)
+      |> Repo.delete_all()
 
-      case deleted do
-        {0, _} -> :ok
-        {_deleted, _} -> announce(tx, skill_id)
-      end
-    end)
+    case deleted do
+      {0, _} -> :ok
+      {_deleted, _} -> announce(tx, skill_id)
+    end
   end
 
   defp in_scope(column), do: where(Enablement, [e], e.scope == ^column)

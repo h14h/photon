@@ -413,6 +413,99 @@ defmodule Photon.Assistant.ReadoutTest do
     assert Readout.file_edited("notes.md", "garden") == "Edited notes.md in garden."
   end
 
+  describe "schedules" do
+    @when_daily "first at 2026-10-10 09:00 UTC, then every 1440 minutes"
+
+    test "what the schedule tool says: Blip's own, or a project's with its place" do
+      assert Readout.scheduled("sc_9", "first at 2026-10-10 09:00 UTC", nil) ==
+               "Scheduled sc_9: first at 2026-10-10 09:00 UTC."
+
+      new_thread = %{slug: "garden", thread: nil, repeats?: true}
+
+      assert Readout.scheduled("sc_9", @when_daily, new_thread) ==
+               "Scheduled sc_9: #{@when_daily}, in garden, starting a new thread each time."
+
+      assert Readout.scheduled("sc_9", "first at 2026-10-10 09:00 UTC", %{
+               new_thread
+               | repeats?: false
+             }) ==
+               "Scheduled sc_9: first at 2026-10-10 09:00 UTC, in garden, starting a new thread."
+
+      woken = %{new_thread | thread: %{id: "c_1", title: "Fix the pump"}}
+
+      assert Readout.scheduled("sc_9", @when_daily, woken) ==
+               ~s(Scheduled sc_9: #{@when_daily}, in garden, waking c_1 "Fix the pump" each time.)
+    end
+
+    test "a project's list, with each schedule's state and target" do
+      schedules = [
+        %{
+          id: "sc_1",
+          when: @when_daily,
+          state: :waiting,
+          next_at: ~U[2026-10-10 09:00:00Z],
+          prompt: "Water\nzone 2",
+          thread_id: nil
+        },
+        %{
+          id: "sc_2",
+          when: "first at 2026-10-08 09:00 UTC",
+          state: {:stopped, "boom"},
+          next_at: nil,
+          prompt: "Pump",
+          thread_id: "c_1"
+        }
+      ]
+
+      assert Readout.schedules("garden", schedules, %{"c_1" => "Fix the pump"}, @now) ==
+               """
+               Now: 2026-10-07 12:00 UTC.
+               Schedules in garden:
+               - sc_1: #{@when_daily}; next 2026-10-10 09:00 UTC; starts a new thread each time: "Water zone 2"
+               - sc_2: first at 2026-10-08 09:00 UTC; stopped after an error (boom); wakes c_1 "Fix the pump": "Pump"\
+               """
+
+      assert Readout.schedules("garden", [], %{}, @now) ==
+               "No schedules in garden. (Now: 2026-10-07 12:00 UTC.)"
+    end
+  end
+
+  describe "skills" do
+    test "a line per skill with where it is on" do
+      skills = [
+        %{name: "pdf-forms", description: "Fill in PDF forms.", on_for: ["you", "garden"]},
+        %{name: "release-notes", description: "Write release notes", on_for: []}
+      ]
+
+      assert Readout.skills(skills) ==
+               "pdf-forms: Fill in PDF forms. On for: you, garden.\n" <>
+                 "release-notes: Write release notes. Off everywhere."
+
+      assert Readout.skills([]) == "No skills yet."
+    end
+
+    test "a long description is cut at a word" do
+      [line] =
+        [%{name: "long", description: String.duplicate("word ", 100), on_for: []}]
+        |> Readout.skills()
+        |> String.split("\n")
+
+      assert line =~ ~r/\Along: (word ){30,}word\.\.\. Off everywhere\.\z/
+      assert String.length(line) < 240
+    end
+
+    test "turning one on or off, and one that isn't there" do
+      assert Readout.skill_set("pdf-forms", "garden", true) == "Turned on pdf-forms for garden."
+      assert Readout.skill_set("pdf-forms", "garden", false) == "Turned off pdf-forms for garden."
+
+      assert Readout.unknown_skill("pdf-form", ["pdf-forms", "release-notes"]) ==
+               "There's no skill called pdf-form. Skills: pdf-forms, release-notes."
+
+      assert Readout.unknown_skill("pdf-form", []) ==
+               "There's no skill called pdf-form. There are no skills yet."
+    end
+  end
+
   test "the words for a project or thread that isn't there" do
     assert Readout.unknown_project("gardn", ["garden", "house"]) ==
              "There's no project called gardn. Projects: garden, house."

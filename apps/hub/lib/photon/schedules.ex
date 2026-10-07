@@ -4,7 +4,8 @@ defmodule Photon.Schedules do
   prompts that fire at set times. A project's schedules start a new
   thread in the project each time, or wake one of its threads; Blip's own
   schedules post into Blip's conversation. The owner manages a project's
-  on its page, and Blip makes its own with its `schedule` tool. Threads
+  on its page, and Blip makes its own and projects' with its `schedule`
+  tool. Threads
   have no schedule tools, since a schedule that starts threads would let
   a thread start threads.
 
@@ -38,10 +39,14 @@ defmodule Photon.Schedules do
   (`Photon.Schedules.Rules.arm/4` and `fired_through/3`), so an edit
   neither skips nor repeats a firing.
 
-  Blip's `schedule` and `cancel_schedule` tools change Blip's schedules
-  inside the commits that record their results (`blip_schedule_tx/5`,
-  `delete_tx/3`), so a tool call that runs again after a restart makes
-  or removes nothing twice.
+  Blip's `schedule` and `cancel_schedule` tools change Blip's own
+  schedules and projects' inside the commits that record their results
+  (`tool_schedule_tx/4`, `delete_tx/3`), so a tool call that runs again
+  after a restart makes or removes nothing twice. A project schedule Blip
+  makes is a row like the form's, with `created_by: "blip"`, and fires
+  under the same consent. Each row Blip makes says why (`asked_by`), and
+  every firing's source carries who made it and why, for the signals to
+  Blip and the activity log.
 
   Every change and every firing announces `{:schedules_changed,
   project_id}` (nil for Blip's) on `"schedules"` after its commit.
@@ -76,6 +81,20 @@ defmodule Photon.Schedules do
 
   @typedoc "Whose schedules: Blip's own, or a project's."
   @type scope :: :blip | {:project, String.t()}
+
+  @typedoc """
+  Where a schedule from Blip's `schedule` tool fires: Blip's conversation,
+  or a project, waking one of its threads or (nil) starting a new thread
+  each time.
+  """
+  @type tool_target :: {:blip, String.t()} | {:project, String.t(), String.t() | nil}
+
+  @typedoc """
+  How Blip's `schedule` call makes a schedule: why (`asked_by`, `"owner"`
+  or `"blip"`), the call's request ID, and the clock it read (Unix
+  milliseconds).
+  """
+  @type made :: %{asked_by: String.t(), request_id: String.t(), now: Rules.ms()}
 
   @typedoc """
   Where a schedule stands, read from its task: waiting for its next time,
@@ -370,38 +389,48 @@ defmodule Photon.Schedules do
   defp every_ms(%Schedule{every_minutes: minutes}), do: minutes * 60_000
 
   @doc """
-  Makes one of Blip's own schedules from its `schedule` tool's arguments
-  (`prompt`, `in_minutes` or `at`, `every_minutes`, read by
+  Makes a schedule from Blip's `schedule` tool's arguments (`prompt`,
+  `in_minutes` or `at`, `every_minutes`, read by
   `Photon.Schedules.Rules.from_tool/2` with the tool's messages) inside
   the commit that records the tool's result, so the row and its routine
-  task exist only if the result does. The schedule posts into
-  `conversation_id`, Blip's conversation.
+  task exist only if the result does. `target` says where it fires:
+  `{:blip, conversation_id}` posts into Blip's conversation, and
+  `{:project, project_id, thread_id}` is a project schedule like the
+  form's, waking `thread_id` or, with nil, starting a new thread each
+  time. A thread that isn't the project's is refused
+  (`Photon.Schedules.Rules.tool_thread/3`), as is a project that went
+  before the commit.
 
+  `made` says how the call made it (`t:made/0`). The row is
+  `created_by: "blip"`, with `asked_by` (`"owner"` or `"blip"`) from the
+  run that called the tool (section 5.4 of
+  `docs/plans/step-4-blip-as-coordinator.md`); every firing carries both.
   `request_id` is the tool call's (`"schedule:<task id>"`), kept as the
   routine task's request ID: a call that runs again with it gets the
   schedule it already made, not a second one. `now` is the clock the
   tool read (Unix milliseconds), shared by the rules and the arming, so a
   time the rules accept always fires.
   """
-  @spec blip_schedule_tx(Tx.t(), String.t(), map(), String.t(), Rules.ms()) ::
+  @spec tool_schedule_tx(Tx.t(), tool_target(), map(), made()) ::
           {:ok, Schedule.t()} | {:error, String.t()}
-  def blip_schedule_tx(tx, conversation_id, args, request_id, now) do
+  def tool_schedule_tx(tx, target, args, %{asked_by: asked_by, request_id: request_id, now: now}) do
     case made_for(request_id) do
       %Schedule{} = schedule ->
         {:ok, schedule}
 
       nil ->
-        with {:ok, attrs} <- Rules.from_tool(args, now) do
+        with {:ok, place} <- tool_place(target),
+             {:ok, attrs} <- Rules.from_tool(args, now) do
           schedule =
             Repo.insert!(
               struct!(
                 %Schedule{
                   id: PhotonCore.ID.new("sc_"),
-                  conversation_id: conversation_id,
                   version: 1,
-                  created_by: "blip"
+                  created_by: "blip",
+                  asked_by: asked_by
                 },
-                attrs
+                Map.merge(place, attrs)
               )
             )
 
@@ -409,6 +438,22 @@ defmodule Photon.Schedules do
           :ok = announce(tx, schedule)
           {:ok, schedule}
         end
+    end
+  end
+
+  # The row's place for a tool target: Blip's conversation, or a project
+  # and the thread it wakes (nil for a new thread each time).
+  defp tool_place({:blip, conversation_id}),
+    do: {:ok, %{project_id: nil, conversation_id: conversation_id}}
+
+  defp tool_place({:project, project_id, thread}) do
+    case Projects.get(project_id) do
+      %Project{} = project ->
+        with {:ok, thread_id} <- Rules.tool_thread(thread, thread_ids(project), project.slug),
+             do: {:ok, %{project_id: project.id, conversation_id: thread_id}}
+
+      nil ->
+        {:error, "That project no longer exists."}
     end
   end
 
@@ -446,11 +491,12 @@ defmodule Photon.Schedules do
 
   @doc """
   Deletes schedule `id` inside the caller's commit, as `delete/1` does,
-  but only when it is in `scope`: Blip's `cancel_schedule` tool passes
+  but only when it is in `scope`: the home page's cancel button passes
   `:blip`, so a project's schedule is `{:error, :not_found}` to it, like
-  one that doesn't exist.
+  one that doesn't exist. Blip's `cancel_schedule` tool passes `:any`,
+  since Blip manages project schedules too.
   """
-  @spec delete_tx(Tx.t(), String.t(), scope()) :: :ok | {:error, :not_found}
+  @spec delete_tx(Tx.t(), String.t(), scope() | :any) :: :ok | {:error, :not_found}
   def delete_tx(tx, id, scope) do
     case fetch_schedule(id) do
       {:ok, schedule} ->
@@ -461,6 +507,7 @@ defmodule Photon.Schedules do
     end
   end
 
+  defp in_scope?(%Schedule{}, :any), do: true
   defp in_scope?(%Schedule{project_id: nil}, :blip), do: true
   defp in_scope?(%Schedule{project_id: project_id}, {:project, project_id}), do: true
   defp in_scope?(%Schedule{}, _scope), do: false

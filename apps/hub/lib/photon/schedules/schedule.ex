@@ -13,7 +13,13 @@ defmodule Photon.Schedules.Schedule do
   created and goes up by one on every edit. `task_id` is the routine task
   that carries the current version; the schedule's next time and state
   are read from that task, never stored here (rule 15). `created_by` is
-  `"owner"` (the project page) or `"blip"` (Blip's `schedule` tool).
+  `"owner"` (the project page) or `"blip"` (Blip's `schedule` tool, for
+  itself or in a project). `asked_by` says why Blip made one: `"owner"`
+  when the owner wrote to the run that called the tool, `"blip"` when
+  Blip set it up on its own; nil for the owner's. Every firing carries
+  both in its source (`Photon.Schedules.Routine`), so a thread a Blip-made
+  schedule starts counts as Blip's work, and a firing of a reminder the
+  owner asked for reads as a schedule, not as Blip's follow-up.
 
   `last_run_at`, `last_outcome` and `last_thread_id` sum up the last
   firing, run-now included: when, what it did (`"started"`, `"sent"`,
@@ -39,6 +45,7 @@ defmodule Photon.Schedules.Schedule do
           version: pos_integer() | nil,
           task_id: String.t() | nil,
           created_by: String.t() | nil,
+          asked_by: String.t() | nil,
           last_run_at: DateTime.t() | nil,
           last_outcome: outcome() | nil,
           last_thread_id: String.t() | nil,
@@ -56,6 +63,7 @@ defmodule Photon.Schedules.Schedule do
     field(:version, :integer)
     field(:task_id, :string)
     field(:created_by, :string)
+    field(:asked_by, :string)
     field(:last_run_at, :utc_datetime_usec)
     field(:last_outcome, :string)
     field(:last_thread_id, :string)

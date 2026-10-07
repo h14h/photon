@@ -79,12 +79,11 @@ defmodule Photon.AssistantTest do
 
       {:ok, schedule} =
         Durable.commit(
-          &Schedules.blip_schedule_tx(
+          &Schedules.tool_schedule_tx(
             &1,
-            c,
+            {:blip, c},
             %{"prompt" => "check disks", "in_minutes" => 0},
-            "schedule:t_x",
-            now
+            %{asked_by: "owner", request_id: "schedule:t_x", now: now}
           )
         )
 

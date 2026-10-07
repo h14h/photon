@@ -12,7 +12,8 @@ defmodule Photon.Schedules.Rules do
   `when_text/2`).
 
   - Reading input: `schedule/2` checks the owner's form, `from_tool/2`
-    Blip's `schedule` tool's arguments. Both accept a time up to a
+    Blip's `schedule` tool's arguments, and `tool_thread/3` the thread
+    that tool names in a project. Both accept a time up to a
     minute ago, since the form's time input only goes down to the minute
     and Blip's "now" is a few milliseconds old by the time it is stored.
   - Arming: `arm/4` is the first time a new or edited schedule's task
@@ -237,6 +238,28 @@ defmodule Photon.Schedules.Rules do
       {:ok, %{prompt: prompt, first_at: datetime(first_at), every_minutes: every}}
     end
   end
+
+  @doc """
+  The thread a project schedule from Blip's `schedule` tool wakes, from
+  its `thread` argument: nil (none, or only spaces) for a new thread each
+  time, or a thread among `thread_ids`, the project's (slug `slug`).
+  Otherwise `c_123 isn't a thread in garden.`
+  """
+  @spec tool_thread(term(), [String.t()], String.t()) ::
+          {:ok, String.t() | nil} | {:error, String.t()}
+  def tool_thread(thread, thread_ids, slug) when is_binary(thread) do
+    case String.trim(thread) do
+      "" ->
+        {:ok, nil}
+
+      id ->
+        if id in thread_ids,
+          do: {:ok, id},
+          else: {:error, "#{id} isn't a thread in #{slug}."}
+    end
+  end
+
+  def tool_thread(_thread, _thread_ids, _slug), do: {:ok, nil}
 
   defp tool_first_at(%{"in_minutes" => minutes}, _every, now)
        when is_integer(minutes) and minutes >= 0 do

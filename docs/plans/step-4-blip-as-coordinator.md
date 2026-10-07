@@ -1031,20 +1031,39 @@ owner typed into are never counted against or refused.
   wake each time, instead of starting a new thread."). Its description
   drops "it can't schedule work in a project" and says where each kind
   posts. `execute/2` calls `Schedules.tool_schedule_tx(tx, target, args,
-  request_id, now)`, which replaces `blip_schedule_tx/5`: `target` is
-  `{:blip, conversation_id}` or `{:project, project_id, thread_id | nil}`.
-  A project schedule is a row like the form's, with `created_by: "blip"`.
-  Every row the tool makes, Blip's own or a project's, gets `asked_by`
-  from the calling run's origin (section 5.4). Threads a Blip-made
-  project schedule starts or wakes count as Blip's work for signals
-  (section 3.2).
-  A thread not in the project: `c_123 isn't a thread in garden.` The
-  result adds the place: `Scheduled sc_9: first at 2026-10-10 09:00 UTC,
-  then every 1440 minutes, in garden, starting a new thread each time.`
+  %{asked_by: _, request_id: _, now: _})`, which replaces
+  `blip_schedule_tx/5`: `target` is `{:blip, conversation_id}` or
+  `{:project, project_id, thread_id | nil}`, and `asked_by` is
+  `Origin.asked_by/1` of the calling run (`Schedules` can't reach
+  `Photon.Assistant`, so the tool passes it in; the three go in one map
+  because credo allows at most five parameters). A project schedule is a row like the form's, with `created_by:
+  "blip"`. Every row the tool makes, Blip's own or a project's, gets
+  `asked_by` from the calling run's origin (section 5.4). Threads a
+  Blip-made project schedule starts or wakes count as Blip's work for
+  signals (section 3.2).
+  A thread not in the project: `c_123 isn't a thread in garden.`
+  (`Schedules.Rules.tool_thread/3`); a `thread` without `project`: `Give
+  project too: the slug of the project c_123 is in.`; a project gone
+  before the commit: `That project no longer exists.` The result adds the
+  place (`Readout.scheduled/3`): `Scheduled sc_9: first at 2026-10-10
+  09:00 UTC, then every 1440 minutes, in garden, starting a new thread
+  each time.`, or `..., in garden, waking c_123 "Fix the pump".`, with
+  "each time" only when it repeats. Its details carry `"schedule_id"`,
+  and for a project `"project_id"`, `"slug"` and (when it wakes one)
+  `"thread_id"`.
 - `list_schedules` gains `project` (optional). Without it, Blip's own, as
-  today; with it, the project's, each with its target.
+  today; with it, the project's (`Readout.schedules/4`), each with its
+  target, as `read_project` lists them. Both leave out one-offs that
+  already fired (`Assistant.project_schedules/1` for a project's, which
+  `read_project` uses too).
 - `cancel_schedule` deletes any schedule (`Schedules.delete_tx(tx, id,
-  :any)`), Blip's or a project's.
+  :any)`), Blip's or a project's: `Cancelled sc_9 in garden.`, with
+  `"schedule_id"` and, for a project's, `"project_id"` and `"slug"` in
+  its details.
+- All three writing calls (`schedule`, `cancel_schedule`, and
+  `set_project_skill` below) refuse in a restricted run
+  (`Assistant.may_act_tx(tx, task, :change)`), Blip's own reminders
+  included.
 - Blip's prompt drops "For recurring work in a project, tell the user to
   add it with New schedule on that project's page."
 
@@ -1056,7 +1075,7 @@ Consent is unchanged: a project schedule Blip makes fires under the same
 | Tool | Parameters | Does | Result |
 |---|---|---|---|
 | `list_skills` | none | `Skills.list/0` | One line per skill: `pdf-forms: Fill in PDF forms. On for: you, garden.` (`Off everywhere.` when off). `No skills yet.` |
-| `set_project_skill` | `project`, `skill` (name), `on` (boolean) | `Skills.enable_tx/3` or `disable_tx/3` | `Turned on pdf-forms for garden.` / `Turned off ...`; the 30-skill message; `There's no skill called pdf-form. Skills: pdf-forms, release-notes.` |
+| `set_project_skill` | `project`, `skill` (name), `on` (boolean) | `Skills.enable_tx/3` or `disable_tx/3` | `Turned on pdf-forms for garden.` / `Turned off ...` (also when it already was); the 30-skill message; `There's no skill called pdf-form. Skills: pdf-forms, release-notes.` (or `There are no skills yet.`). Details: `"project_id"`, `"slug"`, `"skill"`, `"on"`. |
 
 `Skills.enable_tx/3` and `disable_tx/3` are `enable/2` and `disable/2`
 inside a caller's commit, which the two wrap. Blip's own skill set stays
@@ -1269,6 +1288,7 @@ and skill phrasings and before its own. Its help text lists them.
 | `edit <slug>/<name>: <old> => <new>` | `edit_context_file` |
 | `in <n> minutes in <slug>: <prompt>`, `every <n> minutes in <slug>: <prompt>` | `schedule` with `project` |
 | `schedules in <slug>` | `list_schedules` with `project` |
+| `cancel schedule <id>` | `cancel_schedule` |
 | `all skills` | `list_skills` |
 | `turn on <skill> in <slug>`, `turn off <skill> in <slug>` | `set_project_skill` |
 | `answer <question id>: <text>` | `answer_question` |
@@ -1573,7 +1593,8 @@ labels.
 | Blip's file tools | as the thread's, with "in garden" | | |
 | `answer_question` | Answering q_456 (the title only arrives in the result's details) | Answered "Fix the pump" (linked) | Stopped answering q_456 / Couldn't answer q_456 |
 | `ask_owner` | Asking you about q_456 | the question card (10.6); until C16 adds it, Asked you about "Fix the pump" (linked) | Stopped asking you about q_456 / Couldn't ask you about q_456 (a refused call keeps this line after C16) |
-| `list_skills`, `set_project_skill` | Checking skills / Turning on pdf-forms for garden | Checked skills / Turned on ... | |
+| `list_skills`, `set_project_skill` | Checking skills / Turning on pdf-forms for garden | Checked skills / Turned on ... | Stopped checking skills / Couldn't check skills; Stopped turning on pdf-forms for garden / Couldn't turn on pdf-forms for garden |
+| `schedule`, `list_schedules` with a project | | Scheduled in garden: <prompt> / Checked the schedules in garden | (as today, whatever the status) |
 
 Names and titles come from the result's details where there are some,
 the arguments otherwise, as `load_skill`'s label does.
@@ -1625,10 +1646,10 @@ No changes.
 
 | Module | Layer | Boundary | Notes |
 |---|---|---|---|
-| `Photon.Assistant` | boundary (API and the `"assistant"` profile) | deps add `Photon.Activity`, `Photon.Questions`, `Photon.Signals`; `exports: [Notice]` | `conversation_id/0` delegates to `Signals`; `answer/2` (the panel's reply chip, through `Questions.answer/2`); `question_refusal/2` (Blip's words for a refused `answer_question` or `ask_owner`, read inside the tool's commit); `find_project/1`, `find_thread/1` for the tools; `origin_tx/2` (takes the generation or one of its tool tasks); `unattended_count_tx/1`; `unattended_limit/0`; `may_act_tx/3` (the refusals of section 5.4, which the tools that start or change work call in their commit); `on_tool_result/4` and `on_settled/3` (`settled_tx/3`) record activity; the tool list (sections 5.2 to 5.5). It goes past `ModuleDependencies`' 20, as `Photon.Threads` did in step 3; disable the check on the module with the same reason (it is the context's API and the profile). |
+| `Photon.Assistant` | boundary (API and the `"assistant"` profile) | deps add `Photon.Activity`, `Photon.Questions`, `Photon.Signals`; `exports: [Notice]` | `conversation_id/0` delegates to `Signals`; `answer/2` (the panel's reply chip, through `Questions.answer/2`); `question_refusal/2` (Blip's words for a refused `answer_question` or `ask_owner`, read inside the tool's commit); `find_project/1`, `find_thread/1` for the tools; `origin_tx/2` (takes the generation or one of its tool tasks); `unattended_count_tx/1`; `unattended_limit/0`; `may_act_tx/3` (the refusals of section 5.4, which the tools that start or change work call in their commit); `project_schedules/1` (a project's schedules as `read_project` and `list_schedules` show them, one-offs that fired left out); `on_tool_result/4` and `on_settled/3` (`settled_tx/3`) record activity; the tool list (sections 5.2 to 5.5). It goes past `ModuleDependencies`' 20, as `Photon.Threads` did in step 3; disable the check on the module with the same reason (it is the context's API and the profile). |
 | `Photon.Assistant.Prompt` | core | unchanged | Section 5.6. |
-| `Photon.Assistant.Origin` | core | `use Boundary, type: :strict, deps: [PhotonCore]` (`for_call/3` decodes the raw arguments with `PhotonCore.Message.arguments/1`) | `of/1`, `for_call/3`, `unattended_ok?/3` (section 5.4), and the two refusals' words, `restricted_message/0` and `unattended_message/1`. |
-| `Photon.Assistant.Readout` | core | `use Boundary, type: :strict, deps: [Photon.Threads, PhotonCore]` (it reaches `Threads.State` through the parent's export, as prompts reach `Skills.Prompt`) | The read tools' texts (section 5.2): `projects/3`, `project/2` (schedules come in with their `when` text, which the tool gets from `Schedules.when_text/1`), `threads/2`, `thread/3` over recent entries (takes `now`), `unknown_project/2`, `unknown_thread/1`, `unknown_question/2` (an unknown question's ID, with the open ones), and `state_names/0` and `state_named/1` for `list_threads`' `state` argument; `file_written/4` and `file_edited/2` for the write and edit tools' results (the listing and read texts are `Threads.describe_files/2` and `read_file_text/3`). |
+| `Photon.Assistant.Origin` | core | `use Boundary, type: :strict, deps: [PhotonCore]` (`for_call/3` decodes the raw arguments with `PhotonCore.Message.arguments/1`) | `of/1`, `for_call/3`, `unattended_ok?/3` (section 5.4), `asked_by/1` (a schedule's `asked_by` from the run's origin, section 5.5), and the two refusals' words, `restricted_message/0` and `unattended_message/1`. |
+| `Photon.Assistant.Readout` | core | `use Boundary, type: :strict, deps: [Photon.Threads, PhotonCore]` (it reaches `Threads.State` through the parent's export, as prompts reach `Skills.Prompt`) | The read tools' texts (section 5.2): `projects/3`, `project/2` (schedules come in with their `when` text, which the tool gets from `Schedules.when_text/1`), `threads/2`, `thread/3` over recent entries (takes `now`), `unknown_project/2`, `unknown_thread/1`, `unknown_question/2` (an unknown question's ID, with the open ones), and `state_names/0` and `state_named/1` for `list_threads`' `state` argument; `file_written/4` and `file_edited/2` for the write and edit tools' results (the listing and read texts are `Threads.describe_files/2` and `read_file_text/3`); `scheduled/3` and `schedules/4` for the schedule tools, `skills/1`, `skill_set/3` and `unknown_skill/2` for the skill tools (section 5.5). |
 | `Photon.Assistant.MockCoordinator` | core | `use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]` | Section 8.2: `phrasings/1`, `unasked/2` (the replies to questions, updates and the owner's answers, which `MockScript` tries first), and `help/0`, the lines `MockScript`'s help text includes. |
 | `Photon.Assistant.MockScript` | core | deps add `Photon.Assistant.MockCoordinator` (same boundary) | Tries `MockCoordinator.phrasings/1`; help text. |
 | `Photon.Assistant.Notice` | core | unchanged | `:question` notices (section 10.6). |
@@ -1643,7 +1664,8 @@ No changes.
 | Module | Change |
 |---|---|
 | `Photon.Projects` | `file_counts/0` (context files per project, one grouped query, for `list_projects`); `create_tx/2` public; `updated_by` may be `"blip"`; the file functions' errors name the writer (section 5.2). |
-| `Photon.Schedules` | `tool_schedule_tx/5` replaces `blip_schedule_tx/5` and writes `asked_by`; `delete_tx/3` takes `:any`. |
+| `Photon.Schedules` | `tool_schedule_tx/4` (its last argument is `%{asked_by, request_id, now}`; the tool passes `asked_by` in) replaces `blip_schedule_tx/5` and writes `asked_by`; `delete_tx/3` takes `:any`. |
+| `Photon.Schedules.Rules` | `tool_thread/3`: the thread a project schedule from the tool wakes, or `c_123 isn't a thread in garden.` |
 | `Photon.Schedules.Schedule` | `asked_by` (section 5.4). |
 | `Photon.Schedules.Routine` | `"created_by"` and `"asked_by"` in every firing's source (sections 3.2, 5.4). |
 | `Photon.Skills` | `enable_tx/3`, `disable_tx/3`. |
@@ -2304,19 +2326,29 @@ C10. Blip's question tools and prompt. After C6 and C8.
 C11. Project schedules and skills for Blip. After C8.
 - Migration `apps/hub/priv/repo/migrations/20261009020000_schedule_asked_by.exs`;
   `schedules/schedule.ex` (`asked_by`); `schedules.ex`
-  (`tool_schedule_tx/5` writing `asked_by`, `delete_tx/3` with `:any`);
+  (`tool_schedule_tx/4` writing `asked_by`, `delete_tx/3` with `:any`);
+  `schedules/rules.ex` (`tool_thread/3`); `assistant/origin.ex`
+  (`asked_by/1`); `assistant/readout.ex` (the schedule and skill texts);
+  `assistant.ex` (`project_schedules/1`, the tool list);
+  `assistant/tools/read_project.ex` (leaves fired one-offs out);
   `schedules/routine.ex` (`"asked_by"` in the firing's source);
   `skills.ex` (`enable_tx/3`, `disable_tx/3`); `assistant/tools/schedule.ex`,
   `list_schedules.ex`, `cancel_schedule.ex`; new
   `assistant/tools/list_skills.ex`, `set_project_skill.ex`;
   `assistant/prompt.ex` (the schedule line);
-  `assistant/mock_coordinator.ex` (their phrasings).
+  `assistant/mock_coordinator.ex` (their phrasings, and `cancel
+  schedule <id>`).
 - `conversation_components.ex`: labels.
 - Tests: `test/boundary/assistant_tools_test.exs` (with `asked_by`),
   `schedules_test.exs` and `skills_test.exs` for the `_tx` functions, a
   Blip-made project schedule case of `signals_test.exs` through the
   `schedule` tool (C4 covers the firing's source with a row it inserts),
-  the prompt test.
+  the prompt test; also the refusals of `schedule`, `cancel_schedule`
+  and `set_project_skill` in a question's run
+  (`assistant_coordinator_tools_test.exs`), and the core tests of the new
+  pure functions (`readout_test.exs`, `origin_test.exs`,
+  `schedules/rules_test.exs`, `mock_coordinator_test.exs`) and the labels
+  (`conversation_components_test.exs`).
 
 C12. The activity log's data. After C10 and C11 (its tests cover
 question runs and schedule origins).

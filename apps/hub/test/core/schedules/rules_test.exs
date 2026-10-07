@@ -257,6 +257,19 @@ defmodule Photon.Schedules.RulesTest do
     end
   end
 
+  describe "tool_thread/3 (a project schedule from Blip's tool)" do
+    test "no thread is a new thread each time; a project's thread is taken, trimmed" do
+      assert Rules.tool_thread(nil, ["c_1"], "garden") == {:ok, nil}
+      assert Rules.tool_thread("  ", ["c_1"], "garden") == {:ok, nil}
+      assert Rules.tool_thread(" c_1 ", ["c_1"], "garden") == {:ok, "c_1"}
+    end
+
+    test "a thread that isn't the project's is refused, naming the project" do
+      assert Rules.tool_thread("c_9", ["c_1"], "garden") ==
+               {:error, "c_9 isn't a thread in garden."}
+    end
+  end
+
   describe "arm/4" do
     test "a one-off arms at its time, up to a minute ago" do
       assert Rules.arm(@now, nil, @now, nil) == @now

@@ -45,6 +45,7 @@ defmodule PhotonWeb.ConversationComponents do
   @file_tools ~w(list_context_files read_context_file write_context_file edit_context_file)
   @read_tools ~w(list_projects read_project list_threads read_thread)
   @work_tools ~w(start_project start_thread message_thread stop_thread answer_question ask_owner)
+  @skill_tools ~w(list_skills set_project_skill)
 
   @doc "One entry of the conversation: a message, an answer with its calls, an error or a reset."
   attr :entry, :map, required: true
@@ -385,6 +386,15 @@ defmodule PhotonWeb.ConversationComponents do
     """
   end
 
+  def action_label(%{name: name} = assigns) when name in @skill_tools do
+    {verb, skill, project} = skill_tool_words(name, assigns.args, assigns.details, assigns.status)
+    assigns = assign(assigns, verb: verb, skill: truncate(skill), project: truncate(project))
+
+    ~H"""
+    <span phx-no-format>{@verb}<span :if={@skill != ""}> <span class="font-medium text-ink">{@skill}</span></span><span :if={@project != ""} data-project={@project}> for <span class="font-medium text-ink">{@project}</span></span></span>
+    """
+  end
+
   def action_label(assigns) do
     assigns = assign(assigns, :text, label_text(assigns.name, assigns.args))
 
@@ -398,7 +408,14 @@ defmodule PhotonWeb.ConversationComponents do
   defp label_text("update_memory", args),
     do: "Memory: #{args["action"]} #{truncate(args["text"])}"
 
+  defp label_text("schedule", %{"project" => slug} = args) when is_binary(slug) and slug != "",
+    do: "Scheduled in #{truncate(slug)}: #{truncate(args["prompt"])}"
+
   defp label_text("schedule", args), do: "Scheduled: #{truncate(args["prompt"])}"
+
+  defp label_text("list_schedules", %{"project" => slug}) when is_binary(slug) and slug != "",
+    do: "Checked the schedules in #{truncate(slug)}"
+
   defp label_text("list_schedules", _), do: "Checked the schedule"
   defp label_text("cancel_schedule", args), do: "Cancelled #{args["schedule_id"]}"
   defp label_text(name, _), do: name
@@ -409,6 +426,19 @@ defmodule PhotonWeb.ConversationComponents do
   defp skill_words(:error), do: {"Couldn't load", ""}
   defp skill_words(:stopped), do: {"Stopped loading the", " skill"}
   defp skill_words(_done), do: {"Loaded the", " skill"}
+
+  # Blip's skill tools: the verb for the call's status, the skill and the
+  # project it turned on or off for (from the result's details, else the
+  # arguments). Listing names neither.
+  defp skill_tool_words("list_skills", _args, _details, status),
+    do: {status_verb(status, "Checking skills", "Checked skills", "check skills"), nil, nil}
+
+  defp skill_tool_words("set_project_skill", args, details, status) do
+    on = if Map.get(details, "on", args["on"]) == false, do: "off", else: "on"
+
+    {status_verb(status, "Turning #{on}", "Turned #{on}", "turn #{on}"),
+     details["skill"] || args["skill"], details["slug"] || args["project"]}
+  end
 
   # A question can wait for hours, so the running words say it is asking.
   defp ask_verb(:pending), do: "Asking Blip"
@@ -555,6 +585,8 @@ defmodule PhotonWeb.ConversationComponents do
   defp action_icon("stop_thread"), do: "hero-stop-circle-micro"
   defp action_icon("answer_question"), do: "hero-chat-bubble-bottom-center-text-micro"
   defp action_icon("ask_owner"), do: "hero-question-mark-circle-micro"
+  defp action_icon("list_skills"), do: "hero-book-open-micro"
+  defp action_icon("set_project_skill"), do: "hero-adjustments-horizontal-micro"
 
   defp action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
     do: "hero-clock-micro"

@@ -69,6 +69,31 @@ defmodule Photon.Assistant.MockCoordinatorTest do
     assert calls(ask("read thread c_123")) == [{"read_thread", %{"thread" => "c_123"}}]
   end
 
+  test "the schedule and skill phrasings name a project" do
+    for {text, call} <- [
+          {"in 5 minutes in garden: check the pump",
+           {"schedule", %{"prompt" => "check the pump", "in_minutes" => 5, "project" => "garden"}}},
+          {"every 60 minutes in garden: water zone 2",
+           {"schedule",
+            %{"prompt" => "water zone 2", "every_minutes" => 60, "project" => "garden"}}},
+          {"schedules in garden", {"list_schedules", %{"project" => "garden"}}},
+          {"cancel schedule sc_9", {"cancel_schedule", %{"schedule_id" => "sc_9"}}},
+          {"all skills", {"list_skills", %{}}},
+          {"turn on pdf-forms in garden",
+           {"set_project_skill", %{"project" => "garden", "skill" => "pdf-forms", "on" => true}}},
+          {"turn off pdf-forms in garden",
+           {"set_project_skill", %{"project" => "garden", "skill" => "pdf-forms", "on" => false}}}
+        ] do
+      assert calls(ask(text)) == [call], text
+    end
+
+    # Blip's own schedules stay the script's.
+    assert calls(ask("in 5 minutes: check the pump")) ==
+             [{"schedule", %{"prompt" => "check the pump", "in_minutes" => 5}}]
+
+    assert calls(ask("schedules")) == [{"list_schedules", %{}}]
+  end
+
   test "each phrasing matches the whole message" do
     for text <- [
           "projects please",
@@ -85,7 +110,11 @@ defmodule Photon.Assistant.MockCoordinatorTest do
           "read notes.md",
           "read garden/notes.md now",
           "write garden: hello",
-          "edit garden/notes.md: zone 2"
+          "edit garden/notes.md: zone 2",
+          "schedules in",
+          "all skills now",
+          "turn on pdf-forms",
+          "turn up pdf-forms in garden"
         ] do
       assert calls(ask(text)) == [], text
     end
@@ -108,6 +137,8 @@ defmodule Photon.Assistant.MockCoordinatorTest do
     assert help =~ "`start thread in <slug>: <message>` starts a thread there"
     assert help =~ "`stop thread <id>` stops one"
     assert help =~ "`write <slug>/<name>: <text>` writes a whole file"
+    assert help =~ "`schedules in <slug>` lists a project's schedules"
+    assert help =~ "`turn on <skill> in <slug>`"
     assert help =~ MockCoordinator.help()
   end
 

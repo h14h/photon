@@ -371,6 +371,33 @@ defmodule Photon.SignalsTest do
       assert %{status: "done"} = await_settled(blip, signal.id)
     end
 
+    test "a thread a project schedule from Blip's schedule tool starts posts an update", %{
+      project: project,
+      blip: blip
+    } do
+      :ok = Schedules.subscribe()
+      project_id = project.id
+      {:ok, asked} = Assistant.send("in 0 minutes in garden: files")
+      await_settled(blip, asked.id)
+
+      # Made, then fired at once.
+      assert_receive {:schedules_changed, ^project_id}
+      assert_receive {:schedules_changed, ^project_id}, 5_000
+
+      assert [%{schedule: %Schedule{created_by: "blip", asked_by: "owner"} = schedule}] =
+               Schedules.list({:project, project.id})
+
+      assert %Schedule{last_outcome: "started", last_thread_id: thread_id} =
+               Repo.get!(Schedule, schedule.id)
+
+      idle!(thread_id)
+
+      assert [signal] = signals(blip)
+      assert [%{"status" => "finished", "thread_id" => ^thread_id}] = refs(signal)
+      assert Threads.get(thread_id).started_by == "schedule"
+      assert %{status: "done"} = await_settled(blip, signal.id)
+    end
+
     test "one the owner's schedule starts posts nothing", %{project: project, blip: blip} do
       schedule = schedule!(project, "sc_owner", "owner")
       assert Schedules.run_now(schedule.id) == {:ok, "started"}

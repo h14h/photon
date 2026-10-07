@@ -1,30 +1,57 @@
 defmodule Photon.Assistant.Tools.ListSchedules do
   @moduledoc """
-  Blip's `list_schedules` tool: Blip's own schedules that are waiting for
-  their next time, and those that stopped after an error, with why
-  (`Photon.Assistant.schedules/0`), each with its `sc_` ID for
-  `cancel_schedule`. A project's schedules aren't Blip's, so they aren't
-  listed.
+  Blip's `list_schedules` tool. Without `project`: Blip's own schedules
+  that are waiting for their next time, and those that stopped after an
+  error, with why (`Photon.Assistant.schedules/0`). With `project`: that
+  project's, the same way, each with what it does when it fires (starts a
+  new thread, or wakes one), as `read_project` lists them
+  (`Photon.Assistant.project_schedules/1`, `Photon.Assistant.Readout.schedules/4`).
+  Each has its `sc_` ID for `cancel_schedule`.
   """
   @behaviour Photon.Durable.Tool
+
+  alias Photon.{Assistant, Threads}
+  alias Photon.Assistant.Readout
 
   @impl true
   def name, do: "list_schedules"
 
   @impl true
-  def description, do: "List your scheduled prompts with their next run times."
+  def description,
+    do:
+      "List scheduled prompts with their next run times: your own, or with project, that project's."
 
   @impl true
-  def parameters, do: %{"type" => "object", "properties" => %{}}
+  def parameters,
+    do: %{
+      "type" => "object",
+      "properties" => %{
+        "project" => %{
+          "type" => "string",
+          "description" =>
+            "To list a project's schedules, its slug (list_projects shows them). Leave it out for your own."
+        }
+      }
+    }
 
   @impl true
   def replay, do: :safe
 
   @impl true
+  def execute(%{"project" => name}, _api) when is_binary(name) and name != "" do
+    with {:ok, project} <- Assistant.find_project(name) do
+      titles = Map.new(Threads.list(project.id), &{&1.id, &1.title})
+      schedules = Assistant.project_schedules(project.id)
+
+      {:ok, Readout.schedules(project.slug, schedules, titles, DateTime.utc_now()),
+       %{"project_id" => project.id, "slug" => project.slug}}
+    end
+  end
+
   def execute(_args, _api) do
     now = Calendar.strftime(DateTime.utc_now(), "%Y-%m-%d %H:%M UTC")
 
-    case Photon.Assistant.schedules() do
+    case Assistant.schedules() do
       [] ->
         {:ok, "No schedules. (Now: #{now}.)"}
 

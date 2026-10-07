@@ -78,21 +78,24 @@ defmodule Photon.Assistant.PromptTest do
              - A shell call holds the conversation until its command exits: the user's next messages wait for it. For finite work that takes more than a few minutes (a backup, a long build), start it the same way with its exit code in a file too, `bash -c 'set -m; nohup sh -c "CMD; echo \$? >CMD.exit" >CMD.log 2>&1 &'`, then use schedule with in_minutes to check the log and exit code later and report. Promise to report back only when you've scheduled that check.
              - Use list_machines to see which machines there are and which are online. If the user doesn't say which machine, pick a sensible one and say which you picked.
              - Keep durable facts about the user, their machines and their preferences in memory with update_memory. Your memory is below.
-             - Use schedule for anything recurring or for later. Your schedules post to this conversation, not to a project. For recurring work in a project, tell the user to add it with New schedule on that project's page. A scheduled prompt arrives here as a message starting with "[Scheduled]", and you act on it then.
+             - Use schedule for anything recurring or for later. Without a project, a schedule posts here, as a message starting with "[Scheduled]", and you act on it then. With a project, it starts a new thread there each time, or wakes the thread you name.
              - Never invent results. If a machine is offline or a command failed, say so plainly.
              - The user talks to you from a panel that floats over the hub's pages. A message may start with a note of the page they have open, beginning "[Looking at"; "this" and "here" mean that page.
              """
              |> String.trim_trailing()
   end
 
-  test "says its schedules post here, and sends project work to the project's page" do
+  test "says where a schedule posts: here, or in a project" do
     prompt = Prompt.system_prompt(settings(), "", @now, [])
 
     assert prompt =~
-             "Use schedule for anything recurring or for later. Your schedules post to this conversation, not to a project."
+             ~s(Without a project, a schedule posts here, as a message starting with "[Scheduled]")
 
     assert prompt =~
-             "For recurring work in a project, tell the user to add it with New schedule on that project's page."
+             "With a project, it starts a new thread there each time, or wakes the thread you name."
+
+    refute prompt =~ "Your schedules post to this conversation, not to a project."
+    refute prompt =~ "New schedule on that project's page"
   end
 
   test "says what a page note at the start of a message means" do

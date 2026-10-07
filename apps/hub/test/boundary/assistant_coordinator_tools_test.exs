@@ -568,17 +568,39 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       projects = length(Projects.list())
       {:ok, _plan} = Projects.create_file(garden.id, %{"name" => "plan.md", "content" => "beds"})
 
+      {:ok, schedule} =
+        Schedules.create(
+          {:project, garden.id},
+          Map.put(Schedules.new_params(DateTime.utc_now()), "prompt", "check the beds")
+        )
+
+      {:ok, _skill} =
+        Skills.create(%{
+          "name" => "pdf-forms",
+          "description" => "Fill in PDF forms.",
+          "instructions" => "# PDF forms"
+        })
+
       for {text, name} <- [
             {"start project: Keep the bees healthy.", "start_project"},
             {"start thread in garden: files", "start_thread"},
             {"tell #{idle.id}: files", "message_thread"},
             {"stop thread #{busy.id}", "stop_thread"},
             {"write garden/notes.md: hello", "write_context_file"},
-            {"edit garden/plan.md: beds => pots", "edit_context_file"}
+            {"edit garden/plan.md: beds => pots", "edit_context_file"},
+            {"in 5 minutes in garden: files", "schedule"},
+            {"in 5 minutes: files", "schedule"},
+            {"cancel schedule #{schedule.id}", "cancel_schedule"},
+            {"turn on pdf-forms in garden", "set_project_skill"}
           ] do
         {result, data} = signal_tool!(blip, :question, text, name)
         assert {data["status"], result} == {"error", @refused}, name
       end
+
+      assert [%{id: schedule_id}] = Schedules.list({:project, garden.id})
+      assert schedule_id == schedule.id
+      assert Schedules.list(:blip) == []
+      assert Skills.enabled({:project, garden.id}) == []
 
       assert length(Projects.list()) == projects
 
@@ -592,7 +614,9 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       for {text, name} <- [
             {"project garden", "read_project"},
             {"files in garden", "list_context_files"},
-            {"read garden/plan.md", "read_context_file"}
+            {"read garden/plan.md", "read_context_file"},
+            {"schedules in garden", "list_schedules"},
+            {"all skills", "list_skills"}
           ] do
         {_text, data} = signal_tool!(blip, :question, text, name)
         assert data["status"] == "ok", name

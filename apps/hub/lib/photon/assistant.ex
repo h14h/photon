@@ -11,10 +11,13 @@ defmodule Photon.Assistant do
 
   It runs commands and looks at images on the user's machines itself, with
   the machine tools (`Photon.MachineTools`: `shell`, `view_image`,
-  `list_machines`), keeps a memory, and keeps schedules of its own in
-  `Photon.Schedules`, which post into its conversation. Its prompt
-  lists the skills turned on for Blip (`Photon.Skills`), and `load_skill`
-  loads one. It sees every project and thread with its read tools
+  `list_machines`), keeps a memory, and keeps schedules in
+  `Photon.Schedules`: its own, which post into its conversation, and
+  projects', which start or wake threads (`schedule`, `list_schedules`,
+  `cancel_schedule`). Its prompt lists the skills turned on for Blip
+  (`Photon.Skills`), and `load_skill` loads one; `list_skills` and
+  `set_project_skill` show every skill and turn one on or off for a
+  project. It sees every project and thread with its read tools
   (`list_projects`, `read_project`, `list_threads`, `read_thread`),
   which find what they name through `find_project/1` and `find_thread/1`
   and put their texts together in `Photon.Assistant.Readout`. It starts
@@ -37,8 +40,8 @@ defmodule Photon.Assistant do
   answers (`origin_tx/2`, `Photon.Assistant.Origin`): the owner, a
   schedule, Blip's own follow-up on a thread update, or a thread's
   `ask_blip` question. A run that carries a question the owner hasn't
-  written into can't start, wake or stop work or change a project's
-  files, and between two of the
+  written into can't start, wake, stop or schedule work or change a
+  project, and between two of the
   owner's messages Blip can start or message threads only
   `unattended_limit/0` times on its own (`may_act_tx/3`), so a loop
   between Blip and a thread stops in code.
@@ -126,7 +129,9 @@ defmodule Photon.Assistant do
     Tools.WriteContextFile,
     Tools.EditContextFile,
     Tools.AnswerQuestion,
-    Tools.AskOwner
+    Tools.AskOwner,
+    Tools.ListSkills,
+    Tools.SetProjectSkill
   ]
 
   # The tools that start or wake threads, which the unattended limit counts.
@@ -420,6 +425,28 @@ defmodule Photon.Assistant do
   """
   @spec schedules() :: [Schedules.listed()]
   def schedules, do: Enum.reject(Schedules.list(:blip), &(&1.state == :done))
+
+  @doc """
+  A project's schedules as Blip's `read_project` and `list_schedules`
+  show them (`Photon.Assistant.Readout.schedule/0`): those waiting for
+  their next time, soonest first, then any that stopped after an error.
+  One-offs that fired are left out, as `schedules/0` leaves out Blip's.
+  """
+  @spec project_schedules(String.t()) :: [Readout.schedule()]
+  def project_schedules(project_id) do
+    for %{state: state} = listed when state != :done <- Schedules.list({:project, project_id}) do
+      schedule = listed.schedule
+
+      %{
+        id: schedule.id,
+        when: Schedules.when_text(schedule),
+        state: state,
+        next_at: listed.next_at,
+        prompt: schedule.prompt,
+        thread_id: schedule.conversation_id
+      }
+    end
+  end
 
   @doc """
   Deletes one of Blip's schedules (the home page's cancel button). A

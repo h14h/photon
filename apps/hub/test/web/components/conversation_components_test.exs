@@ -1,8 +1,8 @@
 defmodule PhotonWeb.ConversationComponentsTest do
   @moduledoc """
   The conversation pieces Blip's panel and a thread page share: the
-  context-file (a thread's and Blip's), `load_skill`, `ask_blip` and Blip's read, work and
-  question calls' lines, the ID prefix
+  context-file (a thread's and Blip's), `load_skill`, `ask_blip` and Blip's read, work,
+  skill, schedule and question calls' lines, the ID prefix
   that keeps two conversations on one page apart, and images loaded from
   the page's own route.
   """
@@ -242,6 +242,74 @@ defmodule PhotonWeb.ConversationComponentsTest do
 
       assert label(action(call("stop_thread", %{"thread" => "c_1"}, "c1"), stopped)) ==
                "Didn't stop c_1"
+    end
+  end
+
+  describe "Blip's skill and schedule calls" do
+    test "say which skill and project, in the present while they run" do
+      on =
+        call(
+          "set_project_skill",
+          %{"project" => "garden", "skill" => "pdf-forms", "on" => true},
+          "c1"
+        )
+
+      off =
+        call(
+          "set_project_skill",
+          %{"project" => "garden", "skill" => "pdf-forms", "on" => false},
+          "c1"
+        )
+
+      details = %{"project_id" => "p_1", "slug" => "garden", "skill" => "pdf-forms", "on" => true}
+
+      assert label(action(on, nil)) == "Turning on pdf-forms for garden"
+
+      assert label(action(on, ok("c1", "Turned on.", details))) ==
+               "Turned on pdf-forms for garden"
+
+      assert label(action(off, nil)) == "Turning off pdf-forms for garden"
+
+      assert label(action(off, ok("c1", "Turned off.", %{details | "on" => false}))) ==
+               "Turned off pdf-forms for garden"
+
+      list = call("list_skills", %{}, "c1")
+      assert label(action(list, nil)) == "Checking skills"
+      assert label(action(list, ok("c1", "No skills yet.", %{}))) == "Checked skills"
+    end
+
+    test "a skill call that was refused, or stopped, says so" do
+      error = %{
+        "message" => Message.tool_result("c1", "Error: There's no skill called pdf-form."),
+        "status" => "error",
+        "details" => %{},
+        "entry_id" => "e_1"
+      }
+
+      on =
+        call(
+          "set_project_skill",
+          %{"project" => "garden", "skill" => "pdf-form", "on" => true},
+          "c1"
+        )
+
+      assert label(action(on, error)) == "Couldn't turn on pdf-form for garden"
+
+      assert label(action(on, %{error | "status" => "aborted"})) ==
+               "Stopped turning on pdf-form for garden"
+    end
+
+    test "a project schedule names its project" do
+      project = call("schedule", %{"prompt" => "Water zone 2", "project" => "garden"}, "c1")
+      own = call("schedule", %{"prompt" => "Check the disks"}, "c1")
+
+      assert label(action(project, ok("c1", "Scheduled.", %{}))) ==
+               "Scheduled in garden: Water zone 2"
+
+      assert label(action(own, ok("c1", "Scheduled.", %{}))) == "Scheduled: Check the disks"
+
+      listed = call("list_schedules", %{"project" => "garden"}, "c1")
+      assert label(action(listed, ok("c1", "Now.", %{}))) == "Checked the schedules in garden"
     end
   end
 
