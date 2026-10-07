@@ -11,9 +11,9 @@ defmodule Photon.AmbientTest do
 
   Where Blip must be busy, it runs a `shell` call on `box`, a machine the
   test process plays and that never answers, so what is posted queues
-  behind its run. Until the scripted Blip learns digests (task M7) it
-  answers them with its help text, so these tests look at what was
-  posted, not at Blip's reply.
+  behind its run. The scripted Blip (`Photon.Assistant.MockAmbient`)
+  answers a digest or a review in a line per thread, so its reply is
+  checked only for naming them.
   """
 
   use Photon.DataCase, async: false
@@ -28,6 +28,7 @@ defmodule Photon.AmbientTest do
   alias Photon.Durable.{Runtime, Scheduler, Store, Submission, TaskRecord, Tx}
   alias Photon.Signals.DigestItem
   alias Photon.Threads.Thread
+  alias PhotonCore.Message
 
   @hour 3_600_000
 
@@ -335,6 +336,21 @@ defmodule Photon.AmbientTest do
       assert doc()["last_sent_at"] == DateTime.to_iso8601(at)
     end
 
+    test "Blip's reply names the thread that finished, in its project", %{
+      project: project,
+      blip: blip
+    } do
+      on!()
+      thread = ended!(project, "files")
+      :ok = Durable.subscribe(blip)
+      assert %{outcome: "sent"} = Ambient.digest_now()
+
+      reply = await_entry(blip, &(&1.kind == "assistant"))
+      assert Message.text_of(reply.data["message"]) =~ ~r/\Afiles in Garden finished/
+      refute Message.text_of(reply.data["message"]) =~ thread
+      idle!(blip)
+    end
+
     test "a finished thread the owner has seen is smaller: it waits, and sends nothing", %{
       project: project,
       blip: blip
@@ -553,6 +569,16 @@ defmodule Photon.AmbientTest do
 
       assert %{outcome: "sent", count: 3, at: at} = Ambient.review_now()
       assert [review] = posted(blip, "review")
+
+      # Blip's reply lists the three, by ID on the scripted model.
+      reply =
+        await_entry(blip, fn entry ->
+          entry.kind == "assistant" and
+            Message.text_of(entry.data["message"]) =~ "These have sat for a while:"
+        end)
+
+      for id <- [stopped, failed, waiting],
+          do: assert(Message.text_of(reply.data["message"]) =~ "(#{id})")
 
       assert text(review) =~
                ~r/^\[Daily review\] 3 threads have sat untouched for 3 days or more:/

@@ -11,10 +11,13 @@ defmodule Photon.ActivityTest do
 
   @moduletag :durable
 
-  alias Photon.{Activity, Assistant, Projects, Questions, Schedules, Signals, Threads}
+  import Ecto.Query, only: [from: 2]
+
+  alias Photon.{Activity, Ambient, Assistant, Projects, Questions, Schedules, Signals, Threads}
   alias Photon.Activity.Action
-  alias Photon.Durable.{Entry, Scheduler, TaskRecord}
+  alias Photon.Durable.{Entry, Scheduler, Submission, TaskRecord}
   alias Photon.Questions.Question
+  alias PhotonCore.Message
 
   setup do
     {:ok, garden} =
@@ -55,6 +58,18 @@ defmodule Photon.ActivityTest do
   end
 
   defp entry!(blip, id), do: %Entry{} = Durable.entry(blip, id)
+
+  # The newest submission in Blip's conversation.
+  defp last_submission(blip) do
+    query =
+      from(s in Submission,
+        where: s.conversation_id == ^blip,
+        order_by: [desc: s.inserted_at, desc: s.id],
+        limit: 1
+      )
+
+    %Submission{} = Repo.one(query)
+  end
 
   # Posts a signal into Blip's conversation whose text is one of the
   # scripted Blip's phrasings, as a thread's update would arrive, so the
@@ -229,6 +244,36 @@ defmodule Photon.ActivityTest do
 
       message = await_row!(&(&1.kind == "message"))
       assert %Action{origin: "follow_up", origin_id: "review"} = message
+    end
+
+    test "a digest's reply names the thread; an ignored one is nothing to tell, and no row", %{
+      garden: garden,
+      blip: blip
+    } do
+      :ok = Ambient.configure(%{"ambient" => "true"})
+
+      # A thread finishes, and the digest's reply tells the owner.
+      {:ok, thread} = Threads.start(garden.id, "files")
+      :ok = idle!(thread.id)
+      assert %{outcome: "sent"} = Ambient.digest_now()
+      told = await_settled(blip, last_submission(blip).id)
+
+      message = await_row!(&(&1.kind == "message"))
+      assert %Action{origin: "follow_up", origin_id: "digest", tool: nil} = message
+      assert message.entry_id == told.answer_entry_id
+      reply = entry!(blip, message.entry_id)
+      assert Message.text_of(reply.data["message"]) =~ ~r/\Afiles in Garden finished/
+
+      # With the word in memory, the next one has nothing to tell.
+      :ok = Assistant.put_memory("- ignore: files")
+      {:ok, again} = Threads.start(garden.id, "files")
+      :ok = idle!(again.id)
+      assert %{outcome: "sent"} = Ambient.digest_now()
+      quiet = await_settled(blip, last_submission(blip).id)
+
+      assert %Entry{} = reply = entry!(blip, quiet.answer_entry_id)
+      assert Message.text_of(reply.data["message"]) == "[nothing to tell]"
+      assert [^message] = Enum.filter(rows(), &(&1.kind == "message"))
     end
 
     test "a call stopped while it runs records aborted", %{blip: blip} do

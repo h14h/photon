@@ -36,6 +36,9 @@ defmodule Photon.Assistant.MockCoordinator do
   Messages the owner didn't type (`unasked/2`), read from every text part
   of the last user message, since a signal message may carry several:
 
+    * a digest or a daily review of ambient mode: `Photon.Assistant.MockAmbient`'s,
+      which `unasked/2` tries first
+
     * `[Question q_... from ...]` parts: a question whose text holds the
       key of a memory line `- <key>: <value>` (in the request's system
       text, under `## Memory`; at least three characters, ignoring case)
@@ -64,8 +67,11 @@ defmodule Photon.Assistant.MockCoordinator do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]
+  use Boundary,
+    type: :strict,
+    deps: [PhotonCore, PhotonCore.LLM, Photon.Assistant.MockAmbient]
 
+  alias Photon.Assistant.MockAmbient
   alias PhotonCore.LLM.Mock
   alias PhotonCore.Message
 
@@ -369,12 +375,15 @@ defmodule Photon.Assistant.MockCoordinator do
 
   @doc """
   The scripted reply to a message the owner didn't type, from the text
-  parts of the last user message (`texts`): thread questions, thread
-  updates, or the owner's answer to a question going by. Nil for anything
-  else, which the phrasings handle.
+  parts of the last user message (`texts`): a digest or a daily review
+  (`Photon.Assistant.MockAmbient.unasked/2`, tried first), thread
+  questions, thread updates, or the owner's answer to a question going
+  by. Nil for anything else, which the phrasings handle.
   """
   @spec unasked([String.t()], map()) :: Message.t() | nil
-  def unasked(texts, request) do
+  def unasked(texts, request), do: MockAmbient.unasked(texts, request) || signal(texts, request)
+
+  defp signal(texts, request) do
     questions = for "[Question " <> _ = text <- texts, q = question(text), q != nil, do: q
 
     cond do
