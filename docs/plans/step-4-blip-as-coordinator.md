@@ -261,7 +261,8 @@ whatever the number of threads (rule 73):
 - `board(scope)` where `scope` is `:all` or `{:project, project_id}`:
   every thread in scope as `%{id: thread_id, thread: Thread.t(), project:
   %{id, slug, name}, state: State.t(), asking_blip?: boolean, questions:
-  [Question.t()]}`, `questions` being the thread's open ones. Three
+  [Question.t()]}`, `questions` being the thread's open ones, oldest
+  first, and `asking_blip?` true when any of them is still `"asked"`. Three
   queries: threads joined to projects,
   `Durable.busy_in_profile("thread")`, and `Questions.open_by_thread/1`
   for the threads' open questions. The pages sort and cut it
@@ -559,7 +560,8 @@ Index on `[status]`. A question is open while it is `"asked"` or
   at most 2,000 characters ("Keep the question under 2,000 characters;
   put background in a context file and say which.").
 - `answer(text)`: trimmed; required ("Write an answer."); at most 4,000
-  characters.
+  characters ("Keep the answer under 4,000 characters.").
+- `open?(status)` and `open_statuses()`: `"asked"` and `"with_owner"`.
 - `step(status, event)`: the transitions, `{:ok, new_status,
   answered_by}` (`answered_by` nil unless the event answers) or
   `{:error, reason}` with a short atom. `{:answer, {:blip, owner_wrote?}}`
@@ -581,6 +583,7 @@ Index on `[status]`. A question is open while it is `"asked"` or
 | `"answered"` | anything but `:withdraw` | | | `:answered` |
 | `"withdrawn"` | anything | | | `:withdrawn` |
 | `"answered"` | `:withdraw` | `"answered"` (no change) | | |
+| any other status or event | | | | `:invalid` (unreachable; the function is total because a withdraw runs on the harness's abort path) |
 
   The `{:blip, false}` refusal is what keeps a guess from becoming the
   owner's decision: a question the hub escalated, or one Blip passed on,
@@ -599,6 +602,13 @@ Index on `[status]`. A question is open while it is `"asked"` or
 | `:with_blip` | (not reachable) | `Blip has "Fix the pump"'s question; it'll ask you if it needs to.` |
 | `:answered` | `q_456 was already answered.` | `"Fix the pump"'s question was already answered.` |
 | `:withdrawn` | `q_456 was withdrawn: its thread was stopped.` | `"Fix the pump" was stopped, so its question was withdrawn.` |
+| `:not_found` | `There's no open question q_999.` | `That question isn't there any more.` |
+
+  The cells marked "not reachable" still have words, so `message/3` is
+  total: to the owner, `"Fix the pump"'s question is waiting for your
+  answer.` and `"Fix the pump"'s question is already with you.`; to Blip,
+  `q_456 is yours to answer: use answer_question, or ask the user with
+  ask_owner.` A nil question reads as "That question" or "The thread".
 
 - `result(question)`: what the thread's call returns:
   - `answered_by: "blip"`: `Blip answered: <answer>`
@@ -611,7 +621,8 @@ Index on `[status]`. A question is open while it is `"asked"` or
     own words on): `The user answered: <answer>`.
 - `escalate?(question, carrier)`: true when the question is `"asked"`
   and its carrier submission is settled (`"done"` or `"unanswered"`) or
-  `"withdrawn"`.
+  `"withdrawn"`, or is gone (nil): no run of Blip's will see the question
+  again, so waiting would leave it unanswered for good.
 
 ### 4.3 The thread asks
 
@@ -689,7 +700,11 @@ Two of Blip's tools (section 5.3):
 `answered_by`, `answered_at`, records the signal
 `Tx.signal(tx, "question:<id>", %{})` that wakes the thread's call, and
 announces `{:questions_changed, thread_id}`. `pass_tx/4` writes
-`wording`, `passed_by`, `passed_at` and announces.
+`wording`, `passed_by`, `passed_at` and announces. Both return `{:ok,
+question}` or `{:error, reason}` (a `Rules.step/2` reason, or
+`:not_found`), and both take text the caller has already checked
+(`Rules.answer/1`, and `Rules.question/1` for Blip's wording): the two
+tools check before their commit, as `answer/2` does for the owner.
 
 ### 4.5 The owner's answer
 
@@ -1557,9 +1572,9 @@ No changes.
 | `Photon.Signals` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, PhotonCore], exports: [Rules, Text]` (it reads and writes only through `Tx`; add `Photon.Repo` if a later task needs a query of its own) | `blip_conversation_id/0`, `blip_conversation_tx/1`, `post_tx/2`, `answer_tx/3`, `unpost_tx/2`, `notice_tx/3`, `mode/0`. Moduledoc: what reaches Blip unasked, the merge, the room for ambient mode. |
 | `Photon.Signals.Rules` | core | `use Boundary, type: :strict, deps: []` | `thread_update/2` over source maps (section 3.2), `blip_source?/1`, `key/1`, `update_ref/3` and `question_ref/3` (the refs of section 3.3, from a place map: thread ID and title, project ID, slug and name), `merges?/2` (a queued carrier takes a ref only of its own kind, section 3.3), `carries?/2` (a message carries a key), `merge/3` and `without/2` (add or take back one signal's part and ref, kept at the same index). |
 | `Photon.Signals.Text` | core | `use Boundary, type: :strict, deps: []` | The texts of section 3.4 (`update/2`, `question/2`), the answer note (4.5, `answer_note/1`) and the notices (4.6, 4.7: `escalated/1`, `withdrawn/1`), each taking a ref for the place. An update's detail is the stored run note (`State.note/2`, at most 280 characters) for finished and asking, and the raw reason, cut to 600, for failed. |
-| `Photon.Questions` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Repo, Photon.Signals, PhotonCore, Ecto], exports: [Question, Rules]` | `subscribe/0`, `get/1`, `by_task/1`, `open_by_thread/1` (thread IDs to their open questions, one query), `open/0`, `ask/1`, `answer/2` (the owner), `answer_tx/4`, `pass_tx/4`, `escalate/1`, `withdraw_tx/2`, `signal_key/1`, `check_ms/0`. Moduledoc: the states, the fenced ask, the relay, escalation. |
+| `Photon.Questions` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Repo, Photon.Signals, PhotonCore, Ecto], exports: [Question, Rules]` | `subscribe/0`, `get/1`, `by_task/1`, `open_by_thread/1` (thread IDs to their open questions, one query), `open/0`, `ask/1`, `answer/2` (the owner), `answer_tx/4`, `pass_tx/4`, `escalate/1` (`{:ok, question}` as it is afterwards, passed on or not, or `{:error, :not_found}`), `withdraw_tx/2`, `signal_key/1`, `check_ms/0`. Moduledoc: the states, the fenced ask, the relay, escalation. |
 | `Photon.Questions.Question` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 4.1. |
-| `Photon.Questions.Rules` | core | `use Boundary, type: :strict, deps: []` | `question/1`, `answer/1`, `step/2`, `message/3`, `askable?/1`, `escalate?/2`, `result/1` (section 4.2). |
+| `Photon.Questions.Rules` | core | `use Boundary, type: :strict, deps: []` | `question/1`, `answer/1`, `open?/1`, `open_statuses/0`, `step/2`, `message/3`, `askable?/1`, `escalate?/2`, `result/1` (section 4.2). |
 
 ### 11.4 apps/hub: Blip and the activity log
 

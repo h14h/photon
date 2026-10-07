@@ -15,9 +15,12 @@ defmodule Photon do
     * `Photon.Threads`: threads, the durable agent conversations inside a
       project, their state (worked out from stored facts), and their
       `"thread"` profile for the durable harness
+    * `Photon.Questions`: a thread's `ask_blip` questions, which Blip
+      answers or passes to the owner, and whose answers go back to the
+      waiting thread
     * `Photon.Signals`: what reaches Blip unasked, such as how the threads
-      it started end, posted into Blip's conversation by code; used by
-      the other contexts, not the web layer
+      it started end and the questions they ask, posted into Blip's
+      conversation by code; used by the other contexts, not the web layer
     * `Photon.Skills`: skills, the instructions an agent loads when a task
       calls for them, written or installed by the user and turned on for
       Blip or per project
@@ -36,8 +39,8 @@ defmodule Photon do
       on the tailnet, or a password), and each node's own key
 
   None of them adds a process for a project, a thread, a skill, a
-  schedule, a signal or an operation: projects, context files and skills
-  are rows, a thread is a conversation in the durable harness, a signal
+  schedule, a signal, a question or an operation: projects, context
+  files, skills and questions are rows, a thread is a conversation in the durable harness, a signal
   is a message in Blip's, a schedule is a row and a durable task waiting
   for its time, and an operation is a row its tool call waits on.
 
@@ -47,7 +50,7 @@ defmodule Photon do
   Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Page,
   MockScript}`, `Photon.Transcript` (what a conversation page shows),
   `Photon.Projects.Rules`, `Photon.Threads.{Rules, State, Prompt, MockScript}`,
-  `Photon.Signals.{Rules, Text}`,
+  `Photon.Signals.{Rules, Text}`, `Photon.Questions.Rules`,
   `Photon.Skills.{Rules, SkillMd, Source, Prompt, MockPhrases}`,
   `Photon.Schedules.Rules`,
   `Photon.Machines.{Rules, Roster}`,
@@ -84,6 +87,8 @@ defmodule Photon do
       Projects.ContextFile,
       Projects.Project,
       Provision,
+      Questions,
+      Questions.Question,
       Schedules,
       Schedules.Schedule,
       Settings,

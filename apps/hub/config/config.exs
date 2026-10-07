@@ -38,6 +38,11 @@ config :photon, Photon.Durable,
 # docs/plans/step-4-blip-as-coordinator.md).
 config :photon, Photon.Threads, quiet_after_hours: 72
 
+# A thread's ask_blip call checks this often whether Blip's run went past
+# its question without handling it, and if so passes it to the owner
+# (section 4.6 of docs/plans/step-4-blip-as-coordinator.md).
+config :photon, Photon.Questions, check_ms: 60_000
+
 # How a machine tool call waits for its operation: it checks once a minute
 # (asking an online machine to push the op again), and gives up once the
 # machine has been offline for 10 minutes.

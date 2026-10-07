@@ -4,7 +4,8 @@ defmodule Photon.SignalsTest do
   (section 3 of `docs/plans/step-4-blip-as-coordinator.md`), on the
   durable harness with the scripted models. Which settles become signals
   is covered cell by cell in `test/core/signals/rules_test.exs`; here, that
-  the hook posts them, and how they join Blip's inbox.
+  the hook posts them, and how they and `ask_blip` questions join Blip's
+  inbox.
 
   Blip is kept busy by a `shell` call on `box`, a machine the test process
   plays and that never answers, so signals queue behind its run.
@@ -16,7 +17,7 @@ defmodule Photon.SignalsTest do
 
   import Ecto.Query, only: [from: 2]
 
-  alias Photon.{Assistant, Projects, Schedules, Signals, Threads}
+  alias Photon.{Assistant, Projects, Questions, Schedules, Signals, Threads}
   alias Photon.Durable.{Submission, TaskRecord}
   alias Photon.Schedules.Schedule
 
@@ -196,6 +197,74 @@ defmodule Photon.SignalsTest do
 
       assert length(runs) == 2
       assert Enum.count(runs, &(&1.checkpoint["submissions"] == [carrier.id])) == 1
+    end
+  end
+
+  describe "questions" do
+    # An `ask_blip` call in `thread` that waits and that nothing wakes, and
+    # its question.
+    defp ask!(thread, project, question) do
+      task =
+        Durable.create_task(%{
+          kind: "test_ask",
+          conversation_id: thread.id,
+          waiting: %{"signal" => "never"}
+        })
+
+      {:ok, asked} =
+        Questions.ask(%{
+          task_id: task.id,
+          thread_id: thread.id,
+          thread_title: thread.title,
+          project_id: project.id,
+          project_slug: project.slug,
+          project_name: project.name,
+          question: question
+        })
+
+      asked
+    end
+
+    test "a question and an update while Blip is busy make two queued messages, never one", %{
+      project: project,
+      blip: blip
+    } do
+      parked = park_blip!(blip)
+      owners = ended!(project, "files")
+
+      first = ask!(owners, project, "Which zone first?")
+      update = ended!(project, "files", source: @blip_source)
+      second = ask!(owners, project, "Drip or spray?")
+
+      assert [questions, updates] = signals(blip)
+      assert {questions.status, updates.status} == {"queued", "queued"}
+      assert first.submission_id == questions.id
+      assert second.submission_id == questions.id
+
+      assert Enum.map(refs(questions), &{&1["kind"], &1["question_id"]}) ==
+               [{"question", first.id}, {"question", second.id}]
+
+      assert parts(questions) == [
+               ~s{[Question #{first.id} from Garden / "files" (#{owners.id})]\nWhich zone first?},
+               ~s{[Question #{second.id} from Garden / "files" (#{owners.id})]\nDrip or spray?}
+             ]
+
+      assert [%{"kind" => "thread_update", "thread_id" => update_id}] = refs(updates)
+      assert update_id == update.id
+
+      # Each is placed on its own and answered before the next.
+      unpark_blip!(blip, parked)
+      assert %{status: "done", entry_id: question_entry} = await_settled(blip, questions.id)
+      assert %{status: "done", entry_id: update_entry} = await_settled(blip, updates.id)
+
+      kinds =
+        blip
+        |> Durable.entries()
+        |> Enum.drop_while(&(&1.id != question_entry))
+        |> Enum.map(&if(&1.id == update_entry, do: :update, else: &1.kind))
+
+      assert ["user", "assistant" | _] = kinds
+      assert :update in kinds
     end
   end
 

@@ -48,6 +48,9 @@ config :phoenix,
 # call to stay parked longer sets its own limits.
 config :photon, Photon.MachineTools, check_ms: 200, offline_limit_ms: 500
 
+# An ask_blip call checks for a question Blip didn't get to in milliseconds.
+config :photon, Photon.Questions, check_ms: 50
+
 # Harness tests use their own conversation profile alongside the assistant's.
 config :photon, Photon.Durable,
   profiles: %{

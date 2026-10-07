@@ -60,9 +60,10 @@ defmodule Photon.Threads do
 
   ## State
 
-  A thread's state (running, waiting on you, failed, finished and unread,
-  quiet, idle; `Photon.Threads.State`) is worked out when it is read
-  (`board/1`, `state/1`, `sidebar/1`), from facts on its row recorded
+  A thread's state (running, asking Blip, waiting on you, failed,
+  finished and unread, quiet, idle; `Photon.Threads.State`) is worked out
+  when it is read (`board/1`, `state/1`, `sidebar/1`), from its open
+  `ask_blip` questions (`Photon.Questions`) and facts on its row recorded
   when something happened (section 2 of
   `docs/plans/step-4-blip-as-coordinator.md`):
 
@@ -99,6 +100,7 @@ defmodule Photon.Threads do
       Photon.Durable,
       Photon.MachineTools,
       Photon.Projects,
+      Photon.Questions,
       Photon.Repo,
       Photon.Settings,
       Photon.Signals,
@@ -114,9 +116,21 @@ defmodule Photon.Threads do
 
   import Ecto.Query
 
-  alias Photon.{Durable, MachineTools, Projects, Repo, Settings, Signals, Skills, Transcript}
+  alias Photon.{
+    Durable,
+    MachineTools,
+    Projects,
+    Questions,
+    Repo,
+    Settings,
+    Signals,
+    Skills,
+    Transcript
+  }
+
   alias Photon.Durable.{Entry, Submission, Tx}
   alias Photon.Projects.Project
+  alias Photon.Questions.Question
   alias Photon.Signals.Rules, as: SignalRules
   alias Photon.Signals.Text, as: SignalText
   alias Photon.Threads.{Prompt, Rules, State, Thread, Titling, Tools}
@@ -153,7 +167,8 @@ defmodule Photon.Threads do
 
   @typedoc """
   A thread on the board (`board/1`): the thread, its project, its state,
-  whether its question is with Blip, and its open `ask_blip` questions.
+  whether it has a question Blip still holds, and its open `ask_blip`
+  questions, oldest first.
   """
   @type board_entry :: %{
           id: String.t(),
@@ -161,7 +176,7 @@ defmodule Photon.Threads do
           project: project_ref(),
           state: State.t(),
           asking_blip?: boolean(),
-          questions: [map()]
+          questions: [Question.t()]
         }
 
   ## Starting and talking to threads
@@ -384,7 +399,9 @@ defmodule Photon.Threads do
   @spec sidebar(pos_integer()) :: [sidebar_project()]
   def sidebar(limit) do
     running = Durable.busy_in_profile(@profile)
-    by_project = limit |> listed(MapSet.to_list(running)) |> Enum.group_by(& &1.project_id)
+    rows = listed(limit, MapSet.to_list(running))
+    questions = open_questions(rows)
+    by_project = Enum.group_by(rows, & &1.project_id)
     now = DateTime.utc_now()
     opts = state_opts()
 
@@ -393,18 +410,23 @@ defmodule Photon.Threads do
 
       %{
         project: %{id: project.id, slug: project.slug, name: project.name},
-        threads: Enum.map(rows, &sidebar_thread(&1, MapSet.member?(running, &1.id), now, opts)),
+        threads: Enum.map(rows, &sidebar_thread(&1, running, questions, now, opts)),
         more: total(rows) - length(rows)
       }
     end
   end
 
-  defp sidebar_thread(row, running?, now, opts) do
+  defp open_questions(rows), do: rows |> Enum.map(& &1.id) |> Questions.open_by_thread()
+
+  defp sidebar_thread(row, running, questions, now, opts) do
+    running? = MapSet.member?(running, row.id)
+    open = Map.get(questions, row.id, [])
+
     %{
       id: row.id,
       title: row.title,
       running?: running?,
-      state: State.of(facts(row, running?), now, opts)
+      state: State.of(facts(row, running?, open), now, opts)
     }
   end
 
@@ -451,15 +473,20 @@ defmodule Photon.Threads do
   Every thread in `scope` (`:all`, or `{:project, project_id}`) with its
   state (`Photon.Threads.State`), most recently active first, in a fixed
   number of queries however many threads there are: the threads with
-  their projects, and which are running. The pages group and cut it.
+  their projects, which are running, and their open questions. The pages
+  group and cut it.
   """
   @spec board(:all | {:project, String.t()}) :: [board_entry()]
   def board(scope) do
     rows = scope |> board_query() |> Repo.all()
     busy = Durable.busy_in_profile(@profile)
+    questions = Questions.open_by_thread(for {thread, _project} <- rows, do: thread.id)
     now = DateTime.utc_now()
     opts = state_opts()
-    Enum.map(rows, fn {thread, project} -> entry(thread, project, busy, now, opts) end)
+
+    Enum.map(rows, fn {thread, project} ->
+      entry(thread, project, busy, Map.get(questions, thread.id, []), {now, opts})
+    end)
   end
 
   @doc "Thread `thread_id`'s board entry (see `board/1`), or nil when there is no such thread."
@@ -467,7 +494,15 @@ defmodule Photon.Threads do
   def state(thread_id) do
     case :all |> board_query() |> where([t], t.id == ^thread_id) |> Repo.one() do
       {thread, project} ->
-        entry(thread, project, Durable.busy([thread_id]), DateTime.utc_now(), state_opts())
+        questions = Map.get(Questions.open_by_thread([thread_id]), thread_id, [])
+
+        entry(
+          thread,
+          project,
+          Durable.busy([thread_id]),
+          questions,
+          {DateTime.utc_now(), state_opts()}
+        )
 
       nil ->
         nil
@@ -495,23 +530,22 @@ defmodule Photon.Threads do
   defp board_query({:project, project_id}),
     do: where(board_query(:all), [t], t.project_id == ^project_id)
 
-  defp entry(thread, project, busy, now, opts) do
-    facts = facts(thread, MapSet.member?(busy, thread.id))
+  defp entry(thread, project, busy, questions, {now, opts}) do
+    facts = facts(thread, MapSet.member?(busy, thread.id), questions)
 
     %{
       id: thread.id,
       thread: thread,
       project: project,
       state: State.of(facts, now, opts),
-      asking_blip?: false,
-      questions: []
+      asking_blip?: Enum.any?(questions, &(&1.status == "asked")),
+      questions: questions
     }
   end
 
   # What `State.of/3` works the state out from, for a thread row (or a
-  # map with its fields) and whether it is running. Open questions arrive
-  # with `ask_blip`; until then no thread has one.
-  defp facts(thread, busy?) do
+  # map with its fields), whether it is running, and its open questions.
+  defp facts(thread, busy?, questions) do
     thread
     |> Map.take([
       :last_run_status,
@@ -521,7 +555,17 @@ defmodule Photon.Threads do
       :seen_at,
       :resolved_at
     ])
-    |> Map.merge(%{busy?: busy?, question: nil})
+    |> Map.merge(%{busy?: busy?, question: question(questions)})
+  end
+
+  # Where a thread's open questions are: with the owner if any is, else
+  # with Blip if any is asked, else nil.
+  defp question(questions) do
+    cond do
+      Enum.any?(questions, &(&1.status == "with_owner")) -> :with_owner
+      Enum.any?(questions, &(&1.status == "asked")) -> :with_blip
+      true -> nil
+    end
   end
 
   defp state_opts do

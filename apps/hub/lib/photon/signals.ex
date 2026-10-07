@@ -1,11 +1,15 @@
 defmodule Photon.Signals do
   @moduledoc """
-  What reaches Blip unasked (section 3 of
-  `docs/plans/step-4-blip-as-coordinator.md`): thread updates, and later
+  What reaches Blip unasked (sections 3 and 4 of
+  `docs/plans/step-4-blip-as-coordinator.md`): thread updates and
   `ask_blip` questions, posted into Blip's conversation as messages with
-  source kind `"signal"`. It also owns finding Blip's conversation
-  (`blip_conversation_id/0`), since `Photon.Threads` posts into it and
-  can't depend on `Photon.Assistant`, which depends on it.
+  source kind `"signal"`; the owner's answers to questions, which have
+  already gone to the thread (`answer_tx/3`, source kind `"answer"`); and
+  notices for the owner when a question is passed on or withdrawn
+  (`notice_tx/3`). It also owns finding Blip's conversation
+  (`blip_conversation_id/0`), since `Photon.Threads` and
+  `Photon.Questions` post into it and can't depend on `Photon.Assistant`,
+  which depends on them.
 
   Which settles become signals is decided in code, never by a model:
   `Photon.Threads`' settle hook asks `Photon.Signals.Rules.thread_update/2`
@@ -40,7 +44,7 @@ defmodule Photon.Signals do
 
   alias Photon.Durable
   alias Photon.Durable.{Submission, Tx}
-  alias Photon.Signals.Rules
+  alias Photon.Signals.{Rules, Text}
   alias PhotonCore.Message
 
   @typedoc """
@@ -48,6 +52,20 @@ defmodule Photon.Signals do
   reads (`Photon.Signals.Text`), and the `ref` the panel draws it from.
   """
   @type t :: %{key: String.t(), text: String.t(), ref: Rules.ref()}
+
+  @typedoc """
+  An `ask_blip` question, as `Photon.Questions.Question` holds it: its ID,
+  and where its thread was when it asked.
+  """
+  @type question :: %{
+          required(:id) => String.t(),
+          required(:thread_id) => String.t(),
+          required(:thread_title) => String.t(),
+          required(:project_id) => String.t(),
+          required(:project_slug) => String.t(),
+          required(:project_name) => String.t(),
+          optional(atom()) => term()
+        }
 
   @doc "Which signals reach Blip. Quiet mode is the only mode until step 5 adds the setting."
   @spec mode() :: Rules.mode()
@@ -138,6 +156,68 @@ defmodule Photon.Signals do
     else
       _no_blip_or_not_queued -> :ok
     end
+  end
+
+  @doc """
+  The owner's answer to `question`, as a message in Blip's conversation,
+  inside the caller's commit (section 4.5): a note that the answer has
+  already gone straight to the thread, then the answer as the owner
+  wrote it. Its source (`"answer"`) names the question and the thread, so
+  the panel can show what it answered. Like any message it starts a run
+  when Blip is idle and waits as a follow-up when Blip is busy; Blip's
+  Stop keeps it. One per question (its request ID).
+  """
+  @spec answer_tx(Tx.t(), question(), String.t()) :: Submission.t()
+  def answer_tx(tx, question, text) do
+    ref = question_ref(question)
+
+    Durable.submit_tx(
+      tx,
+      blip_conversation_tx(tx),
+      [Message.text(Text.answer_note(ref)), Message.text(text)],
+      source: %{
+        "kind" => "answer",
+        "question_id" => question.id,
+        "thread_id" => question.thread_id,
+        "title" => question.thread_title,
+        "slug" => question.project_slug,
+        "project" => question.project_name
+      },
+      request_id: "answer:" <> question.id
+    )
+  end
+
+  @doc """
+  A notice about `question` in Blip's conversation, inside the caller's
+  commit: `:escalated` when the hub passed a question Blip didn't get to
+  on to the owner, `:withdrawn` when the thread was stopped while its
+  question was with the owner. A notice is for the owner to read; the
+  model never sees it. It runs on the harness's abort path, so it never
+  raises.
+  """
+  @spec notice_tx(Tx.t(), question(), :escalated | :withdrawn) :: :ok
+  def notice_tx(tx, question, kind) do
+    ref = question_ref(question)
+    text = if kind == :escalated, do: Text.escalated(ref), else: Text.withdrawn(ref)
+
+    _entry =
+      Tx.append(tx, blip_conversation_tx(tx), "error", %{
+        "message" => text,
+        "notice" => true,
+        "question_id" => question.id
+      })
+
+    :ok
+  end
+
+  defp question_ref(question) do
+    Rules.question_ref(question.id, Rules.key({:question, question.id}), %{
+      thread_id: question.thread_id,
+      title: question.thread_title,
+      project_id: question.project_id,
+      slug: question.project_slug,
+      project: question.project_name
+    })
   end
 
   defp source(%Submission{content: %{"source" => source}}), do: source
