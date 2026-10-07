@@ -1,18 +1,20 @@
-defmodule PhotonWeb.OverviewLive do
+defmodule PhotonWeb.HomeLive do
   @moduledoc """
-  The home page, at a glance: your machines and whether they're online, a
-  pointer to Blip and to projects for work on them, and Blip's schedules.
-  Blip floats over it, as over every page.
+  The home page at `/` (section 10.3 of
+  `docs/plans/step-4-blip-as-coordinator.md`). For now it lists Blip's
+  schedules; what needs the owner across every project arrives with the
+  rest of that section. Blip floats over it, as over every page.
 
-  Machines come from `@shell`, which keeps them current. Blip's schedules
-  that are waiting for their next time, and those that stopped after an
-  error (`Photon.Assistant.schedules/0`), which stay in sight with why and
-  their cancel button showing until the owner cancels them, are a stream (`#schedule-list`), read here and again on
+  Blip's schedules that are waiting for their next time, and those that
+  stopped after an error (`Photon.Assistant.schedules/0`), which stay in
+  sight with why and their cancel button showing until the owner cancels
+  them, are a stream (`#schedule-list`), read here and again on
   `{:schedules_changed, nil}` (`Photon.Schedules.subscribe/0`). A
   project's schedules are on its page, and their announcements carry the
   project's ID, so they don't reload this list. Times are shown in the
   owner's time zone, in the lines a schedule shows wherever it is listed
-  (`PhotonWeb.ScheduleComponents`).
+  (`PhotonWeb.ScheduleComponents`). Everything else the shell passes on is
+  ignored.
   """
 
   use PhotonWeb, :live_view
@@ -27,7 +29,7 @@ defmodule PhotonWeb.OverviewLive do
 
     {:ok,
      socket
-     |> assign(page_title: "Overview")
+     |> assign(page_title: "Home")
      |> stream_configure(:schedules, dom_id: &"schedule-#{&1.id}")
      |> load_schedules()}
   end
@@ -50,56 +52,15 @@ defmodule PhotonWeb.OverviewLive do
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, online: Enum.count(assigns.shell.nodes, & &1.online))
-
     ~H"""
     <Layouts.app flash={@flash} shell={@shell} socket={@socket} active={:home}>
       <div class="h-full overflow-y-auto">
         <div class="blip-clear-y mx-auto w-full max-w-4xl px-4 py-8 sm:px-6">
           <.header>
-            Overview
-            <:subtitle>
-              <span id="overview-summary">
-                {summary(@online, length(@shell.nodes))}
-              </span>
-            </:subtitle>
+            <span id="home-heading">Home</span>
           </.header>
 
-          <section id="machines" class="mt-8">
-            <.section_title>Machines</.section_title>
-            <div
-              :if={@shell.nodes == []}
-              id="no-machines"
-              class="mt-3 rounded-2xl border border-dashed border-line-strong px-5 py-6 text-[14px] text-ink-soft"
-            >
-              No machines yet. Add one from the <.link
-                navigate={~p"/nodes"}
-                class="text-accent-strong underline underline-offset-2"
-              >
-                Nodes page</.link>.
-            </div>
-            <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <.machine :for={node <- @shell.nodes} node={node} />
-            </div>
-            <p
-              :if={@shell.nodes != []}
-              id="work-hint"
-              class="mt-4 flex items-center gap-2 text-[14px] text-ink-soft"
-            >
-              <.icon name="hero-chat-bubble-left-ellipsis" class="size-4 shrink-0 text-ink-faint" />
-              <span>
-                Ask Blip to run something on any of these, or
-                <.link
-                  id="work-hint-new-project"
-                  navigate={~p"/projects/new"}
-                  class="text-accent-strong underline underline-offset-2"
-                >start a project</.link>
-                for longer work.
-              </span>
-            </p>
-          </section>
-
-          <section id="schedules" class="mt-9">
+          <section id="schedules" class="mt-8">
             <.section_title>Schedules</.section_title>
             <div id="schedule-list" phx-update="stream" class="mt-3 space-y-2">
               <p
@@ -148,12 +109,6 @@ defmodule PhotonWeb.OverviewLive do
     """
   end
 
-  defp summary(_online, 0), do: "Add a machine and Blip can start working on it."
-  defp summary(online, total), do: "#{online} of #{total} #{plural(total, "machine")} online."
-
-  defp plural(1, word), do: word
-  defp plural(_n, word), do: word <> "s"
-
   slot :inner_block, required: true
 
   defp section_title(assigns) do
@@ -163,32 +118,4 @@ defmodule PhotonWeb.OverviewLive do
     </h2>
     """
   end
-
-  attr :node, :map, required: true
-
-  defp machine(assigns) do
-    ~H"""
-    <div
-      id={"machine-#{@node.id}"}
-      class="rounded-2xl border border-line bg-surface px-4 py-3.5 shadow-xs transition"
-    >
-      <div class="flex items-center gap-2">
-        <.dot status={if(@node.online, do: :ok, else: :off)} />
-        <span class={["truncate font-medium", !@node.online && "text-ink-faint"]}>{@node.id}</span>
-        <span class="ml-auto shrink-0 text-[12px] text-ink-faint">
-          {if(@node.online, do: "online", else: "offline")}
-        </span>
-      </div>
-      <p class="mt-2 truncate text-[13px] text-ink-faint">{machine_line(@node)}</p>
-    </div>
-    """
-  end
-
-  # What the card says under a machine's name: its host and platform while
-  # it's connected.
-  defp machine_line(%{online: true, info: info}),
-    do:
-      [info["hostname"], info["platform"]] |> Enum.reject(&(&1 in [nil, ""])) |> Enum.join(" · ")
-
-  defp machine_line(_node), do: "Not connected"
 end

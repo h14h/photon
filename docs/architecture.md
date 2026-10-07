@@ -289,7 +289,8 @@ does (start a thread, wake one, post to Blip, or skip) is the pure
 | `PhotonWeb.SkillLive` | boundary (UI process; `:new` writes a skill, `:edit` edits one against the version it loaded and turns it on for Blip and each project; a toggle re-reads the switches, and only a new version touches the form) | is a process; follows `{:skills_changed, _}` and `{:projects_changed, _}` | `Skills`, `Projects`, `Markdown`, `SkillText`, `EditorComponents` |
 | `PhotonWeb.SkillInstallLive` | boundary (UI process; install from a link, fetched in a `start_async` task, or a pasted SKILL.md: one candidate opens an editable preview, several are a list to pick from) | is a process; the fetch's HTTP runs in its `start_async` task; follows `{:skills_changed, _}` while a list is open | `Skills`, `Markdown`, `SkillText`, `EditorComponents` |
 | `PhotonWeb.ThreadLive` | boundary (UI process; `:new` starts a thread with its first message, `:show` is its conversation with a composer, Stop and a Schedule link to a new schedule for the thread, drawn with the shared conversation modules under the ID prefix `thread-`) | is a process; subscribes to the thread's conversation | `Projects`, `Threads`, `Transcript`, `ConversationComponents`, `ConversationView` |
-| `PhotonWeb.OverviewLive` | boundary (UI process; the home page, Home in the sidebar until step 4 replaces it; lists Blip's schedules) | is a process; machines from the shell, Blip's schedules read on mount and on `{:schedules_changed, nil}` | `Assistant`, `Schedules`, `ScheduleComponents` |
+| `PhotonWeb.HomeLive` | boundary (UI process; the home page at `/`, Home in the sidebar; lists Blip's schedules, and step 4 adds what needs the owner) | is a process; Blip's schedules read on mount and on `{:schedules_changed, nil}` | `Assistant`, `Schedules`, `ScheduleComponents` |
+| `PhotonWeb.ActivityLive` | boundary (UI process; the activity page at `/activity`, Activity in the sidebar; for now its header and empty state) | is a process; reads nothing yet | none |
 | `PhotonWeb.NodesLive` | boundary (UI process) | is a process; node data read on mount and on change messages, `tailscale` in a `start_async` task; `render/1` only derives from assigns | `Machines`, `NodeDist`, `NodeKeys`, `Provision`, `Tailnet`, `Hub` |
 | `PhotonWeb.SettingsLive` | boundary (UI process; the scheduled-work checkbox covers every schedule, Blip's and the projects') | is a process; settings file, the ChatGPT account (sign-in steps; models in a `start_async` task), Blip's memory | `Settings`, `ChatGPT`, `Assistant` |
 
@@ -390,7 +391,7 @@ Photon.Supervisor  one_for_one                      (Photon.Application)
 │   └── Photon.Durable.Scheduler                    GenServer: reconciles with Durable.Policy, starts steps
 ├── PhotonWeb.Endpoint                              Bandit
 │   ├── /node/websocket -> NodeSocket -> NodeChannel        one process per connected node
-│   ├── /live -> OverviewLive | ProjectNewLive | ProjectLive | ContextFileLive | ThreadLive
+│   ├── /live -> HomeLive | ActivityLive | ProjectNewLive | ProjectLive | ContextFileLive | ThreadLive
 │   │            | ScheduleLive | SkillsLive | SkillLive | SkillInstallLive
 │   │            | NodesLive | SettingsLive, each with BlipLive (sticky) over it
 │   └── HTTP -> Router -> NodeInstallController | ConversationImageController | HealthPlug

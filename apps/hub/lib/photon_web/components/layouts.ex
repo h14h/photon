@@ -1,9 +1,9 @@
 defmodule PhotonWeb.Layouts do
   @moduledoc """
-  The app shell: a sidebar with Home (the overview), the projects, each
-  with its most recently active threads and any running one, Machines (how
-  many are online, linking to the nodes page), Skills and Settings; the page fills
-  the rest. On small screens the sidebar folds into a drawer behind a top
+  The app shell: a sidebar with Home, Activity (everything Blip did), the
+  projects, each with its most recently active threads and any running
+  one, Machines (how many are online, linking to the nodes page), Skills
+  and Settings; the page fills the rest. On small screens the sidebar folds into a drawer behind a top
   bar. The sidebar's data is `@shell`, kept current by `PhotonWeb.Shell`.
 
   Blip floats over all of it: `PhotonWeb.BlipLive`, rendered here once and
@@ -20,7 +20,7 @@ defmodule PhotonWeb.Layouts do
   attr :active, :any,
     default: nil,
     doc:
-      "the page in the sidebar: `:home`, `:nodes`, `:skills`, `:settings`, `{:project, slug}` or `{:thread, slug, id}` (which marks its project's row too)"
+      "the page in the sidebar: `:home`, `:activity`, `:nodes`, `:skills`, `:settings`, `{:project, slug}` or `{:thread, slug, id}` (which marks its project's row too)"
 
   slot :inner_block, required: true
 
@@ -98,6 +98,14 @@ defmodule PhotonWeb.Layouts do
     <nav class="space-y-0.5 px-2.5">
       <.nav_item navigate={~p"/"} icon="hero-home" active={@active == :home} id="nav-home">
         Home
+      </.nav_item>
+      <.nav_item
+        navigate={~p"/activity"}
+        icon="hero-queue-list"
+        active={@active == :activity}
+        id="nav-activity"
+      >
+        Activity
       </.nav_item>
     </nav>
 

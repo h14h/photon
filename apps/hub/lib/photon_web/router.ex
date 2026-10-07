@@ -15,7 +15,8 @@ defmodule PhotonWeb.Router do
     pipe_through :browser
 
     live_session :gui, on_mount: [PhotonWeb.Auth, PhotonWeb.Shell] do
-      live "/", OverviewLive
+      live "/", HomeLive
+      live "/activity", ActivityLive
       # `/projects/new` before `/projects/:slug`; `new` is a reserved slug,
       # and file names end in `.md`, so neither `new` below is a file or thread.
       live "/projects/new", ProjectNewLive

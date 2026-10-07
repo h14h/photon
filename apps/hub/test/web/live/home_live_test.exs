@@ -1,13 +1,13 @@
-defmodule PhotonWeb.OverviewLiveTest do
+defmodule PhotonWeb.HomeLiveTest do
   @moduledoc """
-  The home page: machines and schedules, kept current as they change.
+  The home page: Blip's schedules, kept current as they change.
   """
 
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
 
-  alias Photon.{Assistant, Durable, Machines, NodeKeys, Projects, Schedules}
+  alias Photon.{Assistant, Durable, Projects, Schedules}
   alias Photon.Durable.Tx
   alias Photon.Schedules.Routine
 
@@ -18,28 +18,11 @@ defmodule PhotonWeb.OverviewLiveTest do
     %{view: view}
   end
 
-  test "without machines, says how to add one", %{view: view} do
-    assert has_element?(view, "#no-machines")
-    assert has_element?(view, "#overview-summary", "Add a machine")
-    refute has_element?(view, "#work-hint")
+  test "is Home, marked in the sidebar", %{view: view} do
+    assert has_element?(view, "#home-heading", "Home")
     assert has_element?(view, "#nav-home[aria-current=page]")
-    assert page_title(view) =~ "Overview"
-  end
-
-  test "shows connected machines and known offline ones, and points at Blip and projects", %{
-    view: view
-  } do
-    {:ok, _key} = NodeKeys.issue("nas")
-    :ok = Machines.register("box", %{"hostname" => "box.lan", "platform" => "linux"})
-    Machines.broadcast()
-    _ = render(view)
-
-    assert has_element?(view, "#machine-box", "online")
-    assert has_element?(view, "#machine-box", "box.lan · linux")
-    assert has_element?(view, "#machine-nas", "offline")
-    assert has_element?(view, "#overview-summary", "1 of 2 machines online.")
-    assert has_element?(view, "#work-hint", "Ask Blip")
-    assert has_element?(view, ~s(#work-hint-new-project[href="/projects/new"]), "start a project")
+    refute has_element?(view, "#nav-activity[aria-current]")
+    assert page_title(view) =~ "Home"
   end
 
   # One of Blip's schedules, as its `schedule` tool makes it.

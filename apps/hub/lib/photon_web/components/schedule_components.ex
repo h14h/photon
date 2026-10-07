@@ -1,7 +1,7 @@
 defmodule PhotonWeb.ScheduleComponents do
   @moduledoc """
   The lines a schedule shows wherever it is listed: the home page (Blip's
-  schedules, `PhotonWeb.OverviewLive`) and a project's page
+  schedules, `PhotonWeb.HomeLive`) and a project's page
   (`PhotonWeb.ProjectLive`).
 
     * `schedule_when/1`: when it runs next, or that it is done or stopped

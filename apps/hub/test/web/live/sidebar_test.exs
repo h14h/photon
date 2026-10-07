@@ -1,7 +1,7 @@
 defmodule PhotonWeb.SidebarTest do
   @moduledoc """
   The sidebar on every page (`PhotonWeb.Layouts`, fed by `PhotonWeb.Shell`):
-  Home, the projects with their threads, Machines, Skills and Settings, kept current
+  Home, Activity, the projects with their threads, Machines, Skills and Settings, kept current
   as projects and threads change.
 
   Threads run on the scripted model (`Photon.Threads.MockScript`). A thread
@@ -69,8 +69,11 @@ defmodule PhotonWeb.SidebarTest do
     view |> render() |> LazyHTML.from_fragment() |> LazyHTML.query(selector) |> Enum.count()
   end
 
-  test "has Home, Projects, Machines with the online count, and Settings", %{view: view} do
+  test "has Home, Activity, Projects, Machines with the online count, and Settings", %{
+    view: view
+  } do
     assert has_element?(view, "#nav-home[href='/']")
+    assert has_element?(view, "#nav-activity[href='/activity']", "Activity")
     assert has_element?(view, "#new-project[href='/projects/new']")
     assert has_element?(view, "#nav-machines[href='/nodes']", "0 online")
     assert has_element?(view, "#nav-settings")
@@ -194,6 +197,10 @@ defmodule PhotonWeb.SidebarTest do
     assert has_element?(view, "#side-thread-#{thread}[aria-current=page]")
     assert has_element?(view, "#side-project-garden.font-medium")
     refute has_element?(view, "#side-project-garden[aria-current]")
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+    assert has_element?(view, "#nav-activity[aria-current=page]")
+    refute has_element?(view, "#nav-home[aria-current]")
 
     {:ok, view, _html} = live(conn, ~p"/nodes")
     assert has_element?(view, "#nav-machines[aria-current=page]")

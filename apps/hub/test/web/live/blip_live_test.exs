@@ -18,7 +18,7 @@ defmodule PhotonWeb.BlipLiveTest do
 
   ## Named setups
 
-  # The overview page with Blip over it; `blip` is Blip's own LiveView.
+  # The home page with Blip over it; `blip` is Blip's own LiveView.
   defp page(%{conn: conn}) do
     conversation = Assistant.conversation_id()
     Durable.subscribe(conversation)

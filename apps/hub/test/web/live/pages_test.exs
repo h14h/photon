@@ -7,11 +7,24 @@ defmodule PhotonWeb.PagesTest do
 
   alias Photon.{Durable, Machines, NodeKeys, Projects, Schedules, Skills}
 
-  test "the overview shows machines and schedules", %{conn: conn} do
+  test "the home page shows Blip's schedules, and no machine cards", %{conn: conn} do
+    :ok = Machines.register("box", %{"hostname" => "box.lan", "platform" => "linux"})
+
     {:ok, view, _html} = live(conn, ~p"/")
-    assert has_element?(view, "#no-machines")
+    assert has_element?(view, "#home-heading", "Home")
     assert has_element?(view, "#schedules")
     assert has_element?(view, "#nav-home")
+    refute has_element?(view, "#machines")
+    refute has_element?(view, "#no-machines")
+    refute has_element?(view, "#machine-box")
+  end
+
+  test "the activity page mounts, empty until Blip does something", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/activity")
+    assert has_element?(view, "#activity-heading", "Activity")
+    assert has_element?(view, "#no-activity", "Nothing yet.")
+    assert has_element?(view, "#nav-activity[aria-current=page]")
+    assert page_title(view) =~ "Activity"
   end
 
   test "Blip answers in the conversation over the page", %{conn: conn} do
@@ -53,7 +66,7 @@ defmodule PhotonWeb.PagesTest do
     {:ok, _key} = NodeKeys.issue("nas")
     :ok = Machines.register("box", %{"hostname" => "box.lan", "platform" => "linux"})
 
-    for path <- [~p"/", ~p"/nodes", ~p"/settings"] do
+    for path <- [~p"/", ~p"/activity", ~p"/nodes", ~p"/settings"] do
       {:ok, view, _html} = live(conn, path)
       assert has_element?(view, "#nav-machines[href='/nodes']", "1 online")
       refute has_element?(view, ~s(a[href^="/sessions"]))
