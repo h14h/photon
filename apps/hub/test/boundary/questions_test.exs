@@ -426,7 +426,7 @@ defmodule Photon.QuestionsTest do
       thread = ask_blip!(project, "what colour should the gate be?")
       passed = question!(thread, "with_owner")
 
-      wording = ~s{"#{passed.thread_title}" asks: what colour should the gate be?}
+      wording = "what colour should the gate be?"
       assert {passed.passed_by, passed.wording} == {"blip", wording}
 
       assert {"ok", text, details} = blip_result!(blip, "ask_owner")

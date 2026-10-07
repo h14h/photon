@@ -40,7 +40,8 @@ defmodule Photon.Assistant.MockCoordinator do
       key of a memory line `- <key>: <value>` (in the request's system
       text, under `## Memory`; at least three characters, ignoring case)
       is answered with the value (`answer_question`); any other is passed
-      to the owner as `"<title>" asks: <question>` (`ask_owner`). One call
+      to the owner in the thread's words (`ask_owner`; the card and the
+      bubble name the thread). One call
       per question, in one answer. A question ending in `(prose)` gets a
       plain reply and no call, the way a real model sometimes slips, so
       the hub passes it on itself
@@ -357,7 +358,7 @@ defmodule Photon.Assistant.MockCoordinator do
 
       true ->
         {~s{Asking you for "#{title}".},
-         Mock.call("ask_owner", %{"question_id" => id, "question" => ~s{"#{title}" asks: #{text}}})}
+         Mock.call("ask_owner", %{"question_id" => id, "question" => text})}
     end
   end
 

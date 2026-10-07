@@ -583,17 +583,20 @@ defmodule Photon.Assistant do
 
   @doc """
   Records a message row when one of Blip's runs that the owner didn't
-  type into (a thread's update or question, a schedule, its own
-  follow-up) ends a model turn with an answer that has text: the owner
-  didn't watch that reply come in, so the activity page shows it. Runs
-  the owner wrote to, and answers with no text, record nothing.
+  type into (a thread's update, a schedule, its own follow-up) ends a
+  model turn with an answer that has text: the owner didn't watch that
+  reply come in, so the activity page shows it. Runs the owner wrote
+  to, runs that only handle threads' questions (their calls already say
+  what Blip did, and the reply isn't for the owner), and answers with no
+  text record nothing.
   """
   @impl true
   def on_settled(conversation, settled, tx), do: settled_tx(tx, conversation, settled)
 
   defp settled_tx(tx, conversation, %{outcome: "done", answer_entry_id: entry_id} = settled)
        when is_binary(entry_id) do
-    with %{by: by} = origin when by != "owner" <- origin_tx(tx, Map.get(settled, :task)),
+    with %{by: by, quiet?: false} = origin when by != "owner" <-
+           origin_tx(tx, Map.get(settled, :task)),
          %Entry{data: %{"message" => message}} <- Durable.entry(conversation.id, entry_id),
          text when text != "" <- String.trim(Message.text_of(message)) do
       Activity.record_tx(tx, %{kind: "message", entry_id: entry_id, text: text, origin: origin})

@@ -90,6 +90,10 @@ defmodule PhotonWeb.BlipLive do
   def mount(_params, _session, socket) do
     conversation = Assistant.conversation_id()
     if connected?(socket), do: Assistant.subscribe(conversation)
+    entries = Assistant.entries(conversation)
+    # Where the conversation's runs stand, so a reply in a run already
+    # under way is judged by who asked for that run.
+    {_said, notice_state} = Notice.scan(entries, Notice.initial())
 
     socket =
       socket
@@ -104,9 +108,10 @@ defmodule PhotonWeb.BlipLive do
         page_path: nil,
         page_dismissed: false,
         reply: nil,
-        reply_error: nil
+        reply_error: nil,
+        notice_state: notice_state
       )
-      |> ConversationView.mount_conversation(Assistant.entries(conversation),
+      |> ConversationView.mount_conversation(entries,
         busy: Assistant.busy?(conversation),
         queued: Assistant.queued(conversation)
       )
@@ -229,13 +234,15 @@ defmodule PhotonWeb.BlipLive do
       ) do
     was_busy = socket.assigns.busy
     busy = Assistant.busy?(conversation)
+    {notices, notice_state} = Notice.scan(changes.entries, socket.assigns.notice_state)
 
     socket =
       socket
       |> ConversationView.apply_changes(changes, busy, Assistant.queued(conversation))
       |> keep_reply()
       |> hold(Transcript.outcome(changes.entries, was_busy, busy))
-      |> notify(Notice.from_entries(changes.entries))
+      |> assign(notice_state: notice_state)
+      |> notify(notices)
 
     {:noreply, socket}
   end

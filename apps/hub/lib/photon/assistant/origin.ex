@@ -27,6 +27,11 @@ defmodule Photon.Assistant.Origin do
   `schedule_work_ok?/1` keeps project schedules, whose firings start
   threads with no limit, to runs the owner typed into.
 
+  A run that only handles threads' questions (`quiet?`: signals carrying
+  questions and no updates, nothing the owner or a schedule sent) answers
+  to the threads, not the owner: Blip's reply in it makes no bubble and
+  no "Told you" row. Its `ask_owner` question still reaches the owner.
+
   These run on the harness's hook paths too (the activity log, C12), so
   they are total: any term in, a value out.
   """
@@ -45,14 +50,16 @@ defmodule Photon.Assistant.Origin do
   @typedoc """
   Who asked for a run (`by`, and `id`, the schedule or the one thread it
   was for), whether the owner typed into it, the questions it carries,
-  and whether the limits on a thread's question hold in it.
+  whether the limits on a thread's question hold in it, and whether it
+  only handles threads' questions (`quiet?`).
   """
   @type t :: %{
           by: by(),
           id: String.t() | nil,
           owner_wrote?: boolean(),
           questions: [question()],
-          restricted?: boolean()
+          restricted?: boolean(),
+          quiet?: boolean()
         }
 
   # The tools whose calls handle one question, credited to its thread.
@@ -74,7 +81,7 @@ defmodule Photon.Assistant.Origin do
   """
   @spec of(term()) :: t()
   def of(sources) do
-    sources = if is_list(sources), do: Enum.filter(sources, &is_map/1), else: []
+    sources = maps(sources)
     refs = Enum.flat_map(sources, &refs/1)
     questions = for %{"kind" => "question"} = ref <- refs, do: question(ref)
     updates = for %{"kind" => "thread_update"} = ref <- refs, do: ref["thread_id"]
@@ -86,9 +93,16 @@ defmodule Photon.Assistant.Origin do
       id: id,
       owner_wrote?: owner_wrote?,
       questions: questions,
-      restricted?: questions != [] and not owner_wrote?
+      restricted?: questions != [] and not owner_wrote?,
+      quiet?: quiet?(by, updates)
     }
   end
+
+  defp maps(sources) when is_list(sources), do: Enum.filter(sources, &is_map/1)
+  defp maps(_sources), do: []
+
+  # Only questions: no update, and nothing from the owner or a schedule.
+  defp quiet?(by, updates), do: by == "thread" and updates == []
 
   defp by(sources, questions, updates) do
     routine = Enum.find(sources, &(kind(&1) == "routine"))

@@ -101,6 +101,25 @@ defmodule Photon.Assistant.OriginTest do
       end
     end
 
+    test "a run that only handles questions is quiet; an update, a steer or an answer isn't" do
+      asked = carrying([question("q_1", "c_1")])
+      assert Origin.of([asked]).quiet?
+      assert Origin.of([asked, carrying([question("q_2", "c_2")])]).quiet?
+
+      for sources <- [
+            [carrying([question("q_1", "c_1"), update("c_2")])],
+            [asked, carrying([update("c_2")])],
+            [asked, @user],
+            [asked, @answer],
+            [carrying([update("c_1")])],
+            [routine("blip")],
+            [@user],
+            []
+          ] do
+        refute Origin.of(sources).quiet?, inspect(sources)
+      end
+    end
+
     test "is total over anything" do
       for sources <- [nil, "no", [nil, 5, "x"], [%{"kind" => "signal", "signals" => "x"}]] do
         assert %{by: "unknown", restricted?: false, questions: []} = Origin.of(sources)

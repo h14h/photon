@@ -89,6 +89,60 @@ defmodule Photon.Assistant.NoticeTest do
                %{kind: :reply, text: "Pump failed."}
              ]
     end
+
+    defp question_signal do
+      entry("user", %{
+        "message" => Message.user("[Question q_1 from Garden / \"Deploy\" (c_1)]\nWhich branch?"),
+        "source" => %{
+          "kind" => "signal",
+          "signals" => [%{"kind" => "question", "question_id" => "q_1", "thread_id" => "c_1"}]
+        }
+      })
+    end
+
+    test "Blip's replies in a run that only handles questions say nothing; its question does" do
+      details = %{"question_id" => "q_1", "title" => "Deploy", "wording" => "Which branch?"}
+
+      # The run arrives over three batches, as its commits do.
+      {first, state} =
+        Notice.scan(
+          [question_signal(), assistant_entry("Asking you.", [call("ask_owner", %{}, "c1")])],
+          Notice.initial()
+        )
+
+      {second, state} = Notice.scan([ask_owner("ok", details)], state)
+      {third, state} = Notice.scan([assistant_entry("Asked the user.")], state)
+
+      assert first == []
+      assert second == [%{kind: :question, text: ~s("Deploy" asks: Which branch?)}]
+      assert third == []
+
+      # The owner's next message starts a run of theirs, which speaks.
+      {said, _state} =
+        Notice.scan([user_entry("check disks"), assistant_entry("All fine.")], state)
+
+      assert said == [%{kind: :reply, text: "All fine."}]
+    end
+
+    test "a run with an update, or the owner's steer, beside the question speaks" do
+      update =
+        entry("user", %{
+          "message" => Message.user("[Thread update] Garden / \"Pump\" (c_2) failed."),
+          "source" => %{"kind" => "signal", "signals" => [%{"kind" => "thread_update"}]}
+        })
+
+      steered = [
+        question_signal(),
+        assistant_entry("", [call("answer_question", %{}, "c1")]),
+        tool_result_entry("c1", "Sent your answer."),
+        user_entry("and check disks"),
+        assistant_entry("Answered, and the disks are fine.")
+      ]
+
+      for entries <- [[question_signal(), update, assistant_entry("Pump failed.")], steered] do
+        assert [%{kind: :reply}] = Notice.from_entries(entries)
+      end
+    end
   end
 
   describe "the paragraph in the bubble" do

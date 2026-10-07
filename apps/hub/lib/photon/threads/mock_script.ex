@@ -25,7 +25,8 @@ defmodule Photon.Threads.MockScript do
     * `fail: <reason>` fails the model request with `<reason>`, so the
       run fails (the scripted model's errors aren't retried)
 
-  After a tool result it relays the result, as Blip's does. Anything else
+  After a tool result it relays the result, as Blip's does (Blip's answer
+  to `ask_blip` as prose). Anything else
   gets a help text. It reads the last text part of the last user message,
   without a leading `"[Scheduled] "`, as Blip's does, so a project
   schedule's prompt such as `on local: $ uptime` runs on it too.
@@ -68,7 +69,7 @@ defmodule Photon.Threads.MockScript do
 
     case List.last(messages) do
       %{"role" => "tool"} = result ->
-        result |> MockPhrases.relay_result() |> Message.assistant()
+        result |> relay() |> Message.assistant()
 
       %{"role" => "user"} = message ->
         message |> last_text() |> String.trim() |> plan(request)
@@ -76,6 +77,16 @@ defmodule Photon.Threads.MockScript do
       _ ->
         Message.assistant(@help)
     end
+  end
+
+  # Blip's answer to `ask_blip` reads as prose, a paragraph a line ("Blip
+  # asked the user: ...", "They answered: ..."), not as printed output.
+  defp relay(result) do
+    text = Message.text_of(result)
+
+    if String.starts_with?(text, ["Blip answered: ", "Blip asked the user: "]),
+      do: String.replace(text, ~r/\n+/, "\n\n"),
+      else: MockPhrases.relay_result(result)
   end
 
   # The last text part: what the user typed, after any note put before it.

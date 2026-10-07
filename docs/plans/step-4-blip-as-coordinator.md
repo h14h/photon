@@ -1189,7 +1189,9 @@ same commit, and announces `{:activity_added, id}` on `"activity"`.
 It also implements `on_settled/3` (as `Assistant.settled_tx/3`) for what
 Blip does without a tool. When a settle's outcome is `"done"`, the run's
 origin is not `"owner"` (it started from a signal, a schedule or a
-follow-up), and the answer entry has text, it records one row with
+follow-up) and not a run that only handled threads' questions (its
+`answer_question` and `ask_owner` rows already say what Blip did, and
+the reply was for the threads), and the answer entry has text, it records one row with
 `kind: "message"`, the run's origin, `entry_id` the answer entry, and the
 summary `Told you: <first line>`. A morning review that only writes the
 owner a note, or a thread update Blip only reports, then shows on
@@ -1361,7 +1363,9 @@ of the last user message (a signal message may carry several):
   `system` text, under `## Memory`. If a memory line reads `- <key>:
   <value>` and `<key>` (at least three characters) appears in the
   question, ignoring case, it calls `answer_question` with `<value>`;
-  otherwise `ask_owner` with `"<title>" asks: <question>`. A message with
+  otherwise `ask_owner` with the question as the thread asked it (the
+  card and the bubble already name the thread, so a title in the wording
+  read twice: `"Gate" asks: "Gate" asks: ...`). A message with
   several questions makes one call per question in one answer. So
   `remember deploy branch: staging`, then in a thread `ask blip: which
   deploy branch should I use?` is answered by Blip, and `ask blip: what
@@ -1678,7 +1682,12 @@ the `sm` width up). The row's `data-running` goes. It re-reads them on
   asks: <wording or the thread's question>` in a bubble
   while the panel is closed, so a question reaches the owner even with
   the panel shut. A signal message makes no bubble; Blip's reply to it
-  does, as any answer does. Blip's wording comes from `ask_owner`'s
+  does, as any answer does, except in a run that only handles threads'
+  questions (`Origin`'s `quiet?`: question refs and no updates, nothing
+  the owner or a schedule sent). There Blip answers to the threads, so
+  the owner hears only the questions it passes on: a question Blip
+  answers from memory reaches the owner as nothing at all
+  (`Notice.scan/2` follows the runs across commits). Blip's wording comes from `ask_owner`'s
   details (`"wording"`), the thread's question from the notice
   (`"question"`). A question's bubble (`is-question`, in the waiting
   colour) isn't pushed out by what Blip says next, as Blip's own bubbles

@@ -172,7 +172,7 @@ defmodule Photon.Assistant.MockCoordinatorTest do
                {"ask_owner",
                 %{
                   "question_id" => "q_2",
-                  "question" => ~s{"Gate" asks: What colour should the gate be?}
+                  "question" => "What colour should the gate be?"
                 }}
              ]
 

@@ -943,7 +943,33 @@ defmodule PhotonWeb.BlipLiveTest do
                ~s("#{thread.title}" asks:)
              )
 
-      assert has_element?(blip, "#blip-unread")
+      # Blip's replies in the run that passed the question on were for the
+      # thread: the question is the one thing it says.
+      assert [_question] = bubbles(blip)
+      assert has_element?(blip, "#blip-unread", "1")
+    end
+
+    test "a question Blip answers from memory says nothing to the owner", %{
+      blip: blip,
+      conversation: c
+    } do
+      :ok = Assistant.put_memory("- deploy branch: staging")
+
+      {:ok, project} =
+        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+
+      {:ok, _thread} = Threads.start(project.id, "ask blip: which deploy branch?")
+
+      _result =
+        await_entry(c, &(&1.kind == "tool_result" and &1.data["name"] == "answer_question"))
+
+      _reply =
+        await_entry(c, &(&1.kind == "assistant" and Message.tool_calls(&1.data["message"]) == []))
+
+      idle!(c)
+
+      assert bubbles(blip) == []
+      refute has_element?(blip, "#blip-unread")
     end
   end
 

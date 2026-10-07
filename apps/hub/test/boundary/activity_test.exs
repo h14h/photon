@@ -271,6 +271,10 @@ defmodule Photon.ActivityTest do
 
       refute Enum.any?(rows(), &(&1.kind == "message" and &1.origin == "owner"))
 
+      # Blip's reply in the run that only handled the two questions was
+      # for the threads, not the owner: no "Told you" row either.
+      refute Enum.any?(rows(), &(&1.kind == "message"))
+
       # The parked call the stop ended is the owner's; the only calls a
       # thread asked for are the two that handled its own question.
       assert %Action{origin: "owner", status: "aborted"} = await_row!(&(&1.tool == "shell"))

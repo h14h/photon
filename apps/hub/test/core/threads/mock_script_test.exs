@@ -133,6 +133,10 @@ defmodule Photon.Threads.MockScriptTest do
     test "relays Blip's answer, and the user's" do
       assert relay("Blip answered: staging") == "Blip answered: staging"
 
+      # Prose, a paragraph a line, not a code block that runs off the page.
+      assert relay("Blip asked the user: Which colour?\nThey answered: Sage green.") ==
+               "Blip asked the user: Which colour?\n\nThey answered: Sage green."
+
       assert relay("Error: This question was withdrawn.") ==
                "That didn't work: This question was withdrawn."
     end
