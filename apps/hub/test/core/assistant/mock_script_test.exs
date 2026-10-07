@@ -115,9 +115,17 @@ defmodule Photon.Assistant.MockScriptTest do
 
   describe "skills" do
     @system "You are an agent.\n\n" <>
-              SkillsPrompt.section([
-                %{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."}
-              ])
+              SkillsPrompt.section(%{
+                own: [
+                  %{
+                    id: "sk_pdf",
+                    name: "pdf-forms",
+                    version: 2,
+                    description: "Fill in PDF forms."
+                  }
+                ],
+                machines: []
+              })
 
     test "skills says what the prompt lists, and load skill loads one" do
       listed = MockScript.respond(%{system: @system, messages: [Message.user("skills")]})

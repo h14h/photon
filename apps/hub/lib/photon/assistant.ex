@@ -14,10 +14,10 @@ defmodule Photon.Assistant do
   `list_machines`), keeps a memory, and keeps schedules in
   `Photon.Schedules`: its own, which post into its conversation, and
   projects', which start or wake threads (`schedule`, `list_schedules`,
-  `cancel_schedule`). Its prompt lists the skills turned on for Blip
-  (`Photon.Skills`), and `load_skill` loads one; `list_skills` and
-  `set_project_skill` show every skill and turn one on or off for a
-  project. It sees every project and thread with its read tools
+  `cancel_schedule`). Its prompt lists the skills turned on for Blip and
+  for each machine (`Photon.Skills.offered/1`), and `load_skill` loads
+  one; `list_skills` and `set_project_skill` show every skill and turn
+  one on or off for a project. It sees every project and thread with its read tools
   (`list_projects`, `read_project`, `list_threads`, `read_thread`),
   which find what they name through `find_project/1` and `find_thread/1`
   and put their texts together in `Photon.Assistant.Readout`. It starts
@@ -574,7 +574,7 @@ defmodule Photon.Assistant do
     settings = Settings.load()
     now = DateTime.utc_now()
     ambient? = Signals.mode() == :ambient
-    Prompt.system_prompt(settings, memory(), now, Skills.enabled(:blip), ambient?)
+    Prompt.system_prompt(settings, memory(), now, Skills.offered(:blip), ambient?)
   end
 
   ## The activity log's hooks

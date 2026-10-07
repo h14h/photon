@@ -54,7 +54,7 @@ defmodule Photon.Threads.MockScript do
   - `read <name>` reads one, like `read notes.md`
   - `write <name>: <text>` writes a whole file
   - `edit <name>: <old text> => <new text>` changes one passage
-  - `skills` lists the skills turned on for this project
+  - `skills` lists the skills turned on for this project, and for each machine
   - `load skill <name>` loads one, like `load skill pdf-forms`
   - `ask blip: <question>` asks Blip, like `ask blip: which deploy branch?`
   - `ask me: <question>` ends the run asking you, like `ask me: which zone first?`

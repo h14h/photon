@@ -1,10 +1,12 @@
 defmodule Photon.Threads.Prompt do
   @moduledoc """
   A thread's system prompt, as a pure function of its project, the time
-  and the skills turned on for the project (section 3.2 of
-  `docs/plans/step-2-projects-and-threads.md`, and section 2.6 of
-  `docs/plans/step-3-skills-and-schedules.md`). `Photon.Threads` reads the
-  project and its skills and calls this.
+  and the skills it is offered: those turned on for the project, and
+  those turned on for each machine (section 3.2 of
+  `docs/plans/step-2-projects-and-threads.md`, section 2.6 of
+  `docs/plans/step-3-skills-and-schedules.md`, and section 3 of
+  `docs/plans/machine-skills.md`). `Photon.Threads` reads the project and
+  the skills and calls this.
 
   It says who the thread is, the project's name and purpose, how it works
   (the machine tools in the project's folder, the context files, messages
@@ -12,19 +14,21 @@ defmodule Photon.Threads.Prompt do
   judgement with `ask_blip`, and ending an answer with a question only
   when it needs the user's reply; section 4.7 of
   `docs/plans/step-4-blip-as-coordinator.md`),
-  the project's skills (`Photon.Skills.Prompt.section/1`, left out when
-  none are on) and the time to the hour. It changes only when the
-  project's name or purpose changes, a skill is turned on or off or
-  changed, or on the hour, so provider prompt caches stay warm; that's
-  also why it doesn't list the context files, which the model lists with
-  a tool.
+  the skills (`Photon.Skills.Prompt.section/1`: the project's, then each
+  machine's under its name; left out when none are on) and the time to
+  the hour. It changes only when the project's name or purpose changes, a
+  skill is turned on or off or changed, a machine with skills is
+  installed or removed, or on the hour, so provider prompt caches stay
+  warm; that's also why it doesn't list the context files, which the
+  model lists with a tool.
 
   Nothing about the user goes in: not Blip's voice, not the user's name,
   time zone or instructions from Settings, and not Blip's memory. A
-  thread asks Blip what it needs to know of the user. A skill
-  is the user's text, but the user turned it on for this project. The
-  lines about how a `shell` call behaves are
-  `Photon.MachineTools.Guide.shell/1`'s, shared with Blip's prompt.
+  thread asks Blip what it needs to know of the user. A skill is the
+  user's text, but the user turned it on for this project, or for a
+  machine the thread can work on. The lines about how a `shell` call
+  behaves are `Photon.MachineTools.Guide.shell/1`'s, shared with Blip's
+  prompt.
   """
 
   # Functional core: no processes, no I/O.
@@ -43,9 +47,10 @@ defmodule Photon.Threads.Prompt do
 
   @doc """
   The system prompt for a thread in `project` at the time `now`, with
-  `skills` the skills turned on for the project, by name.
+  `skills` the skills it is offered (`Photon.Skills.offered/1`): the
+  project's, by name, and each machine's.
   """
-  @spec system_prompt(project(), DateTime.t(), [SkillsPrompt.listed()]) :: String.t()
+  @spec system_prompt(project(), DateTime.t(), SkillsPrompt.offered()) :: String.t()
   def system_prompt(project, now, skills) do
     """
     You are an agent working on one project in Photon, a hub that runs work on a set of machines. You work in this thread. Other threads in the project may be working on it at the same time.

@@ -25,7 +25,8 @@ defmodule Photon.Threads do
   machine a call names (`workdir/1` is the project's slug), and reads and
   writes the project's context files with four tools of its own
   (`Photon.Threads.Tools`). Its prompt lists the skills turned on for its
-  project (`Photon.Skills`), and `load_skill` loads one. It can search the
+  project and for each machine (`Photon.Skills.offered/1`), and
+  `load_skill` loads one. It can search the
   web, and uses the model and reasoning level in Settings.
 
   This module is the threads context's API, which the web pages use, and
@@ -922,7 +923,7 @@ defmodule Photon.Threads do
   @impl true
   def system_prompt(conversation) do
     project = project!(conversation.id)
-    Prompt.system_prompt(project, DateTime.utc_now(), Skills.enabled({:project, project.id}))
+    Prompt.system_prompt(project, DateTime.utc_now(), Skills.offered({:project, project.id}))
   end
 
   @impl true

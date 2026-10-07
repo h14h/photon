@@ -7,22 +7,25 @@ defmodule Photon.Assistant.PromptTest do
 
   @now ~U[2026-10-03 14:37:00Z]
 
+  # Nothing offered: no skills on for Blip or any machine.
+  @none %{own: [], machines: []}
+
   test "carries the memory, or says it's empty" do
-    assert Prompt.system_prompt(settings(), "- the NAS is mp1", @now, []) =~
+    assert Prompt.system_prompt(settings(), "- the NAS is mp1", @now, @none) =~
              "## Memory\n\n- the NAS is mp1\n"
 
-    assert Prompt.system_prompt(settings(), "", @now, []) =~ "## Memory\n\n(empty)\n"
+    assert Prompt.system_prompt(settings(), "", @now, @none) =~ "## Memory\n\n(empty)\n"
   end
 
   test "names the time to the hour, so it stays the same between requests" do
-    prompt = Prompt.system_prompt(settings(), "", @now, [])
+    prompt = Prompt.system_prompt(settings(), "", @now, @none)
 
     assert prompt =~ "It's about 14:00 UTC on Saturday, October 3, 2026."
-    assert prompt == Prompt.system_prompt(settings(), "", ~U[2026-10-03 14:59:59Z], [])
+    assert prompt == Prompt.system_prompt(settings(), "", ~U[2026-10-03 14:59:59Z], @none)
   end
 
   test "adds the user's time zone and standing instructions when set" do
-    plain = Prompt.system_prompt(settings(), "", @now, [])
+    plain = Prompt.system_prompt(settings(), "", @now, @none)
     refute plain =~ "time zone"
     refute plain =~ "The user's instructions"
 
@@ -31,7 +34,7 @@ defmodule Photon.Assistant.PromptTest do
         settings(%{"timezone" => "America/Chicago", "instructions" => "  Prefer mp1.  "}),
         "",
         @now,
-        []
+        @none
       )
 
     assert prompt =~ "The user's time zone is America/Chicago; give times in it."
@@ -39,11 +42,11 @@ defmodule Photon.Assistant.PromptTest do
   end
 
   test "searches the web itself rather than sending a machine" do
-    assert Prompt.system_prompt(settings(), "", @now, []) =~ "You can search the web yourself"
+    assert Prompt.system_prompt(settings(), "", @now, @none) =~ "You can search the web yourself"
   end
 
   test "runs work on machines itself, with no node agent to hand it to" do
-    prompt = Prompt.system_prompt(settings(), "", @now, [])
+    prompt = Prompt.system_prompt(settings(), "", @now, @none)
     assert prompt =~ "You have shell and view_image on every machine"
     assert prompt =~ "Background children are killed when the command exits, nohup or not."
     assert prompt =~ "bash -c 'set -m; nohup CMD >CMD.log 2>&1 &'"
@@ -54,7 +57,7 @@ defmodule Photon.Assistant.PromptTest do
   end
 
   test "checks back on long work with a schedule rather than holding the conversation" do
-    prompt = Prompt.system_prompt(settings(), "", @now, [])
+    prompt = Prompt.system_prompt(settings(), "", @now, @none)
     assert prompt =~ "A shell call holds the conversation until its command exits"
     assert prompt =~ ~S[nohup sh -c "CMD; echo \$? >CMD.exit" >CMD.log 2>&1 &]
     assert prompt =~ "use schedule with in_minutes to check the log and exit code later"
@@ -65,7 +68,7 @@ defmodule Photon.Assistant.PromptTest do
   # `Photon.MachineTools.Guide` read exactly as they did when they were
   # written here.
   test "says how it works, word for word" do
-    prompt = Prompt.system_prompt(settings(), "", @now, [])
+    prompt = Prompt.system_prompt(settings(), "", @now, @none)
     [_voice, rest] = String.split(prompt, "## How you work\n\n")
     [how, _rest] = String.split(rest, "\n\n## Projects and threads")
 
@@ -86,7 +89,7 @@ defmodule Photon.Assistant.PromptTest do
   end
 
   test "says where a schedule posts: here, or in a project" do
-    prompt = Prompt.system_prompt(settings(), "", @now, [])
+    prompt = Prompt.system_prompt(settings(), "", @now, @none)
 
     assert prompt =~
              ~s(Without a project, a schedule posts here, as a message starting with "[Scheduled]")
@@ -100,7 +103,7 @@ defmodule Photon.Assistant.PromptTest do
   end
 
   test "says what a page note at the start of a message means" do
-    prompt = Prompt.system_prompt(settings(), "", @now, [])
+    prompt = Prompt.system_prompt(settings(), "", @now, @none)
     assert prompt =~ ~s(beginning "[Looking at"; "this" and "here" mean that page)
     refute prompt =~ "You can't read or change projects"
   end
@@ -108,7 +111,7 @@ defmodule Photon.Assistant.PromptTest do
   # Pinned word for word: these lines are how Blip handles a thread's
   # update and question, and the limits on what it starts on its own.
   test "says how it works with projects and threads, right after How you work" do
-    prompt = Prompt.system_prompt(settings(), "", @now, [])
+    prompt = Prompt.system_prompt(settings(), "", @now, @none)
     [_before, rest] = String.split(prompt, "mean that page.\n\n## Projects and threads\n\n")
     [section, _rest] = String.split(rest, "\n\n## Memory")
 
@@ -130,27 +133,30 @@ defmodule Photon.Assistant.PromptTest do
   end
 
   test "names no question or thread, so it stays the same whatever is open" do
-    prompt = Prompt.system_prompt(settings(), "- deploy branch: staging", @now, [])
+    prompt = Prompt.system_prompt(settings(), "- deploy branch: staging", @now, @none)
     refute prompt =~ ~r/\b(q|c)_\w*\d/
-    assert prompt == Prompt.system_prompt(settings(), "- deploy branch: staging", @now, [])
+    assert prompt == Prompt.system_prompt(settings(), "- deploy branch: staging", @now, @none)
   end
 
   test "opens with Blip's voice, in the owner's name when it's set" do
-    prompt = Prompt.system_prompt(settings(), "", @now, [])
+    prompt = Prompt.system_prompt(settings(), "", @now, @none)
     assert String.starts_with?(prompt, "You are Blip, the assistant in the user's Photon hub.")
     assert prompt =~ "You run commands on the user's machines yourself"
     refute prompt =~ "You do not run commands yourself"
     assert prompt =~ "## How you work"
     refute prompt =~ "The user's name is"
 
-    named = Prompt.system_prompt(settings(%{"user_name" => " Henry "}), "", @now, [])
+    named = Prompt.system_prompt(settings(%{"user_name" => " Henry "}), "", @now, @none)
     assert String.starts_with?(named, "You are Blip, the assistant in Henry's Photon hub.")
     assert named =~ "You run commands on Henry's machines yourself"
     assert named =~ "The user's name is Henry."
   end
 
   describe "ambient mode" do
-    @one_skill [%{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."}]
+    @one_skill %{
+      own: [%{id: "sk_pdf", name: "pdf-forms", version: 2, description: "Fill in PDF forms."}],
+      machines: []
+    }
 
     # Pinned word for word: section 5.5 of docs/plans/step-5-ambient-mode.md.
     @section ~S"""
@@ -164,7 +170,7 @@ defmodule Photon.Assistant.PromptTest do
     """
 
     test "off, there is no Ambient mode section, and the prompt is step 4's" do
-      for skills <- [[], @one_skill] do
+      for skills <- [@none, @one_skill] do
         off = Prompt.system_prompt(settings(), "- the NAS is mp1", @now, skills, false)
         assert off == Prompt.system_prompt(settings(), "- the NAS is mp1", @now, skills)
         refute off =~ "## Ambient mode"
@@ -175,7 +181,7 @@ defmodule Photon.Assistant.PromptTest do
     end
 
     test "on, the section sits right after Projects and threads, and nothing else moves" do
-      for skills <- [[], @one_skill] do
+      for skills <- [@none, @one_skill] do
         on = Prompt.system_prompt(settings(), "- the NAS is mp1", @now, skills, true)
         off = Prompt.system_prompt(settings(), "- the NAS is mp1", @now, skills, false)
 
@@ -191,9 +197,9 @@ defmodule Photon.Assistant.PromptTest do
     end
 
     test "names no thread, so the prompt stays the same between requests" do
-      on = Prompt.system_prompt(settings(), "", @now, [], true)
+      on = Prompt.system_prompt(settings(), "", @now, @none, true)
       refute on =~ ~r/\b(q|c)_\w*\d/
-      assert on == Prompt.system_prompt(settings(), "", @now, [], true)
+      assert on == Prompt.system_prompt(settings(), "", @now, @none, true)
     end
   end
 
@@ -204,15 +210,16 @@ defmodule Photon.Assistant.PromptTest do
     ]
 
     test "with none turned on there is no Skills section" do
-      prompt = Prompt.system_prompt(settings(), "- the NAS is mp1", @now, [])
+      prompt = Prompt.system_prompt(settings(), "- the NAS is mp1", @now, @none)
       refute prompt =~ "## Skills"
       refute prompt =~ "load_skill"
       refute prompt =~ "available_skills"
     end
 
     test "sit between Projects and threads and Memory, and nothing else moves" do
-      prompt = Prompt.system_prompt(settings(), "- the NAS is mp1", @now, @skills)
-      section = SkillsPrompt.section(@skills)
+      offered = %{own: @skills, machines: []}
+      prompt = Prompt.system_prompt(settings(), "- the NAS is mp1", @now, offered)
+      section = SkillsPrompt.section(offered)
 
       # The last line of Projects and threads, the section, then Memory.
       assert prompt =~
@@ -220,7 +227,22 @@ defmodule Photon.Assistant.PromptTest do
                  section <> "\n\n## Memory\n"
 
       assert String.replace(prompt, section <> "\n\n", "") ==
-               Prompt.system_prompt(settings(), "- the NAS is mp1", @now, [])
+               Prompt.system_prompt(settings(), "- the NAS is mp1", @now, @none)
+    end
+
+    test "a machine's skills come in the same section, under the machine, before Memory" do
+      offered = %{own: [], machines: [{"mm1", [hd(@skills)]}]}
+      prompt = Prompt.system_prompt(settings(), "- the NAS is mp1", @now, offered)
+      section = SkillsPrompt.section(offered)
+
+      assert prompt =~
+               "are for your tools only.\n\n" <>
+                 section <> "\n\n## Memory\n"
+
+      assert section =~ ~s(<machine name="mm1">\n<skill><name>pdf-forms</name>)
+
+      assert String.replace(prompt, section <> "\n\n", "") ==
+               Prompt.system_prompt(settings(), "- the NAS is mp1", @now, @none)
     end
   end
 end
