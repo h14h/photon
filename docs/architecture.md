@@ -2093,9 +2093,13 @@ are untouched, and machine rows appear only once the owner turns a skill
 on for a machine. A hub with no machine skills sends the same prompts and
 scripted replies as before. Nodes are unchanged.
 
-Results at the end of the follow-up's build, 2026-10-07: hub 1723
-passed (12 properties, 1711 tests) and `mix precommit` passes; core and
-node are unchanged. Section 7.2 of the plan's walk-through with the
+Results at the end of the follow-up, 2026-10-07, after the review's
+three fixes: `mix precommit` passes in all three apps (core 187 passed,
+12 properties and 175 tests; node 106 passed, 1 property and 105 tests;
+hub 1731 passed, 12 properties and 1719 tests). `mix dialyzer` passes in
+all three with no new ignore entries and up-to-date PLTs. `mix test
+--cover`: core 99.11% (threshold 95), node 85.87% (85), hub 95.26% (85).
+Core and node are unchanged. No TLC run: the specs didn't change. Section 7.2 of the plan's walk-through with the
 scripted models (writing a skill, turning it on for `local`, `skills`,
 `load skill` and `machines` in Blip's panel and in a Garden thread, and
 turning it off) gave the replies the plan expects.
