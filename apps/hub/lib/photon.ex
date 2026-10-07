@@ -19,6 +19,9 @@ defmodule Photon do
     * `Photon.Questions`: a thread's `ask_blip` questions, which Blip
       answers or passes to the owner, and whose answers go back to the
       waiting thread
+    * `Photon.Activity`: the activity log, everything Blip did and who
+      asked for it (the owner, a thread's question, a schedule, or Blip's
+      own follow-up), one row per tool call or unasked message
     * `Photon.Signals`: what reaches Blip unasked, such as how the threads
       it started end and the questions they ask, posted into Blip's
       conversation by code; used by the other contexts, not the web layer
@@ -41,7 +44,7 @@ defmodule Photon do
 
   None of them adds a process for a project, a thread, a skill, a
   schedule, a signal, a question or an operation: projects, context
-  files, skills and questions are rows, a thread is a conversation in the durable harness, a signal
+  files, skills, questions and activity are rows, a thread is a conversation in the durable harness, a signal
   is a message in Blip's, a schedule is a row and a durable task waiting
   for its time, and an operation is a row its tool call waits on.
 
@@ -52,6 +55,7 @@ defmodule Photon do
   Readout, MockScript, MockCoordinator}`, `Photon.Transcript` (what a conversation page shows),
   `Photon.Projects.Rules`, `Photon.Threads.{Rules, State, Prompt, MockScript}`,
   `Photon.Signals.{Rules, Text}`, `Photon.Questions.Rules`,
+  `Photon.Activity.Rules`,
   `Photon.Skills.{Rules, SkillMd, Source, Prompt, MockPhrases}`,
   `Photon.Schedules.Rules`,
   `Photon.Machines.{Rules, Roster}`,
@@ -71,6 +75,9 @@ defmodule Photon do
     deps: [PhotonCore, PhotonCore.LLM, PhotonCore.LLM.Error, Ecto, EEx, Jason, MDEx, Req],
     check: [apps: [:photon_node]],
     exports: [
+      Activity,
+      Activity.Action,
+      Activity.Rules,
       Assistant,
       Assistant.Notice,
       Auth,

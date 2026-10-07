@@ -1162,7 +1162,16 @@ owner a note, or a thread update Blip only reports, then shows on
 owner saw the reply as it came.
 
 Both hooks follow section 3.1's totality rule. `record_tx/2` takes the
-call as stored (`task.input["call"]`), whatever its arguments are.
+call as stored (`task.input["call"]`), whatever its arguments are. Its
+two shapes are `%{kind: "call", task:, entry:, origin:}` and `%{kind:
+"message", entry_id:, text:, origin:}`, `origin` being `%{by:, id:}`; any
+other term records nothing, a `by` outside the five is `"unknown"`, and
+a second record of the same entry records nothing (it checks for the
+`entry_id` before inserting). A call's `project_id` and `thread_id` come
+from its result's details; a message row leaves both nil, since its
+origin already names the thread it followed up on. The message hook
+reads who asked with `origin_tx/2` on the settled generation (its
+checkpoint's submissions), the same way the call hook does.
 
 `Activity.Rules` (pure):
 
@@ -1179,9 +1188,17 @@ call as stored (`task.input["call"]`), whatever its arguments are.
   notes.md in garden`, `Read "Fix the pump"`, `Looked over garden`,
   `Listed projects`, `Listed threads`, `Scheduled "check the pump" every
   day in garden`, `Cancelled sc_9`, `Turned on pdf-forms for garden`,
-  `Remembered: prefers metric units`, `Loaded the pdf-forms skill`. A tool
-  it doesn't know reads `Used <name>` (rule 75). A failed call adds `:
-  failed`, a stopped one `: stopped`.
+  `Remembered: prefers metric units`, `Loaded the pdf-forms skill`; also
+  `Listed threads in garden`, `Listed the files in garden`, `Checked the
+  schedules (in garden)`, `Checked skills`, `Cancelled sc_9 in garden`,
+  `Forgot: <text>` and `Rewrote its memory`. A schedule's time comes from
+  its arguments: `every day`, `every 2 hours`, `every 90 minutes`, `in 30
+  minutes`, `at <at>`. Names and titles come from the details where
+  there are some, the arguments otherwise. A tool it doesn't know reads
+  `Used <name>` (rule 75), and a call with no name `Used a tool`. A
+  failed call adds `: failed`, a stopped one `: stopped`, one a restart
+  cut short (`"interrupted"`) `: interrupted`; the ending is kept when
+  the line is cut.
 - `message_summary(text)`: `Told you: <first non-empty line>`, cut to
   200 characters; `Told you something` for empty text.
 - `changes?(name)`: false for `list_*`, `read_*`, `load_skill`; true for
@@ -1189,18 +1206,26 @@ call as stored (`task.input["call"]`), whatever its arguments are.
 
 ### 6.3 Who asked, as the page says it
 
-`Activity.Rules.origin_label(origin, names)`: "You", a thread by title
+`Activity.Rules.origin_label(row, names)` (`row` is an `Action` or any
+map with `origin` and `origin_id`): "You", a thread by title
 (linked) for a question, "Schedule: <prompt>" (Blip's schedules are
 listed on the home page), "Blip's follow-up" (with "on <thread title>",
-linked, when `origin_id` names a thread), or "Blip" for `"unknown"`.
-`names` are the titles and prompts the page read for the IDs on screen.
-"A thread" only ever appears for a thread's question.
+linked, when `origin_id` names a thread: a `c_` ID whose title is in
+`names`; a follow-up from a schedule Blip made for itself names a
+schedule, so it reads "Blip's follow-up" alone), or "Blip" for
+`"unknown"`. `names` are the titles and prompts the page read for the
+IDs on screen; an ID missing from them reads "A thread" or "A
+schedule". "A thread" only ever appears for a thread's question.
+`Activity.Rules.origins/0` lists the five kinds, for `list/1`'s filter
+and the page's options.
 
 ### 6.4 Reading
 
 - `Activity.list(opts)`: newest first, `limit` (default 50), `before`
-  (an `inserted_at` and ID cursor for "Show older"), `origin` (one of the
-  five or nil), `changes_only` (boolean). Returns `{actions, more?}`.
+  (an `inserted_at` and ID cursor for "Show older": the last `Action`
+  shown, or its `{inserted_at, id}`), `origin` (one of the five or nil;
+  anything else filters nothing), `changes_only` (boolean). Returns
+  `{actions, more?}`.
 - `Activity.get/1`, `Activity.subscribe/0`.
 
 The log keeps everything; there is no pruning in this step. A busy month
@@ -1657,7 +1682,7 @@ No changes.
 | `Photon.Assistant.Tools.Schedule`, `.ListSchedules`, `.CancelSchedule` | boundary (durable tools) | inside `Photon.Assistant` | Section 5.5. |
 | `Photon.Activity` | boundary (API, no process) | `use Boundary, deps: [Photon.Durable, Photon.Events, Photon.Repo, PhotonCore, Ecto], exports: [Action, Rules]` | `record_tx/2` (calls and messages), `list/1`, `get/1`, `subscribe/0`. |
 | `Photon.Activity.Action` | data (Ecto schema) | `use Boundary, type: :strict, deps: [Ecto]` | Section 6.1. |
-| `Photon.Activity.Rules` | core | `use Boundary, type: :strict, deps: []` | `summary/3` over the raw call, `message_summary/1`, `changes?/1`, `origin_label/2` (section 6.2, 6.3). |
+| `Photon.Activity.Rules` | core | `use Boundary, type: :strict, deps: [PhotonCore]` (`summary/3` decodes the raw arguments with `PhotonCore.Message.arguments/1`, as `Origin.for_call/3` does) | `summary/3` over the raw call, `message_summary/1`, `changes?/1`, `origin_label/2`, `origins/0` (the five kinds of asker) (section 6.2, 6.3). |
 
 ### 11.5 apps/hub: the other contexts
 

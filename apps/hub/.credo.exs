@@ -89,6 +89,8 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Signals.Text",
                    "Photon.Questions.Question",
                    "Photon.Questions.Rules",
+                   "Photon.Activity.Action",
+                   "Photon.Activity.Rules",
                    "Photon.Skills.Skill",
                    "Photon.Skills.Enablement",
                    "Photon.Skills.Rules",
@@ -170,6 +172,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                [
                  files: lib_only,
                  api_modules: [
+                   "Photon.Activity",
                    "Photon.Assistant",
                    "Photon.ChatGPT",
                    "Photon.Durable",

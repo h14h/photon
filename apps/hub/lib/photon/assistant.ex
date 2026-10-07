@@ -46,6 +46,11 @@ defmodule Photon.Assistant do
   `unattended_limit/0` times on its own (`may_act_tx/3`), so a loop
   between Blip and a thread stops in code.
 
+  Everything Blip does goes in the activity log (`Photon.Activity`), from
+  the profile's two hooks: `on_tool_result/4` records each tool call's
+  result with who asked for it, and `on_settled/3` records what Blip told
+  the owner in a run they didn't type into.
+
   This module is the assistant's API, which the web pages use, and its
   `Photon.Durable.Profile`. Behind it, by layer:
 
@@ -70,6 +75,7 @@ defmodule Photon.Assistant do
 
   use Boundary,
     deps: [
+      Photon.Activity,
       Photon.ChatGPT,
       Photon.Durable,
       Photon.MachineTools,
@@ -91,6 +97,7 @@ defmodule Photon.Assistant do
   alias Photon.Assistant.{Memory, Origin, Page, Prompt, Readout, Tools}
 
   alias Photon.{
+    Activity,
     Durable,
     MachineTools,
     Projects,
@@ -537,4 +544,51 @@ defmodule Photon.Assistant do
     now = DateTime.utc_now()
     Prompt.system_prompt(settings, memory(), now, Skills.enabled(:blip))
   end
+
+  ## The activity log's hooks
+
+  # Both run inside the harness's commits, on a Stop or a failed task
+  # inside the Scheduler's own, so they are total: `origin_tx/2`,
+  # `Origin.for_call/3` and `Activity.record_tx/2` take what they are given
+  # as it is, and a missing row records less (section 3.1).
+
+  @doc """
+  Records the activity row for one of Blip's tool calls, with who asked
+  for it (`Photon.Assistant.Origin.for_call/3`: a call that handles a
+  thread's question is that thread's), in the commit that stores its
+  result, whatever ended the call.
+  """
+  @impl true
+  def on_tool_result(_conversation, task, entry, tx) do
+    call = stored_call(task)
+    origin = Origin.for_call(origin_tx(tx, task), call["name"], call["arguments"])
+    Activity.record_tx(tx, %{kind: "call", task: task, entry: entry, origin: origin})
+  end
+
+  # The call as the model sent it, from its tool task.
+  defp stored_call(%TaskRecord{input: %{"call" => call}}) when is_map(call), do: call
+  defp stored_call(_task), do: %{}
+
+  @doc """
+  Records a message row when one of Blip's runs that the owner didn't
+  type into (a thread's update or question, a schedule, its own
+  follow-up) ends a model turn with an answer that has text: the owner
+  didn't watch that reply come in, so the activity page shows it. Runs
+  the owner wrote to, and answers with no text, record nothing.
+  """
+  @impl true
+  def on_settled(conversation, settled, tx), do: settled_tx(tx, conversation, settled)
+
+  defp settled_tx(tx, conversation, %{outcome: "done", answer_entry_id: entry_id} = settled)
+       when is_binary(entry_id) do
+    with %{by: by} = origin when by != "owner" <- origin_tx(tx, Map.get(settled, :task)),
+         %Entry{data: %{"message" => message}} <- Durable.entry(conversation.id, entry_id),
+         text when text != "" <- String.trim(Message.text_of(message)) do
+      Activity.record_tx(tx, %{kind: "message", entry_id: entry_id, text: text, origin: origin})
+    else
+      _owner_or_no_text -> :ok
+    end
+  end
+
+  defp settled_tx(_tx, _conversation, _settled), do: :ok
 end
