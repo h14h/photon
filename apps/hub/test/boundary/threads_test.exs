@@ -245,7 +245,13 @@ defmodule Photon.ThreadsTest do
              ]
 
       assert Enum.all?(listed, &(&1.running? == false))
-      assert shed_row == %{id: shed_thread, title: "sort the tools", running?: false}
+
+      assert shed_row == %{
+               id: shed_thread,
+               title: "sort the tools",
+               running?: false,
+               state: :unread
+             }
     end
 
     test "lists a running thread past the five, and a project with no threads", %{

@@ -13,6 +13,8 @@ defmodule Photon.Threads.MockTitle do
       files"
     * `read notes.md`, `write notes.md: ...` and `edit notes.md: ...` are
       "Read notes.md", "Write notes.md" and "Edit notes.md"
+    * `ask me: which zone first?` is "Ask you about which zone first" (the
+      question's first five words), and `fail: ...` is "Fail on purpose"
 
   A schedule's `"[Scheduled] "` in front is dropped first, as the scripted
   thread drops it. Anything else is its first line's first five words,
@@ -63,8 +65,25 @@ defmodule Photon.Threads.MockTitle do
       {~r/\A(?:list )?files\z/, fn [] -> "Check the context files" end},
       {~r/\Aread\s+([^\s:]+)\z/, fn [name] -> "Read #{name}" end},
       {~r/\Awrite\s+([^\s:]+)\s*:/, fn [name] -> "Write #{name}" end},
-      {~r/\Aedit\s+([^\s:]+)\s*:/, fn [name] -> "Edit #{name}" end}
+      {~r/\Aedit\s+([^\s:]+)\s*:/, fn [name] -> "Edit #{name}" end},
+      {~r/\Aask me\s*:\s*(\S.*)\z/s, fn [question] -> about("Ask you about", question) end},
+      {~r/\Afail\s*:\s*\S/, fn [] -> "Fail on purpose" end}
     ]
+  end
+
+  # `prefix` and the first five words of `text`'s first line, without the
+  # punctuation they end on.
+  defp about(prefix, text) do
+    words =
+      text
+      |> Rules.title()
+      |> String.trim_trailing("...")
+      |> String.split()
+      |> Enum.take(5)
+      |> Enum.join(" ")
+      |> String.replace(~r/[?!.,;:]+\z/u, "")
+
+    "#{prefix} #{words}"
   end
 
   defp run([machine, command]) do

@@ -148,4 +148,19 @@ defmodule Photon.Threads.RulesTest do
     assert Rules.characters("é") == "1 character"
     assert Rules.characters(String.duplicate("a", 123_456)) == "123,456 characters"
   end
+
+  describe "started_by/1" do
+    test "names who started a thread from its first message's source" do
+      assert Rules.started_by(%{"kind" => "user"}) == "owner"
+      assert Rules.started_by(%{"kind" => "blip"}) == "blip"
+      assert Rules.started_by(%{"kind" => "routine", "schedule_id" => "s_1"}) == "schedule"
+    end
+
+    test "is the owner for anything else" do
+      assert Rules.started_by(nil) == "owner"
+      assert Rules.started_by(%{}) == "owner"
+      assert Rules.started_by(%{"kind" => "signal"}) == "owner"
+      assert Rules.started_by("blip") == "owner"
+    end
+  end
 end

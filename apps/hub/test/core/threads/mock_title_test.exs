@@ -43,4 +43,12 @@ defmodule Photon.Threads.MockTitleTest do
     assert {:error, _} = MockTitle.respond(%{messages: [Message.user("read notes.md")]})
     assert {:error, _} = MockTitle.respond(%{})
   end
+
+  test "names the run endings" do
+    assert title("ask me: which zone should I water first?") ==
+             "Ask you about which zone should I water"
+
+    assert title("ask me: valves?") == "Ask you about valves"
+    assert title("fail: the pump is unplugged") == "Fail on purpose"
+  end
 end

@@ -42,7 +42,7 @@ defmodule Photon do
   `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall,
   Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Page,
   MockScript}`, `Photon.Transcript` (what a conversation page shows),
-  `Photon.Projects.Rules`, `Photon.Threads.{Rules, Prompt, MockScript}`,
+  `Photon.Projects.Rules`, `Photon.Threads.{Rules, State, Prompt, MockScript}`,
   `Photon.Skills.{Rules, SkillMd, Source, Prompt, MockPhrases}`,
   `Photon.Schedules.Rules`,
   `Photon.Machines.{Rules, Roster}`,
@@ -86,6 +86,7 @@ defmodule Photon do
       Skills.Skill,
       Tailnet,
       Threads,
+      Threads.State,
       Threads.Thread,
       Transcript
     ]

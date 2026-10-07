@@ -33,6 +33,11 @@ config :photon, Photon.Durable,
     "thread_title" => Photon.Threads.Titling
   }
 
+# A thread whose last run was stopped (or never recorded an end) reads as
+# quiet once nothing has happened in it for this long (section 2.3 of
+# docs/plans/step-4-blip-as-coordinator.md).
+config :photon, Photon.Threads, quiet_after_hours: 72
+
 # How a machine tool call waits for its operation: it checks once a minute
 # (asking an online machine to push the op again), and gives up once the
 # machine has been offline for 10 minutes.

@@ -241,7 +241,8 @@ answer entry records less, it doesn't crash.
   project_id}`. Otherwise it writes and announces nothing, so a page that
   calls it on every update can't loop on its own announcement. Returns
   `:ok` or `{:error, :not_found}`.
-- `mark_all_seen()`: the same for every unread thread, one commit, one
+- `mark_all_seen()`: the same for every thread whose state is `:unread`
+  (so the count matches the home page's Finished list), one commit, one
   announcement per project touched. Returns the count.
 - `resolve(thread_id)` and `reopen(thread_id)`: set or clear
   `resolved_at`, announce. Resolving a running thread is allowed and
@@ -1544,7 +1545,7 @@ No changes.
 |---|---|---|---|
 | `Photon.Threads` | boundary (API and the `"thread"` profile, no process) | deps add `Photon.Questions`, `Photon.Signals`; `exports: [Thread, State]` | `board/1`, `state/1`, `needs_you_count/0`, `mark_seen/1`, `mark_all_seen/0`, `resolve/1`, `reopen/1`, `stop_tx/2`, `recent_entries/2`, `describe_files/2`, `read_file_text/3`; `on_settled/3` (`settled_tx/3`: facts, announcement, signal); `start_tx/4` sets `started_by`; `start_tx/4` and `send_tx/4` clear `resolved_at`; the tool list adds `Tools.AskBlip`. Moduledoc: the state facts, the hook, the signal filter. |
 | `Photon.Threads.Thread` | data | unchanged | The seven new fields (section 2.1). |
-| `Photon.Threads.State` | core | `use Boundary, type: :strict, deps: []` | `of/3` (with `:asking`), `asks?/1`, `note/2`, `label/2`, `sections/2` (section 2.2, 10.3). |
+| `Photon.Threads.State` | core | `use Boundary, type: :strict, deps: []` | `of/3` (with `:asking`), `asks?/1`, `note/2`, `label/2`, `unseen?/1` (rule 7's test, which `mark_seen/1` shares), `sections/2` (section 2.2, 10.3). |
 | `Photon.Threads.Rules` | core | unchanged | `started_by/1`; the file listing and read header take the viewer (section 5.2). |
 | `Photon.Threads.Prompt` | core | unchanged | The two lines of section 4.7. |
 | `Photon.Threads.MockScript` | core | unchanged | Section 8.1. |

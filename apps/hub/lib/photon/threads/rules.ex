@@ -51,6 +51,19 @@ defmodule Photon.Threads.Rules do
   @typedoc "Other threads' titles by ID, for naming who wrote a file."
   @type titles :: %{optional(String.t()) => String.t()}
 
+  ## Who started a thread
+
+  @doc """
+  Who started a thread, from its first message's source map: `"blip"`
+  for a `"blip"` source, `"schedule"` for a schedule's firing
+  (`"routine"`), and `"owner"` for the owner typing it or anything else.
+  Total: any term gives one of the three.
+  """
+  @spec started_by(term()) :: String.t()
+  def started_by(%{"kind" => "blip"}), do: "blip"
+  def started_by(%{"kind" => "routine"}), do: "schedule"
+  def started_by(_user_or_other), do: @owner
+
   ## Titles
 
   @doc """

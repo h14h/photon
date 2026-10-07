@@ -28,8 +28,10 @@ defmodule Photon.Threads do
   Behind it, by layer:
 
     * data: `Photon.Threads.Thread`
-    * functional core (pure): `Photon.Threads.Rules` (titles, and how the
-      tools describe files), `Photon.Threads.Prompt` (the system prompt),
+    * functional core (pure): `Photon.Threads.Rules` (titles, who started
+      a thread, and how the tools describe files),
+      `Photon.Threads.State` (a thread's state from its facts),
+      `Photon.Threads.Prompt` (the system prompt),
       `Photon.Threads.MockScript` (the scripted model)
     * boundary: the tools in `Photon.Threads.Tools`: the context-file
       tools, which write through `Photon.Projects` inside the commit that
@@ -56,6 +58,26 @@ defmodule Photon.Threads do
   Whether a thread is running is derived from its durable run
   (`Photon.Durable.busy/1`), never stored (rule 15).
 
+  ## State
+
+  A thread's state (running, waiting on you, failed, finished and unread,
+  quiet, idle; `Photon.Threads.State`) is worked out when it is read
+  (`board/1`, `state/1`, `sidebar/1`), from facts on its row recorded
+  when something happened (section 2 of
+  `docs/plans/step-4-blip-as-coordinator.md`):
+
+    * who started it (`started_by`), from its first message's source
+    * how its last run ended: the `"thread"` profile's `on_settled/3`
+      hook runs inside the harness's commit that settles a run, and when
+      the run ends there it records `"done"`, `"failed"` or `"stopped"`,
+      whether the answer asked the user something, and a short note, then
+      announces `{:projects_changed, project_id}`. On a Stop or a failed
+      task that commit is the Scheduler's, so the hook never raises: a
+      missing row or answer records less.
+    * when the owner last had the thread open (`mark_seen/1`,
+      `mark_all_seen/0`), and whether they resolved it (`resolve/1`,
+      `reopen/1`; a new message clears it)
+
   There is no process here: the harness runs the conversations, and the
   rows hold the rest.
   """
@@ -74,7 +96,7 @@ defmodule Photon.Threads do
       PhotonCore.LLM,
       Ecto
     ],
-    exports: [Thread]
+    exports: [Thread, State]
 
   @behaviour Photon.Durable.Profile
 
@@ -83,7 +105,7 @@ defmodule Photon.Threads do
   alias Photon.{Durable, MachineTools, Projects, Repo, Settings, Skills, Transcript}
   alias Photon.Durable.{Entry, Submission, Tx}
   alias Photon.Projects.Project
-  alias Photon.Threads.{Prompt, Rules, Thread, Titling, Tools}
+  alias Photon.Threads.{Prompt, Rules, State, Thread, Titling, Tools}
 
   @profile "thread"
 
@@ -99,11 +121,33 @@ defmodule Photon.Threads do
     Tools.LoadSkill
   ]
 
+  # How long a stopped thread is left alone before it reads as quiet, when
+  # the config doesn't say (section 2.3).
+  @quiet_after_hours 72
+
+  @typedoc "A project's ID, slug and name, as the board and sidebar give them."
+  @type project_ref :: %{id: String.t(), slug: String.t(), name: String.t()}
+
   @typedoc "A project as the sidebar shows it, with its most recently active threads."
   @type sidebar_project :: %{
-          project: %{id: String.t(), slug: String.t(), name: String.t()},
-          threads: [%{id: String.t(), title: String.t(), running?: boolean()}],
+          project: project_ref(),
+          threads: [
+            %{id: String.t(), title: String.t(), running?: boolean(), state: State.t()}
+          ],
           more: non_neg_integer()
+        }
+
+  @typedoc """
+  A thread on the board (`board/1`): the thread, its project, its state,
+  whether its question is with Blip, and its open `ask_blip` questions.
+  """
+  @type board_entry :: %{
+          id: String.t(),
+          thread: Thread.t(),
+          project: project_ref(),
+          state: State.t(),
+          asking_blip?: boolean(),
+          questions: [map()]
         }
 
   ## Starting and talking to threads
@@ -112,7 +156,8 @@ defmodule Photon.Threads do
   Starts a thread in project `project_id` with the user's first message:
   the thread's row, its conversation, the message and the task that names
   the thread after its first run, in one commit. The first title comes
-  from the message. Errors: `:blank` when the message has no
+  from the message, and `started_by` from its source
+  (`Photon.Threads.Rules.started_by/1`). Errors: `:blank` when the message has no
   text, `:not_found` when the project doesn't exist; either makes nothing.
   """
   @spec start(String.t(), String.t()) :: {:ok, Thread.t()} | {:error, :blank | :not_found}
@@ -166,7 +211,8 @@ defmodule Photon.Threads do
         id: conversation.id,
         project_id: project.id,
         title: title,
-        active_at: DateTime.utc_now()
+        active_at: DateTime.utc_now(),
+        started_by: Rules.started_by(opts[:source])
       })
 
     _submission = Durable.submit_tx(tx, conversation.id, text, opts)
@@ -237,7 +283,7 @@ defmodule Photon.Threads do
 
   @doc """
   Sends the user's message to thread `thread_id`, and moves the thread's
-  `active_at`, in one commit. The options are `send_tx/4`'s.
+  `active_at` and clears its `resolved_at`, in one commit. The options are `send_tx/4`'s.
   Errors: `:blank`, `:not_found`, and `:busy` for `when_busy: "reject"`.
   """
   @spec send(String.t(), String.t(), keyword()) ::
@@ -264,7 +310,12 @@ defmodule Photon.Threads do
     with false <- blank?(text),
          %Thread{} = thread <- get(thread_id) do
       submission = Durable.submit_tx(tx, thread.id, text, submit_opts(opts))
-      _thread = Repo.update!(Ecto.Changeset.change(thread, active_at: DateTime.utc_now()))
+
+      _thread =
+        Repo.update!(
+          Ecto.Changeset.change(thread, active_at: DateTime.utc_now(), resolved_at: nil)
+        )
+
       :ok = Projects.threads_changed_tx(tx, thread.project_id)
       {:ok, submission}
     else
@@ -313,24 +364,34 @@ defmodule Photon.Threads do
   @doc """
   The sidebar's projects, by name, each with its `limit` most recently
   active threads plus any other of its threads that is running (most
-  recent first, each with `running?`), and `more`, how many threads it has
-  besides those.
+  recent first, each with `running?` and its `state`), and `more`, how
+  many threads it has besides those.
   """
   @spec sidebar(pos_integer()) :: [sidebar_project()]
   def sidebar(limit) do
     running = Durable.busy_in_profile(@profile)
     by_project = limit |> listed(MapSet.to_list(running)) |> Enum.group_by(& &1.project_id)
+    now = DateTime.utc_now()
+    opts = state_opts()
 
     for project <- Projects.list() do
       rows = Map.get(by_project, project.id, [])
 
       %{
         project: %{id: project.id, slug: project.slug, name: project.name},
-        threads:
-          Enum.map(rows, &%{id: &1.id, title: &1.title, running?: MapSet.member?(running, &1.id)}),
+        threads: Enum.map(rows, &sidebar_thread(&1, MapSet.member?(running, &1.id), now, opts)),
         more: total(rows) - length(rows)
       }
     end
+  end
+
+  defp sidebar_thread(row, running?, now, opts) do
+    %{
+      id: row.id,
+      title: row.title,
+      running?: running?,
+      state: State.of(facts(row, running?), now, opts)
+    }
   end
 
   # Each project's `limit` most recently active threads and the running
@@ -343,6 +404,12 @@ defmodule Photon.Threads do
           id: t.id,
           project_id: t.project_id,
           title: t.title,
+          active_at: t.active_at,
+          last_run_status: t.last_run_status,
+          last_run_ended_at: t.last_run_ended_at,
+          last_run_asked: t.last_run_asked,
+          seen_at: t.seen_at,
+          resolved_at: t.resolved_at,
           rank:
             over(row_number(),
               partition_by: t.project_id,
@@ -363,6 +430,165 @@ defmodule Photon.Threads do
 
   defp total([row | _rows]), do: row.total
   defp total([]), do: 0
+
+  ## State
+
+  @doc """
+  Every thread in `scope` (`:all`, or `{:project, project_id}`) with its
+  state (`Photon.Threads.State`), most recently active first, in a fixed
+  number of queries however many threads there are: the threads with
+  their projects, and which are running. The pages group and cut it.
+  """
+  @spec board(:all | {:project, String.t()}) :: [board_entry()]
+  def board(scope) do
+    rows = scope |> board_query() |> Repo.all()
+    busy = Durable.busy_in_profile(@profile)
+    now = DateTime.utc_now()
+    opts = state_opts()
+    Enum.map(rows, fn {thread, project} -> entry(thread, project, busy, now, opts) end)
+  end
+
+  @doc "Thread `thread_id`'s board entry (see `board/1`), or nil when there is no such thread."
+  @spec state(String.t()) :: board_entry() | nil
+  def state(thread_id) do
+    case :all |> board_query() |> where([t], t.id == ^thread_id) |> Repo.one() do
+      {thread, project} ->
+        entry(thread, project, Durable.busy([thread_id]), DateTime.utc_now(), state_opts())
+
+      nil ->
+        nil
+    end
+  end
+
+  @doc """
+  How many threads need the owner: waiting on them, failed, or finished
+  and not yet looked at. Threads asking Blip don't count; Blip has those.
+  """
+  @spec needs_you_count() :: non_neg_integer()
+  def needs_you_count, do: :all |> board() |> Enum.count(&needs_you?/1)
+
+  defp needs_you?(%{state: state}), do: state in [:waiting, :failed, :unread]
+
+  defp board_query(:all) do
+    from(t in Thread,
+      join: p in Project,
+      on: p.id == t.project_id,
+      order_by: [desc: t.active_at, desc: t.inserted_at, asc: t.id],
+      select: {t, map(p, [:id, :slug, :name])}
+    )
+  end
+
+  defp board_query({:project, project_id}),
+    do: where(board_query(:all), [t], t.project_id == ^project_id)
+
+  defp entry(thread, project, busy, now, opts) do
+    facts = facts(thread, MapSet.member?(busy, thread.id))
+
+    %{
+      id: thread.id,
+      thread: thread,
+      project: project,
+      state: State.of(facts, now, opts),
+      asking_blip?: false,
+      questions: []
+    }
+  end
+
+  # What `State.of/3` works the state out from, for a thread row (or a
+  # map with its fields) and whether it is running. Open questions arrive
+  # with `ask_blip`; until then no thread has one.
+  defp facts(thread, busy?) do
+    thread
+    |> Map.take([
+      :last_run_status,
+      :last_run_ended_at,
+      :last_run_asked,
+      :active_at,
+      :seen_at,
+      :resolved_at
+    ])
+    |> Map.merge(%{busy?: busy?, question: nil})
+  end
+
+  defp state_opts do
+    hours =
+      :photon
+      |> Application.get_env(__MODULE__, [])
+      |> Keyword.get(:quiet_after_hours, @quiet_after_hours)
+
+    %{quiet_after: hours * 3600}
+  end
+
+  @doc """
+  Records that the owner has looked at thread `thread_id` (its page is
+  open), in one commit, when it is unread: its last run finished
+  (`"done"`) and the owner hasn't seen it since. Announces
+  `{:projects_changed, project_id}` only then, so a page that calls this
+  on every update doesn't loop on its own announcement. Blip reading a
+  thread doesn't count: seen is the owner's.
+  """
+  @spec mark_seen(String.t()) :: :ok | {:error, :not_found}
+  def mark_seen(thread_id), do: Durable.commit(&mark_seen_tx(&1, thread_id))
+
+  defp mark_seen_tx(tx, thread_id) do
+    case get(thread_id) do
+      %Thread{} = thread ->
+        if State.unseen?(thread), do: seen_tx(tx, [thread], DateTime.utc_now()), else: :ok
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Marks every thread that reads as finished and unread (`:unread` on the
+  board) as seen, in one commit, announcing once per project touched.
+  Returns how many it marked.
+  """
+  @spec mark_all_seen() :: non_neg_integer()
+  def mark_all_seen do
+    Durable.commit(fn tx ->
+      threads = for %{state: :unread, thread: thread} <- board(:all), do: thread
+      :ok = seen_tx(tx, threads, DateTime.utc_now())
+      length(threads)
+    end)
+  end
+
+  defp seen_tx(_tx, [], _now), do: :ok
+
+  defp seen_tx(tx, threads, now) do
+    ids = Enum.map(threads, & &1.id)
+
+    {_count, _rows} = Thread |> where([t], t.id in ^ids) |> Repo.update_all(set: [seen_at: now])
+
+    threads
+    |> Enum.map(& &1.project_id)
+    |> Enum.uniq()
+    |> Enum.each(&(:ok = Projects.threads_changed_tx(tx, &1)))
+  end
+
+  @doc """
+  Marks thread `thread_id` resolved: it reads as idle ("Resolved") until
+  its next message, whatever its last run did. A running thread can be
+  resolved; its state changes once the run ends. Announces it.
+  """
+  @spec resolve(String.t()) :: :ok | {:error, :not_found}
+  def resolve(thread_id), do: Durable.commit(&resolved_tx(&1, thread_id, DateTime.utc_now()))
+
+  @doc "Takes back `resolve/1`, and announces it."
+  @spec reopen(String.t()) :: :ok | {:error, :not_found}
+  def reopen(thread_id), do: Durable.commit(&resolved_tx(&1, thread_id, nil))
+
+  defp resolved_tx(tx, thread_id, resolved_at) do
+    case get(thread_id) do
+      %Thread{} = thread ->
+        _thread = Repo.update!(Ecto.Changeset.change(thread, resolved_at: resolved_at))
+        Projects.threads_changed_tx(tx, thread.project_id)
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
 
   @doc "Which of `thread_ids` are running."
   @spec running([String.t()]) :: MapSet.t(String.t())
@@ -482,6 +708,53 @@ defmodule Photon.Threads do
 
   @impl true
   def workdir(conversation), do: project!(conversation.id).slug
+
+  @impl true
+  def on_settled(conversation, settled, tx), do: settled_tx(tx, conversation, settled)
+
+  # A generation settled what it placed (section 2.4). When the run ends
+  # with it, records how on the thread row, and announces it. It runs
+  # inside the harness's commit, on a Stop or a failed task inside the
+  # Scheduler's, so it is total: a missing row or answer records less, and
+  # nothing here raises.
+  defp settled_tx(tx, conversation, %{ended?: true} = settled) do
+    case get(conversation.id) do
+      %Thread{} = thread ->
+        text = run_text(conversation.id, settled)
+        status = settled.outcome
+
+        {_count, _rows} =
+          Thread
+          |> where([t], t.id == ^thread.id)
+          |> Repo.update_all(
+            set: [
+              last_run_status: status,
+              last_run_ended_at: DateTime.utc_now(),
+              last_run_asked: status == "done" and State.asks?(text),
+              last_run_note: State.note(status, text)
+            ]
+          )
+
+        Projects.threads_changed_tx(tx, thread.project_id)
+
+      nil ->
+        :ok
+    end
+  end
+
+  defp settled_tx(_tx, _conversation, _settled), do: :ok
+
+  # The text a run's end is noted from: the answer for `"done"`, the
+  # reason otherwise; nil when the answer entry is missing.
+  defp run_text(thread_id, %{outcome: "done", answer_entry_id: entry_id})
+       when is_binary(entry_id) do
+    case Durable.entry(thread_id, entry_id) do
+      %Entry{data: %{"message" => message}} -> PhotonCore.Message.text_of(message)
+      _missing -> nil
+    end
+  end
+
+  defp run_text(_thread_id, settled), do: Map.get(settled, :reason)
 
   # The project of thread `thread_id`. A thread whose row or project is
   # missing can't run: the generation or tool call fails with this message.

@@ -115,4 +115,26 @@ defmodule Photon.Threads.MockScriptTest do
       assert help =~ "`load skill <name>`"
     end
   end
+
+  describe "run endings" do
+    test "ask me: answers with the question, so the run ends asking" do
+      asked = ask("ask me: which zone should I water first?")
+      assert calls(asked) == []
+      assert Message.text_of(asked) == "which zone should I water first?"
+
+      assert Message.text_of(ask("ask me:  should I order a valve ")) ==
+               "should I order a valve?"
+    end
+
+    test "fail: fails the model request with the reason" do
+      assert ask("fail: the pump is unplugged") == {:error, "the pump is unplugged"}
+      assert ask("[Scheduled] fail: no water") == {:error, "no water"}
+    end
+
+    test "the help lists both" do
+      help = Message.text_of(ask("tidy the shed"))
+      assert help =~ "`ask me: <question>`"
+      assert help =~ "`fail: <reason>`"
+    end
+  end
 end

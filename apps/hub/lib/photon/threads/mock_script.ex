@@ -18,6 +18,10 @@ defmodule Photon.Threads.MockScript do
     * `skills` says which skills the prompt lists, and `load skill <name>`
       loads one (`load_skill`), the same as Blip's
       (`Photon.Skills.MockPhrases`)
+    * `ask me: <question>` answers with the question, ending in `?`, so
+      the run ends asking the user and the thread waits on them
+    * `fail: <reason>` fails the model request with `<reason>`, so the
+      run fails (the scripted model's errors aren't retried)
 
   After a tool result it relays the result, as Blip's does. Anything else
   gets a help text. It reads the last text part of the last user message,
@@ -49,6 +53,8 @@ defmodule Photon.Threads.MockScript do
   - `edit <name>: <old text> => <new text>` changes one passage
   - `skills` lists the skills turned on for this project
   - `load skill <name>` loads one, like `load skill pdf-forms`
+  - `ask me: <question>` ends the run asking you, like `ask me: which zone first?`
+  - `fail: <reason>` makes the run fail, like `fail: the pump is unplugged`
 
   Sign in with ChatGPT and it can do the rest.
   """
@@ -99,7 +105,9 @@ defmodule Photon.Threads.MockScript do
         {~r/\A(?:list )?files\z/, &list_files/1},
         {~r/\Aread\s+([^\s:]+)\z/, &read/1},
         {~r/\Awrite\s+([^\s:]+)\s*:\s*(.*)\z/s, &write/1},
-        {~r/\Aedit\s+([^\s:]+)\s*:\s*(.+?)\s*=>\s*(.*)\z/s, &edit/1}
+        {~r/\Aedit\s+([^\s:]+)\s*:\s*(.+?)\s*=>\s*(.*)\z/s, &edit/1},
+        {~r/\Aask me\s*:\s*(\S.*)\z/s, &ask_me/1},
+        {~r/\Afail\s*:\s*(\S.*)\z/s, &fail/1}
       ]
   end
 
@@ -122,6 +130,17 @@ defmodule Photon.Threads.MockScript do
         %{"name" => name, "old_text" => old_text, "new_text" => new_text},
         "Editing #{name}."
       )
+
+  # The question as the answer, so the run ends asking.
+  defp ask_me([question]) do
+    question
+    |> String.trim()
+    |> String.trim_trailing("?")
+    |> Kernel.<>("?")
+    |> Message.assistant()
+  end
+
+  defp fail([reason]), do: {:error, String.trim(reason)}
 
   defp call(tool, args, intro), do: Message.assistant(intro, [Mock.call(tool, args)])
 end
