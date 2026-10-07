@@ -113,7 +113,12 @@ defmodule Photon.Threads.State do
 
   @doc "The thread's state at `now`, by the first rule of the moduledoc's list that holds."
   @spec of(facts(), DateTime.t(), opts()) :: t()
-  def of(facts, now, opts), do: live(facts) || settled(facts, now, opts)
+  def of(facts, now, opts) do
+    case live(facts) do
+      nil -> settled(facts, now, opts)
+      state -> state
+    end
+  end
 
   # Rules 1 to 3: a question with the owner, or a run in progress.
   defp live(%{question: :with_owner}), do: :waiting

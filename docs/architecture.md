@@ -1774,7 +1774,7 @@ What was added:
   generation settles what it placed) and `on_tool_result/4` (after a tool
   result is stored), called by `Durable.settled/3` and `tool_result/3`
   inside the commit that made the change; `Durable.abort_tx/3` and
-  `recent_entries/2`; `Tx.count_tool_results_since/4`; signals and
+  `recent_entries/2`; `Tx.count_tool_results_since/5`; signals and
   answers are background input that Blip's Stop keeps.
 - Hub, threads: the run facts on the thread row and `Threads.State`, the
   board, seen and resolved, and the settle hook that records a run's end;
@@ -1851,6 +1851,21 @@ next run. Deleting the hub database is still fine. Nodes are unchanged.
 
 Results at the end of step 4's build, before its review: core 187 passed
 (12 properties, 175 tests; unchanged), node 105 passed (1 property, 104
-tests; unchanged), hub 1436 passed (12 properties, 1424 tests). `mix
-precommit` is clean in the hub; dialyzer, coverage and the TLC runs are
-recorded by the final checks.
+tests; unchanged), hub 1436 passed (12 properties, 1424 tests).
+
+The review (the plan's "Second review" table) kept project schedules to
+runs the owner typed into, counted only unattended calls towards the
+limit, cleared a Resolve when queued input starts a new run, made a
+queued answer impossible to withdraw, and fixed the thread page and home
+rows on phones. The final checks then fixed four dialyzer findings from
+the build (two unmatched returns and two specs missing nil) and a
+ChatGPT test that left the hub signed in for the next test.
+
+Final checks, 2026-10-07: core 187 passed (12 properties, 175 tests),
+coverage 99.11% (threshold 95); node 105 passed (1 property, 104 tests),
+coverage 85.89% (threshold 85); hub 1447 passed (12 properties, 1435
+tests), coverage 95.35% (threshold 85). `mix precommit` and `mix
+dialyzer` pass in all three apps; the Credo checks' own 66 tests pass.
+The TLC runs are C19's (Durable-ask, -ask-mixed and -ask-live pass, the
+two bug configs fail as expected); the review changed nothing the specs
+model, so they weren't rerun.

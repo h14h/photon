@@ -315,7 +315,7 @@ defmodule Photon.Activity.Rules do
 
   defp label("owner", _id, _name), do: "You"
   defp label("thread", _id, nil), do: "A thread"
-  defp label("thread", _id, title), do: title
+  defp label("thread", _id, title) when is_binary(title), do: title
   defp label("schedule", _id, nil), do: "A schedule"
   defp label("schedule", _id, prompt), do: "Schedule: " <> prompt
 

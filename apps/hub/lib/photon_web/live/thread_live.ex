@@ -138,12 +138,14 @@ defmodule PhotonWeb.ThreadLive do
   defp look(%{assigns: %{thread: nil}} = socket), do: socket
 
   defp look(socket) do
-    if connected?(socket) do
-      # Threads aren't deleted; a missing one only leaves the state as it was.
-      _seen = Threads.mark_seen(socket.assigns.thread.id)
-    end
-
+    :ok = if connected?(socket), do: seen(socket.assigns.thread.id), else: :ok
     load_state(socket)
+  end
+
+  defp seen(thread_id) do
+    # Threads aren't deleted; a missing one only leaves the state as it was.
+    _seen = Threads.mark_seen(thread_id)
+    :ok
   end
 
   # The thread's board entry: its state, and its open questions. The

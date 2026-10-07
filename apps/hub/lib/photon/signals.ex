@@ -135,6 +135,18 @@ defmodule Photon.Signals do
     Tx.update_submission(tx, carrier, content: content)
   end
 
+  defp unpost_carrier_tx(tx, carrier, :withdraw) do
+    _withdrawn = Tx.update_submission(tx, carrier, status: "withdrawn")
+    :ok
+  end
+
+  defp unpost_carrier_tx(tx, carrier, {:keep, content}) do
+    _kept = Tx.update_submission(tx, carrier, content: content)
+    :ok
+  end
+
+  defp unpost_carrier_tx(_tx, _carrier, :absent), do: :ok
+
   @doc """
   Takes back the signal with `key` while it is still queued: withdraws the
   message when the signal is all it carries, or drops the signal's part
@@ -146,13 +158,7 @@ defmodule Photon.Signals do
     with %{"conversation_id" => blip} <- Tx.get_doc(tx, "global", "assistant"),
          %Submission{} = carrier <-
            tx |> Tx.queued(blip) |> Enum.find(&Rules.carries?(source(&1), key)) do
-      case Rules.without(carrier.content, key) do
-        :withdraw -> _withdrawn = Tx.update_submission(tx, carrier, status: "withdrawn")
-        {:keep, content} -> _kept = Tx.update_submission(tx, carrier, content: content)
-        :absent -> :ok
-      end
-
-      :ok
+      unpost_carrier_tx(tx, carrier, Rules.without(carrier.content, key))
     else
       _no_blip_or_not_queued -> :ok
     end

@@ -11,6 +11,9 @@ defmodule Photon.ChatGPTTest do
 
   setup do
     ChatGPTStub.reset!()
+    # A test that signs in would leave the account (and a model list to
+    # fetch through this test's stub) to whatever test runs next.
+    on_exit(&ChatGPTStub.reset!/0)
     ChatGPT.subscribe()
     :ok
   end
