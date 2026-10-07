@@ -205,9 +205,13 @@ aren't in the form, and a Save leaves ambient mode as it was (section
   - `#ambient-last-digest` and `#ambient-last-review`, when there was
     one: "Last digest <local_time>: sent 3 changes." / "...: nothing new,
     skipped." / "...: skipped, schedules can't use your plan." / "...:
-    Blip still had the last one waiting, skipped."
+    Blip still had the last one waiting, skipped." A queued one reads
+    "sent 3 changes, after what Blip was doing."; a review "sent 2
+    threads." or "no threads to review, skipped."
   - `#ambient-stopped` when a timer failed: "Digests stopped after an
-    error: <reason>. Save settings to start them again."
+    error: <reason>. Save settings to start them again." (for the review:
+    "The daily review stopped after an error: <reason>. Save settings to
+    start it again.")
 - Only on the scripted model (`status.scripted?`), two buttons,
   `#ambient-digest-now` ("Send a digest now") and `#ambient-review-now`
   ("Run the review now"), `type="button"`, `phx-click`, size `sm`,
@@ -1030,8 +1034,10 @@ its local node.
    30; echo pump fixed` and send it. Go Home straight away, without
    opening the thread again. After about 30 seconds the thread is listed
    under Finished.
-3. Open Settings: it says "1 change waiting." Press "Send a digest now".
-   The flash says "Sent Blip a digest of 1 change." Blip's bubble says
+3. Open Settings: it says "1 change waiting, and 2 smaller ones." (the
+   new project and the thread's start ride along). Press "Send a digest
+   now". The flash says "Sent Blip a digest of 3 changes." (the count is
+   new plus smaller, as `"last_digest"` records it). Blip's bubble says
    the thread in Garden finished. Open Blip's panel: above the reply is
    a faint "Digest: 1 new" line; tap it to see the thread.
 4. Press "Send a digest now" again: "Nothing new since the last digest."
