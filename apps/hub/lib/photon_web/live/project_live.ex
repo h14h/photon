@@ -4,8 +4,8 @@ defmodule PhotonWeb.ProjectLive do
   `docs/plans/step-2-projects-and-threads.md`, and section 6.6 of
   `docs/plans/step-3-skills-and-schedules.md`): its name, folder and
   purpose (which the user can edit), its threads, and in the second
-  column its context files, the skills its threads may load, and its
-  schedules.
+  column its context files, the skills turned on for it (threads also get
+  the skills turned on for each machine), and its schedules.
 
   The lists are streams (`#project-threads`, `#context-files`,
   `#project-skills`, `#project-schedules`). The threads are the project's
@@ -634,7 +634,7 @@ defmodule PhotonWeb.ProjectLive do
           id="no-project-skills"
           class="hidden rounded-2xl border border-dashed border-line-strong px-5 py-6 text-[14px] leading-relaxed text-ink-soft only:block"
         >
-          No skills turned on. Skills are instructions this project's threads load when a task calls for them.
+          No skills turned on. Skills are instructions this project's threads load when a task calls for them. Skills turned on for a machine reach them too.
         </p>
         <div
           :for={{dom_id, skill} <- @skills}

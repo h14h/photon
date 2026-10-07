@@ -13,9 +13,16 @@ defmodule PhotonWeb.SkillLive do
   (`PhotonWeb.EditorComponents.guarded_form/1`, shared with the context
   file editor).
 
-  "Turned on for" has a switch for Blip and one per project (a stream),
-  each calling `Skills.enable/2` or `disable/2` with the state it should
-  end in; a refused enable is a flash.
+  "Turned on for" has a switch for Blip, one per project and one per
+  machine the hub knows (section 6.1 of `docs/plans/machine-skills.md`:
+  `Photon.Machines.known/0`, connected or offline but not removed), the
+  projects and machines each a stream. Each switch calls `Skills.enable/2`
+  or `disable/2` with the state it should end in, so a double click or a
+  stale page can't flip it the wrong way; a refused enable (30 on already,
+  or a machine removed since the page loaded) is a flash. A skill on for a
+  machine is offered to Blip and every thread when they work there. The
+  MACHINES group has a row of its own below `xl:`, so the projects' grid
+  keeps its width, and sits beside the other two from `xl:`.
 
   The page follows `Skills.subscribe/0`. A toggle and a save announce the
   same `{:skills_changed, id}`, so for the open skill the handler does two
@@ -36,8 +43,11 @@ defmodule PhotonWeb.SkillLive do
   alone. A deleted skill sends the page to `/skills`.
 
   `{:projects_changed, _}` (through `PhotonWeb.Shell`) re-reads the
-  projects, so a new or renamed project shows among the switches.
-  Everything else the shell passes on is ignored. An unknown skill goes
+  projects, so a new or renamed project shows among the switches, and
+  `:nodes_changed` and `{:node_keys_changed, _}` (also through the shell)
+  re-read the machines, so one installed or removed while the page is
+  open gains or loses its switch. Everything else the shell passes on is
+  ignored. An unknown skill goes
   back to `/skills` with a flash.
   """
 
@@ -45,7 +55,7 @@ defmodule PhotonWeb.SkillLive do
 
   import PhotonWeb.EditorComponents
 
-  alias Photon.{Markdown, Projects, Skills}
+  alias Photon.{Machines, Markdown, Projects, Skills}
   alias Photon.Skills.Skill
   alias PhotonWeb.SkillText
 
@@ -61,6 +71,7 @@ defmodule PhotonWeb.SkillLive do
          socket
          |> assign(tab: "write", revision: 0, leaving?: false)
          |> stream_configure(:projects, dom_id: &"skill-scope-row-#{&1.id}")
+         |> stream_configure(:machines, dom_id: &"skill-machine-row-#{&1.id}")
          |> open(skill)}
 
       {:error, message} ->
@@ -132,19 +143,27 @@ defmodule PhotonWeb.SkillLive do
     if renamed?, do: push_patch(socket, to: ~p"/skills/#{skill.name}"), else: socket
   end
 
-  # Where the open skill is on: Blip's switch, and one per project by name.
-  defp load_scopes(%{assigns: %{skill: nil}} = socket),
-    do: socket |> assign(blip?: false) |> stream(:projects, [], reset: true)
+  # Where the open skill is on: Blip's switch, one per project by name,
+  # and one per known machine in `Machines.known/0`'s order.
+  defp load_scopes(%{assigns: %{skill: nil}} = socket) do
+    socket
+    |> assign(blip?: false)
+    |> stream(:projects, [], reset: true)
+    |> stream(:machines, [], reset: true)
+  end
 
   defp load_scopes(%{assigns: %{skill: skill}} = socket) do
     scopes = Skills.scopes(skill.id)
 
-    rows =
+    projects =
       for p <- Projects.list(), do: %{id: p.id, name: p.name, on?: {:project, p.id} in scopes}
+
+    machines = for id <- Machines.known(), do: %{id: id, on?: {:machine, id} in scopes}
 
     socket
     |> assign(blip?: :blip in scopes)
-    |> stream(:projects, rows, reset: true)
+    |> stream(:projects, projects, reset: true)
+    |> stream(:machines, machines, reset: true)
   end
 
   # The form over `params`, with the context's `%{field => message}` errors.
@@ -243,15 +262,12 @@ defmodule PhotonWeb.SkillLive do
     end
   end
 
-  def handle_event("scope", %{"scope" => scope, "on" => on}, socket) do
-    %Skill{id: id} = socket.assigns.skill
-    scope = if scope == "blip", do: :blip, else: {:project, scope}
+  def handle_event("scope", %{"machine" => machine, "on" => on}, socket),
+    do: {:noreply, toggle(socket, {:machine, machine}, on == "true")}
 
-    case if(on == "true", do: Skills.enable(id, scope), else: Skills.disable(id, scope)) do
-      :ok -> {:noreply, load_scopes(socket)}
-      {:error, :not_found} -> {:noreply, deleted(socket)}
-      {:error, message} -> {:noreply, socket |> put_flash(:error, message) |> load_scopes()}
-    end
+  def handle_event("scope", %{"scope" => scope, "on" => on}, socket) do
+    scope = if scope == "blip", do: :blip, else: {:project, scope}
+    {:noreply, toggle(socket, scope, on == "true")}
   end
 
   def handle_event("delete", _params, socket) do
@@ -264,6 +280,15 @@ defmodule PhotonWeb.SkillLive do
      |> assign(leaving?: true)
      |> put_flash(:info, "Deleted #{name}.")
      |> push_navigate(to: ~p"/skills")}
+  end
+
+  # Turns the open skill on or off for `scope`, then shows where it is on.
+  defp toggle(%{assigns: %{skill: %Skill{id: id}}} = socket, scope, on?) do
+    case if(on?, do: Skills.enable(id, scope), else: Skills.disable(id, scope)) do
+      :ok -> load_scopes(socket)
+      {:error, :not_found} -> deleted(socket)
+      {:error, message} -> socket |> put_flash(:error, message) |> load_scopes()
+    end
   end
 
   # A save that went through: the stored skill, clean, at its own URL.
@@ -302,6 +327,14 @@ defmodule PhotonWeb.SkillLive do
   end
 
   def handle_info({:projects_changed, _id}, %{assigns: %{skill: %Skill{}}} = socket),
+    do: {:noreply, load_scopes(socket)}
+
+  # A machine installed, removed or (for `local`) connected: the known
+  # machines may have changed, so the switches are read again.
+  def handle_info(:nodes_changed, %{assigns: %{skill: %Skill{}}} = socket),
+    do: {:noreply, load_scopes(socket)}
+
+  def handle_info({:node_keys_changed, _id}, %{assigns: %{skill: %Skill{}}} = socket),
     do: {:noreply, load_scopes(socket)}
 
   def handle_info(_message, socket), do: {:noreply, socket}
@@ -362,46 +395,76 @@ defmodule PhotonWeb.SkillLive do
                 Agents there see its name and description, and load it when a task calls for it.
               </p>
             </div>
-            <div class="mt-4 flex flex-col gap-4 sm:flex-row sm:gap-8">
-              <div class="shrink-0">
-                <h3 class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
-                  Assistant
-                </h3>
-                <div class="mt-2.5">
-                  <.switch
-                    id="skill-scope-blip"
-                    on={@blip?}
-                    label="Blip"
-                    phx-click="scope"
-                    phx-value-scope="blip"
-                    phx-value-on={to_string(!@blip?)}
-                  />
+            <div class="mt-4 flex flex-col gap-4 xl:flex-row xl:gap-8">
+              <div class="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:gap-8">
+                <div class="shrink-0">
+                  <h3 class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
+                    Assistant
+                  </h3>
+                  <div class="mt-2.5">
+                    <.switch
+                      id="skill-scope-blip"
+                      on={@blip?}
+                      label="Blip"
+                      phx-click="scope"
+                      phx-value-scope="blip"
+                      phx-value-on={to_string(!@blip?)}
+                    />
+                  </div>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <h3 class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
+                    Projects
+                  </h3>
+                  <div
+                    id="skill-scopes"
+                    phx-update="stream"
+                    class="mt-2.5 grid gap-x-6 gap-y-2.5 sm:grid-cols-2"
+                  >
+                    <p id="skill-no-projects" class="hidden text-[13px] text-ink-faint only:block">
+                      No projects yet.
+                    </p>
+                    <div :for={{dom_id, row} <- @streams.projects} id={dom_id} class="min-w-0">
+                      <.switch
+                        id={"skill-scope-#{row.id}"}
+                        on={row.on?}
+                        label={row.name}
+                        phx-click="scope"
+                        phx-value-scope={row.id}
+                        phx-value-on={to_string(!row.on?)}
+                        class="max-w-full"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div class="min-w-0 flex-1">
+              <div class="min-w-0 xl:w-52 xl:shrink-0">
                 <h3 class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
-                  Projects
+                  Machines
                 </h3>
                 <div
-                  id="skill-scopes"
+                  id="skill-machine-scopes"
                   phx-update="stream"
-                  class="mt-2.5 grid gap-x-6 gap-y-2.5 sm:grid-cols-2"
+                  class="mt-2.5 grid gap-x-6 gap-y-2.5 sm:grid-cols-2 xl:grid-cols-1"
                 >
-                  <p id="skill-no-projects" class="hidden text-[13px] text-ink-faint only:block">
-                    No projects yet.
+                  <p id="skill-no-machines" class="hidden text-[13px] text-ink-faint only:block">
+                    No machines yet.
                   </p>
-                  <div :for={{dom_id, row} <- @streams.projects} id={dom_id} class="min-w-0">
+                  <div :for={{dom_id, row} <- @streams.machines} id={dom_id} class="min-w-0">
                     <.switch
-                      id={"skill-scope-#{row.id}"}
+                      id={"skill-scope-machine-#{row.id}"}
                       on={row.on?}
-                      label={row.name}
+                      label={row.id}
                       phx-click="scope"
-                      phx-value-scope={row.id}
+                      phx-value-machine={row.id}
                       phx-value-on={to_string(!row.on?)}
                       class="max-w-full"
                     />
                   </div>
                 </div>
+                <p id="skill-machines-hint" class="mt-2.5 text-[11.5px] text-ink-faint">
+                  For Blip and every thread, when they work there.
+                </p>
               </div>
             </div>
           </section>

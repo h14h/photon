@@ -97,6 +97,18 @@ defmodule PhotonWeb.SkillsLiveTest do
     assert text(view, "#skill-#{ios.id}-scopes") == "On for Blip, machine mm1 and Garden"
   end
 
+  test "a removed machine drops out of the line", %{conn: conn} do
+    {:ok, _key} = Photon.NodeKeys.issue("mm1")
+    ios = skill!("ios-simulators")
+    :ok = Skills.enable(ios.id, {:machine, "mm1"})
+
+    {:ok, view, _html} = live(conn, ~p"/skills")
+    assert text(view, "#skill-#{ios.id}-scopes") == "On for machine mm1"
+
+    :ok = Photon.NodeKeys.revoke("mm1")
+    assert text(view, "#skill-#{ios.id}-scopes") == "Off everywhere"
+  end
+
   test "the Blip switch turns a skill on and off for Blip", %{conn: conn} do
     skill = skill!("pdf-forms")
     {:ok, view, _html} = live(conn, ~p"/skills")

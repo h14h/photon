@@ -1,8 +1,9 @@
 defmodule PhotonWeb.SkillLiveTest do
   @moduledoc """
   A skill's page: writing one, editing and renaming it, the stale-save
-  banner, the switches that turn it on, deleting it, and what the page
-  does when the skill changes elsewhere.
+  banner, the switches that turn it on (for Blip, projects and machines),
+  deleting it, and what the page does when the skill or the machines
+  change elsewhere.
 
   Writes from the test process are other processes' writes as far as the
   page is concerned. The Store broadcasts inside the commit's call, so
@@ -13,7 +14,7 @@ defmodule PhotonWeb.SkillLiveTest do
 
   import Phoenix.LiveViewTest
 
-  alias Photon.{Projects, Skills}
+  alias Photon.{NodeKeys, Projects, Skills}
 
   @moduletag :durable
 
@@ -353,6 +354,119 @@ defmodule PhotonWeb.SkillLiveTest do
       {:ok, house} = Projects.create(%{"name" => "House", "purpose" => "Keep the house."})
 
       assert has_element?(view, ~s(#skill-scope-#{house.id}[aria-checked="false"]), "House")
+    end
+  end
+
+  describe "turning it on for a machine" do
+    setup do
+      for id <- ["mm1", "mp1"], do: {:ok, _key} = NodeKeys.issue(id)
+      :ok
+    end
+
+    test "each known machine has a switch, and a removed one doesn't", %{conn: conn} do
+      {:ok, _key} = NodeKeys.issue("old")
+      :ok = NodeKeys.revoke("old")
+
+      {:ok, view, _html} = open(conn)
+
+      assert has_element?(
+               view,
+               ~s(#skill-machine-scopes[phx-update=stream] #skill-machine-row-mm1 #skill-scope-machine-mm1[aria-checked="false"]),
+               "mm1"
+             )
+
+      assert has_element?(view, ~s(#skill-scope-machine-mp1[aria-checked="false"]), "mp1")
+      refute has_element?(view, "#skill-machine-row-old")
+      refute has_element?(view, "#skill-scope-machine-old")
+      assert has_element?(view, "#skill-machines-hint")
+    end
+
+    test "with no machines, the group says so", %{conn: conn} do
+      :ok = NodeKeys.revoke("mm1")
+      :ok = NodeKeys.revoke("mp1")
+
+      {:ok, view, _html} = open(conn)
+
+      assert has_element?(view, "#skill-machine-scopes #skill-no-machines")
+      refute has_element?(view, "#skill-machine-scopes [role=switch]")
+    end
+
+    test "the switch turns it on and off for that machine", %{conn: conn, skill: skill} do
+      {:ok, view, _html} = open(conn)
+
+      view |> element("#skill-scope-machine-mm1") |> render_click()
+      assert has_element?(view, ~s(#skill-scope-machine-mm1[aria-checked="true"]))
+      assert has_element?(view, ~s(#skill-scope-machine-mp1[aria-checked="false"]))
+      assert Skills.scopes(skill.id) == [{:machine, "mm1"}]
+
+      view |> element("#skill-scope-machine-mm1") |> render_click()
+      assert has_element?(view, ~s(#skill-scope-machine-mm1[aria-checked="false"]))
+      assert Skills.scopes(skill.id) == []
+    end
+
+    test "the 31st skill on a machine is refused with a flash", %{conn: conn, skill: skill} do
+      for n <- 1..30 do
+        {:ok, other} =
+          Skills.create(%{"name" => "skill-#{n}", "description" => "D.", "instructions" => "I."})
+
+        :ok = Skills.enable(other.id, {:machine, "mm1"})
+      end
+
+      {:ok, view, _html} = open(conn)
+      html = view |> element("#skill-scope-machine-mm1") |> render_click()
+
+      assert html =~ "30 skills are on here already."
+      assert has_element?(view, ~s(#skill-scope-machine-mm1[aria-checked="false"]))
+      assert Skills.scopes(skill.id) == []
+
+      # Another machine still takes it.
+      view |> element("#skill-scope-machine-mp1") |> render_click()
+      assert Skills.scopes(skill.id) == [{:machine, "mp1"}]
+    end
+
+    test "a machine removed since the page loaded is refused with a flash",
+         %{conn: conn, skill: skill} do
+      {:ok, view, _html} = open(conn)
+
+      # A stale page's click: the switch is still there, the machine isn't.
+      html = render_click(view, "scope", %{"machine" => "gone", "on" => "true"})
+
+      assert html =~ "There&#39;s no machine called gone."
+      assert Skills.scopes(skill.id) == []
+    end
+
+    test "machines installed and removed while the page is open come and go", %{conn: conn} do
+      {:ok, view, _html} = open(conn)
+      assert has_element?(view, "#skill-machine-row-mm1")
+
+      :ok = NodeKeys.revoke("mm1")
+      refute has_element?(view, "#skill-machine-row-mm1")
+      assert has_element?(view, "#skill-machine-row-mp1")
+
+      {:ok, _key} = NodeKeys.issue("mm2")
+      assert has_element?(view, ~s(#skill-machine-row-mm2 #skill-scope-machine-mm2), "mm2")
+    end
+
+    test "a machine reinstalled under its name keeps its switch on",
+         %{conn: conn, skill: skill} do
+      :ok = Skills.enable(skill.id, {:machine, "mm1"})
+      {:ok, view, _html} = open(conn)
+
+      :ok = NodeKeys.revoke("mm1")
+      :ok = NodeKeys.forget("mm1")
+      refute has_element?(view, "#skill-scope-machine-mm1")
+
+      {:ok, _key} = NodeKeys.issue("mm1")
+      assert has_element?(view, ~s(#skill-scope-machine-mm1[aria-checked="true"]))
+    end
+
+    test "a machine toggle made elsewhere shows on the page", %{conn: conn, skill: skill} do
+      {:ok, view, _html} = open(conn)
+
+      :ok = Skills.enable(skill.id, {:machine, "mp1"})
+
+      assert has_element?(view, ~s(#skill-scope-machine-mp1[aria-checked="true"]))
+      assert has_element?(view, ~s(#skill-scope-machine-mm1[aria-checked="false"]))
     end
   end
 end
