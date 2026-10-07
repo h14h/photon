@@ -3,15 +3,19 @@
 `Durable.tla` models `Photon.Durable` (Store, Tx, Runtime, Scheduler,
 Generation, ToolTask) with the tool calls a conversation makes: a machine
 call (`shell` or `view_image`, both `Photon.MachineTools.Call`), a plain
-tool that isn't safe to rerun, and the routine task behind a schedule,
-which may repeat and which the owner may edit or delete. Faults are hub
-crashes, Scheduler crashes, step crashes, a machine call's own code
-raising, and user Stops. The machine's result can arrive at any time. It
-follows the code after build step 1, and for schedules step 3's plan
-(`docs/plans/step-3-skills-and-schedules.md`, sections 3.3 and 3.4),
-written before that code: `schedules/routine.ex` (`Routine`, moved from
-`assistant/routine.ex`) and `schedules.ex` (`Schedules.update/3`,
-`delete/1`). See "What changed in build step 3".
+tool that isn't safe to rerun, a thread's `ask_blip` call with Blip's
+side of it, and the routine task behind a schedule, which may repeat and
+which the owner may edit or delete. Faults are hub crashes, Scheduler
+crashes, step crashes, a tool's own code raising, and user Stops. The
+machine's result can arrive at any time, and so can Blip's or the
+owner's answer. It follows the code after build step 1, for schedules
+step 3's plan (`docs/plans/step-3-skills-and-schedules.md`, sections 3.3
+and 3.4), written before that code: `schedules/routine.ex` (`Routine`,
+moved from `assistant/routine.ex`) and `schedules.ex`
+(`Schedules.update/3`, `delete/1`), and for `ask_blip` and the settle
+hook step 4's plan (`docs/plans/step-4-blip-as-coordinator.md`, sections
+3.1, 3.3, 4 and 14), also written before the code. See "What changed in
+build step 3" and "What changed in build step 4".
 
 The first version modeled the harness with the assistant's node work
 (`run_on_node`, `NodeWork`, `NodeWatch`) and found ten bugs (F1 to F10
@@ -20,9 +24,11 @@ in it (F10b), which is fixed too. Build step 1 replaced node work with
 machine calls, and PR B deleted node sessions, so the spec now models the
 machine call in its place (see "What changed in build step 1"). Build
 step 3 added repeating routines and the owner's edits and deletes (see
-"What changed in build step 3"); TLC found no problem in the plan's
-rules. Every config is expected to finish with no error, except the two
-`Durable-bug-*` configs, which put a defect back and must fail.
+"What changed in build step 3"), and step 4 the `ask_blip` call and the
+settle hook (see "What changed in build step 4"); in both, TLC found no
+problem in the plan's rules. Every config is expected to finish with no
+error, except the four `Durable-bug-*` configs, which put a defect back
+and must fail.
 `docs/verification.md` lists the ExUnit regression test for each
 finding.
 
@@ -48,10 +54,16 @@ interleaves those freely).
 | `task[r].fired` | a routine's checkpoint `"runs"`: how often it has fired |
 | `fires`, `retired` | firing commits per routine (with `Target = "thread"`, the threads it started), and whether an edit or delete replaced it |
 | `lateFire`, `dupFire` | ghosts: a fire step's commit landed after its routine was retired; two firing commits landed for one routine and checkpoint |
+| `q` | an `ask_blip` call's row in `questions` (`questions/question.ex`), reduced to its `status`: `"none"` (not asked), `"asked"`, `"with_owner"`, `"answered"`, `"withdrawn"` |
+| `qsub` | the question's carrier: the submission in Blip's conversation that carries its signal (the row's `submission_id`), as `"queued"`, `"placed"`, `"settled"` (`done` or `unanswered`) or `"withdrawn"` (`Signals.unpost_tx/2`) |
+| `signal[t]` for an ask call | the `"question:<id>"` signal `Questions.answer_tx/4` records |
+| `asks`, `answers`, `lateAnswer`, `qResult` | ghosts: question rows inserted per call; answers accepted per question; an answer accepted for a withdrawn question; the call's result is its question's answer |
+| `hooked`, `dupHook` | ghosts: the settle keys `on_settled/3` ran for (each settled submission, or `"<generation>:end"` for a settle that closed none), and whether one came round twice |
 
 Ids are fixed so the state space stays small. Tool task `t1`'s op is keyed
 by `t1` too, since the op ID is derived from the task ID
-(`Wait.op_id/1`). A routine `r1`'s `k`-th firing posts the submission
+(`Wait.op_id/1`), and so are an ask call's question and its signal (one
+question per call, found by its unique `task_id`). A routine `r1`'s `k`-th firing posts the submission
 `rs_r1_k` (the code's request ID is `"schedule:<id>:<task id>:<runs>"`,
 with `runs = k - 1`). `Routines` holds the routine the schedule starts
 with (at most one), and `Spares` the routines an edit may create.
@@ -97,6 +109,15 @@ applies.
 | `RoutineFire` | `Routine.step("fire")`: one `Runtime.commit` that reads the row, applies `Rules.fire/2`, posts `RS(r, k)` (`Target = "conv"`: `Durable.submit_tx/4`, through `Threads.send_tx/4` for a thread) or starts a thread (`Target = "thread"`: `Threads.start_tx/4`, counted in `fires`), records the outcome on the row, announces, and returns `after_fire/2`: wait again while `fired < MaxFires`, else `{:done, ...}`. A row that is gone finishes the task and writes nothing (`{:done, %{"gone" => true}}`). `BugFireIgnoresAbort` drops the abort mark from this commit's fence |
 | `OwnerEdit` | `Schedules.update/3`: one commit that marks the row's task for abort (`Tx.request_abort/3` with `background: true`), arms a new routine (pending, phase `"start"`) and names it on the row. `BugEditKeepsOld` skips the mark |
 | `OwnerDelete` | `Schedules.delete/1` (and Blip's `cancel_schedule`, `delete_tx/3`): one commit that marks the task for abort and deletes the row |
+| `QAsk` | `AskBlip.execute/2` up to `Questions.ask/1`, a Store commit of its own: a question with this `task_id` is returned (a rerun parks on it again); else, only while the task is unfinished and not marked for abort (`Rules.askable?/1`), the question is inserted `"asked"` and its signal posted (`Signals.post_tx/2`), else `{:error, :stopped}` and an error result. `BugAskUnfenced` drops the task check |
+| `QPark` | the `{:wait, %{"signal" => "question:<id>", "until" => now + check_ms}, ...}` transition, first and again after a check that found Blip still has it |
+| `QResume` | `AskBlip.resume/2`: reads the question and its carrier, then answered -> the answer as the result (`Rules.result/1`); with the owner -> park on the signal alone; asked with the carrier queued or placed -> park again; asked with it settled or withdrawn (`Rules.escalate?/2`) -> escalate; withdrawn or missing -> an error |
+| `QEscalate` | `Questions.escalate/1`: its own commit, unfenced, which re-checks the status and the carrier and passes the question to the owner (`{:pass, :hub}`, with a notice in Blip's conversation) |
+| `QParkSig` | the `{:wait, %{"signal" => ...}, ...}` transition with no `until` |
+| `BlipPlace`, `BlipSettle` | Blip's conversation reduced to the carrier: a Blip run places it (at once when Blip is idle, else when the run ahead of it ends) and settles it whether or not Blip acted |
+| `BlipAnswer` | `answer_question`: `Questions.answer_tx/4` with `{:blip, owner_wrote?}` in the commit that records the call's result: the status (`Rules.step/2`), the answer and the signal |
+| `BlipPass` | `ask_owner`: `Questions.pass_tx/4` with `{:pass, :blip}` |
+| `OwnerAnswer` | `Questions.answer/2` from a question's reply box: `answer_tx/4` with `{:answer, :owner}` (and `Signals.answer_tx/3`, which only writes into Blip's conversation). `BugAnswerAnyStatus` skips the status check |
 | `OpFinish` | the machine's terminal snapshot: `Machines.snapshot/3` with `Rules.on_snapshot/3` in one Store commit, so an open row becomes `finished` (or `closed` if it was canceled) and the signal fires together (hub rule 4) |
 | `Tick` | a waiting task's deadline passes |
 
@@ -106,7 +127,19 @@ marked for abort, or is not the start this step belongs to"
 aborts live foreground children. The tool hooks run in the commit that ends
 the call: `ToolTask.on_abort`/`on_fail` call the tool's `on_interrupt/2`,
 which for a machine call is `cancel_tx/2` (`OnAbortRow`): an open row gets
-`cancel`, a finished one is closed and its result dropped.
+`cancel`, a finished one is closed and its result dropped. For an ask call
+it is `Questions.withdraw_tx/2` (`Withdraw`, `OnAbortQ`): an open question
+becomes `"withdrawn"` and a carrier still queued is taken back. A rescued
+raise runs it too; the ask call's own error results find nothing to
+withdraw.
+
+The harness hooks of step 4 run inside commits the spec already has.
+`Generation` calls `Durable.settled/3` (the profile's `on_settled/3`)
+right after each `settle/4`: in `GenRequest`'s answer, model-error and
+round-limit branches, and in the abort and fail commits of a generation
+(`SchedAbort`, `SchedExit`); `RunHook` records the keys. `ToolTask` calls
+`Durable.tool_result/3` (`on_tool_result/4`) in every commit that records
+a tool result, which `toolResults` already counts.
 
 ### Faults
 
@@ -120,15 +153,18 @@ which for a machine call is `cancel_tx/2` (`OnAbortRow`): an open row gets
   to pending; their commits are fenced out. `Machines.start/1`'s commit
   isn't the step's, so the fence doesn't cover it; hub rule 9 does.
 * `StepCrash`: a step process exits abnormally at any point before its last
-  commit, or a machine call's own code raises (in `execute/2`, `resume/2`,
-  or between `Machines.start/1` and the park). `ToolTask` rescues a raise
-  and records an error result whose commit runs `on_interrupt/2`.
+  commit, or a machine or ask call's own code raises (in `execute/2`,
+  `resume/2`, between `Machines.start/1` or `Questions.ask/1` and the
+  park, or around the escalation). `ToolTask` rescues a raise and records
+  an error result whose commit runs `on_interrupt/2`.
 * `UserAbort`: Stop at any time.
 * `OwnerEdit`, `OwnerDelete`: the owner edits or deletes the schedule at
   any time, between any two commits, so also while a fire step is
   running, before or after a hub crash or a Scheduler restart.
 * The machine may finish an op any time after its row exists, and a check
   may find it offline (`MachineOffline`).
+* Blip may answer or pass a question, and the owner answer one, at any
+  time after it was asked.
 
 Message loss and the node's side are `HubOps.tla`'s and `Executor.tla`'s.
 
@@ -199,6 +235,40 @@ Message loss and the node's side are `HubOps.tla`'s and `Executor.tla`'s.
   `Durable-schedule-retire-live.cfg` (added with this case) checks that
   a routine retired with no replacement ends `aborted`. The spec didn't
   change. Every other edit replaces the routine.
+* Questions (step 4): one conversation is modeled, so an ask call's
+  thread is the modeled conversation and Blip's conversation is reduced
+  to the question's carrier (`qsub`). Blip's run is any interleaving of
+  `BlipPlace`, `BlipSettle`, `BlipAnswer` and `BlipPass`; its reasoning,
+  the content of questions and answers, and the words of the notices are
+  left out. Signal merging is left out too: a question merged into a
+  queued carrier is one commit that edits a queued row, so as far as the
+  question is concerned it is one carrier, and a question never shares
+  one with an update (plan section 3.3). Blip's tools may name a
+  question at any time after it was asked, not only while its carrier is
+  placed (`list_threads` and `read_thread` show open questions), which
+  allows more behaviors than the plan's first sketch. Refused steps
+  (`Rules.step/2` returning an error) write nothing and are left out,
+  except under the bug switch. The refusal of `{:answer, {:blip, false}}`
+  on a question with the owner is a pure check on the run's sources, so
+  `BlipAnswer` stands for the accepted `{:blip, true}` relay there.
+  `Rules.question/1` refusing a question is the same error result as a
+  stopped ask, with no row, and is left out.
+* An ask call's checks (`check_ms`) are time, so they are bounded by
+  `MaxRechecks` like a machine call's, with one exception: once the
+  carrier has settled or been withdrawn, the `until` may pass again
+  (`AskCheckDue` in `Tick`). The next check then escalates, ends or parks
+  on the signal alone, so this adds at most a check or two, and without
+  it a run could spend the budget while the carrier is still queued and
+  never reach the escalation, which the code (no limit on checks) always
+  does.
+* Thread state, signals other than the question's, and the activity log
+  are left out. Thread state is derived at read time from committed
+  facts, so nothing can race it. A thread update is posted by the settle
+  hook inside the settling commit, which `HookOnce` covers; what Blip
+  does with it is Blip's reasoning. The activity log is one row per tool
+  result, written in the result's commit, which `OneResultPerCall` and
+  `ToolResultIffFinished` already bound, and one row per settle of a run
+  nobody typed into, which `HookOnce` bounds.
 
 ### Fairness
 
@@ -207,9 +277,22 @@ after every step result or `:DOWN`, and on its timer, so its actions are
 weakly fair. Steps keep running, and time passes. An op eventually ends on
 its machine (`OpFinish`): the command finishes, or is canceled, once the
 machine is back. A running command has no timeout, so without that
-assumption a call may wait for good, as designed. The user, the owner's
-edits and deletes, and faults get no fairness. The crash budgets are
-finite.
+assumption a call may wait for good, as designed. Blip's conversation
+moves on: a queued carrier is placed once the Blip run ahead of it ends,
+and a placed one settles when its run does (`BlipPlace`, `BlipSettle`;
+this spec checks the same of the modeled conversation with
+`QueuedNotStranded` and `PlacedSettles`). Whether Blip answers or passes
+a question is its choice, so those get no fairness. The user, the
+owner's edits and deletes, and faults get no fairness. The crash budgets
+are finite.
+
+The owner's answers get none in `Spec` either. A question with the owner
+waits for them with no time limit, by design, and so does the thread's
+run around it, so `PlacedSettles` with an ask call holds only if the
+owner eventually answers what reaches them (or stops the thread).
+`SpecOwnerAnswers` adds that (`OwnerAnswers`: weak fairness on
+`OwnerAnswer`), and `Durable-ask-live.cfg` uses it. Its other properties
+hold under `Spec` alone (checked once, see "Results").
 
 `FairnessFine` states that per action and per task. `Spec` uses one
 weak-fairness condition on all system actions (`SysNext`). That is weaker,
@@ -236,6 +319,12 @@ Safety (invariants):
 | `OneCarrier` | at most one routine is live and not marked for abort, and it is the one the row names: an edit or delete never leaves the old timer running beside the new one |
 | `NoFireAfterRetire` | no fire step's commit lands for a routine after the commit that retired it (an edit or delete), whether it would post, start a thread, or find the row gone |
 | `FireOncePerSlot` | no two firing commits for the same routine and checkpoint, across hub crashes, Scheduler restarts and step crashes; with `Target = "thread"` there is no request ID to fall back on |
+| `HookOnce` | the settle hook runs once per settle: no submission is reported settled twice, and no generation settles twice with nothing to close (each settle's signal key is unique) |
+| `OneQuestionPerCall` | an ask call inserts at most one question row; a rerun finds it |
+| `NoOpenQuestionAfterCall` | once an ask call has ended, however it ended, its question is not `"asked"` or `"with_owner"`, so nothing is left on the home page that no call waits for |
+| `AnswerOnce` | a question is answered at most once, by Blip or the owner |
+| `NoAnswerAfterWithdraw` | no answer is accepted for a withdrawn question |
+| `AnsweredResult` | an ask call that ended with an answer has an answered question |
 
 Liveness:
 
@@ -249,6 +338,9 @@ Liveness:
 | `FinishedLeavesNoLiveWork` | a finished task's foreground children all finish |
 | `RowsClose` | every op row eventually closes, so no result (up to 5 MB for an image) is kept for good |
 | `RetiredEnds` | a routine an edit or delete retired while it was live ends `aborted` |
+| `AnsweredCallEnds` | an answered question whose call is parked leads to the call finishing: the answer always reaches a call still waiting for it |
+| `UnhandledReachesOwner` | a question still with Blip whose carrier has settled (Blip's run ended without answering or passing it) leads to the question leaving `"asked"`: the escalation reaches the owner, or the call ends |
+| `CallEndClosesQuestion` | a call that has ended leads to its question not being open; immediate today (`on_interrupt/2` runs in the ending commit), stated so a later change can't break it |
 
 ## How to run
 
@@ -305,6 +397,35 @@ step 3 configs ran the same day, under the same load:
 | `Durable-bug-edit-keeps-old.cfg` | `Durable-schedule.cfg` with `BugEditKeepsOld` | fails `OneCarrier` (expected) | 2-state trace | 1s |
 | `Durable-bug-fire-after-retire.cfg` | `Durable-schedule.cfg` with `BugFireIgnoresAbort` | fails `NoFireAfterRetire` (expected) | 8-state trace | 2s |
 
+On 2026-10-06 (step 4) every older config was rerun with the two new
+bug switches `FALSE` and `"ask"` left out of `ToolTypes`, 4 workers,
+load average around 40: each passing one reached exactly the distinct
+state count above (the new variables stay at their initial values, and
+the settle hook's keys are a function of the submission statuses), and
+the two bug configs failed with the same traces.
+`HookOnce` joined the safety set of `Durable.cfg`, `-parallel`,
+`-routine`, `-schedcrash-ok`, `-schedule` and `-schedule-thread`, which
+doesn't change a state count. The step 4 configs ran the same day, under
+the same load. "Question set" is `HookOnce`, `OneQuestionPerCall`,
+`NoOpenQuestionAfterCall`, `AnswerOnce`, `NoAnswerAfterWithdraw` and
+`AnsweredResult`:
+
+| Config | Shape | Checks | Distinct states | Time |
+|---|---|---|---|---|
+| `Durable-ask.cfg` | 1 user input whose run makes an `ask_blip` call, model errors, 1 hub crash, 1 Scheduler crash, 1 step crash (or a raise in the call), 1 Stop; Blip and the owner may answer or pass at any time | safety set and question set | 420,090 | 26s |
+| `Durable-ask-live.cfg` | the same, under `SpecOwnerAnswers` | `AnsweredCallEnds` `UnhandledReachesOwner` `CallEndClosesQuestion` `PlacedSettles` `NoRunningForever` | 420,090 | 7m23s (3 workers) |
+| `Durable-ask-mixed.cfg` | 2 tool calls in one response, each an `ask_blip` or a machine call, 1 hub crash, 1 Stop | safety set and question set | 3,712,448 | 4m21s (3 workers) |
+| `Durable-bug-ask-unfenced.cfg` | `Durable-ask.cfg` with `BugAskUnfenced` | fails `NoOpenQuestionAfterCall` (expected) | 9-state trace | 2s |
+| `Durable-bug-answer-twice.cfg` | `Durable-ask.cfg` with `BugAnswerAnyStatus` | fails `AnswerOnce` (expected) | 8-state trace | 3s |
+
+The plan gave `Durable-ask-live.cfg` no crashes and
+`Durable-ask-mixed.cfg` only a Stop. Without them they pass with 2,068
+and 416,792 distinct states (5s and 29s); the crashes were cheap enough
+to keep. `Durable-ask-live.cfg`'s three question properties and
+`NoRunningForever` also pass under plain `Spec` (the crash-free shape,
+2,068 states), and `PlacedSettles` fails there as it should: the owner
+never answers a question Blip passed on, and the thread's run waits.
+
 `Durable-schedule.cfg` has no user input, unlike the plan's first shape:
 with one, TLC had covered 160M distinct states in two hours, the queue
 still growing, when the run was stopped. The user's input adds nothing
@@ -322,10 +443,11 @@ offline machine, which it had to leave out before.
 
 ## Checks that the properties bite
 
-Every config passes, so each machine-call property, and in step 3 each
-schedule property that has no bug config of its own, was checked once
-against a copy of the spec (or config) with one of the code's rules
-broken. Each failed on the property meant to catch it:
+Every config passes, so each machine-call property, and in steps 3 and
+4 each schedule or question property that has no bug config of its own,
+was checked once against a copy of the spec (or config) with one of the
+code's rules broken. Each failed on the property meant to catch it (the
+step 4 copies ran with `-workers 1`):
 
 | Rule broken | Config | Fails |
 |---|---|---|
@@ -336,6 +458,14 @@ broken. Each failed on the property meant to catch it:
 | `claim_tx/2` doesn't close the row it claims (hub rule 8) | `Durable-double.cfg` | `OneResultPerCall`, 12 states |
 | step 3: the fire step's commit isn't fenced on its start, only on the abort mark (F10 put back for routines) | `Durable-schedule-thread.cfg` without edits or deletes | `FireOncePerSlot`, 10 states: a Scheduler crash while the fire step runs, the routine starts again, and both steps commit their firing; with `Target = "thread"` that is two threads |
 | step 3: an edit doesn't mark the old routine (`BugEditKeepsOld`) | `Durable-schedule-live.cfg` with no user input, hub crash or Stop, checking `RetiredEnds` only | `RetiredEnds`, 30 states then stuttering: the retired routine fires both times and ends `done` |
+| step 4: an ask call's `on_interrupt/2` doesn't withdraw its question | `Durable-ask.cfg` | `NoOpenQuestionAfterCall`, 8 states: the step exits right after the ask, and the call fails (`on_fail`) with its question still open |
+| step 4: the same | the crash-free `Durable-ask-live.cfg` | `CallEndClosesQuestion`, 13 states then stuttering: Stop while Blip's run has the question |
+| step 4: `Questions.ask/1` inserts without looking for the call's question first | `Durable-ask.cfg` | `OneQuestionPerCall`, 9 states: a hub crash after the ask, and the rerun asks again |
+| step 4: `Questions.escalate/1` doesn't pass the question on | the crash-free `Durable-ask-live.cfg` | `UnhandledReachesOwner`, 15 states then stuttering: Blip's run settles without handling it, and the call parks on the signal alone with the question still Blip's |
+| step 4: `answer_tx/4` doesn't record the signal | the crash-free `Durable-ask-live.cfg` | `AnsweredCallEnds`, 16 states then stuttering: Blip passes the question, then relays the owner's answer while the call is parked on the signal alone |
+| step 4: Blip's answer skips the status check on a withdrawn question | `Durable-ask.cfg` | `NoAnswerAfterWithdraw`, 9 states |
+| step 4: `resume/2` takes a question with the owner for an answer | `Durable-ask.cfg` without `NoOpenQuestionAfterCall` | `AnsweredResult`, 13 states (with it, `NoOpenQuestionAfterCall` fails first) |
+| step 4: the settle hook also runs when a generation goes on after its tools | `Durable-ask.cfg` | `HookOnce`, 12 states: the abort commit reports the same submission again |
 
 ## What changed in build step 3
 
@@ -391,6 +521,66 @@ repeats that firing, are pure and tested in
 |---|---|---|
 | `Durable-bug-edit-keeps-old.cfg` | `Schedules.update/3` arms the new routine without marking the old one for abort | `OneCarrier`, 2 states: the edit itself leaves `r1` pending beside its replacement `r2`. Without `OneCarrier` in the config, `NoFireAfterRetire` fails in 8 states: the old routine goes on to fire |
 | `Durable-bug-fire-after-retire.cfg` | the fire step's commit is fenced only on its start (`updated_at`), not on the abort mark | `NoFireAfterRetire`, 8 states (`-workers 1`): `r1` wakes and its fire step starts, the owner edits the schedule, then the step's commit posts `rs_r1_1` for the retired routine. The delete variant (the step finds the row gone) is as short, and also breaks `AbortEndsAborted`: the task marked for abort finishes `done` |
+
+## What changed in build step 4
+
+Step 4 adds `ask_blip`: a thread's tool call that asks Blip a question
+and waits, durably, for Blip's answer or the owner's
+(`docs/plans/step-4-blip-as-coordinator.md`, section 4), and the
+harness's settle hook, through which every run's end reaches Blip as a
+signal (section 3.1). The plan's claims are in its section 14: the ask
+commits outside the step's fence, like `Machines.start/1`, and its own
+check (no question for a finished or abort-marked task) is what keeps a
+Stop from leaving a question open with no call waiting; the relay has
+three writers (Blip's answer, the owner's answer, the call's withdraw)
+and a poller (the escalation, also outside the fence) racing on one row
+while the call may be stopped, the hub may crash or the Scheduler may
+restart between any two of them; and the hook runs once per settle. The
+spec was extended before the code, which follows these modules:
+`questions.ex` (`ask/1`, `answer_tx/4`, `pass_tx/4`, `escalate/1`,
+`withdraw_tx/2`) with `questions/rules.ex` (`step/2`, `askable?/1`,
+`escalate?/2`), `threads/tools/ask_blip.ex`, `signals.ex` (`post_tx/2`,
+`unpost_tx/2`) and `durable/generation.ex` (`Durable.settled/3` after
+each `settle/4`).
+
+* Constants: `ToolTypes` may include `"ask"`; bug switches
+  `BugAskUnfenced` and `BugAnswerAnyStatus`.
+* Variables `q` and `qsub`, the ghosts `asks`, `answers`, `lateAnswer`,
+  `qResult`, `hooked` and `dupHook`. An ask call's signal reuses
+  `signal`, keyed by the task like an op's.
+* Actions `QAsk`, `QPark`, `QResume`, `QEscalate`, `QParkSig` (the call),
+  `BlipPlace`, `BlipSettle`, `BlipAnswer`, `BlipPass` (Blip) and
+  `OwnerAnswer`. The abort and fail commits and `ToolFinish`'s error
+  results run the withdraw for an ask call. `GenRequest`'s settling
+  branches and a generation's abort and fail commits run the settle hook.
+  `StepCrash` may raise inside an ask call. `Tick` lets an ask call's
+  `until` pass again once its carrier has settled (see "Abstractions").
+* Invariants `HookOnce`, `OneQuestionPerCall`, `NoOpenQuestionAfterCall`,
+  `AnswerOnce`, `NoAnswerAfterWithdraw`, `AnsweredResult`; liveness
+  `AnsweredCallEnds`, `UnhandledReachesOwner`, `CallEndClosesQuestion`;
+  `SpecOwnerAnswers` for liveness that needs the owner to answer.
+* Five configs (`Durable-ask`, `-ask-live`, `-ask-mixed`, and the bug
+  configs `-bug-ask-unfenced` and `-bug-answer-twice`). Every older
+  config sets both new switches `FALSE` and leaves `"ask"` out, and
+  reaches exactly its old state count.
+
+TLC found no problem in sections 3 and 4 of the plan. Modeling them
+settled four points the plan's section 14 had left open or put
+differently, and the plan now says so: the carrier needs a `"withdrawn"`
+value (a Stop takes a queued carrier back); Blip may answer or pass a
+question at any time after it was asked, not only while the carrier is
+placed; `PlacedSettles` with an ask call needs the owner to answer
+eventually (`SpecOwnerAnswers`); and the answered branch of `resume/2`
+is a plain `{:ok, ...}` result, since an answered question never changes
+again, so reading it outside the commit is safe (section 4.3 had it
+right; section 14 said `{:commit, ...}`).
+
+### The bug configs
+
+| Config | Defect put back | Fails |
+|---|---|---|
+| `Durable-bug-ask-unfenced.cfg` | `Questions.ask/1` inserts the question whatever the task's state (no `Rules.askable?/1` in its commit) | `NoOpenQuestionAfterCall`, 9 states (`-workers 1`): the thread's run makes the call and its step starts, the owner presses Stop, the Scheduler crashes and leaves the step running, the call is aborted (its `on_interrupt/2` finds no question), then the orphaned step's ask commit inserts a question for a call that has ended. Without the Scheduler crash a Stop can't land between the ask and the end of the call without the withdraw seeing the question: the abort commit waits for the step to be killed |
+| `Durable-bug-answer-twice.cfg` | the owner's answer skips `Rules.step/2`'s status check | `AnswerOnce`, 8 states: the call asks, Blip answers, and the owner's answer lands on the answered question. With the call stopped first, the same defect fails `NoAnswerAfterWithdraw` |
 
 ## What changed in build step 1
 

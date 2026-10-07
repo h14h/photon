@@ -120,4 +120,15 @@ defmodule Photon.ThreadFileToolsTest do
     assert notes =~ ~r/ UTC by you\)\z/
     assert zones =~ ~r/ UTC by thread "write zones.md: three zones"\)\z/
   end
+
+  test "a file Blip wrote reads as Blip's", %{project: project, thread: thread} do
+    {:ok, _written} =
+      Durable.commit(&Projects.write_file_tx(&1, project.id, "notes.md", "hello", "blip"))
+
+    assert text(tool(thread, "files")) =~
+             ~r/\A- notes\.md \(5 characters, changed .* UTC by Blip\)\z/
+
+    assert text(tool(thread, "read notes.md")) =~
+             ~r/\Anotes\.md, 5 characters, changed .* by Blip:\nhello\z/
+  end
 end

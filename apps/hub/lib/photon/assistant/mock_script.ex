@@ -14,10 +14,24 @@ defmodule Photon.Assistant.MockScript do
       (`Photon.Assistant.Page.note/2`), or that it doesn't know the page
     * `skills` says which skills the prompt lists, and `load skill <name>`
       loads one (`load_skill`)
+    * the phrasings for its tools over projects and threads, in
+      `Photon.Assistant.MockCoordinator`: `projects`, `project <slug>`,
+      `threads`, `threads in <slug>`, `read thread <id>`, `start project:
+      <purpose>`, `start thread in <slug>: <message>`, `tell <id>:
+      <message>`, `stop thread <id>`, `files in <slug>`, `read
+      <slug>/<name>`, `write <slug>/<name>: <text>`, `edit <slug>/<name>:
+      <old> => <new>`, `in <n> minutes in <slug>: <prompt>`, `every <n>
+      minutes in <slug>: <prompt>`, `schedules in <slug>`, `cancel schedule
+      <id>`, `all skills`,
+      `turn on <skill> in <slug>`, `turn off <skill> in <slug>`, `answer
+      <question id>: <text>`, `answer: <text>`
 
   It reads the last text part of the user's message, which is what the
   user typed: a message sent from a page has the page's note in front of
-  it, as a part of its own.
+  it, as a part of its own. A message the user didn't type (a thread's
+  question or update, or the user's answer to a question going by) is
+  `Photon.Assistant.MockCoordinator.unasked/2`'s, which reads every text
+  part.
 
   After a tool result it relays the result. An image result gets "Here it
   is." and its dimensions line.
@@ -25,15 +39,23 @@ defmodule Photon.Assistant.MockScript do
   The three machine phrasings and the relay are
   `Photon.MachineTools.MockPhrases`, and the skill phrasings
   `Photon.Skills.MockPhrases`; a thread's scripted model uses both too.
+  The coordinator's phrasings come after those and before its own.
   """
 
   # Functional core: no processes, no I/O.
   use Boundary,
     type: :strict,
-    deps: [PhotonCore, PhotonCore.LLM, Photon.MachineTools, Photon.Skills]
+    deps: [
+      PhotonCore,
+      PhotonCore.LLM,
+      Photon.Assistant.MockCoordinator,
+      Photon.MachineTools,
+      Photon.Skills
+    ]
 
   @behaviour PhotonCore.LLM.Mock
 
+  alias Photon.Assistant.MockCoordinator
   alias Photon.MachineTools.MockPhrases
   alias Photon.Skills.MockPhrases, as: SkillPhrases
   alias PhotonCore.LLM.Mock
@@ -51,7 +73,7 @@ defmodule Photon.Assistant.MockScript do
   - `here` tells you which page you're on, as I see it
   - `skills` lists the skills turned on for me
   - `load skill <name>` loads one, like `load skill pdf-forms`
-
+  #{MockCoordinator.help()}
   Sign in with ChatGPT and I can do the rest.
   """
 
@@ -64,13 +86,22 @@ defmodule Photon.Assistant.MockScript do
         result |> MockPhrases.relay_result() |> Message.assistant()
 
       %{"role" => "user", "content" => content} ->
-        {note, typed} = split(content)
-        typed |> String.trim() |> plan(note, request)
+        MockCoordinator.unasked(texts(content), request) || typed(content, request)
 
       _ ->
         Message.assistant(@help)
     end
   end
+
+  defp typed(content, request) do
+    {note, typed} = split(content)
+    typed |> String.trim() |> plan(note, request)
+  end
+
+  defp texts(content) when is_list(content),
+    do: for(%{"type" => "text", "text" => text} when is_binary(text) <- content, do: text)
+
+  defp texts(content), do: [Message.text_of(content)]
 
   # The note of the page (nil without one) and what the user typed: the
   # last text part.
@@ -101,10 +132,12 @@ defmodule Photon.Assistant.MockScript do
   end
 
   # The phrasings it understands, in the order it tries them, each with the
-  # reply its captures make: the shared machine and skill ones first.
+  # reply its captures make: the shared machine and skill ones first, then
+  # the coordinator's.
   defp phrasings(request) do
     MockPhrases.phrasings() ++
       SkillPhrases.phrasings(request) ++
+      MockCoordinator.phrasings(request) ++
       [
         {~r/\Aremember\s+(.+)\z/s, &remember/1},
         {~r/\Ain\s+(\d+)\s+minutes?\s*:\s*(.+)\z/s, &schedule("in_minutes", &1)},

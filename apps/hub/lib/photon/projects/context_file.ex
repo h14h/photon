@@ -8,8 +8,8 @@ defmodule Photon.Projects.ContextFile do
   `key` is `name` downcased, unique within the project, so `Notes.md` and
   `notes.md` can't both exist. `version` is 1 when the file is created and
   goes up by one on every write; the user's editor saves against the
-  version it loaded. `updated_by` is `"owner"` or the ID of the thread that
-  last wrote the file.
+  version it loaded. `updated_by` is `"owner"`, `"blip"` or the ID of the
+  thread that last wrote the file.
   """
 
   # Data: an Ecto schema, no behaviour of its own.
@@ -17,7 +17,7 @@ defmodule Photon.Projects.ContextFile do
 
   use Ecto.Schema
 
-  @typedoc "Who last wrote a file: `\"owner\"` or a thread's ID."
+  @typedoc ~S(Who last wrote a file: `"owner"`, `"blip"` or a thread's ID.)
   @type writer :: String.t()
 
   @type t :: %__MODULE__{

@@ -18,8 +18,15 @@ defmodule Photon.Threads.MockScript do
     * `skills` says which skills the prompt lists, and `load skill <name>`
       loads one (`load_skill`), the same as Blip's
       (`Photon.Skills.MockPhrases`)
+    * `ask blip: <question>` asks Blip the question (`ask_blip`), and the
+      call waits for the answer, which it then relays
+    * `ask me: <question>` answers with the question, ending in `?`, so
+      the run ends asking the user and the thread waits on them
+    * `fail: <reason>` fails the model request with `<reason>`, so the
+      run fails (the scripted model's errors aren't retried)
 
-  After a tool result it relays the result, as Blip's does. Anything else
+  After a tool result it relays the result, as Blip's does (Blip's answer
+  to `ask_blip` as prose). Anything else
   gets a help text. It reads the last text part of the last user message,
   without a leading `"[Scheduled] "`, as Blip's does, so a project
   schedule's prompt such as `on local: $ uptime` runs on it too.
@@ -49,6 +56,9 @@ defmodule Photon.Threads.MockScript do
   - `edit <name>: <old text> => <new text>` changes one passage
   - `skills` lists the skills turned on for this project
   - `load skill <name>` loads one, like `load skill pdf-forms`
+  - `ask blip: <question>` asks Blip, like `ask blip: which deploy branch?`
+  - `ask me: <question>` ends the run asking you, like `ask me: which zone first?`
+  - `fail: <reason>` makes the run fail, like `fail: the pump is unplugged`
 
   Sign in with ChatGPT and it can do the rest.
   """
@@ -59,7 +69,7 @@ defmodule Photon.Threads.MockScript do
 
     case List.last(messages) do
       %{"role" => "tool"} = result ->
-        result |> MockPhrases.relay_result() |> Message.assistant()
+        result |> relay() |> Message.assistant()
 
       %{"role" => "user"} = message ->
         message |> last_text() |> String.trim() |> plan(request)
@@ -67,6 +77,16 @@ defmodule Photon.Threads.MockScript do
       _ ->
         Message.assistant(@help)
     end
+  end
+
+  # Blip's answer to `ask_blip` reads as prose, a paragraph a line ("Blip
+  # asked the user: ...", "They answered: ..."), not as printed output.
+  defp relay(result) do
+    text = Message.text_of(result)
+
+    if String.starts_with?(text, ["Blip answered: ", "Blip asked the user: "]),
+      do: String.replace(text, ~r/\n+/, "\n\n"),
+      else: MockPhrases.relay_result(result)
   end
 
   # The last text part: what the user typed, after any note put before it.
@@ -100,7 +120,16 @@ defmodule Photon.Threads.MockScript do
         {~r/\Aread\s+([^\s:]+)\z/, &read/1},
         {~r/\Awrite\s+([^\s:]+)\s*:\s*(.*)\z/s, &write/1},
         {~r/\Aedit\s+([^\s:]+)\s*:\s*(.+?)\s*=>\s*(.*)\z/s, &edit/1}
-      ]
+      ] ++ asking_phrasings()
+  end
+
+  # Asking Blip, ending the run asking the user, and failing it.
+  defp asking_phrasings do
+    [
+      {~r/\Aask blip\s*:\s*(\S.*)\z/s, &ask_blip/1},
+      {~r/\Aask me\s*:\s*(\S.*)\z/s, &ask_me/1},
+      {~r/\Afail\s*:\s*(\S.*)\z/s, &fail/1}
+    ]
   end
 
   defp list_files([]), do: call("list_context_files", %{}, "Checking the context files.")
@@ -122,6 +151,20 @@ defmodule Photon.Threads.MockScript do
         %{"name" => name, "old_text" => old_text, "new_text" => new_text},
         "Editing #{name}."
       )
+
+  defp ask_blip([question]),
+    do: call("ask_blip", %{"question" => String.trim(question)}, "Asking Blip.")
+
+  # The question as the answer, so the run ends asking.
+  defp ask_me([question]) do
+    question
+    |> String.trim()
+    |> String.trim_trailing("?")
+    |> Kernel.<>("?")
+    |> Message.assistant()
+  end
+
+  defp fail([reason]), do: {:error, String.trim(reason)}
 
   defp call(tool, args, intro), do: Message.assistant(intro, [Mock.call(tool, args)])
 end

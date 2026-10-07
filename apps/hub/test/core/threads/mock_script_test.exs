@@ -115,4 +115,56 @@ defmodule Photon.Threads.MockScriptTest do
       assert help =~ "`load skill <name>`"
     end
   end
+
+  describe "ask blip" do
+    test "asks Blip the question, trimmed" do
+      asked = ask("ask blip:  which deploy branch? ")
+      assert calls(asked) == [{"ask_blip", %{"question" => "which deploy branch?"}}]
+      assert Message.text_of(asked) == "Asking Blip."
+
+      assert calls(ask("[Scheduled] ask blip: is the gate locked? (prose)")) ==
+               [{"ask_blip", %{"question" => "is the gate locked? (prose)"}}]
+    end
+
+    test "an empty question is only help" do
+      assert calls(ask("ask blip:")) == []
+    end
+
+    test "relays Blip's answer, and the user's" do
+      assert relay("Blip answered: staging") == "Blip answered: staging"
+
+      # Prose, a paragraph a line, not a code block that runs off the page.
+      assert relay("Blip asked the user: Which colour?\nThey answered: Sage green.") ==
+               "Blip asked the user: Which colour?\n\nThey answered: Sage green."
+
+      assert relay("Error: This question was withdrawn.") ==
+               "That didn't work: This question was withdrawn."
+    end
+
+    test "the help lists it" do
+      assert Message.text_of(ask("tidy the shed")) =~ "`ask blip: <question>`"
+    end
+  end
+
+  describe "run endings" do
+    test "ask me: answers with the question, so the run ends asking" do
+      asked = ask("ask me: which zone should I water first?")
+      assert calls(asked) == []
+      assert Message.text_of(asked) == "which zone should I water first?"
+
+      assert Message.text_of(ask("ask me:  should I order a valve ")) ==
+               "should I order a valve?"
+    end
+
+    test "fail: fails the model request with the reason" do
+      assert ask("fail: the pump is unplugged") == {:error, "the pump is unplugged"}
+      assert ask("[Scheduled] fail: no water") == {:error, "no water"}
+    end
+
+    test "the help lists both" do
+      help = Message.text_of(ask("tidy the shed"))
+      assert help =~ "`ask me: <question>`"
+      assert help =~ "`fail: <reason>`"
+    end
+  end
 end

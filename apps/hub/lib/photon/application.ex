@@ -34,10 +34,12 @@ defmodule Photon.Application do
   reverse: the local node and the endpoint stop before the durable harness,
   so nothing new arrives while it stops.
 
-  Projects, threads, skills and schedules add no process here: they are
-  rows behind their contexts' APIs, threads run on the durable harness,
-  and a schedule waits as a durable task, so a hub restart finds every
-  schedule where it was.
+  Projects, threads, skills, schedules, questions, signals and the
+  activity log add no process here: they are rows behind their contexts'
+  APIs, threads run on the durable harness, a schedule waits as a durable
+  task, a thread waiting on Blip's answer is its parked tool task, and a
+  signal is a message in Blip's conversation. So a hub restart finds
+  every schedule and every open question where it was.
   """
 
   use Boundary, top_level?: true, deps: [Photon, PhotonWeb, PhotonNode]

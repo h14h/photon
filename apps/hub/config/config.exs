@@ -33,6 +33,21 @@ config :photon, Photon.Durable,
     "thread_title" => Photon.Threads.Titling
   }
 
+# A thread whose last run was stopped (or never recorded an end) reads as
+# quiet once nothing has happened in it for this long (section 2.3 of
+# docs/plans/step-4-blip-as-coordinator.md).
+config :photon, Photon.Threads, quiet_after_hours: 72
+
+# Between two of the owner's messages, Blip can start or message threads at
+# most this many times on its own, so a loop between Blip and a thread
+# stops in code (section 5.4 of docs/plans/step-4-blip-as-coordinator.md).
+config :photon, Photon.Assistant, unattended_limit: 10
+
+# A thread's ask_blip call checks this often whether Blip's run went past
+# its question without handling it, and if so passes it to the owner
+# (section 4.6 of docs/plans/step-4-blip-as-coordinator.md).
+config :photon, Photon.Questions, check_ms: 60_000
+
 # How a machine tool call waits for its operation: it checks once a minute
 # (asking an online machine to push the op again), and gives up once the
 # machine has been offline for 10 minutes.

@@ -338,6 +338,12 @@
 .blip-bubble.is-failed .blip-bubble-tail {
   border-color: color-mix(in oklch, var(--color-bad) 35%, var(--color-line));
 }
+/* A thread's question for the owner: the waiting colour, so it reads as
+   something to answer, not something that broke. */
+.blip-bubble.is-question .blip-bubble-card,
+.blip-bubble.is-question .blip-bubble-tail {
+  border-color: color-mix(in oklch, var(--color-warn) 45%, var(--color-line));
+}
 
 .blip-bubble-close {
   position: absolute;

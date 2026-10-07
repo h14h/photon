@@ -5,22 +5,86 @@ defmodule Photon.Assistant.Notice do
   answer, whole, as Markdown. `PhotonWeb.BlipLive` drives these.
 
   Blip speaks up only about its own answers and failures in the
-  conversation (`from_entries/1`), never with tips.
+  conversation (`from_entries/1`), never with tips, and about a thread's
+  question once it is with the owner (`:question`): Blip's `ask_owner`
+  passing it on, in Blip's words, or the hub's notice that it passed on
+  one Blip didn't get to, in the thread's. So a question reaches the
+  owner with the panel shut. A signal message is never a notice; Blip's
+  reply to it is, as any answer is, except in a run that only handles
+  threads' questions (`Photon.Assistant.Origin`'s `quiet?`): there Blip
+  answers to the threads, so the owner hears only the questions it
+  passes on. `scan/2` follows the runs across batches for that.
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, Photon.Transcript]
+  use Boundary, type: :strict, deps: [PhotonCore, Photon.Transcript, Photon.Assistant.Origin]
 
+  alias Photon.Assistant.Origin
   alias Photon.Durable.Entry
   alias Photon.Transcript
   alias PhotonCore.Message
 
-  @typedoc "One thing Blip says: `:reply` (its answer) or `:error` (the conversation failed)."
-  @type t :: %{kind: :reply | :error, text: String.t()}
+  # The most of a question a bubble shows; the panel has all of it.
+  @question_limit 280
+
+  @typedoc """
+  One thing Blip says: `:reply` (its answer), `:error` (the conversation
+  failed) or `:question` (a thread's question is with the owner).
+  """
+  @type t :: %{kind: :reply | :error | :question, text: String.t()}
+
+  @typedoc """
+  What `scan/2` carries from one batch to the next: the sources of the
+  user entries of the run in progress (newest first), and whether the last run ended (a
+  model turn with no calls, or an error), so the next user entry starts
+  a new one.
+  """
+  @type state :: %{sources: [term()], ended?: boolean()}
+
+  @doc "The state before any entry: no run in progress."
+  @spec initial() :: state()
+  def initial, do: %{sources: [], ended?: true}
 
   @doc "What a batch of newly committed conversation entries is worth saying, in order."
   @spec from_entries([Entry.t()]) :: [t()]
-  def from_entries(entries), do: entries |> Enum.map(&of_entry/1) |> Enum.reject(&is_nil/1)
+  def from_entries(entries), do: entries |> scan(initial()) |> elem(0)
+
+  @doc """
+  `from_entries/1` for a batch that follows the batches `state` has seen:
+  what the batch is worth saying, and the state for the next batch. A
+  reply in a run that only handles threads' questions says nothing.
+  """
+  @spec scan([Entry.t()], state()) :: {[t()], state()}
+  def scan(entries, state) do
+    Enum.flat_map_reduce(entries, state, fn entry, state ->
+      state = follow(state, entry)
+      {entry |> of_entry(quiet?(state)) |> List.wrap(), ended(state, entry)}
+    end)
+  end
+
+  # A user entry joins the run in progress, or starts the next one.
+  defp follow(%{ended?: true}, %{kind: "user", data: data}),
+    do: %{sources: [source(data)], ended?: false}
+
+  defp follow(%{sources: sources}, %{kind: "user", data: data}),
+    do: %{sources: [source(data) | sources], ended?: false}
+
+  defp follow(state, _entry), do: state
+
+  # A user entry with no source is one the owner typed.
+  defp source(%{"source" => %{} = source}), do: source
+  defp source(_data), do: %{"kind" => "user"}
+
+  defp ended(state, %{kind: "assistant", data: data}),
+    do: %{state | ended?: Message.tool_calls(data["message"]) == []}
+
+  defp ended(state, %{kind: "error"}), do: %{state | ended?: true}
+  defp ended(state, _entry), do: state
+
+  defp quiet?(%{sources: sources}), do: Origin.of(sources).quiet?
+
+  defp of_entry(%{kind: "assistant"}, true = _quiet), do: nil
+  defp of_entry(entry, _quiet), do: of_entry(entry)
 
   defp of_entry(%{kind: "assistant", data: data}) do
     case data["message"] |> Message.text_of() |> paragraph() do
@@ -29,13 +93,44 @@ defmodule Photon.Assistant.Notice do
     end
   end
 
-  defp of_entry(%{kind: "error", data: data}) do
-    if Transcript.quiet?(data),
-      do: nil,
-      else: %{kind: :error, text: paragraph(data["message"] || "")}
+  defp of_entry(%{kind: "tool_result", data: data}) do
+    details = data["details"]
+
+    if Transcript.question_card(data),
+      do: question(details["title"], details["wording"]),
+      else: nil
+  end
+
+  defp of_entry(%{kind: "error", data: data} = entry) do
+    cond do
+      Transcript.escalation(entry) -> question(data["title"], data["question"])
+      Transcript.quiet?(data) -> nil
+      true -> %{kind: :error, text: paragraph(data["message"] || "")}
+    end
   end
 
   defp of_entry(_entry), do: nil
+
+  # `"Fix the pump" asks: <the question>`, the question on one line and
+  # cut to what a bubble holds.
+  defp question(title, text) do
+    title = if is_binary(title) and title != "", do: ~s("#{title}"), else: "A thread"
+
+    case one_line(text) do
+      "" -> %{kind: :question, text: title <> " has a question for you."}
+      text -> %{kind: :question, text: title <> " asks: " <> text}
+    end
+  end
+
+  defp one_line(text) when is_binary(text) do
+    text = text |> String.split() |> Enum.join(" ")
+
+    if String.length(text) > @question_limit,
+      do: String.slice(text, 0, @question_limit - 3) <> "...",
+      else: text
+  end
+
+  defp one_line(_text), do: ""
 
   @doc """
   What of `text` goes in the bubble: its first paragraph (or list, or other

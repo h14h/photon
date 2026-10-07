@@ -30,14 +30,22 @@ defmodule Photon.MachineToolsE2ETest do
   durable task fires on time and starts a thread whose scheduled prompt
   runs on the node in the project's folder, and that thread loads a skill
   turned on for the project.
+
+  The coordinator test (`docs/plans/step-4-blip-as-coordinator.md`,
+  section 12.4) walks step 4's demo path on the node: Blip starts a thread
+  that runs in its project's folder and hears how it ended, the thread
+  asks Blip one question Blip answers from its memory and one it passes to
+  the owner, and the activity log says who asked for each thing Blip did.
   """
 
   use Photon.DataCase, async: false
 
   import Photon.Eventually
 
-  alias Photon.{Assistant, Machines, Projects, Schedules, Skills, Threads}
+  alias Photon.{Activity, Assistant, Machines, Projects, Questions, Schedules, Skills, Threads}
+  alias Photon.Activity.Action
   alias Photon.Machines.Op
+  alias Photon.Questions.Question
   alias PhotonCore.Message
   alias PhotonNode.Executor.Journal
 
@@ -140,6 +148,42 @@ defmodule Photon.MachineToolsE2ETest do
   # Once the hub has acked a result, the node forgets the op's entry.
   defp await_forgotten(ops_dir, id),
     do: assert(eventually(fn -> Journal.read(ops_dir, id) == {:ok, nil} end, @wait))
+
+  # The thread's open question once it has `status`.
+  defp open_question(thread_id, status) do
+    eventually(
+      fn ->
+        case Questions.open_by_thread([thread_id]) do
+          %{^thread_id => [%Question{status: ^status} = question]} -> question
+          _other -> nil
+        end
+      end,
+      @wait
+    )
+  end
+
+  # The text of the thread's newest `ask_blip` result, once its message
+  # has settled.
+  defp ask_blip!(thread_id, submission_id) do
+    assert %{status: "done"} = await_settled(thread_id, submission_id, @wait)
+
+    assert %{"status" => "ok", "message" => message} =
+             thread_id |> results() |> Enum.filter(&(&1["name"] == "ask_blip")) |> List.last()
+
+    Message.text_of(message)
+  end
+
+  # Activity rows once one matches each of `wanted`, in that order.
+  defp activity!(wanted) do
+    eventually(
+      fn ->
+        {rows, _more?} = Activity.list(limit: 500)
+        found = Enum.map(wanted, fn fun -> Enum.find(rows, fun) end)
+        if Enum.all?(found), do: found
+      end,
+      @wait
+    )
+  end
 
   defp kill(pid) do
     ref = Process.monitor(pid)
@@ -361,5 +405,81 @@ defmodule Photon.MachineToolsE2ETest do
              List.last(results(started))
 
     assert Message.text_of(message) =~ "Run `echo hello` when asked to greet."
+  end
+
+  test "Blip coordinates a thread on the node: starts it, hears how it ended, answers its question from memory and passes another to the owner",
+       %{conversation: c, node: node} do
+    start_node(node)
+
+    {:ok, project} =
+      Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+
+    :ok = Assistant.put_memory("- deploy branch: staging")
+
+    # Blip starts a thread for the owner; it runs on the node in the
+    # project's folder.
+    {:ok, s} = Assistant.send("start thread in garden: on local: $ pwd")
+    assert %{status: "done"} = await_settled(c, s.id, @wait)
+    assert [%{id: thread_id}] = Threads.list(project.id)
+    :ok = Threads.subscribe(thread_id)
+    await_idle(thread_id)
+
+    assert String.ends_with?(String.trim(output(thread_id)), "/workspace/garden")
+
+    assert %{started_by: "blip", last_run_status: "done", last_run_asked: false} =
+             Threads.get(thread_id)
+
+    # Blip hears how the thread it started ended, and tells the owner.
+    update =
+      await_entry(
+        c,
+        &(&1.kind == "user" and &1.data["source"]["kind"] == "signal"),
+        @wait
+      )
+
+    assert Message.text_of(update.data["message"]) =~ "[Thread update]"
+    title = Threads.get(thread_id).title
+
+    told =
+      await_entry(
+        c,
+        &(&1.kind == "assistant" and Message.text_of(&1.data["message"]) =~ "in Garden finished"),
+        @wait
+      )
+
+    assert Message.text_of(told.data["message"]) == "#{title} in Garden finished."
+
+    # The thread asks Blip something its memory settles.
+    {:ok, asked} = Threads.send(thread_id, "ask blip: which deploy branch?")
+    assert ask_blip!(thread_id, asked.id) == "Blip answered: staging"
+
+    # And something it doesn't: Blip passes it to the owner, whose answer
+    # goes straight to the thread.
+    {:ok, asked} = Threads.send(thread_id, "ask blip: what colour is the gate?")
+    question = open_question(thread_id, "with_owner")
+    assert %Question{passed_by: "blip", question: "what colour is the gate?"} = question
+    assert %{state: :waiting} = Threads.state(thread_id)
+
+    assert {:ok, %Question{status: "answered", answered_by: "owner"}} =
+             Questions.answer(question.id, "green")
+
+    assert ask_blip!(thread_id, asked.id) =~ ~r/They answered: green$/
+    assert %{state: :unread, questions: []} = Threads.state(thread_id)
+
+    # The log says who asked for each thing Blip did.
+    [started, message, answered, passed] =
+      activity!([
+        &(&1.kind == "call" and &1.tool == "start_thread"),
+        &(&1.kind == "message" and &1.origin == "follow_up"),
+        &(&1.kind == "call" and &1.tool == "answer_question"),
+        &(&1.kind == "call" and &1.tool == "ask_owner")
+      ])
+
+    assert %Action{origin: "owner", origin_id: nil, thread_id: ^thread_id, status: "ok"} =
+             started
+
+    assert %Action{origin_id: ^thread_id, summary: "Told you: " <> _told} = message
+    assert %Action{origin: "thread", origin_id: ^thread_id, status: "ok"} = answered
+    assert %Action{origin: "thread", origin_id: ^thread_id, status: "ok"} = passed
   end
 end

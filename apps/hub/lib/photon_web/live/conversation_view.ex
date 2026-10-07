@@ -21,6 +21,13 @@ defmodule PhotonWeb.ConversationView do
     show of what it did; a page opened later has none of it);
   - `live` and `shown`: the in-flight answer, and its finished blocks;
   - `empty?`, `busy`, `queued`, and the composer's `mode` and `form`;
+  - `questions`: where each question the conversation put to the owner
+    stands (`Photon.Transcript.questions/3`), folded from the entries and
+    the answers still queued, and `cards`, the entry that shows each
+    one's card (the answer whose `ask_owner` call passed it on, or the
+    hub's escalation notice), so a card re-renders when its question
+    changes, as an answer re-renders when a call's result lands. Only
+    Blip's conversation has any;
   - the `:entries` stream of what the conversation shows.
 
   `apply_changes/4` folds a commit's `{:durable, ...}` changes in,
@@ -43,23 +50,40 @@ defmodule PhotonWeb.ConversationView do
   @spec mount_conversation(Socket.t(), [map()], keyword()) :: Socket.t()
   def mount_conversation(socket, entries, opts) do
     %{results: results, calls: calls} = Transcript.index(entries)
+    queued = Keyword.fetch!(opts, :queued)
 
     socket
     |> assign(
       results: results,
       calls: calls,
+      questions: Transcript.questions(entries, queued),
+      cards: Enum.reduce(entries, %{}, &add_card(&2, &1, calls)),
       outputs: %{},
       empty?: Transcript.empty?(entries),
       live: nil,
       shown: nil,
       busy: Keyword.fetch!(opts, :busy),
-      queued: Keyword.fetch!(opts, :queued),
+      queued: queued,
       mode: "follow_up",
       form: blank_form()
     )
     |> configure(opts[:dom_id])
     |> stream(:entries, Enum.filter(entries, &Transcript.shown?/1))
   end
+
+  @doc """
+  Closes the questions the conversation shows as open whose rows say
+  they are answered or withdrawn (`Photon.Transcript.close_from_rows/2`).
+  The page reads `rows` for `open_questions/1` after mounting.
+  """
+  @spec close_questions(Socket.t(), [map()]) :: Socket.t()
+  def close_questions(socket, rows),
+    do: update(socket, :questions, &Transcript.close_from_rows(&1, rows))
+
+  @doc "The IDs of the questions the conversation shows as open."
+  @spec open_questions(Socket.t()) :: [String.t()]
+  def open_questions(socket),
+    do: for({id, %{status: :open}} <- socket.assigns.questions, do: id)
 
   defp configure(socket, nil), do: socket
   defp configure(socket, dom_id), do: stream_configure(socket, :entries, dom_id: dom_id)
@@ -72,8 +96,38 @@ defmodule PhotonWeb.ConversationView do
   @spec apply_changes(Socket.t(), %{entries: [map()]}, boolean(), [map()]) :: Socket.t()
   def apply_changes(socket, changes, busy, queued) do
     socket = Enum.reduce(changes.entries, socket, &add_entry(&2, &1))
-    socket = assign(socket, queued: queued, busy: busy)
+    socket = socket |> assign(queued: queued, busy: busy) |> fold_questions(changes.entries)
     if busy, do: socket, else: assign(socket, live: nil, shown: nil)
+  end
+
+  # A question that changed re-renders the entry that shows its card.
+  defp fold_questions(socket, entries) do
+    %{questions: known, queued: queued, cards: cards} = socket.assigns
+    questions = Transcript.questions(entries, queued, known)
+
+    questions
+    |> Enum.filter(fn {id, question} -> known[id] != question and Map.has_key?(cards, id) end)
+    |> Enum.reduce(assign(socket, questions: questions), fn {id, _question}, socket ->
+      stream_insert(socket, :entries, cards[id])
+    end)
+  end
+
+  # The entry that shows a question's card: the answer that made the
+  # `ask_owner` call, or the escalation notice itself.
+  defp add_card(cards, %{kind: "tool_result"} = entry, calls) do
+    with id when is_binary(id) <- Transcript.question_card(entry.data),
+         %{} = parent <- calls[Transcript.call_id(entry)] do
+      Map.put(cards, id, parent)
+    else
+      _no_card -> cards
+    end
+  end
+
+  defp add_card(cards, entry, _calls) do
+    case Transcript.escalation(entry) do
+      nil -> cards
+      id -> Map.put(cards, id, entry)
+    end
   end
 
   @doc """
@@ -116,6 +170,7 @@ defmodule PhotonWeb.ConversationView do
 
     socket
     |> assign(results: results)
+    |> update(:cards, &add_card(&1, entry, socket.assigns.calls))
     |> update(:outputs, &Transcript.settle_output(&1, call_id, results[call_id]))
     |> show_call(call_id)
   end
@@ -129,7 +184,11 @@ defmodule PhotonWeb.ConversationView do
 
   defp add_entry(socket, entry) do
     if Transcript.shown?(entry),
-      do: socket |> assign(empty?: false) |> stream_insert(:entries, entry),
+      do:
+        socket
+        |> assign(empty?: false)
+        |> update(:cards, &add_card(&1, entry, socket.assigns.calls))
+        |> stream_insert(:entries, entry),
       else: socket
   end
 

@@ -26,6 +26,11 @@ defmodule Photon.Durable do
 
       config :photon, Photon.Durable, profiles: %{"assistant" => Photon.Assistant}
 
+  A profile may also hook into what the harness stores: `on_settled/3` when
+  a generation settles its input, `on_tool_result/4` when a tool call's
+  result is recorded, each inside the commit that stores it (see
+  `Photon.Durable.Profile`, and why hooks must never raise).
+
   Task kinds beyond the built-in `"generation"` and `"tool"` are registered
   the same way, under `:kinds`.
 
@@ -172,6 +177,15 @@ defmodule Photon.Durable do
   @spec busy_in_profile(String.t()) :: MapSet.t(String.t())
   def busy_in_profile(profile),
     do: profile |> Queries.busy_in_profile() |> Repo.all() |> MapSet.new()
+
+  @doc """
+  A conversation's newest `limit` entries that make up its exchange
+  (`"user"`, `"assistant"` and `"tool_result"`), oldest first: the recent
+  part of a transcript, for a reader that wants only the tail.
+  """
+  @spec recent_entries(String.t(), pos_integer()) :: [Entry.t()]
+  def recent_entries(conversation_id, limit),
+    do: Repo.all(Queries.recent_entries(conversation_id, limit))
 
   @doc "A conversation's newest `limit` entries of `kind`, newest first."
   @spec last_entries(String.t(), String.t(), pos_integer()) :: [Entry.t()]
@@ -325,22 +339,26 @@ defmodule Photon.Durable do
       withdraw (default: all of them)
 
   Input still queued once the run has been aborted starts the next run.
+  Returns the run marked for abort, or `:idle` when there was none.
   """
   @spec abort(String.t(), keyword()) :: TaskRecord.t() | :idle
-  def abort(conversation_id, opts \\ []) do
+  def abort(conversation_id, opts \\ []),
+    do: Store.commit(&abort_tx(&1, conversation_id, opts))
+
+  @doc "`abort/2` inside a commit."
+  @spec abort_tx(Tx.t(), String.t(), keyword()) :: TaskRecord.t() | :idle
+  def abort_tx(tx, conversation_id, opts \\ []) do
     withdraw? = Keyword.get(opts, :withdraw, fn _submission -> true end)
 
-    Store.commit(fn tx ->
-      tx
-      |> Tx.queued(conversation_id)
-      |> Enum.filter(withdraw?)
-      |> Enum.each(&Tx.update_submission(tx, &1, status: "withdrawn"))
+    tx
+    |> Tx.queued(conversation_id)
+    |> Enum.filter(withdraw?)
+    |> Enum.each(&Tx.update_submission(tx, &1, status: "withdrawn"))
 
-      case Tx.active_run(tx, conversation_id) do
-        nil -> :idle
-        task -> Tx.request_abort(tx, task)
-      end
-    end)
+    case Tx.active_run(tx, conversation_id) do
+      nil -> :idle
+      task -> Tx.request_abort(tx, task)
+    end
   end
 
   @doc false
@@ -366,6 +384,62 @@ defmodule Photon.Durable do
   end
 
   def continue_inbox(_tx, _task), do: :ok
+
+  ## Profile hooks
+
+  @doc false
+  # A generation settled the submissions it placed (`facts` is
+  # `Photon.Durable.Profile.settled/0` without the task): calls the
+  # conversation's profile's `on_settled/3` inside the same commit, when it
+  # has one. Total: a missing conversation or unknown profile calls nothing.
+  @spec settled(Tx.t(), TaskRecord.t(), map()) :: :ok
+  def settled(tx, %TaskRecord{} = task, facts) do
+    case hook(tx, task.conversation_id, :on_settled, 3) do
+      nil ->
+        :ok
+
+      {profile, conversation} ->
+        # The hook's own writes are in the commit; its return value says
+        # nothing the harness acts on, and a hook mustn't fail the commit.
+        _ = profile.on_settled(conversation, Map.put(facts, :task, task), tx)
+        :ok
+    end
+  end
+
+  @doc false
+  # A tool call's result was appended as `entry`: calls the profile's
+  # `on_tool_result/4` inside the same commit, when it has one. Total, as
+  # settled/3 is.
+  @spec tool_result(Tx.t(), TaskRecord.t(), Entry.t()) :: :ok
+  def tool_result(tx, %TaskRecord{} = task, %Entry{} = entry) do
+    case hook(tx, task.conversation_id, :on_tool_result, 4) do
+      nil ->
+        :ok
+
+      {profile, conversation} ->
+        # As in settled/3: the hook's writes are in the commit, and its
+        # return value is nothing the harness acts on.
+        _ = profile.on_tool_result(conversation, task, entry, tx)
+        :ok
+    end
+  end
+
+  # The profile module and conversation for a hook, or nil when the
+  # conversation is gone, its profile isn't registered, or the profile
+  # doesn't implement the hook. Never raises: it runs in the Scheduler's
+  # abort and fail commits.
+  defp hook(tx, conversation_id, callback, arity) when is_binary(conversation_id) do
+    with %Conversation{} = conversation <- Tx.get_conversation(tx, conversation_id),
+         profile when is_atom(profile) and profile != nil <-
+           Map.get(config(:profiles, %{}), conversation.profile),
+         true <- implements?(profile, callback, arity) do
+      {profile, conversation}
+    else
+      _missing -> nil
+    end
+  end
+
+  defp hook(_tx, _conversation_id, _callback, _arity), do: nil
 
   @doc "Starts a fresh context: the model stops seeing older entries, which stay stored."
   @spec reset(String.t(), String.t() | nil) :: Entry.t()

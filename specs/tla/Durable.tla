@@ -5,7 +5,10 @@
 (* routine task behind a schedule (Photon.Schedules.Routine), as built in  *)
 (* apps/hub/lib after build step 1, with step 3's schedules: a routine     *)
 (* that repeats, and the owner's edits and deletes that replace or retire  *)
-(* it (Photon.Schedules.update/3, delete/1).  Durable.md lists the         *)
+(* it (Photon.Schedules.update/3, delete/1), and step 4's ask_blip call    *)
+(* (Photon.Threads.Tools.AskBlip over Photon.Questions) with Blip's side   *)
+(* of it reduced to the question's carrier, and the settle hook            *)
+(* (Durable.settled/3, Profile.on_settled/3).  Durable.md lists the        *)
 (* findings and how they were fixed.  One conversation.                    *)
 (*                                                                         *)
 (* Granularity: every Store.commit is one atomic step (the Store runs     *)
@@ -44,9 +47,11 @@ CONSTANTS
                     \*   starts a new thread, another conversation (a count)
     BugEditKeepsOld,     \* bug switch: an edit doesn't mark the old routine
     BugFireIgnoresAbort, \* bug switch: the fire commit ignores the abort mark
+    BugAskUnfenced,      \* bug switch: Questions.ask/1 inserts whatever the task's state
+    BugAnswerAnyStatus,  \* bug switch: the owner's answer skips Rules.step/2's status check
     MaxRounds,      \* Turn.max_rounds/0 (60, in durable/turn.ex)
     MaxCalls,       \* most tool calls in one model response
-    ToolTypes,      \* subset of {"machine", "plain"}
+    ToolTypes,      \* subset of {"machine", "plain", "ask"}
     GenPolicy,      \* "all_settled" (Turn.wait_for_tools/2) or "fail_fast" (what-if)
     LLMErrors,      \* model requests may fail ({:error, _} from LLM.stream)
     MachineOffline, \* a machine call may find its machine offline when it checks
@@ -59,18 +64,21 @@ CONSTANTS
     MaxAborts       \* user Stop presses (Durable.abort/1)
 
 ASSUME MaxRounds >= 1 /\ MaxCalls >= 1 /\ NTools >= 0 /\ MaxRechecks >= 0
-ASSUME ToolTypes \subseteq {"machine", "plain"} /\ ToolTypes # {}
+ASSUME ToolTypes \subseteq {"machine", "plain", "ask"} /\ ToolTypes # {}
 ASSUME GenPolicy \in {"all_settled", "fail_fast"}
 ASSUME Cardinality(Routines) <= 1 /\ Routines \cap Spares = {}
 ASSUME MaxFires >= 1 /\ MaxEdits >= 0 /\ MaxDeletes >= 0
 ASSUME (Spares # {} \/ MaxEdits > 0 \/ MaxDeletes > 0) => Routines # {}
 ASSUME Target \in {"conv", "thread"}
 ASSUME BugEditKeepsOld \in BOOLEAN /\ BugFireIgnoresAbort \in BOOLEAN
+ASSUME BugAskUnfenced \in BOOLEAN /\ BugAnswerAnyStatus \in BOOLEAN
 
 -----------------------------------------------------------------------------
 (* Identifiers.  Ids are deterministic so the state space stays small:    *)
 (* tool task i is "t<i>", and a machine call's op row and signal are keyed *)
-(* by its task (the op ID is derived from the task ID, Wait.op_id/1).  A   *)
+(* by its task (the op ID is derived from the task ID, Wait.op_id/1), and  *)
+(* so are an ask call's question row and its signal "question:<id>" (one   *)
+(* question per call, found by task_id).  A                                *)
 (* routine r's k-th firing posts the submission "rs_<r>_<k>" (its request *)
 (* ID is "schedule:<id>:<task id>:<runs>", runs = k - 1).                 *)
 
@@ -95,7 +103,7 @@ Kind(id) == CASE id \in GenIds   -> "gen"
               [] OTHER           -> "routine"
 
 Terminal == {"done", "failed", "aborted"}            \* TaskRecord.terminal_statuses/0
-FinPcs   == {"fin_err", "fin_ok", "fin_int"}
+FinPcs   == {"fin_err", "fin_ok", "fin_int", "fin_ans"}
 
 VARIABLES
     task,         \* tasks table (task_record.ex); status "none" = not created
@@ -122,7 +130,19 @@ VARIABLES
     retired,      \* an edit or delete replaced the routine
     lateFire,     \* ghost: a fire step's commit landed after its routine was retired
     dupFire,      \* ghost: two firing commits for one routine and checkpoint
-    edits, deletes
+    edits, deletes,
+    q,            \* ask call t's question row (questions/question.ex): "none",
+                  \*   "asked", "with_owner", "answered", "withdrawn"
+    qsub,         \* its carrier, the submission in Blip's conversation that carries
+                  \*   the question signal: "none", "queued", "placed", "settled",
+                  \*   "withdrawn" (Signals.unpost_tx/2)
+    asks,         \* ghost: question rows inserted for t
+    answers,      \* ghost: answers accepted for t's question
+    lateAnswer,   \* ghost: an answer was accepted for a withdrawn question
+    qResult,      \* ghost: t's tool result is its question's answer (an ok result)
+    hooked,       \* ghost: the settle keys on_settled/3 ran for (a settled
+                  \*   submission, or "<gen>:end" for a settle that closed none)
+    dupHook       \* ghost: on_settled/3 ran twice for one key
 
 dbVars    == <<task, sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd>>
 rowVars   == <<row, rcx, signal>>
@@ -131,7 +151,11 @@ timeVars  == <<untilPassed, rechecks>>
 procVars  == <<steps, inc>>
 faultVars == <<hubCrashes, schedCrashes, stepCrashes, aborts>>
 schedVars == <<carrier, fires, retired, lateFire, dupFire, edits, deletes>>
-vars      == <<dbVars, rowVars, ghostVars, timeVars, procVars, faultVars, schedVars>>
+qVars     == <<q, qsub>>
+qGhosts   == <<asks, answers, lateAnswer, qResult>>
+hookVars  == <<hooked, dupHook>>
+askVars   == <<qVars, qGhosts, hookVars>>
+vars      == <<dbVars, rowVars, ghostVars, timeVars, procVars, faultVars, schedVars, askVars>>
 
 -----------------------------------------------------------------------------
 (* Records *)
@@ -229,7 +253,7 @@ CancelRow(t) ==
 
 \* Submissions
 Queued(sb)    == {x \in SubIds : sb[x].status = "queued"}
-Oldest(sb, q) == CHOOSE x \in q : \A y \in q : sb[x].ord <= sb[y].ord
+Oldest(sb, qd) == CHOOSE x \in qd : \A y \in qd : sb[x].ord <= sb[y].ord
 Place(sb, ss) == [x \in SubIds |-> IF x \in ss THEN [sb[x] EXCEPT !.status = "placed"]
                                    ELSE sb[x]]
 \* Generation.settle/4 (Turn.settlement/2): only "placed" ones
@@ -239,9 +263,9 @@ Settle(sb, ss, st) ==
 \* Generation.continue_with_inbox/3 (Inbox.next_input/1): all queued steers, else the
 \* oldest queued input
 NextInput(sb) ==
-    LET q == Queued(sb)
-        steers == {x \in q : sb[x].mode = "steer"}
-    IN  IF steers # {} THEN steers ELSE IF q = {} THEN {} ELSE {Oldest(sb, q)}
+    LET qd == Queued(sb)
+        steers == {x \in qd : sb[x].mode = "steer"}
+    IN  IF steers # {} THEN steers ELSE IF qd = {} THEN {} ELSE {Oldest(sb, qd)}
 
 \* Durable.submit_tx/4, inside a commit whose task table
 \* so far is tk.  A known request id returns the existing submission; busy
@@ -270,6 +294,28 @@ HandOff(id, tk, sb) ==
            Place(sb, nxt), nextGen + 1>>
     ELSE <<tk, sb, nextGen>>
 
+\* The settle hook (Durable.settled/3 -> the profile's on_settled/3), run by
+\* Generation right after each settle/4, inside the same commit, with the
+\* submissions that settle closed (the placed ones among ss, as sb has
+\* them before the settle).  Its signal key is "settle:<submission id>"
+\* for the first of them, or "settle:<generation id>:end" when it closed
+\* none (Signals, plan section 3.3), so a key seen twice is a hook run
+\* twice for one settle, or a signal posted twice.
+HookKeys(g, ss, sb) ==
+    LET closed == {x \in ss : sb[x].status = "placed"}
+    IN  IF closed = {} THEN {g \o ":end"} ELSE closed
+RunHook(g, ss, sb) ==
+    /\ hooked' = hooked \cup HookKeys(g, ss, sb)
+    /\ dupHook' = (dupHook \/ HookKeys(g, ss, sb) \cap hooked # {})
+
+\* Questions.withdraw_tx/2, an ask call's on_interrupt/2, in the commit that
+\* ends the call another way: an open question ("asked" or "with_owner")
+\* becomes "withdrawn", and a carrier still queued is taken back
+\* (Signals.unpost_tx/2).  A no-op for other tools (no question).
+Withdraw(t) ==
+    /\ q' = [q EXCEPT ![t] = IF @ \in {"asked", "with_owner"} THEN "withdrawn" ELSE @]
+    /\ qsub' = [qsub EXCEPT ![t] = IF @ = "queued" THEN "withdrawn" ELSE @]
+
 -----------------------------------------------------------------------------
 (* Step processes.  A step is spawned by Scheduler.start/2 (spawn_step/1) *)
 (* with the task as it was then: phase, runs, checkpoint.  pc              *)
@@ -293,7 +339,7 @@ StepExit(st)   == (steps \ {st}) \cup ExitSet(st)
 \* A Runtime.commit that came back :ignored: nothing is written.
 IgnoredCommit(st) ==
     /\ steps' = StepExit(st)
-    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars, askVars>>
 
 ---------------------------------------------------------------------------
 (* Generation (durable/generation.ex, decisions in durable/turn.ex) *)
@@ -301,13 +347,15 @@ IgnoredCommit(st) ==
 \* step("request"): one model request (no commit), then one Runtime.commit of
 \* answered/4 or of the failure (Generation.commit_result/4).  The model's answer is
 \* chosen at commit time; nothing between the call and the commit depends on it.
+\* Every branch that settles runs the settle hook in the same commit.
 GenRequest(st) ==
     LET g == st.t IN
     /\ Kind(g) = "gen" /\ st.pc = "go" /\ st.phase = "request"
     /\ IF Ignored(st) THEN IgnoredCommit(st)
        ELSE
        /\ steps' = StepDone(st)
-       /\ UNCHANGED <<toolResults, rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
+       /\ UNCHANGED <<toolResults, rowVars, ghostVars, timeVars, inc, faultVars, schedVars,
+                      qVars, qGhosts>>
        /\ \/ \* answer without tool calls: settle "done", continue with the
              \* inbox (Generation.follow/5, continue_with_inbox/3)
              LET sb1 == Settle(sub, st.subs, "done")
@@ -315,6 +363,7 @@ GenRequest(st) ==
              IN  /\ sub' = Place(sb1, nxt)
                  /\ task' = IF nxt = {} THEN FinishIn(task, g, "done")
                             ELSE NextIn(task, g, "request", nxt, 0)
+                 /\ RunHook(g, st.subs, sub)
                  /\ UNCHANGED <<orphanCalls, nextGen, nextTool, nextOrd>>
           \/ \* {:error, _}: error entry, settle "unanswered", then go on
              \* with the inbox like an answered run, or {:fail, _}
@@ -325,6 +374,7 @@ GenRequest(st) ==
                 IN  /\ sub' = Place(sb1, nxt)
                     /\ task' = IF nxt = {} THEN FinishIn(task, g, "failed")
                                ELSE NextIn(task, g, "request", nxt, 0)
+             /\ RunHook(g, st.subs, sub)
              /\ UNCHANGED <<orphanCalls, nextGen, nextTool, nextOrd>>
           \/ \* tool calls (Turn.outcome/2, Generation.follow/5)
              \E k \in 1..MaxCalls :
@@ -340,7 +390,7 @@ GenRequest(st) ==
                         IN  task' = WaitIn(tk1, g, ids, "none", FALSE, "after_tools",
                                            st.subs, st.rounds + 1)
                      /\ nextTool' = nextTool + k
-                     /\ UNCHANGED <<sub, orphanCalls, nextGen, nextOrd>>
+                     /\ UNCHANGED <<sub, orphanCalls, nextGen, nextOrd, hookVars>>
                 ELSE \* too many rounds: the assistant entry with the calls is
                      \* stored, each call gets a "Not run" tool_result in the
                      \* same commit, and the run goes on with the inbox or
@@ -350,6 +400,7 @@ GenRequest(st) ==
                         IN  /\ sub' = Place(sb1, nxt)
                             /\ task' = IF nxt = {} THEN FinishIn(task, g, "failed")
                                        ELSE NextIn(task, g, "request", nxt, 0)
+                     /\ RunHook(g, st.subs, sub)
                      /\ UNCHANGED <<orphanCalls, nextGen, nextTool, nextOrd>>
 
 \* step("after_tools"): place queued steers, request again (Turn.after_tools/2)
@@ -363,7 +414,7 @@ GenAfterTools(st) ==
             /\ task' = NextIn(task, g, "request", st.subs \cup steers, st.rounds)
             /\ steps' = StepDone(st)
             /\ UNCHANGED <<toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                           rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
+                           rowVars, ghostVars, timeVars, inc, faultVars, schedVars, askVars>>
 
 ---------------------------------------------------------------------------
 (* ToolTask (durable/tool_task.ex, durable/tool_call.ex) with the         *)
@@ -389,7 +440,7 @@ MStart(st) ==
             /\ steps' = StepTo(st, "park")
        ELSE /\ steps' = StepTo(st, "fin_err")
             /\ UNCHANGED row
-    /\ UNCHANGED <<dbVars, rcx, signal, ghostVars, timeVars, inc, faultVars, schedVars>>
+    /\ UNCHANGED <<dbVars, rcx, signal, ghostVars, timeVars, inc, faultVars, schedVars, askVars>>
 
 \* {:wait, %{"signal" => "op:<id>", "until" => ...}, state} committed by
 \* Runtime.transition (ToolCall.park/2), with offline_since if the machine
@@ -403,7 +454,7 @@ MPark(st) ==
             /\ untilPassed' = [untilPassed EXCEPT ![t] = FALSE]
             /\ steps' = StepDone(st)
             /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                           rowVars, ghostVars, rechecks, inc, faultVars, schedVars>>
+                           rowVars, ghostVars, rechecks, inc, faultVars, schedVars, askVars>>
 
 \* Call.resume/2 reads the row (Machines.op_state/1) and, for an open one,
 \* whether the machine is online, then decides with Wait.next/4: finished
@@ -424,7 +475,7 @@ MResume(st) ==
     IN
     /\ IsMachine(st) /\ st.phase = "resume" /\ st.pc = "go"
     /\ \E nxt \in choices : steps' = StepTo(st, nxt)
-    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars, askVars>>
 
 \* Park again: Runtime.transition with {:wait, ...}.
 MRepark(st) ==
@@ -436,7 +487,7 @@ MRepark(st) ==
             /\ rechecks' = [rechecks EXCEPT ![t] = @ + 1]
             /\ steps' = StepDone(st)
             /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                           rowVars, ghostVars, inc, faultVars, schedVars>>
+                           rowVars, ghostVars, inc, faultVars, schedVars, askVars>>
 
 \* {:commit, fun} from Call.resume/2: the commit that records the result
 \* decides on the row as it is then.  claim_tx/2 (and abandon_tx/2, for a
@@ -460,7 +511,7 @@ MClaim(st) ==
                ELSE /\ CancelRow(t)
                     /\ UNCHANGED <<claims, opResult>>
             /\ UNCHANGED <<sub, orphanCalls, nextGen, nextTool, nextOrd, signal,
-                           execCount, timeVars, inc, faultVars, schedVars>>
+                           execCount, timeVars, inc, faultVars, schedVars, askVars>>
 
 \* A plain tool with replay :unsafe: a rerun (runs > 1) reports
 \* "interrupted" instead of executing again (ToolCall.plan/3).
@@ -472,13 +523,19 @@ PlainRun(st) ==
             /\ UNCHANGED execCount
        ELSE /\ execCount' = [execCount EXCEPT ![t] = @ + 1]
             /\ steps' = StepTo(st, "fin_ok")
-    /\ UNCHANGED <<dbVars, rowVars, claims, opResult, timeVars, inc, faultVars, schedVars>>
+    /\ UNCHANGED <<dbVars, rowVars, claims, opResult, timeVars, inc, faultVars, schedVars, askVars>>
 
 \* ToolTask.finish: the tool_result entry and {:done} in one Runtime.commit.
 \* A machine call's error result cancels its op in the same commit
 \* (Call.fail/2 -> cancel_tx/2, hub rule 10), and so does the commit that
 \* records a raise ToolTask rescued (ToolTask.raised/3 runs on_interrupt/2).
-\* For a plain tool there is no row, so CancelRow changes nothing.
+\* For a plain tool there is no row, so CancelRow changes nothing.  An ask
+\* call's answer ("fin_ans", AskBlip.resume/2 on an answered question)
+\* is its ok result; its error results (stopped before the ask, a
+\* withdrawn or missing question, a rescued raise) run on_interrupt/2's
+\* withdraw, which only a raise finds anything to do for.  The
+\* on_tool_result/4 hook runs in this commit too; toolResults already
+\* counts it.
 ToolFinish(st) ==
     LET t == st.t IN
     /\ Kind(t) = "tool" /\ st.pc \in FinPcs
@@ -487,8 +544,107 @@ ToolFinish(st) ==
             /\ task' = FinishIn(task, t, "done")
             /\ steps' = StepDone(st)
             /\ CancelRow(t)
+            /\ IF st.pc = "fin_ans"
+               THEN /\ qResult' = [qResult EXCEPT ![t] = TRUE]
+                    /\ UNCHANGED qVars
+               ELSE /\ Withdraw(t)
+                    /\ UNCHANGED qResult
             /\ UNCHANGED <<sub, orphanCalls, nextGen, nextTool, nextOrd, signal,
-                           ghostVars, timeVars, inc, faultVars, schedVars>>
+                           ghostVars, timeVars, inc, faultVars, schedVars,
+                           asks, answers, lateAnswer, hookVars>>
+
+---------------------------------------------------------------------------
+(* ask_blip (threads/tools/ask_blip.ex, AskBlip) over Photon.Questions     *)
+(* (questions.ex, rules in questions/rules.ex, Rules) and Photon.Signals   *)
+(* (signals.ex).  replay :safe.  The call's question and its signal are    *)
+(* keyed by the task.                                                      *)
+
+IsAsk(st) == Kind(st.t) = "tool" /\ task[st.t].ttype = "ask"
+
+\* AskBlip.execute/2 up to Questions.ask/1, a Store commit of its own, not
+\* the step's, so the start token doesn't fence it.  A question with this
+\* task_id is returned as it is (a rerun after a restart parks on it
+\* again).  Otherwise the question is inserted ("asked") and its signal
+\* posted into Blip's conversation (Signals.post_tx/2; the carrier is
+\* queued, and BlipPlace stands for a Blip run placing it, at once when
+\* Blip is idle) only while the task is unfinished and not marked for
+\* abort (Rules.askable?/1, hub rule 9's shape); else {:error, :stopped}
+\* and the call's error result.  BugAskUnfenced drops that check.
+QAsk(st) ==
+    LET t == st.t IN
+    /\ IsAsk(st) /\ st.phase = "run" /\ st.pc = "go"
+    /\ CASE q[t] # "none" ->
+              /\ steps' = StepTo(st, "park")
+              /\ UNCHANGED <<qVars, asks>>
+         [] (LiveIn(task, t) /\ ~task[t].abort) \/ BugAskUnfenced ->
+              /\ q' = [q EXCEPT ![t] = "asked"]
+              /\ qsub' = [qsub EXCEPT ![t] = "queued"]
+              /\ asks' = [asks EXCEPT ![t] = @ + 1]
+              /\ steps' = StepTo(st, "park")
+         [] OTHER ->
+              /\ steps' = StepTo(st, "fin_err")
+              /\ UNCHANGED <<qVars, asks>>
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars,
+                   answers, lateAnswer, qResult, hookVars>>
+
+\* {:wait, %{"signal" => "question:<id>", "until" => now + check_ms}, ...}
+\* through Runtime.transition (ToolCall.park/2): the first park, and
+\* again while Blip still has the question and its carrier is queued or
+\* placed ("q_repark", a recheck).
+QPark(st) ==
+    LET t == st.t IN
+    /\ IsAsk(st) /\ st.pc \in {"park", "q_repark"}
+    /\ IF Ignored(st) THEN IgnoredCommit(st)
+       ELSE /\ task' = Park(task, t, FALSE)
+            /\ untilPassed' = [untilPassed EXCEPT ![t] = FALSE]
+            /\ rechecks' = IF st.pc = "q_repark" THEN [rechecks EXCEPT ![t] = @ + 1]
+                            ELSE rechecks
+            /\ steps' = StepDone(st)
+            /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
+                           rowVars, ghostVars, inc, faultVars, schedVars, askVars>>
+
+\* {:wait, %{"signal" => "question:<id>"}, ...}: the signal alone, once the
+\* question is with the owner; only an answer or a stop moves it now.
+QParkSig(st) ==
+    LET t == st.t IN
+    /\ IsAsk(st) /\ st.pc = "park_sig"
+    /\ IF Ignored(st) THEN IgnoredCommit(st)
+       ELSE /\ task' = WaitIn(task, t, {}, t, FALSE, "resume", {}, 0)
+            /\ untilPassed' = [untilPassed EXCEPT ![t] = FALSE]
+            /\ steps' = StepDone(st)
+            /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
+                           rowVars, ghostVars, rechecks, inc, faultVars, schedVars, askVars>>
+
+\* AskBlip.resume/2 reads the question (Questions.get/1) and its carrier's
+\* status, outside any commit: answered -> the answer as the result
+\* (Rules.result/1); with the owner -> park on the signal alone; asked
+\* with the carrier queued or placed -> park again with a new until;
+\* asked with the carrier settled or withdrawn (Rules.escalate?/2) ->
+\* escalate; withdrawn or missing -> an error result.
+QResume(st) ==
+    LET t == st.t
+        nxt == CASE q[t] = "answered" -> "fin_ans"
+                 [] q[t] = "with_owner" -> "park_sig"
+                 [] q[t] = "asked" /\ qsub[t] \in {"queued", "placed"} -> "q_repark"
+                 [] q[t] = "asked" -> "escalate"
+                 [] OTHER -> "fin_err"
+    IN
+    /\ IsAsk(st) /\ st.phase = "resume" /\ st.pc = "go"
+    /\ steps' = StepTo(st, nxt)
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars, askVars>>
+
+\* Questions.escalate/1: its own commit, unfenced, which re-checks the
+\* question and its carrier and, if Blip still hasn't handled it, passes
+\* it to the owner ({:pass, :hub}, with a notice in Blip's conversation);
+\* then the call parks on the signal alone.
+QEscalate(st) ==
+    LET t == st.t IN
+    /\ IsAsk(st) /\ st.pc = "escalate"
+    /\ q' = IF q[t] = "asked" /\ qsub[t] \in {"settled", "withdrawn"}
+            THEN [q EXCEPT ![t] = "with_owner"] ELSE q
+    /\ steps' = StepTo(st, "park_sig")
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars,
+                   qsub, qGhosts, hookVars>>
 
 ---------------------------------------------------------------------------
 (* The routine behind a schedule (schedules/routine.ex), and the owner's  *)
@@ -505,7 +661,7 @@ RoutineStart(st) ==
             /\ untilPassed' = [untilPassed EXCEPT ![r] = FALSE]
             /\ steps' = StepDone(st)
             /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                           rowVars, ghostVars, rechecks, inc, faultVars, schedVars>>
+                           rowVars, ghostVars, rechecks, inc, faultVars, schedVars, askVars>>
 
 \* The fence of the fire step's Runtime.commit: Ignored(st), or with
 \* BugFireIgnoresAbort a fence that only checks the start token.
@@ -557,7 +713,7 @@ RoutineFire(st) ==
                   ELSE /\ task' = AfterFire(task, r, k)
                        /\ UNCHANGED <<sub, nextGen, nextOrd>>
        /\ UNCHANGED <<toolResults, orphanCalls, nextTool, rowVars, ghostVars, rechecks,
-                      inc, faultVars, carrier, retired, edits, deletes>>
+                      inc, faultVars, carrier, retired, edits, deletes, askVars>>
 
 \* Schedules.update/3 (the project page's form), in one commit: the old
 \* task is marked for abort, background included (Tx.request_abort/3 with
@@ -578,7 +734,7 @@ OwnerEdit ==
     /\ edits' = edits + 1
     /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd, rowVars,
                    ghostVars, timeVars, procVars, faultVars, fires, lateFire, dupFire,
-                   deletes>>
+                   deletes, askVars>>
 
 \* Schedules.delete/1 (and Blip's cancel_schedule, delete_tx/3), in one
 \* commit: the task is marked for abort and the row deleted.
@@ -591,12 +747,13 @@ OwnerDelete ==
     /\ deletes' = deletes + 1
     /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd, rowVars,
                    ghostVars, timeVars, procVars, faultVars, fires, lateFire, dupFire,
-                   edits>>
+                   edits, askVars>>
 
 StepAct(st) ==
     \/ GenRequest(st) \/ GenAfterTools(st)
     \/ MStart(st) \/ MPark(st) \/ MResume(st) \/ MRepark(st) \/ MClaim(st)
     \/ PlainRun(st) \/ ToolFinish(st)
+    \/ QAsk(st) \/ QPark(st) \/ QParkSig(st) \/ QResume(st) \/ QEscalate(st)
     \/ RoutineStart(st) \/ RoutineFire(st)
 
 ---------------------------------------------------------------------------
@@ -615,7 +772,7 @@ SchedStart(id) ==
                              subs |-> task[id].subs, rounds |-> task[id].rounds,
                              off |-> task[id].off, fired |-> task[id].fired]}
     /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                   rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
+                   rowVars, ghostVars, timeVars, inc, faultVars, schedVars, askVars>>
 
 \* Scheduler.wake?/2 and Policy.wake?/3 (its on_ready?/3); a missing task counts
 \* as done
@@ -642,7 +799,7 @@ SchedWake(id) ==
     /\ WakeReady(id)
     /\ task' = [FailFastIn(task, id) EXCEPT ![id].status = "pending"]
     /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                   rowVars, ghostVars, timeVars, procVars, faultVars, schedVars>>
+                   rowVars, ghostVars, timeVars, procVars, faultVars, schedVars, askVars>>
 
 \* stop_aborted/2, first half: terminate_child for a marked task whose step
 \* this Scheduler is running (Policy.steps_to_kill/2).  A step that already
@@ -650,17 +807,22 @@ SchedWake(id) ==
 SchedKill(id) ==
     /\ task[id].abort /\ LiveIn(task, id)
     /\ \E st \in CurSteps(id) : st.pc # "exited" /\ steps' = steps \ {st}
-    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars>>
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, faultVars, schedVars, askVars>>
 
 \* on_abort/on_fail hooks run in the commit that ends the task that way.
-\* Generation settles its submissions; ToolTask records the result, and a
-\* machine call's on_interrupt/2 cancels its op (Call.on_interrupt/2 ->
-\* cancel_tx/2).
+\* Generation settles its submissions and runs the settle hook
+\* (Durable.settled/3 with "stopped" or "failed"); ToolTask records the
+\* result, and the tool's on_interrupt/2 runs: a machine call cancels its
+\* op (Call.on_interrupt/2 -> cancel_tx/2), an ask call withdraws its
+\* question (Questions.withdraw_tx/2).
 OnAbortSb(id, sb) ==
     IF Kind(id) = "gen" THEN Settle(sb, task[id].subs, "unanswered") ELSE sb
 OnAbortTr(id) ==
     IF Kind(id) = "tool" THEN [toolResults EXCEPT ![id] = @ + 1] ELSE toolResults
 OnAbortRow(id) == IF Kind(id) = "tool" THEN CancelRow(id) ELSE UNCHANGED <<row, rcx>>
+OnAbortQ(id) == IF Kind(id) = "tool" THEN Withdraw(id) ELSE UNCHANGED qVars
+OnAbortHook(id) ==
+    IF Kind(id) = "gen" THEN RunHook(id, task[id].subs, sub) ELSE UNCHANGED hookVars
 
 \* stop_aborted/2, second half: a marked task with no live foreground work is
 \* aborted, bottom-up (Policy.ready_to_abort/1, Scheduler.abort_tx/2).  Its kills come first.
@@ -674,8 +836,10 @@ SchedAbort(id) ==
        IN  /\ task' = r[1] /\ sub' = r[2] /\ nextGen' = r[3]
     /\ toolResults' = OnAbortTr(id)
     /\ OnAbortRow(id)
+    /\ OnAbortQ(id)
+    /\ OnAbortHook(id)
     /\ UNCHANGED <<orphanCalls, nextTool, nextOrd, signal, ghostVars, timeVars,
-                   procVars, faultVars, schedVars>>
+                   procVars, faultVars, schedVars, qGhosts>>
 
 \* A step's result or :DOWN: if the task is still "running" the step ended
 \* without a transition (or crashed), so it fails (Scheduler.fail/2 with
@@ -691,9 +855,11 @@ SchedExit(st) ==
                IN  /\ task' = r[1] /\ sub' = r[2] /\ nextGen' = r[3]
             /\ toolResults' = OnAbortTr(st.t)
             /\ OnAbortRow(st.t)
+            /\ OnAbortQ(st.t)
+            /\ OnAbortHook(st.t)
             /\ UNCHANGED <<orphanCalls, nextTool, nextOrd, signal>>
-       ELSE UNCHANGED <<dbVars, rowVars>>
-    /\ UNCHANGED <<ghostVars, timeVars, inc, faultVars, schedVars>>
+       ELSE UNCHANGED <<dbVars, rowVars, qVars, hookVars>>
+    /\ UNCHANGED <<ghostVars, timeVars, inc, faultVars, schedVars, qGhosts>>
 
 ---------------------------------------------------------------------------
 (* The user, the machine, and time *)
@@ -707,7 +873,7 @@ UserSubmit(u) ==
          /\ nextGen' = SubmitGen(task, sub, u)
          /\ nextOrd' = SubmitOrd(sub, u)
     /\ UNCHANGED <<toolResults, orphanCalls, nextTool, rowVars, ghostVars, timeVars,
-                   procVars, faultVars, schedVars>>
+                   procVars, faultVars, schedVars, askVars>>
 
 \* Assistant.stop -> Durable.abort/2: withdraw the user's queued input
 \* (scheduled prompts stay, Submission.background?/1), mark the run.  This
@@ -721,7 +887,7 @@ UserAbort ==
     /\ task' = IF IdleIn(task) THEN task
                ELSE ReqAbort(task, CHOOSE r \in ActiveRunsIn(task) : TRUE)
     /\ UNCHANGED <<toolResults, orphanCalls, nextGen, nextTool, nextOrd, rowVars,
-                   ghostVars, timeVars, procVars, hubCrashes, schedCrashes, stepCrashes, schedVars>>
+                   ghostVars, timeVars, procVars, hubCrashes, schedCrashes, stepCrashes, schedVars, askVars>>
 
 \* The machine's terminal snapshot: Machines.snapshot/3 with
 \* Rules.on_snapshot/3 (hub rule 4) in one Store commit: an open row
@@ -731,16 +897,83 @@ OpFinish(t) ==
     /\ row[t] = "open"
     /\ row' = [row EXCEPT ![t] = IF rcx[t] THEN "closed" ELSE "finished"]
     /\ signal' = [signal EXCEPT ![t] = TRUE]
-    /\ UNCHANGED <<dbVars, rcx, ghostVars, timeVars, procVars, faultVars, schedVars>>
+    /\ UNCHANGED <<dbVars, rcx, ghostVars, timeVars, procVars, faultVars, schedVars, askVars>>
 
 \* A waiting task's deadline passes; the Scheduler's timer (arm_timer/1,
-\* Policy.timer_delay/2) then reconciles.  A machine call's rechecks are
-\* bounded (MaxRechecks).
+\* Policy.timer_delay/2) then reconciles.  A tool call's rechecks are
+\* bounded (MaxRechecks), except an ask call's once its carrier has
+\* settled: then the next check escalates or stops checking, so the
+\* escalation is always reached (without the exception a model run could
+\* spend the budget while the carrier is still queued).
+AskCheckDue(id) == task[id].ttype = "ask" /\ qsub[id] \in {"settled", "withdrawn"}
 Tick(id) ==
     /\ task[id].status = "waiting" /\ task[id].wUntil /\ ~untilPassed[id]
-    /\ Kind(id) = "tool" => rechecks[id] < MaxRechecks
+    /\ Kind(id) = "tool" => (rechecks[id] < MaxRechecks \/ AskCheckDue(id))
     /\ untilPassed' = [untilPassed EXCEPT ![id] = TRUE]
-    /\ UNCHANGED <<dbVars, rowVars, ghostVars, rechecks, procVars, faultVars, schedVars>>
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, rechecks, procVars, faultVars, schedVars, askVars>>
+
+---------------------------------------------------------------------------
+(* Blip's side of a question.  Blip's conversation is reduced to the       *)
+(* question's carrier: a Blip run places it, and the run settles it        *)
+(* whether or not Blip acted (it answered, passed it on, replied in prose, *)
+(* failed, hit the round limit, or the owner stopped it; Blip's Stop keeps *)
+(* a queued carrier, which is background input, Submission.background?/1). *)
+(* Merging a question into a queued carrier is one commit that edits a     *)
+(* queued row, so it is this carrier too.  Blip's tools may name the       *)
+(* question at any time after it was asked, since list_threads and         *)
+(* read_thread show open questions, so its answer and pass are not tied to *)
+(* the carrier being placed.  Refused steps write nothing and are left     *)
+(* out.                                                                    *)
+
+\* Rules.step/2 accepting an answer: Blip's answer_question while Blip has
+\* the question ({:blip, _}), or while it is with the owner when the owner
+\* typed into Blip's run ({:blip, true}, Blip relaying what they said; the
+\* refusal of {:blip, false} is pure and not modeled); the owner's own
+\* answer only while the question is with them.
+BlipMayAnswer(st)  == st \in {"asked", "with_owner"}
+OwnerMayAnswer(st) == st = "with_owner" \/ (BugAnswerAnyStatus /\ st # "none")
+
+\* Questions.answer_tx/4: the status, the answer, and the signal
+\* "question:<id>" that wakes the call, in one commit.  The bug switch can
+\* answer again, so answers is bounded to keep the state space finite.
+Answer(t) ==
+    /\ answers[t] < 2
+    /\ q' = [q EXCEPT ![t] = "answered"]
+    /\ signal' = [signal EXCEPT ![t] = TRUE]
+    /\ answers' = [answers EXCEPT ![t] = @ + 1]
+    /\ lateAnswer' = (lateAnswer \/ q[t] = "withdrawn")
+    /\ UNCHANGED <<dbVars, row, rcx, ghostVars, timeVars, procVars, faultVars, schedVars,
+                   qsub, asks, qResult, hookVars>>
+
+\* A Blip run places the carrier (Inbox.next_input/1 once Blip's run ends,
+\* or at once when Blip was idle), and that run settles it.
+BlipPlace(t) ==
+    /\ qsub[t] = "queued"
+    /\ qsub' = [qsub EXCEPT ![t] = "placed"]
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, procVars, faultVars, schedVars,
+                   q, qGhosts, hookVars>>
+BlipSettle(t) ==
+    /\ qsub[t] = "placed"
+    /\ qsub' = [qsub EXCEPT ![t] = "settled"]
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, procVars, faultVars, schedVars,
+                   q, qGhosts, hookVars>>
+
+\* answer_question: {:commit, fn tx -> Questions.answer_tx(tx, id, text,
+\* {:blip, owner_wrote?}) end}
+BlipAnswer(t) == BlipMayAnswer(q[t]) /\ Answer(t)
+
+\* ask_owner: Questions.pass_tx/4 with {:pass, :blip}
+BlipPass(t) ==
+    /\ q[t] = "asked"
+    /\ q' = [q EXCEPT ![t] = "with_owner"]
+    /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, procVars, faultVars, schedVars,
+                   qsub, qGhosts, hookVars>>
+
+\* Questions.answer/2 from Blip's card, the home page or the thread page:
+\* answer_tx/4 with {:answer, :owner} (and Signals.answer_tx/3, which only
+\* writes into Blip's conversation).  BugAnswerAnyStatus skips the status
+\* check.
+OwnerAnswer(t) == OwnerMayAnswer(q[t]) /\ Answer(t)
 
 ---------------------------------------------------------------------------
 (* Faults *)
@@ -757,7 +990,7 @@ HubCrash ==
     /\ steps' = {}
     /\ task' = RunningToPending
     /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                   rowVars, ghostVars, timeVars, inc, schedCrashes, stepCrashes, aborts, schedVars>>
+                   rowVars, ghostVars, timeVars, inc, schedCrashes, stepCrashes, aborts, schedVars, askVars>>
 
 \* Only the Scheduler process dies; its supervisor (Durable.Supervisor,
 \* one_for_one) restarts it.  Steps run under the separate Durable.TaskSupervisor via
@@ -771,20 +1004,23 @@ SchedCrash ==
     /\ steps' = {st \in steps : st.pc # "exited"}
     /\ task' = RunningToPending
     /\ UNCHANGED <<sub, toolResults, orphanCalls, nextGen, nextTool, nextOrd,
-                   rowVars, ghostVars, timeVars, hubCrashes, stepCrashes, aborts, schedVars>>
+                   rowVars, ghostVars, timeVars, hubCrashes, stepCrashes, aborts, schedVars, askVars>>
 
 \* A step exits abnormally before finishing (the :DOWN path), or, in a
-\* machine call's own code, raises: ToolTask rescues the raise and records
-\* an error result, whose commit runs on_interrupt/2 (hub rule 10).
-RaisePcs == {"go", "park", "repark_on", "repark_off"}
+\* machine or ask call's own code, raises: ToolTask rescues the raise and
+\* records an error result, whose commit runs on_interrupt/2 (hub rule 10;
+\* for an ask call, the withdraw).
+RaisePcs    == {"go", "park", "repark_on", "repark_off"}
+AskRaisePcs == {"go", "park", "q_repark", "escalate", "park_sig"}
 StepCrash(st) ==
     /\ stepCrashes < MaxStepCrashes
     /\ st.pc # "exited"
     /\ stepCrashes' = stepCrashes + 1
     /\ \/ steps' = StepExit(st)
        \/ IsMachine(st) /\ st.pc \in RaisePcs /\ steps' = StepTo(st, "fin_err")
+       \/ IsAsk(st) /\ st.pc \in AskRaisePcs /\ steps' = StepTo(st, "fin_err")
     /\ UNCHANGED <<dbVars, rowVars, ghostVars, timeVars, inc, hubCrashes, schedCrashes, aborts,
-                   schedVars>>
+                   schedVars, askVars>>
 
 ---------------------------------------------------------------------------
 
@@ -810,6 +1046,14 @@ Init ==
     /\ retired = [r \in RoutineIds |-> FALSE]
     /\ lateFire = FALSE /\ dupFire = FALSE
     /\ edits = 0 /\ deletes = 0
+    /\ q = [t \in ToolIds |-> "none"]
+    /\ qsub = [t \in ToolIds |-> "none"]
+    /\ asks = [t \in ToolIds |-> 0]
+    /\ answers = [t \in ToolIds |-> 0]
+    /\ lateAnswer = FALSE
+    /\ qResult = [t \in ToolIds |-> FALSE]
+    /\ hooked = {}
+    /\ dupHook = FALSE
 
 Next ==
     \/ \E u \in Users : UserSubmit(u)
@@ -824,6 +1068,8 @@ Next ==
     \/ \E st \in steps : StepAct(st)
     \/ \E st \in steps : StepCrash(st)
     \/ \E t \in ToolIds : OpFinish(t)
+    \/ \E t \in ToolIds : BlipPlace(t) \/ BlipSettle(t) \/ BlipAnswer(t) \/ BlipPass(t)
+    \/ \E t \in ToolIds : OwnerAnswer(t)
     \/ \E id \in TaskIds : Tick(id)
     \/ HubCrash
     \/ SchedCrash
@@ -834,13 +1080,17 @@ Next ==
 \* running; time passes; and an op eventually ends on its machine (the
 \* command finishes, or is canceled, once the machine is back; there is no
 \* timeout on a running command, so without this a call may wait for
-\* good).  The user, the owner's edits and deletes, and faults get no
-\* fairness.
+\* good).  Blip's conversation moves on too: a queued carrier is placed
+\* once Blip's current run ends, and a placed one settles when that run
+\* does (this spec checks both for the modeled conversation:
+\* QueuedNotStranded, PlacedSettles).  Whether Blip answers or passes a
+\* question is its choice, so those get no fairness.  The user, the
+\* owner's answers, edits and deletes, and faults get no fairness.
 SysNext ==
     \/ \E id \in TaskIds : SchedStart(id) \/ SchedWake(id) \/ SchedKill(id) \/ SchedAbort(id)
     \/ \E st \in steps : SchedExit(st) \/ StepAct(st)
     \/ \E id \in TaskIds : Tick(id)
-    \/ \E t \in ToolIds : OpFinish(t)
+    \/ \E t \in ToolIds : OpFinish(t) \/ BlipPlace(t) \/ BlipSettle(t)
 
 StepOf(id) == \E st \in steps : st.t = id /\ StepAct(st)
 ExitOf(id) == \E st \in steps : st.t = id /\ SchedExit(st)
@@ -852,7 +1102,7 @@ FairnessFine ==
          /\ WF_vars(SchedKill(id))  /\ WF_vars(SchedAbort(id))
          /\ WF_vars(ExitOf(id))     /\ WF_vars(StepOf(id))
          /\ WF_vars(Tick(id))
-    /\ \A t \in ToolIds : WF_vars(OpFinish(t))
+    /\ \A t \in ToolIds : WF_vars(OpFinish(t)) /\ WF_vars(BlipPlace(t)) /\ WF_vars(BlipSettle(t))
 
 \* One weak-fairness condition on all system actions.  This is weaker than
 \* FairnessFine (it allows more behaviors), so a liveness property that holds
@@ -863,10 +1113,19 @@ Fairness == WF_vars(SysNext)
 Spec     == Init /\ [][Next]_vars /\ Fairness
 SpecFine == Init /\ [][Next]_vars /\ FairnessFine
 
+\* A question with the owner waits for them with no time limit, by design
+\* (plan section 4.7), and so does the thread's run around it.  Liveness
+\* of that run (PlacedSettles with an ask call) holds only if the owner
+\* eventually answers a question passed to them, or stops the thread.
+OwnerAnswers      == \A t \in ToolIds : WF_vars(OwnerAnswer(t))
+SpecOwnerAnswers  == Spec /\ OwnerAnswers
+
 -----------------------------------------------------------------------------
 (* Properties *)
 
 TaskStatuses == {"none", "pending", "running", "waiting"} \cup Terminal
+QStatuses       == {"none", "asked", "with_owner", "answered", "withdrawn"}
+CarrierStatuses == {"none", "queued", "placed", "settled", "withdrawn"}
 SubStatuses  == {"none", "queued", "placed", "done", "unanswered", "withdrawn"}
 
 TypeOK ==
@@ -877,6 +1136,7 @@ TypeOK ==
     /\ \A st \in steps : st.t \in TaskIds
     /\ carrier \in RoutineIds \cup {"none"}
     /\ \A r \in RoutineIds : fires[r] \in Nat
+    /\ \A t \in ToolIds : q[t] \in QStatuses /\ qsub[t] \in CarrierStatuses
 
 \* At most one active run (non-background, conversation-owned, unfinished)
 AtMostOneActiveRun == Cardinality(ActiveRunsIn(task)) <= 1
@@ -941,7 +1201,45 @@ NoFireAfterRetire == ~lateFire
 \* is no request ID to fall back on.
 FireOncePerSlot == ~dupFire
 
+\* An ask call has at most one question row: a rerun finds it by task_id.
+OneQuestionPerCall == \A t \in ToolIds : asks[t] <= 1
+
+\* Once an ask call has ended, however it ended, its question is not open:
+\* nothing would ever answer it, and it would sit on the home page for
+\* good (the ask's own fence, Rules.askable?/1, and on_interrupt/2).
+NoOpenQuestionAfterCall ==
+    \A t \in ToolIds : task[t].status \in Terminal => q[t] \notin {"asked", "with_owner"}
+
+\* One answer per question, from Blip or the owner.
+AnswerOnce == \A t \in ToolIds : answers[t] <= 1
+
+\* No answer is accepted after the question was withdrawn.
+NoAnswerAfterWithdraw == ~lateAnswer
+
+\* An ask call that ended with an answer has an answered question.
+AnsweredResult == \A t \in ToolIds : qResult[t] => q[t] = "answered"
+
+\* The settle hook runs once per settle: no submission is reported settled
+\* twice, and no generation settles twice with nothing to close.
+HookOnce == ~dupHook
+
 \* Liveness
+
+\* An answer reaches a call that is still waiting for it.
+AnsweredCallEnds ==
+    \A t \in ToolIds : (q[t] = "answered" /\ task[t].status = "waiting")
+                         ~> task[t].status \in Terminal
+
+\* A question whose carrier settled while Blip still had it (Blip's run
+\* ended without answering or passing it) reaches the owner, or closes.
+UnhandledReachesOwner ==
+    \A t \in ToolIds : (q[t] = "asked" /\ qsub[t] = "settled") ~> q[t] # "asked"
+
+\* Once the call has ended its question is closed (or was never asked).
+\* Immediate today, since on_interrupt/2 runs in the ending commit; stated
+\* so a later change can't break it.
+CallEndClosesQuestion ==
+    \A t \in ToolIds : task[t].status \in Terminal ~> q[t] \notin {"asked", "with_owner"}
 
 PlacedSettles ==
     \A s \in SubIds : sub[s].status = "placed" ~> sub[s].status \in {"done", "unanswered"}

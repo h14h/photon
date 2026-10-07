@@ -2,14 +2,14 @@ defmodule Photon.Threads.Tools.ReadContextFile do
   @moduledoc """
   The `read_context_file` tool: one of the project's context files, after
   a line naming it with its size, when it changed and who changed it
-  (section 3.3 of `docs/plans/step-2-projects-and-threads.md`). A missing
-  file is an error result that lists the files there are. It changes
-  nothing, so a rerun after a restart is safe.
+  (section 3.3 of `docs/plans/step-2-projects-and-threads.md`), through
+  `Photon.Threads.read_file_text/3`, which Blip's tool of the same name
+  shares. A missing file is an error result that lists the files there
+  are. It changes nothing, so a rerun after a restart is safe.
   """
   @behaviour Photon.Durable.Tool
 
-  alias Photon.{Projects, Threads}
-  alias Photon.Threads.Rules
+  alias Photon.Threads
 
   @impl true
   def name, do: "read_context_file"
@@ -35,16 +35,6 @@ defmodule Photon.Threads.Tools.ReadContextFile do
   @impl true
   def execute(%{"name" => name}, api) do
     thread_id = api.conversation_id
-    project_id = Threads.project_id!(thread_id)
-
-    case Projects.get_file(project_id, name) do
-      nil ->
-        names = project_id |> Projects.list_files() |> Enum.map(& &1.name)
-        {:error, Rules.missing_file(String.trim(name), names)}
-
-      file ->
-        titles = Threads.titles([file.updated_by])
-        {:ok, Rules.file_header(file, thread_id, titles) <> "\n" <> file.content}
-    end
+    thread_id |> Threads.project_id!() |> Threads.read_file_text(name, thread_id)
   end
 end

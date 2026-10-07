@@ -4,7 +4,7 @@ This records how Photon's harnesses were checked, what was found, and what
 was fixed. There are three parts:
 
 - **TLA+ specs** in `specs/tla`, checked with TLC: `Durable` (the hub's
-  durable harness, its machine calls and schedules), `HubOps` (build step 1's
+  durable harness, its machine calls, schedules and `ask_blip`), `HubOps` (build step 1's
   operation protocol between the hub and a node) and `Executor` (the
   node's executor, its journal, the operation processes and the commands
   they run).
@@ -55,13 +55,19 @@ with the tool calls a conversation makes: a machine call
 (`Photon.MachineTools.Call`: `Machines.start/1`'s own commit, the park on
 the op's signal, the recheck, the claim, the offline give-up, and
 `cancel_tx/2` in every commit that ends the call another way), a plain
-tool that isn't safe to rerun, and since step 3 the routine behind a
+tool that isn't safe to rerun, since step 3 the routine behind a
 schedule (`Photon.Schedules.Routine`), which may repeat and which the
 owner may edit or delete from the project page while a firing is in
-flight. Faults: hub crashes, Scheduler-only crashes, step crashes, a
-machine call's code raising, user Stops, the owner's edits and deletes,
-failing model requests, a machine that is offline when the call checks,
-and the op finishing at any time.
+flight, and since step 4 a thread's `ask_blip` call
+(`Photon.Threads.Tools.AskBlip` over `Photon.Questions`: the ask's own
+commit, the park on the question's signal, the checks and the escalation
+to the owner, the withdraw when the call ends another way) with Blip's
+side reduced to the question's carrier, Blip's answer or pass and the
+owner's answer, plus the settle hook (`Durable.settled/3`). Faults: hub
+crashes, Scheduler-only crashes, step crashes, a tool's code raising,
+user Stops, the owner's edits and deletes, failing model requests, a
+machine that is offline when the call checks, and the op finishing, or
+an answer arriving, at any time.
 
 Properties: one active run per conversation; one `tool_result` per tool
 task and per stored call; bottom-up abort, and a stopped task ends
@@ -72,7 +78,10 @@ op's result reaches at most one tool result, a call that has ended leaves
 no row that may still start its op, and every row closes; one routine
 carries a schedule at a time, no firing lands after an edit or delete
 replaced its routine, each firing happens once, and a replaced routine
-ends aborted.
+ends aborted; the settle hook runs once per settle; an ask call has one
+question, answered at most once and never after it was withdrawn, and no
+call that has ended leaves its question open; an answer always reaches a
+call still waiting, and a question Blip didn't handle reaches the owner.
 
 Details: `specs/tla/Durable.md`.
 
@@ -210,6 +219,55 @@ done
 ```
 
 ## Results
+
+### Step 4: `ask_blip` and the settle hook in `Durable.tla` (2026-10-06)
+
+Step 4 lets a thread ask Blip a question with `ask_blip` and wait,
+durably, for the answer, which comes from Blip or, through Blip or the
+hub's escalation, from the owner; and every run's end reaches Blip
+through a new settle hook in the harness. `Durable.tla` was extended
+before the code, from the plan
+(`docs/plans/step-4-blip-as-coordinator.md`, sections 3.1, 3.3, 4 and
+14), with the call (`QAsk`, `QPark`, `QResume`, `QEscalate`,
+`QParkSig`), Blip's side reduced to the question's carrier (`BlipPlace`,
+`BlipSettle`, `BlipAnswer`, `BlipPass`), `OwnerAnswer`, the withdraw on
+every other way the call ends, and the settle hook in every commit that
+settles a run's input. TLC 2.19 on the shared 12-core machine (load
+average around 40 from other work):
+
+- The three new configs pass: `Durable-ask.cfg` (an ask call with every
+  crash kind and a Stop; 420,090 distinct states, 26s),
+  `Durable-ask-mixed.cfg` (an ask call and a machine call parked in one
+  round, a hub crash and a Stop; 3.7M, 4m21s) and
+  `Durable-ask-live.cfg` (liveness with every crash kind; 420,090,
+  7m23s). TLC found no problem in sections 3 and 4 of the plan: the
+  ask's own check keeps a Stop from leaving a question open, one answer
+  lands per question and none after a withdraw, an answer always reaches
+  a waiting call, and a question Blip didn't handle reaches the owner.
+- The two bug configs fail as they should: `Durable-bug-ask-unfenced`
+  (the ask commit without its task check) on `NoOpenQuestionAfterCall`
+  in 9 states, through a step a Scheduler crash orphaned, and
+  `Durable-bug-answer-twice` (the owner's answer without the status
+  check) on `AnswerOnce` in 8. Copies of the spec with one rule broken
+  each fail the property meant to catch it: no withdraw in
+  `on_interrupt/2`, a rerun that asks again, no escalation, an answer
+  without its signal, Blip's answer to a withdrawn question, a question
+  with the owner taken for an answer, and a settle hook run twice.
+- The 19 older passing configs, rerun with the new constants at their
+  old values, reach exactly their old state counts, and the two older
+  bug configs fail with their old traces. `HookOnce` joined the safety
+  set of the six main safety configs.
+
+Modeling settled four details the plan's section 14 had put differently
+or left open, now fixed in the plan: the carrier can be withdrawn; Blip
+may answer or pass a question at any time after it was asked;
+`PlacedSettles` with an ask call needs the owner to answer eventually (a
+question with the owner waits with no limit, by design), so
+`Durable-ask-live.cfg` uses `SpecOwnerAnswers`; and the answered branch
+of `resume/2` is a plain ok result. Thread state, the other signals and
+the activity log are left out: they are derived at read time or written
+in commits the spec already bounds. Per-config counts and traces:
+`specs/tla/Durable.md`.
 
 ### Step 3: schedules in `Durable.tla` (2026-10-06)
 
@@ -494,4 +552,8 @@ were reported; they went with those specs (in git history).
 - `Durable.tla` reduces the machine to its row and signal, and bounds a
   call's rechecks (`MaxRechecks`); `HubOps.tla` models the rest of the
   protocol. It models one schedule, without times, and bounds a
-  repeating routine's firings (`MaxFires`).
+  repeating routine's firings (`MaxFires`). For `ask_blip` it reduces
+  Blip's conversation to the question's carrier and leaves out Blip's
+  reasoning, the texts, signal merging, thread state and the activity
+  log; an ask call's checks are bounded like a machine call's until its
+  carrier settles.

@@ -459,5 +459,7 @@ defmodule PhotonWeb.ContextFileLive do
   defp changed_by({:changed, "owner"}),
     do: "This file was saved somewhere else while you were editing."
 
+  defp changed_by({:changed, "blip"}), do: "Blip changed this file while you were editing."
+
   defp changed_by({:changed, _thread}), do: "A thread changed this file while you were editing."
 end

@@ -61,6 +61,11 @@ defmodule Photon.Durable.InboxTest do
       refute Inbox.withdrawable?(submission(status: "placed"))
       refute Inbox.withdrawable?(nil)
     end
+
+    test "can't be withdrawn when it is the owner's answer, already sent to the thread" do
+      answer = %{"parts" => [], "source" => %{"kind" => "answer", "question_id" => "q_1"}}
+      refute Inbox.withdrawable?(submission(status: "queued", content: answer))
+    end
   end
 
   describe "the next input" do

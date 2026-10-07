@@ -22,16 +22,30 @@ defmodule PhotonWeb.ConversationComponents do
   output it printed before the stop in view under its line, since its
   result only says it was stopped. The context-file calls
   read "Checked the context files", "Read notes.md", "Wrote notes.md" and
-  "Edited notes.md", in the present while they run.
+  "Edited notes.md", in the present while they run. Blip's read tools
+  read "Looked over projects", "Looked over garden", "Checked threads"
+  and `Read "Fix the pump"`, naming the project or thread from the
+  result's details, or the arguments until there is a result.
 
   A message the user sent to Blip from a page inside a project shows only
   what they typed, with a small "About Garden / Fix the pump" line under
   it (`source["page"]`, see `Photon.Assistant.Page`); the note the model
   saw in front of it isn't shown.
 
+  In Blip's conversation, what reached Blip from the threads (a signal
+  message) shows as a compact block, a line per thread update or question
+  linking the thread; the owner's answer to a thread's question shows as
+  their bubble with an "Answer to Fix the pump" line under it. An
+  `ask_owner` call that passed a question to the owner shows as the
+  question's card, and so does the hub's notice that it passed on one
+  Blip didn't get to; a refused `ask_owner` call stays a one-line action,
+  so each question has one card. A withdrawn question's notice is a quiet
+  line. A queued signal message's chip names the threads it is from.
+
   The events these components send (`send`, `toggle_mode`, `stop`,
-  `withdraw`) go to the LiveView that renders them; the socket side of the
-  conversation is `PhotonWeb.ConversationView`.
+  `withdraw`, and the card's `reply`) go to the LiveView that renders
+  them; the socket side of the conversation is
+  `PhotonWeb.ConversationView`.
   """
 
   use PhotonWeb, :html
@@ -40,6 +54,9 @@ defmodule PhotonWeb.ConversationComponents do
   alias PhotonCore.Message
 
   @file_tools ~w(list_context_files read_context_file write_context_file edit_context_file)
+  @read_tools ~w(list_projects read_project list_threads read_thread)
+  @work_tools ~w(start_project start_thread message_thread stop_thread answer_question ask_owner)
+  @skill_tools ~w(list_skills set_project_skill)
 
   @doc "One entry of the conversation: a message, an answer with its calls, an error or a reset."
   attr :entry, :map, required: true
@@ -47,6 +64,10 @@ defmodule PhotonWeb.ConversationComponents do
   attr :outputs, :map, default: %{}, doc: "the tail of each running call's output"
   attr :id_prefix, :string, default: ""
   attr :image_path, :any, required: true, doc: "fn entry_id, index -> the image's path end"
+
+  attr :questions, :map,
+    default: %{},
+    doc: "where each question put to the owner stands (`Photon.Transcript.questions/3`), by ID"
 
   @spec entry(map()) :: Phoenix.LiveView.Rendered.t()
   def entry(%{entry: %{kind: "user"}} = assigns) do
@@ -70,6 +91,54 @@ defmodule PhotonWeb.ConversationComponents do
             <span class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">Scheduled</span>
             <p class="mt-0.5 text-ink-soft">{String.replace_prefix(@text, "[Scheduled] ", "")}</p>
           </div>
+        </div>
+      <% "signal" -> %>
+        <.signal_message id={"#{@id_prefix}message-#{@entry.id}"} data={@entry.data} />
+      <% "answer" -> %>
+        <%!-- The owner's answer to a thread's question: their bubble, and what it answered. --%>
+        <div class="flex flex-col items-end gap-1 pl-10">
+          <div class="max-w-full rounded-2xl rounded-br-md bg-sunken px-3.5 py-2 text-[14.5px] leading-relaxed text-ink ring-1 ring-line">
+            <span
+              id={"#{@id_prefix}message-#{@entry.id}"}
+              phx-no-format
+              class="whitespace-pre-wrap"
+            >{@text}</span>
+          </div>
+          <p
+            id={"#{@id_prefix}message-#{@entry.id}-about"}
+            class="flex max-w-full items-center gap-1 pr-1 text-[11.5px] text-ink-faint"
+            title="This answer went straight to the thread"
+          >
+            <.icon name="hero-arrow-uturn-right-micro" class="size-3 shrink-0" />
+            <span class="min-w-0 truncate">
+              Answer to
+              <.thread_link
+                title={@source["title"]}
+                slug={@source["slug"]}
+                thread_id={@source["thread_id"]}
+                class="hover:text-ink-soft hover:underline"
+              />
+            </span>
+          </p>
+        </div>
+      <% "blip" -> %>
+        <%!-- Blip's words to a thread: a bubble like the owner's, tinted, and signed. --%>
+        <div class="flex flex-col items-end gap-1 pl-10">
+          <div class="max-w-full rounded-2xl rounded-br-md bg-accent-soft/60 px-3.5 py-2 text-[14.5px] leading-relaxed text-ink ring-1 ring-accent/20">
+            <span
+              id={"#{@id_prefix}message-#{@entry.id}"}
+              phx-no-format
+              class="whitespace-pre-wrap"
+            >{@text}</span>
+          </div>
+          <p
+            id={"#{@id_prefix}message-#{@entry.id}-about"}
+            class="flex items-center gap-1 pr-1 text-[11.5px] text-ink-faint"
+            title="Blip sent this message to the thread"
+          >
+            <.blip id={"#{@id_prefix}message-#{@entry.id}-blip"} size={13} still />
+            <span>From Blip</span>
+          </p>
         </div>
       <% _ -> %>
         <div class="flex flex-col items-end gap-1 pl-10">
@@ -111,22 +180,59 @@ defmodule PhotonWeb.ConversationComponents do
       </div>
       <div :if={@text != ""} class="markdown-body text-ink">{raw(Markdown.to_html(@text))}</div>
       <div :if={@calls != []} class="space-y-1.5">
-        <.action
-          :for={call <- @calls}
-          call={call}
-          result={@results[call["id"]]}
-          tail={@outputs[call["id"]]}
-          id_prefix={@id_prefix}
-          image_path={@image_path}
-        />
+        <%= for call <- @calls do %>
+          <%= case Transcript.question_card(@results[call["id"]]) do %>
+            <% nil -> %>
+              <.action
+                call={call}
+                result={@results[call["id"]]}
+                tail={@outputs[call["id"]]}
+                id_prefix={@id_prefix}
+                image_path={@image_path}
+              />
+            <% question_id -> %>
+              <.question_card
+                id={question_id}
+                card={card_of_call(call, @results[call["id"]])}
+                question={@questions[question_id]}
+              />
+          <% end %>
+        <% end %>
       </div>
     </div>
     """
   end
 
   def entry(%{entry: %{kind: "error"}} = assigns) do
-    assigns = assign(assigns, quiet: Transcript.quiet?(assigns.entry.data))
+    case Transcript.escalation(assigns.entry) do
+      nil -> notice(assign(assigns, quiet: Transcript.quiet?(assigns.entry.data)))
+      id -> escalation_card(assign(assigns, question_id: id))
+    end
+  end
 
+  def entry(%{entry: %{kind: "reset"}} = assigns) do
+    ~H"""
+    <div class="flex items-center gap-3 py-2 text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
+      <span class="h-px flex-1 bg-line" /> Fresh context <span class="h-px flex-1 bg-line" />
+    </div>
+    """
+  end
+
+  # The hub passed on a question Blip didn't get to: the question's card,
+  # with the thread's own words.
+  defp escalation_card(assigns) do
+    ~H"""
+    <.question_card
+      id={@question_id}
+      card={card_of_notice(@entry.data)}
+      question={@questions[@question_id]}
+    />
+    """
+  end
+
+  # A failure, a stop, or a notice for the owner (a skipped schedule, a
+  # withdrawn question).
+  defp notice(assigns) do
     ~H"""
     <div class={[
       "flex items-start gap-2 rounded-xl px-3.5 py-2.5 text-sm",
@@ -135,6 +241,7 @@ defmodule PhotonWeb.ConversationComponents do
       <.icon
         name={
           cond do
+            @entry.data["question_notice"] -> "hero-no-symbol"
             @entry.data["notice"] -> "hero-clock"
             @quiet -> "hero-stop-circle"
             true -> "hero-exclamation-triangle"
@@ -147,13 +254,245 @@ defmodule PhotonWeb.ConversationComponents do
     """
   end
 
-  def entry(%{entry: %{kind: "reset"}} = assigns) do
+  @doc """
+  A signal message in Blip's conversation: what reached Blip from the
+  threads, a line each (`#<id>-signal-<n>`): a bell for an update, a
+  question mark for a question, the project and thread (linked) and what
+  happened, or the question on one line.
+  """
+  attr :id, :string, required: true
+  attr :data, :map, required: true, doc: "the user entry's data"
+
+  @spec signal_message(map()) :: Phoenix.LiveView.Rendered.t()
+  def signal_message(assigns) do
+    assigns = assign(assigns, lines: Enum.with_index(Transcript.signal_lines(assigns.data)))
+
     ~H"""
-    <div class="flex items-center gap-3 py-2 text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
-      <span class="h-px flex-1 bg-line" /> Fresh context <span class="h-px flex-1 bg-line" />
+    <div id={@id} class="flex items-start gap-3 text-sm">
+      <span class="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-sunken text-ink-faint">
+        <.icon name="hero-inbox-arrow-down" class="size-4" />
+      </span>
+      <div class="min-w-0 flex-1 pt-1">
+        <span class="text-[11px] font-semibold tracking-wider text-ink-faint uppercase">
+          From your threads
+        </span>
+        <ul class="mt-1 space-y-1">
+          <li
+            :for={{line, n} <- @lines}
+            id={"#{@id}-signal-#{n}"}
+            data-kind={line.ref["kind"]}
+            class="flex min-w-0 items-start gap-2 text-ink-soft"
+          >
+            <.icon
+              name={
+                if(line.ref["kind"] == "question",
+                  do: "hero-question-mark-circle-micro",
+                  else: "hero-bell-micro"
+                )
+              }
+              class={[
+                "mt-[3px] size-3.5 shrink-0",
+                signal_tone(line.ref)
+              ]}
+            />
+            <span class="min-w-0 leading-snug">
+              <span :if={line.ref["project"]} class="text-ink-faint">{line.ref["project"]} /</span>
+              <.thread_link
+                title={line.ref["title"]}
+                slug={line.ref["slug"]}
+                thread_id={line.ref["thread_id"]}
+                class="font-medium text-ink hover:underline"
+              /> {signal_words(line)}
+            </span>
+          </li>
+        </ul>
+      </div>
     </div>
     """
   end
+
+  defp signal_tone(%{"kind" => "question"}), do: "text-accent-strong"
+  defp signal_tone(%{"status" => "failed"}), do: "text-bad"
+  defp signal_tone(%{"status" => "asking"}), do: "text-warn"
+  defp signal_tone(_ref), do: "text-ink-faint"
+
+  defp signal_words(%{ref: %{"kind" => "question"}, question: question}) do
+    case truncate(question, 160) do
+      "" -> "asks something"
+      question -> "asks: " <> question
+    end
+  end
+
+  defp signal_words(%{ref: %{"status" => "finished"}}), do: "finished"
+  defp signal_words(%{ref: %{"status" => "failed"}}), do: "failed"
+  defp signal_words(%{ref: %{"status" => "asking"}}), do: "is waiting on you"
+  defp signal_words(_line), do: "changed"
+
+  attr :title, :string, default: nil
+  attr :slug, :string, default: nil
+  attr :thread_id, :string, default: nil
+  attr :class, :any, default: nil
+  attr :rest, :global
+
+  # A thread's title, linked to its page when the place is known.
+  defp thread_link(assigns) do
+    assigns = assign(assigns, title: thread_title(assigns.title))
+
+    ~H"""
+    <.link
+      :if={is_binary(@slug) and is_binary(@thread_id)}
+      navigate={~p"/projects/#{@slug}/threads/#{@thread_id}"}
+      class={@class}
+      {@rest}
+    >{@title}</.link><span :if={!(is_binary(@slug) and is_binary(@thread_id))} class={@class} {@rest}>{@title}</span>
+    """
+  end
+
+  defp thread_title(title) when is_binary(title) and title != "", do: title
+  defp thread_title(_title), do: "A thread"
+
+  @doc """
+  A thread's question with the owner, as a card in Blip's panel
+  (`#question-card-<id>`): the thread that asks (linked), the question
+  (Blip's wording, or the thread's own words when the hub passed it on),
+  and where it stands: while it is open, `Answer`, which puts the reply
+  chip on the composer (`"reply"` with the question's ID); answered, the
+  answer's first line; withdrawn, that the thread was stopped.
+  """
+  attr :id, :string, required: true, doc: "the question's ID"
+  attr :card, :map, required: true, doc: "title, slug, thread_id, text and hub?"
+  attr :question, :map, default: nil, doc: "where it stands (`Photon.Transcript.question()`)"
+
+  @spec question_card(map()) :: Phoenix.LiveView.Rendered.t()
+  def question_card(assigns) do
+    question = assigns.question || %{status: :open, answer: nil}
+
+    assigns =
+      assign(assigns,
+        dom_id: "question-card-#{assigns.id}",
+        status: question.status,
+        answer: first_line(question.answer)
+      )
+
+    ~H"""
+    <div
+      id={@dom_id}
+      data-status={@status}
+      class={[
+        "rounded-xl border bg-surface px-3.5 py-3 shadow-xs transition-colors",
+        if(@status == :open, do: "border-warn/40 shadow-warn/5", else: "border-line")
+      ]}
+    >
+      <div class="flex items-start gap-2.5">
+        <span class="mt-[5px] flex size-3.5 shrink-0 items-center justify-center">
+          <.state_mark :if={@status == :open} state={:waiting} class="size-3.5" />
+          <.icon :if={@status == :answered} name="hero-check-circle-micro" class="size-3.5 text-ok" />
+          <.icon
+            :if={@status == :withdrawn}
+            name="hero-no-symbol-micro"
+            class="size-3.5 text-ink-faint"
+          />
+        </span>
+        <div class="min-w-0 flex-1">
+          <p class="truncate text-[12.5px] text-ink-faint">
+            <.thread_link
+              id={"#{@dom_id}-thread"}
+              title={@card.title}
+              slug={@card.slug}
+              thread_id={@card.thread_id}
+              class="font-medium text-ink-soft hover:text-ink hover:underline"
+            /> asks
+          </p>
+          <p
+            id={"#{@dom_id}-text"}
+            class={[
+              "mt-1 text-[14px] leading-relaxed whitespace-pre-line",
+              if(@status == :open, do: "text-ink", else: "text-ink-soft")
+            ]}
+          >
+            {@card.text}
+          </p>
+          <p
+            :if={@card.hub? and @status == :open}
+            id={"#{@dom_id}-note"}
+            class="mt-1 text-[12.5px] text-ink-faint"
+          >
+            In the thread's own words. Your answer goes straight to it.
+          </p>
+          <div :if={@status == :open} class="mt-2.5 flex items-center gap-2">
+            <.button
+              type="button"
+              id={"#{@dom_id}-answer"}
+              size="sm"
+              phx-click={JS.push("reply", value: %{id: @id}) |> JS.focus(to: "#composer-input")}
+            >
+              <.icon name="hero-arrow-uturn-left-micro" class="size-4" /> Answer
+            </.button>
+            <span class="text-[12px] text-ink-faint">Your answer goes straight to the thread.</span>
+          </div>
+          <p
+            :if={@status == :answered}
+            id={"#{@dom_id}-status"}
+            class="mt-2 flex min-w-0 items-baseline gap-1.5 text-[13px]"
+          >
+            <span class="shrink-0 font-medium text-ok">Answered</span>
+            <span :if={@answer} class="min-w-0 truncate text-ink-soft" title={@answer}>
+              {@answer}
+            </span>
+          </p>
+          <p
+            :if={@status == :withdrawn}
+            id={"#{@dom_id}-status"}
+            class="mt-2 text-[13px] text-ink-faint"
+          >
+            Withdrawn: the thread was stopped
+          </p>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # An ok `ask_owner` call's card: the thread from the result's details,
+  # and Blip's wording.
+  defp card_of_call(call, result) do
+    details = (result && result["details"]) || %{}
+
+    wording =
+      case Message.arguments(call) do
+        {:ok, %{"question" => question}} when is_binary(question) -> question
+        _none -> nil
+      end
+
+    %{
+      title: details["title"],
+      slug: details["slug"],
+      thread_id: details["thread_id"],
+      text: details["wording"] || wording,
+      hub?: false
+    }
+  end
+
+  # The hub's escalation notice: the thread's own question, or the notice
+  # if it carries none.
+  defp card_of_notice(data) do
+    %{
+      title: data["title"],
+      slug: data["slug"],
+      thread_id: data["thread_id"],
+      text: data["question"] || data["message"],
+      hub?: true
+    }
+  end
+
+  defp first_line(text) when is_binary(text) do
+    case text |> String.trim() |> String.split("\n", parts: 2) |> hd() |> truncate(200) do
+      "" -> nil
+      line -> line
+    end
+  end
+
+  defp first_line(_text), do: nil
 
   @doc """
   One tool call: a line saying what it did, which opens to show the result.
@@ -284,8 +623,10 @@ defmodule PhotonWeb.ConversationComponents do
 
   @doc """
   What a call did, in a line. A machine call names its command or path,
-  and the machine; a context-file call names the file, and `load_skill`
-  the skill. They are in the present while they run.
+  and the machine; a context-file call names the file (and Blip's its
+  project), `load_skill` the
+  skill, and `ask_blip` its question. They are in the present while they
+  run.
   """
   attr :name, :string, required: true
   attr :args, :map, required: true
@@ -316,11 +657,12 @@ defmodule PhotonWeb.ConversationComponents do
     assigns =
       assign(assigns,
         verb: file_verb(name, assigns.status),
-        file: truncate(assigns.details["file"] || assigns.args["name"])
+        file: truncate(assigns.details["file"] || assigns.args["name"]),
+        project: file_project(assigns.args, assigns.details)
       )
 
     ~H"""
-    <span phx-no-format>{@verb}<span :if={@file != ""}> <span class="font-medium text-ink">{@file}</span></span></span>
+    <span phx-no-format>{@verb}<span :if={@file != ""}> <span class="font-medium text-ink">{@file}</span></span><span :if={@project} data-project={@project}> in <span class="font-medium text-ink">{@project}</span></span></span>
     """
   end
 
@@ -339,6 +681,53 @@ defmodule PhotonWeb.ConversationComponents do
     """
   end
 
+  def action_label(%{name: "ask_blip"} = assigns) do
+    assigns =
+      assign(assigns,
+        verb: ask_verb(assigns.status),
+        question: truncate(assigns.args["question"]),
+        whole: truncate(assigns.args["question"], 300)
+      )
+
+    ~H"""
+    <span phx-no-format>{@verb}<span :if={@question != ""}>: <span class="text-ink" title={@whole}>{@question}</span></span></span>
+    """
+  end
+
+  def action_label(%{name: name} = assigns) when name in @read_tools do
+    {verb, subject} = read_words(name, assigns.args, assigns.details, assigns.status)
+    assigns = assign(assigns, verb: verb, subject: truncate(subject))
+
+    ~H"""
+    <span phx-no-format>{@verb}<span :if={@subject != ""}> <span class="font-medium text-ink">{@subject}</span></span></span>
+    """
+  end
+
+  def action_label(%{name: name} = assigns) when name in @work_tools do
+    {verb, subject, rest} = work_words(name, assigns.args, assigns.details, assigns.status)
+
+    assigns =
+      assign(assigns,
+        verb: verb,
+        subject: truncate(subject),
+        rest: rest,
+        href: work_href(name, assigns.status, assigns.details)
+      )
+
+    ~H"""
+    <span phx-no-format>{@verb}<span :if={@subject != ""}> <.link :if={@href} navigate={@href} class="font-medium text-ink hover:underline">{@subject}</.link><span :if={!@href} class="font-medium text-ink">{@subject}</span></span>{@rest}</span>
+    """
+  end
+
+  def action_label(%{name: name} = assigns) when name in @skill_tools do
+    {verb, skill, project} = skill_tool_words(name, assigns.args, assigns.details, assigns.status)
+    assigns = assign(assigns, verb: verb, skill: truncate(skill), project: truncate(project))
+
+    ~H"""
+    <span phx-no-format>{@verb}<span :if={@skill != ""}> <span class="font-medium text-ink">{@skill}</span></span><span :if={@project != ""} data-project={@project}> for <span class="font-medium text-ink">{@project}</span></span></span>
+    """
+  end
+
   def action_label(assigns) do
     assigns = assign(assigns, :text, label_text(assigns.name, assigns.args))
 
@@ -352,7 +741,14 @@ defmodule PhotonWeb.ConversationComponents do
   defp label_text("update_memory", args),
     do: "Memory: #{args["action"]} #{truncate(args["text"])}"
 
+  defp label_text("schedule", %{"project" => slug} = args) when is_binary(slug) and slug != "",
+    do: "Scheduled in #{truncate(slug)}: #{truncate(args["prompt"])}"
+
   defp label_text("schedule", args), do: "Scheduled: #{truncate(args["prompt"])}"
+
+  defp label_text("list_schedules", %{"project" => slug}) when is_binary(slug) and slug != "",
+    do: "Checked the schedules in #{truncate(slug)}"
+
   defp label_text("list_schedules", _), do: "Checked the schedule"
   defp label_text("cancel_schedule", args), do: "Cancelled #{args["schedule_id"]}"
   defp label_text(name, _), do: name
@@ -364,6 +760,135 @@ defmodule PhotonWeb.ConversationComponents do
   defp skill_words(:stopped), do: {"Stopped loading the", " skill"}
   defp skill_words(_done), do: {"Loaded the", " skill"}
 
+  # Blip's skill tools: the verb for the call's status, the skill and the
+  # project it turned on or off for (from the result's details, else the
+  # arguments). Listing names neither.
+  defp skill_tool_words("list_skills", _args, _details, status),
+    do: {status_verb(status, "Checking skills", "Checked skills", "check skills"), nil, nil}
+
+  defp skill_tool_words("set_project_skill", args, details, status) do
+    on = if Map.get(details, "on", args["on"]) == false, do: "off", else: "on"
+
+    {status_verb(status, "Turning #{on}", "Turned #{on}", "turn #{on}"),
+     details["skill"] || args["skill"], details["slug"] || args["project"]}
+  end
+
+  # A question can wait for hours, so the running words say it is asking.
+  defp ask_verb(:pending), do: "Asking Blip"
+  defp ask_verb(:error), do: "Couldn't ask Blip"
+  defp ask_verb(:stopped), do: "Stopped asking Blip"
+  defp ask_verb(_done), do: "Asked Blip"
+
+  # Blip's read tools: the verb for the call's status, and what it read
+  # (a project's slug, a thread's title in quotes), from the result's
+  # details or else the arguments.
+  defp read_words("list_projects", _args, _details, status),
+    do: {status_verb(status, "Looking over", "Looked over", "look over"), "projects"}
+
+  defp read_words("read_project", args, details, status),
+    do:
+      {status_verb(status, "Looking over", "Looked over", "look over"),
+       details["slug"] || args["project"]}
+
+  defp read_words("list_threads", args, details, status) do
+    verb = status_verb(status, "Checking threads", "Checked threads", "check threads")
+
+    case details["slug"] || args["project"] do
+      project when is_binary(project) -> {verb <> " in", project}
+      _all -> {verb, ""}
+    end
+  end
+
+  defp read_words("read_thread", args, details, status) do
+    verb = status_verb(status, "Reading", "Read", "read")
+
+    case details["title"] do
+      title when is_binary(title) -> {verb, ~s("#{title}")}
+      _none -> {verb, args["thread"]}
+    end
+  end
+
+  # Blip's tools that start and stop work: the verb, what it acted on (a
+  # project's slug, a thread's title in quotes, or its ID while the call
+  # runs), and the words after it.
+  defp work_words("start_project", _args, details, status) do
+    case {status, details["slug"]} do
+      {:done, slug} when is_binary(slug) -> {"Started the project", slug, ""}
+      _running -> {status_verb(status, "Starting", "Started", "start") <> " a project", "", ""}
+    end
+  end
+
+  defp work_words("start_thread", args, details, status) do
+    project = details["slug"] || args["project"]
+    verb = status_verb(status, "Starting", "Started", "start") <> " a thread"
+
+    case {status, details["title"], project} do
+      {:done, title, slug} when is_binary(title) -> {"Started", ~s("#{title}"), " in #{slug}"}
+      {_status, _title, slug} when is_binary(slug) -> {verb <> " in", slug, ""}
+      _nowhere -> {verb, "", ""}
+    end
+  end
+
+  defp work_words("message_thread", args, details, status),
+    do: {status_verb(status, "Messaging", "Messaged", "message"), thread_name(args, details), ""}
+
+  defp work_words("stop_thread", args, details, status) do
+    verb =
+      case status do
+        :stopped -> "Didn't stop"
+        status -> status_verb(status, "Stopping", "Stopped", "stop")
+      end
+
+    {verb, thread_name(args, details), ""}
+  end
+
+  # A thread's question: the thread's title once the result names it, the
+  # question's ID while the call runs.
+  defp work_words("answer_question", args, details, status),
+    do:
+      {status_verb(status, "Answering", "Answered", "answer"), question_thread(args, details), ""}
+
+  defp work_words("ask_owner", args, details, status),
+    do:
+      {status_verb(status, "Asking you about", "Asked you about", "ask you about"),
+       question_thread(args, details), ""}
+
+  # A thread Blip started, or whose question it handled, links to its page.
+  defp work_href(name, :done, %{"slug" => slug, "thread_id" => id})
+       when name in ~w(start_thread answer_question ask_owner) and is_binary(slug) and
+              is_binary(id),
+       do: ~p"/projects/#{slug}/threads/#{id}"
+
+  defp work_href(_name, _status, _details), do: nil
+
+  defp thread_name(args, details) do
+    case details["title"] do
+      title when is_binary(title) -> ~s("#{title}")
+      _none -> args["thread"]
+    end
+  end
+
+  defp question_thread(args, details) do
+    case details["title"] do
+      title when is_binary(title) -> ~s("#{title}")
+      _none -> args["question_id"]
+    end
+  end
+
+  defp status_verb(:pending, running, _done, _base), do: running
+  defp status_verb(:error, _running, _done, base), do: "Couldn't " <> base
+  defp status_verb(:stopped, running, _done, _base), do: "Stopped " <> String.downcase(running)
+  defp status_verb(_done, _running, done, _base), do: done
+
+  # Blip's file calls name a project (its slug once the result is in); a
+  # thread's only ever touch its own, so they name none.
+  defp file_project(args, details) do
+    case details["slug"] || args["project"] do
+      project when is_binary(project) and project != "" -> truncate(project)
+      _none -> nil
+    end
+  end
+
   # Listing names no file; the others name the one they touched.
   defp file_verb("list_context_files", :pending), do: "Checking the context files"
   defp file_verb("list_context_files", _status), do: "Checked the context files"
@@ -374,20 +899,38 @@ defmodule PhotonWeb.ConversationComponents do
   defp file_verb("edit_context_file", :pending), do: "Editing"
   defp file_verb("edit_context_file", _status), do: "Edited"
 
-  defp action_icon("shell"), do: "hero-command-line-micro"
-  defp action_icon("view_image"), do: "hero-photo-micro"
-  defp action_icon("list_machines"), do: "hero-server-stack-micro"
-  defp action_icon("update_memory"), do: "hero-bookmark-micro"
-  defp action_icon("list_context_files"), do: "hero-document-duplicate-micro"
-  defp action_icon("read_context_file"), do: "hero-document-text-micro"
-  defp action_icon("write_context_file"), do: "hero-document-plus-micro"
-  defp action_icon("edit_context_file"), do: "hero-pencil-square-micro"
-  defp action_icon("load_skill"), do: "hero-book-open-micro"
+  @doc """
+  The icon a tool's call shows once it went through: in a conversation's
+  action line, and on the activity page's rows. A tool without one of its
+  own gets a check.
+  """
+  @spec action_icon(term()) :: String.t()
+  def action_icon("shell"), do: "hero-command-line-micro"
+  def action_icon("view_image"), do: "hero-photo-micro"
+  def action_icon("list_machines"), do: "hero-server-stack-micro"
+  def action_icon("update_memory"), do: "hero-bookmark-micro"
+  def action_icon("list_context_files"), do: "hero-document-duplicate-micro"
+  def action_icon("read_context_file"), do: "hero-document-text-micro"
+  def action_icon("write_context_file"), do: "hero-document-plus-micro"
+  def action_icon("edit_context_file"), do: "hero-pencil-square-micro"
+  def action_icon("load_skill"), do: "hero-book-open-micro"
+  def action_icon("ask_blip"), do: "hero-chat-bubble-left-ellipsis-micro"
+  def action_icon(name) when name in ~w(list_projects read_project), do: "hero-folder-micro"
+  def action_icon("list_threads"), do: "hero-queue-list-micro"
+  def action_icon("read_thread"), do: "hero-chat-bubble-left-right-micro"
+  def action_icon("start_project"), do: "hero-folder-plus-micro"
+  def action_icon("start_thread"), do: "hero-play-circle-micro"
+  def action_icon("message_thread"), do: "hero-paper-airplane-micro"
+  def action_icon("stop_thread"), do: "hero-stop-circle-micro"
+  def action_icon("answer_question"), do: "hero-chat-bubble-bottom-center-text-micro"
+  def action_icon("ask_owner"), do: "hero-question-mark-circle-micro"
+  def action_icon("list_skills"), do: "hero-book-open-micro"
+  def action_icon("set_project_skill"), do: "hero-adjustments-horizontal-micro"
 
-  defp action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
+  def action_icon(name) when name in ~w(schedule list_schedules cancel_schedule),
     do: "hero-clock-micro"
 
-  defp action_icon(_), do: "hero-check-micro"
+  def action_icon(_), do: "hero-check-micro"
 
   # One line of at most `limit` characters; anything that isn't text is nothing.
   defp truncate(text, limit \\ 90)
@@ -501,7 +1044,9 @@ defmodule PhotonWeb.ConversationComponents do
   @doc """
   The message box, with the queued messages above it and, while the
   conversation is busy, the steer or follow-up toggle and Stop. Enter
-  sends; Shift+Enter starts a new line.
+  sends; Shift+Enter starts a new line. The box empties as it sends; a
+  page whose send was refused gives the text back with a
+  `"composer:restore"` event (`%{id: <the box's ID>, text: text}`).
   """
   attr :form, :any, required: true
   attr :busy, :boolean, required: true
@@ -518,31 +1063,16 @@ defmodule PhotonWeb.ConversationComponents do
   slot :context,
     doc: "what goes with the next message, shown inside the box above the text (Blip's page chip)"
 
+  slot :above, doc: "a line above the queued messages (a thread's question to Blip)"
+  slot :footer, doc: "a note under the box (a thread's while Blip has its question)"
+
   @spec composer(map()) :: Phoenix.LiveView.Rendered.t()
   def composer(assigns) do
     ~H"""
     <div class={["shrink-0 px-3 pt-1 pb-3 sm:px-4 sm:pb-4", @class]}>
       <div class="mx-auto w-full max-w-3xl">
-        <div :if={@queued != []} id={"#{@id_prefix}queued"} class="mb-2 flex flex-wrap gap-1.5">
-          <span
-            :for={s <- @queued}
-            id={"#{@id_prefix}queued-#{s.id}"}
-            class="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-surface py-1 pr-1 pl-3 text-[12px] text-ink-soft"
-          >
-            <span class="font-medium text-ink-faint">{if(s.mode == "steer", do: "Steer", else: "Next")}</span>
-            <span class="max-w-60 truncate">
-              {Transcript.typed(s.content["parts"], s.content["source"])}
-            </span>
-            <button
-              phx-click="withdraw"
-              phx-value-id={s.id}
-              class="rounded-full p-0.5 hover:bg-sunken"
-              title="Withdraw"
-            >
-              <.icon name="hero-x-mark-micro" class="size-3.5" />
-            </button>
-          </span>
-        </div>
+        {render_slot(@above)}
+        <.queued_messages queued={@queued} id_prefix={@id_prefix} />
 
         <.form
           for={@form}
@@ -599,6 +1129,7 @@ defmodule PhotonWeb.ConversationComponents do
             </.button>
           </div>
         </.form>
+        {render_slot(@footer)}
       </div>
 
       <script :type={Phoenix.LiveView.ColocatedHook} name=".Composer">
@@ -616,11 +1147,139 @@ defmodule PhotonWeb.ConversationComponents do
               }
             })
             this.el.form.addEventListener("submit", () => setTimeout(() => { this.el.value = ""; grow() }, 0))
+            // A refused send gives back what was typed (the box empties on submit).
+            this.handleEvent("composer:restore", ({id, text}) => {
+              if (id !== this.el.id) return
+              this.el.value = text
+              grow()
+            })
+            // Measured while Blip's panel is closed (as narrow as Blip), the
+            // placeholder wraps a word a line and the box mounts at its
+            // tallest; it measures again when its width changes.
+            let width = this.el.clientWidth
+            this.resized = new ResizeObserver(() => {
+              if (this.el.clientWidth === width) return
+              width = this.el.clientWidth
+              grow()
+            })
+            this.resized.observe(this.el)
             grow()
+          },
+          destroyed() {
+            if (this.resized) this.resized.disconnect()
           }
         }
       </script>
     </div>
     """
   end
+
+  @doc """
+  The answer box of a thread's question with the owner, inside its form
+  (the home page's question rows and the thread page's banners): Enter
+  sends, Shift+Enter starts a new line, as in the composer.
+  """
+  attr :field, Phoenix.HTML.FormField, required: true
+  attr :id, :string, required: true
+
+  @spec answer_box(map()) :: Phoenix.LiveView.Rendered.t()
+  def answer_box(assigns) do
+    ~H"""
+    <.input
+      field={@field}
+      id={@id}
+      type="textarea"
+      rows="2"
+      placeholder="Your answer goes straight to the thread"
+      phx-debounce="300"
+      phx-hook=".AnswerBox"
+      enterkeyhint="send"
+      class={[field_class(), "h-auto min-h-16 resize-y py-2 leading-relaxed"]}
+    />
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".AnswerBox">
+      export default {
+        mounted() {
+          this.el.addEventListener("keydown", e => {
+            if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+              e.preventDefault()
+              if (this.el.value.trim() !== "") this.el.form.requestSubmit()
+            }
+          })
+        }
+      }
+    </script>
+    """
+  end
+
+  @doc """
+  The messages waiting in a conversation's inbox, each with whether it
+  steers the current work or comes next, and a button to withdraw it
+  (`"withdraw"` with its ID). The owner's answer to a thread's question
+  has no such button: it has already gone to the thread, so its chip
+  says so instead. Shown above the composer, or above whatever takes the
+  composer's place.
+  """
+  attr :queued, :list, required: true
+  attr :id_prefix, :string, default: ""
+
+  @spec queued_messages(map()) :: Phoenix.LiveView.Rendered.t()
+  def queued_messages(assigns) do
+    ~H"""
+    <div :if={@queued != []} id={"#{@id_prefix}queued"} class="mb-2 flex flex-wrap gap-1.5">
+      <span
+        :for={s <- @queued}
+        id={"#{@id_prefix}queued-#{s.id}"}
+        class="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-surface py-1 pr-1 pl-3 text-[12px] text-ink-soft"
+      >
+        <span class="font-medium text-ink-faint">{queued_label(s)}</span>
+        <span class="max-w-60 truncate">{queued_text(s.content)}</span>
+        <span
+          :if={answer?(s)}
+          id={"#{@id_prefix}queued-#{s.id}-sent"}
+          class="rounded-full p-0.5 text-ok"
+          title="Already sent to the thread. Blip reads it next."
+        >
+          <.icon name="hero-check-micro" class="size-3.5" />
+        </span>
+        <button
+          :if={!answer?(s)}
+          phx-click="withdraw"
+          phx-value-id={s.id}
+          class="rounded-full p-0.5 hover:bg-sunken"
+          title="Withdraw"
+        >
+          <.icon name="hero-x-mark-micro" class="size-3.5" />
+        </button>
+      </span>
+    </div>
+    """
+  end
+
+  # The owner's answer to a thread's question, relayed to Blip.
+  defp answer?(%{content: %{"source" => %{"kind" => "answer"}}}), do: true
+  defp answer?(_submission), do: false
+
+  defp queued_label(submission) do
+    cond do
+      answer?(submission) -> "Answered"
+      submission.mode == "steer" -> "Steer"
+      true -> "Next"
+    end
+  end
+
+  # What a queued message says on its chip: what was typed, or for a
+  # signal message, which threads it is from.
+  defp queued_text(%{"source" => %{"kind" => "signal"}} = content) do
+    lines =
+      Transcript.signal_lines(%{
+        "message" => %{"content" => content["parts"]},
+        "source" => content["source"]
+      })
+
+    questions? = Enum.any?(lines, &(&1.ref["kind"] == "question"))
+    titles = Enum.map_join(lines, ", ", &~s("#{thread_title(&1.ref["title"])}"))
+    if(questions?, do: "Question from ", else: "Update on ") <> titles
+  end
+
+  defp queued_text(content), do: Transcript.typed(content["parts"], content["source"])
 end

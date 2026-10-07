@@ -6,6 +6,7 @@ defmodule Photon.SkillsTest do
 
   use Photon.DataCase, async: false
 
+  alias Photon.Durable.Tx
   alias Photon.{Projects, Skills}
   alias Photon.Skills.Skill
 
@@ -343,6 +344,58 @@ defmodule Photon.SkillsTest do
       # Another scope has its own 30, and a skill already on is still :ok.
       assert Skills.enable(last.id, {:project, garden.id}) == :ok
       assert Skills.enable(hd(first_30).id, :blip) == :ok
+    end
+  end
+
+  describe "enable_tx/3 and disable_tx/3" do
+    test "change a scope inside the caller's commit, and announce once it's stored" do
+      pdf = skill!("pdf-forms")
+      notes = skill!("release-notes")
+      garden = project!("Garden")
+      scope = {:project, garden.id}
+      :ok = Skills.subscribe()
+
+      assert Durable.commit(fn tx ->
+               :ok = Skills.enable_tx(tx, pdf.id, scope)
+               :ok = Skills.enable_tx(tx, notes.id, scope)
+               Skills.disable_tx(tx, notes.id, scope)
+             end) == :ok
+
+      assert names(Skills.enabled(scope)) == ["pdf-forms"]
+      pdf_id = pdf.id
+      assert_receive {:skills_changed, ^pdf_id}
+
+      # A commit that rolls back keeps none of it, and announces nothing.
+      flush_skills()
+
+      assert {:rolled_back, :no} =
+               Durable.commit(fn tx ->
+                 :ok = Skills.disable_tx(tx, pdf.id, scope)
+                 :ok = Skills.enable_tx(tx, notes.id, scope)
+                 Tx.rollback(:no)
+               end)
+
+      assert names(Skills.enabled(scope)) == ["pdf-forms"]
+      refute_received {:skills_changed, _}
+    end
+
+    test "refuse as enable/2 does, and change nothing" do
+      pdf = skill!("pdf-forms")
+
+      assert Durable.commit(&Skills.enable_tx(&1, pdf.id, {:project, "p_missing"})) ==
+               {:error, "That project doesn't exist."}
+
+      assert Durable.commit(&Skills.enable_tx(&1, "sk_missing", :blip)) == {:error, :not_found}
+      assert Durable.commit(&Skills.disable_tx(&1, pdf.id, :blip)) == :ok
+      assert Skills.scopes(pdf.id) == []
+    end
+  end
+
+  defp flush_skills do
+    receive do
+      {:skills_changed, _id} -> flush_skills()
+    after
+      0 -> :ok
     end
   end
 

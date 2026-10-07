@@ -16,7 +16,9 @@ defmodule PhotonWeb.BlipLive do
   While the panel is closed, Blip speaks up about its answers and failures
   in the conversation (`Photon.Assistant.Notice`), in a speech bubble above
   it holding the whole first paragraph (`@bubbles`, newest first). A new
-  bubble pushes the one before it up and out. Each can be dismissed (×, or
+  bubble pushes the one before it up and out, except a thread's question
+  for the owner, which stays until it is dismissed or read, so what Blip
+  says after passing it on doesn't hide it. Each can be dismissed (×, or
   Esc for all), and goes by itself once there's been time to read it. Blip
   counts what's unread until the panel opens.
 
@@ -30,6 +32,21 @@ defmodule PhotonWeb.BlipLive do
   through `PhotonWeb.Shell`: a new name, or a thread's new title), the
   page is read again from its path (`@page_path`), so the chip keeps up. A message sent with the chip goes with the page, and
   the model sees a note of it in front of the message.
+
+  A thread's question with the owner shows in the conversation as a card
+  (`PhotonWeb.ConversationComponents.question_card/1`). Its `Answer` puts
+  a reply chip on the message box in place of the page chip (`@reply`,
+  "Answering Fix the pump", × to drop it): what is sent with it goes to
+  `Photon.Assistant.answer/2`, straight to the thread, instead of to
+  Blip. A refused answer (already answered elsewhere, say) shows its
+  reason above the box (`@reply_error`) and gives back what was typed.
+  The chip goes when its question is answered or withdrawn. Where each
+  question stands is `@questions`, which `PhotonWeb.ConversationView`
+  folds from the conversation, the answers still queued included, so a
+  card stops offering `Answer` as soon as the answer is sent, even while
+  Blip is busy. On mount, the rows of the questions that fold as open
+  close any that were settled where the conversation doesn't show it. Only a question that is open on the page takes a reply:
+  the ID comes from the browser.
 
   The conversation is shared with a project's thread page.
   `PhotonWeb.ConversationComponents` renders it: the entries, each tool
@@ -53,7 +70,7 @@ defmodule PhotonWeb.BlipLive do
 
   import PhotonWeb.ConversationComponents
 
-  alias Photon.{Assistant, Markdown, Transcript}
+  alias Photon.{Assistant, Markdown, Questions, Transcript}
   alias Photon.Assistant.Notice
   alias PhotonWeb.ConversationView
 
@@ -73,6 +90,10 @@ defmodule PhotonWeb.BlipLive do
   def mount(_params, _session, socket) do
     conversation = Assistant.conversation_id()
     if connected?(socket), do: Assistant.subscribe(conversation)
+    entries = Assistant.entries(conversation)
+    # Where the conversation's runs stand, so a reply in a run already
+    # under way is judged by who asked for that run.
+    {_said, notice_state} = Notice.scan(entries, Notice.initial())
 
     socket =
       socket
@@ -85,13 +106,18 @@ defmodule PhotonWeb.BlipLive do
         unread: 0,
         page: nil,
         page_path: nil,
-        page_dismissed: false
+        page_dismissed: false,
+        reply: nil,
+        reply_error: nil,
+        notice_state: notice_state
       )
-      |> ConversationView.mount_conversation(Assistant.entries(conversation),
+      |> ConversationView.mount_conversation(entries,
         busy: Assistant.busy?(conversation),
         queued: Assistant.queued(conversation)
       )
 
+    open = ConversationView.open_questions(socket)
+    socket = ConversationView.close_questions(socket, Questions.get_many(open))
     {:ok, socket, layout: false}
   end
 
@@ -99,11 +125,14 @@ defmodule PhotonWeb.BlipLive do
 
   @impl true
   def handle_event("send", %{"message" => %{"text" => text}}, socket) do
-    case String.trim(text) do
-      "" ->
+    case {String.trim(text), socket.assigns.reply} do
+      {"", _reply} ->
         {:noreply, socket}
 
-      text ->
+      {_text, %{id: id}} ->
+        {:noreply, answer(socket, id, text)}
+
+      {text, nil} ->
         {:ok, _} = Assistant.send(text, when_busy: socket.assigns.mode, page: context(socket))
         {:noreply, ConversationView.reset_form(socket)}
     end
@@ -153,6 +182,45 @@ defmodule PhotonWeb.BlipLive do
   def handle_event("dismiss_page", _params, socket),
     do: {:noreply, assign(socket, page_dismissed: true)}
 
+  # A question card's Answer: the next message answers that question.
+  def handle_event("reply", %{"id" => id}, socket) do
+    case socket.assigns.questions[id] do
+      %{status: :open, title: title} ->
+        {:noreply, assign(socket, reply: %{id: id, title: title}, reply_error: nil)}
+
+      _closed_or_unknown ->
+        {:noreply, socket}
+    end
+  end
+
+  # The × on the reply chip: the next message goes to Blip again.
+  def handle_event("dismiss_reply", _params, socket),
+    do: {:noreply, assign(socket, reply: nil, reply_error: nil)}
+
+  # The answer goes straight to the thread. A refusal keeps what was typed,
+  # in the box and in the browser, which empties the box as it sends.
+  defp answer(socket, id, text) do
+    case Assistant.answer(id, text) do
+      {:ok, _question} ->
+        socket |> assign(reply: nil, reply_error: nil) |> ConversationView.reset_form()
+
+      {:error, message} ->
+        socket
+        |> assign(reply_error: message, form: to_form(%{"text" => text}, as: :message))
+        |> push_event("composer:restore", %{id: "composer-input", text: text})
+    end
+  end
+
+  # The reply chip goes once its question is no longer open.
+  defp keep_reply(%{assigns: %{reply: %{id: id}}} = socket) do
+    case socket.assigns.questions[id] do
+      %{status: :open} -> socket
+      _closed -> assign(socket, reply: nil, reply_error: nil)
+    end
+  end
+
+  defp keep_reply(socket), do: socket
+
   # The page the next message goes with, unless the user waved it off.
   defp context(%{assigns: %{page_dismissed: true}}), do: nil
   defp context(socket), do: socket.assigns.page
@@ -166,12 +234,15 @@ defmodule PhotonWeb.BlipLive do
       ) do
     was_busy = socket.assigns.busy
     busy = Assistant.busy?(conversation)
+    {notices, notice_state} = Notice.scan(changes.entries, socket.assigns.notice_state)
 
     socket =
       socket
       |> ConversationView.apply_changes(changes, busy, Assistant.queued(conversation))
+      |> keep_reply()
       |> hold(Transcript.outcome(changes.entries, was_busy, busy))
-      |> notify(Notice.from_entries(changes.entries))
+      |> assign(notice_state: notice_state)
+      |> notify(notices)
 
     {:noreply, socket}
   end
@@ -211,16 +282,27 @@ defmodule PhotonWeb.BlipLive do
   end
 
   # Closed, Blip says the latest thing in a bubble, pushing the one before it
-  # up and out, and counts them all. Open, the conversation shows its own
-  # answers and failures, so there's nothing more to say.
+  # up and out, and counts them all. A thread's question stays, whatever
+  # Blip says after it, until it is dismissed or its time runs out; each
+  # question gets its own bubble. Open, the conversation shows its own
+  # answers, failures and questions, so there's nothing more to say.
   defp notify(%{assigns: %{panel: "closed"}} = socket, [_ | _] = notices) do
+    said = notices |> said() |> Enum.map(&as_bubble/1) |> Enum.reverse()
+
     socket
     |> update(:unread, &(&1 + length(notices)))
-    |> leave(fn _bubble -> true end)
-    |> update(:bubbles, &[as_bubble(List.last(notices)) | &1])
+    |> leave(&(&1.kind != :question))
+    |> update(:bubbles, &(said ++ &1))
   end
 
   defp notify(socket, _notices), do: socket
+
+  # What of a batch gets a bubble, in order: each question, and the last
+  # of the rest.
+  defp said(notices) do
+    {questions, others} = Enum.split_with(notices, &(&1.kind == :question))
+    questions ++ Enum.take(others, -1)
+  end
 
   defp as_bubble(notice),
     do:
@@ -317,6 +399,7 @@ defmodule PhotonWeb.BlipLive do
                   entry={entry}
                   results={@results}
                   outputs={@outputs}
+                  questions={@questions}
                   image_path={&image_path/2}
                 />
               </div>
@@ -333,8 +416,23 @@ defmodule PhotonWeb.BlipLive do
           busy={@busy}
           mode={@mode}
           queued={@queued}
+          placeholder={
+            if(@reply, do: "Your answer goes straight to the thread", else: "Ask Blip anything...")
+          }
         >
-          <:context :if={@page && !@page_dismissed}>
+          <:above :if={@reply_error}>
+            <p
+              id="reply-error"
+              class="mb-2 flex items-start gap-1.5 rounded-lg bg-bad-soft px-3 py-2 text-[12.5px] text-ink"
+            >
+              <.icon name="hero-exclamation-circle-micro" class="mt-px size-4 shrink-0 text-bad" />
+              {@reply_error}
+            </p>
+          </:above>
+          <:context :if={@reply}>
+            <.reply_chip reply={@reply} />
+          </:context>
+          <:context :if={!@reply && @page && !@page_dismissed}>
             <.page_chip page={@page} />
           </:context>
         </.composer>
@@ -589,6 +687,35 @@ defmodule PhotonWeb.BlipLive do
     """
   end
 
+  attr :reply, :map, required: true
+
+  # The question the next message answers, inside the message box, with a
+  # × to go back to talking to Blip.
+  defp reply_chip(assigns) do
+    ~H"""
+    <span
+      id="reply-chip"
+      class="flex max-w-full items-center gap-1.5 rounded-lg bg-warn-soft py-1 pr-1 pl-2 text-[12px] text-ink-soft ring-1 ring-warn/30"
+      title="What you send goes straight to the thread"
+    >
+      <.icon name="hero-arrow-uturn-left-micro" class="size-3.5 shrink-0 text-warn" />
+      <span class="min-w-0 truncate">
+        Answering <span class="font-medium text-ink">{@reply.title || "a thread"}</span>
+      </span>
+      <button
+        type="button"
+        id="reply-chip-dismiss"
+        phx-click="dismiss_reply"
+        class="shrink-0 rounded p-0.5 text-ink-faint transition hover:bg-surface/70 hover:text-ink"
+        title="Don't answer the question"
+        aria-label="Don't answer the question"
+      >
+        <.icon name="hero-x-mark-micro" class="size-3.5" />
+      </button>
+    </span>
+    """
+  end
+
   attr :bubble, :map, required: true
 
   # Blip saying something, in a speech bubble above it: the whole first
@@ -602,7 +729,8 @@ defmodule PhotonWeb.BlipLive do
       class={[
         "blip-bubble",
         @bubble.leaving && "is-leaving",
-        @bubble.kind != :reply && "is-failed"
+        @bubble.kind == :error && "is-failed",
+        @bubble.kind == :question && "is-question"
       ]}
     >
       <div class="blip-bubble-clip">

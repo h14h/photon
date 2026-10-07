@@ -254,6 +254,28 @@ defmodule Photon.ProjectsTest do
       refute_received {:project_files_changed, _, _}
     end
 
+    test "a missing project's message names the writer's side" do
+      assert write("p_missing", "a", "x") ==
+               {:error, "This thread's project no longer exists."}
+
+      assert edit("p_missing", "a", "x", "y") ==
+               {:error, "This thread's project no longer exists."}
+
+      assert Durable.commit(&Projects.write_file_tx(&1, "p_missing", "a", "x", "blip")) ==
+               {:error, "That project no longer exists."}
+
+      assert Durable.commit(&Projects.edit_file_tx(&1, "p_missing", "a", "x", "y", "blip")) ==
+               {:error, "That project no longer exists."}
+    end
+
+    test "Blip writes and edits as blip", %{project: p} do
+      assert {:ok, %{created?: true, file: %ContextFile{updated_by: "blip"}}} =
+               Durable.commit(&Projects.write_file_tx(&1, p.id, "notes", "zone 2", "blip"))
+
+      assert {:ok, %ContextFile{content: "zone 3", version: 2, updated_by: "blip"}} =
+               Durable.commit(&Projects.edit_file_tx(&1, p.id, "notes", "2", "3", "blip"))
+    end
+
     test "edit_file_tx/6 on a project with no files says so" do
       empty = project!(%{"purpose" => "x", "name" => "Empty"})
 

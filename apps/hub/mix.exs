@@ -29,6 +29,7 @@ defmodule Photon.MixProject do
           Photon.HarnessProfiles.Loop,
           Photon.Property.SlowProfile,
           Photon.TestProfile,
+          Photon.TestProfile.Hooks,
           Photon.TestProfile.Wait,
           PhotonWeb.ConnCase,
           PhotonWeb,

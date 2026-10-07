@@ -21,8 +21,12 @@ defmodule Photon.DurableTest do
 
   defp waiting_on_a_tool(%{conversation: c}) do
     {:ok, first} = Durable.submit(c, "wait")
-    await_change(c, &Enum.any?(&1.tasks, fn t -> t.kind == "tool" and t.status == "waiting" end))
+    await_tool_waiting(c)
     %{first: first}
+  end
+
+  defp await_tool_waiting(c) do
+    await_change(c, &Enum.any?(&1.tasks, fn t -> t.kind == "tool" and t.status == "waiting" end))
   end
 
   describe "an idle conversation" do
@@ -304,6 +308,119 @@ defmodule Photon.DurableTest do
       assert newest.seq > first.seq
       assert PhotonCore.Message.tool_calls(first.data["message"]) != []
       assert Durable.last_entries(c, "error", 5) == []
+    end
+  end
+
+  describe "abort_tx/3" do
+    setup :conversation
+
+    test "stops a conversation inside a commit, with the commit's other writes", %{
+      conversation: c
+    } do
+      {:ok, first} = Durable.submit(c, "wait")
+      await_tool_waiting(c)
+      {:ok, queued} = Durable.submit(c, "later")
+
+      run =
+        Durable.commit(fn tx ->
+          _note = Tx.append(tx, c, "error", %{"message" => "stopping", "notice" => true})
+          Durable.abort_tx(tx, c, [])
+        end)
+
+      assert %Durable.TaskRecord{kind: "generation", abort_requested: true} = run
+      assert %{status: "unanswered", reason: "stopped"} = await_settled(c, first.id)
+      assert Repo.get(Durable.Submission, queued.id).status == "withdrawn"
+      assert "stopping" in texts(c, "error")
+      refute Durable.busy?(c)
+    end
+
+    test "keeps what :withdraw leaves, and is :idle with no run", %{conversation: c} do
+      {:ok, kept} = Durable.submit(c, "wait")
+      await_tool_waiting(c)
+      {:ok, mine} = Durable.submit(c, "mine")
+
+      {:ok, other} = Durable.submit(c, "other")
+
+      Durable.commit(&Durable.abort_tx(&1, c, withdraw: fn s -> s.id == mine.id end))
+      await_settled(c, kept.id)
+
+      # The kept input starts the next run once the stopped one has ended.
+      assert %{status: "done"} = await_settled(c, other.id)
+      assert Repo.get(Durable.Submission, mine.id).status == "withdrawn"
+      assert Durable.commit(&Durable.abort_tx(&1, c, [])) == :idle
+    end
+  end
+
+  describe "Tx.count_tool_results_since/5" do
+    setup :conversation
+
+    test "counts flagged ok results of the named tools after the last user entry of the given kinds",
+         %{conversation: c} do
+      user = fn kind ->
+        %{"message" => PhotonCore.Message.user("hi"), "source" => %{"kind" => kind}}
+      end
+
+      result = fn name, status, flag? ->
+        details = if flag?, do: %{"counted" => true}, else: %{}
+        %{"name" => name, "status" => status, "details" => details}
+      end
+
+      count = fn ->
+        Durable.commit(&Tx.count_tool_results_since(&1, c, ~w(a b), ~w(user), "counted"))
+      end
+
+      # With no owner entry yet, it counts from the start.
+      Durable.commit(fn tx ->
+        _a = Tx.append(tx, c, "tool_result", result.("a", "ok", true))
+        Tx.append(tx, c, "tool_result", result.("b", "ok", true))
+      end)
+
+      assert count.() == 2
+
+      Durable.commit(fn tx ->
+        _user = Tx.append(tx, c, "user", user.("user"))
+        _a = Tx.append(tx, c, "tool_result", result.("a", "ok", true))
+        _error = Tx.append(tx, c, "tool_result", result.("a", "error", true))
+        _other = Tx.append(tx, c, "tool_result", result.("other", "ok", true))
+        # A result without the flag isn't counted.
+        _unflagged = Tx.append(tx, c, "tool_result", result.("a", "ok", false))
+        _no_details = Tx.append(tx, c, "tool_result", %{"name" => "a", "status" => "ok"})
+        # A message from anyone else doesn't start the count again.
+        _signal = Tx.append(tx, c, "user", user.("signal"))
+        Tx.append(tx, c, "tool_result", result.("b", "ok", true))
+      end)
+
+      assert count.() == 2
+
+      _user = Durable.commit(&Tx.append(&1, c, "user", user.("user")))
+      assert count.() == 0
+    end
+  end
+
+  describe "recent_entries/2" do
+    setup :conversation
+
+    test "are the newest user, assistant and tool result entries, oldest first", %{
+      conversation: c
+    } do
+      assert Durable.recent_entries(c, 5) == []
+
+      {:ok, s} = Durable.submit(c, "wait")
+      await_tool_waiting(c)
+      Durable.signal("go")
+      await_settled(c, s.id)
+      {:ok, failing} = Durable.submit(c, "fail")
+      await_settled(c, failing.id)
+
+      # The transcript: user, assistant (the call), tool_result, assistant,
+      # user ("fail") and the error, which isn't part of the exchange.
+      assert entry_kinds(c) == ~w(user assistant tool_result assistant user error)
+
+      recent = Durable.recent_entries(c, 3)
+      assert Enum.map(recent, & &1.kind) == ~w(tool_result assistant user)
+      assert [%Durable.Entry{} | _] = recent
+      assert Enum.map(recent, & &1.seq) == Enum.sort(Enum.map(recent, & &1.seq))
+      assert length(Durable.recent_entries(c, 50)) == 5
     end
   end
 end

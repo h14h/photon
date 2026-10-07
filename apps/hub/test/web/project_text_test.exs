@@ -34,6 +34,13 @@ defmodule PhotonWeb.ProjectTextTest do
     assert ProjectText.writer(by_thread, %{}) == "a thread"
   end
 
+  test "changed/3 names Blip, without looking it up as a thread" do
+    file = %ContextFile{updated_by: "blip", updated_at: before(5 * 60)}
+
+    assert ProjectText.changed(file, %{}, @now) == "changed 5 minutes ago by Blip"
+    assert ProjectText.writer(file, %{"blip" => "Not Blip"}) == "Blip"
+  end
+
   test "size/1 in bytes, KB and MB" do
     assert ProjectText.size("") == "Empty"
     assert ProjectText.size("hello") == "5 B"

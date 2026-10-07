@@ -111,9 +111,12 @@ defmodule Photon.Durable.ToolTask do
     Runtime.commit(runtime, &ToolCall.done(record(&1, task, result)))
   end
 
+  # Every way a call ends records its result here, so the profile's
+  # on_tool_result/4 hears of each result once, in the commit that stores it.
   defp record(tx, task, result) do
-    {status, entry} = ToolCall.result_entry(task.input["call"], result)
-    _entry = Tx.append(tx, task.conversation_id, "tool_result", entry)
+    {status, data} = ToolCall.result_entry(task.input["call"], result)
+    entry = Tx.append(tx, task.conversation_id, "tool_result", data)
+    :ok = Durable.tool_result(tx, task, entry)
     status
   end
 

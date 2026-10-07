@@ -1,7 +1,7 @@
 defmodule PhotonWeb.SidebarTest do
   @moduledoc """
   The sidebar on every page (`PhotonWeb.Layouts`, fed by `PhotonWeb.Shell`):
-  Home, the projects with their threads, Machines, Skills and Settings, kept current
+  Home, Activity, the projects with their threads, Machines, Skills and Settings, kept current
   as projects and threads change.
 
   Threads run on the scripted model (`Photon.Threads.MockScript`). A thread
@@ -14,7 +14,7 @@ defmodule PhotonWeb.SidebarTest do
 
   import Phoenix.LiveViewTest
 
-  alias Photon.{Machines, Projects, Threads}
+  alias Photon.{Assistant, Machines, Projects, Questions, Threads}
 
   @moduletag :durable
 
@@ -69,8 +69,11 @@ defmodule PhotonWeb.SidebarTest do
     view |> render() |> LazyHTML.from_fragment() |> LazyHTML.query(selector) |> Enum.count()
   end
 
-  test "has Home, Projects, Machines with the online count, and Settings", %{view: view} do
+  test "has Home, Activity, Projects, Machines with the online count, and Settings", %{
+    view: view
+  } do
     assert has_element?(view, "#nav-home[href='/']")
+    assert has_element?(view, "#nav-activity[href='/activity']", "Activity")
     assert has_element?(view, "#new-project[href='/projects/new']")
     assert has_element?(view, "#nav-machines[href='/nodes']", "0 online")
     assert has_element?(view, "#nav-settings")
@@ -97,6 +100,60 @@ defmodule PhotonWeb.SidebarTest do
 
     {:ok, view, _html} = live(conn, ~p"/")
     assert has_element?(view, "#sign-in-banner[href='/settings']", "Sign in with ChatGPT")
+  end
+
+  test "Home counts the threads that need you, and each thread is marked with its state", %{
+    view: view
+  } do
+    refute has_element?(view, "#nav-home-count")
+
+    # Blip waits on a command that never finishes, so a thread's question
+    # stays with it and the thread stays asking.
+    fake_machine("box")
+    {:ok, _parked} = Assistant.send("on box: $ sleep 1000")
+    project = project!("Garden")
+    :ok = Questions.subscribe()
+
+    waiting = idle_thread!(project, "ask me: which zone should I water first")
+    failed = idle_thread!(project, "fail: the pump is unplugged")
+    unread = idle_thread!(project, "files")
+    {:ok, asking} = Threads.start(project.id, "ask blip: which deploy branch?")
+    asking_id = asking.id
+    assert_receive {:questions_changed, ^asking_id}, 5_000
+    _ = settled(view)
+
+    # Waiting on you, failed and unread count; asking Blip doesn't.
+    assert has_element?(view, "#nav-home-count", "3")
+    assert has_element?(view, "#nav-home-count[title='3 things need you.']")
+
+    for {id, state, words} <- [
+          {asking.id, "asking", "Asking Blip"},
+          {waiting, "waiting", "Waiting on you"},
+          {failed, "failed", "Failed"},
+          {unread, "unread", "Finished"}
+        ] do
+      assert has_element?(view, "#side-thread-#{id}[data-state=#{state}]")
+      assert has_element?(view, ~s(#side-thread-#{id} [data-mark=#{state}][title="#{words}"]))
+    end
+
+    # The thread asking Blip is busy, but doesn't show the running dot.
+    refute has_element?(view, "#side-thread-#{asking.id} [data-mark=running]")
+
+    :ok = Threads.resolve(failed)
+    :ok = Threads.mark_seen(unread)
+    _ = settled(view)
+
+    assert has_element?(view, "#nav-home-count", "1")
+    assert has_element?(view, "#side-thread-#{failed}[data-state=idle]")
+    refute has_element?(view, "#side-thread-#{failed} [data-mark]")
+
+    :ok = Threads.resolve(waiting)
+    _ = settled(view)
+    refute has_element?(view, "#nav-home-count")
+
+    # Stop the thread asking Blip, so no run outlives the test.
+    Threads.stop(asking.id)
+    idle!(asking.id)
   end
 
   test "a project made elsewhere appears, with a + to start a thread", %{view: view} do
@@ -194,6 +251,10 @@ defmodule PhotonWeb.SidebarTest do
     assert has_element?(view, "#side-thread-#{thread}[aria-current=page]")
     assert has_element?(view, "#side-project-garden.font-medium")
     refute has_element?(view, "#side-project-garden[aria-current]")
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+    assert has_element?(view, "#nav-activity[aria-current=page]")
+    refute has_element?(view, "#nav-home[aria-current]")
 
     {:ok, view, _html} = live(conn, ~p"/nodes")
     assert has_element?(view, "#nav-machines[aria-current=page]")

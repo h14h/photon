@@ -38,6 +38,51 @@ defmodule Photon.Durable.Queries do
     from(e in Entry, where: e.conversation_id == ^conversation_id, select: max(e.seq))
   end
 
+  @recent_kinds ~w(user assistant tool_result)
+
+  @doc """
+  A conversation's newest `limit` entries of kinds `"user"`, `"assistant"`
+  and `"tool_result"`, oldest first.
+  """
+  @spec recent_entries(String.t(), pos_integer()) :: Ecto.Query.t()
+  def recent_entries(conversation_id, limit) do
+    newest =
+      from(e in Entry,
+        where: e.conversation_id == ^conversation_id and e.kind in ^@recent_kinds,
+        order_by: [desc: e.seq],
+        limit: ^limit
+      )
+
+    from(e in subquery(newest), order_by: [asc: e.seq])
+  end
+
+  @doc """
+  How many of a conversation's `"tool_result"` entries with status `"ok"`
+  and `flag` true in their details are of a tool in `names` and come
+  after its last `"user"` entry whose source kind is one of
+  `source_kinds` (after its start when it has none). One query, which
+  selects the count.
+  """
+  @spec count_tool_results_since(String.t(), [String.t()], [String.t()], String.t()) ::
+          Ecto.Query.t()
+  def count_tool_results_since(conversation_id, names, source_kinds, flag) do
+    since =
+      from(u in Entry,
+        where:
+          u.conversation_id == ^conversation_id and u.kind == "user" and
+            u.data["source"]["kind"] in ^source_kinds,
+        select: max(u.seq)
+      )
+
+    from(e in Entry,
+      where:
+        e.conversation_id == ^conversation_id and e.kind == "tool_result" and
+          e.data["status"] == "ok" and e.data["name"] in ^names and
+          e.data["details"][^flag] == true and e.seq > coalesce(subquery(since), 0),
+      select: count(e.id)
+    )
+  end
+
   @doc "A conversation's newest `limit` entries of `kind`, newest first."
   @spec last_entries(String.t(), String.t(), pos_integer()) :: Ecto.Query.t()
   def last_entries(conversation_id, kind, limit) do
