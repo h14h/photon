@@ -14,9 +14,9 @@ defmodule PhotonCore.Message do
   A part is `%{"type" => "text", "text" => text}` or
   `%{"type" => "image", "mime" => mime, "data" => base64}`.
 
-  Every function here is pure. The readers (`text_of/1`, `images/1`,
-  `tool_calls/1`, `arguments/1`) accept anything and never raise, because
-  they also read messages that came over the wire.
+  Pure. The readers (`text_of/1`, `images/1`, `tool_calls/1`,
+  `arguments/1`) accept anything and never raise, since they also read
+  messages that came over the wire.
   """
 
   @typedoc "A message: user, assistant or tool result (see the moduledoc)."

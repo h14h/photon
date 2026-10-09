@@ -9,25 +9,18 @@ defmodule Photon.Schedules.Routine do
   The task's input is `"schedule_id"`, `"first_at"` (Unix milliseconds,
   what `Photon.Schedules.Rules.arm/4` chose) and `"every_ms"` (nil for a
   one-off); its checkpoint is `"next_at"` and how many times it has fired
-  (`"runs"`). `Photon.Schedules` creates it in the commit that creates or
-  edits the row, and retires it in the commit that edits or deletes it.
+  (`"runs"`).
 
   A firing (`fire_tx/3`, which run-now shares) is one commit: it reads the
-  row, gathers the facts `Photon.Schedules.Rules.fire/2` needs (each only
-  for an ID that is set), starts a thread, submits the prompt or skips,
-  records the outcome on the row and announces it. The message a firing
-  sends carries the schedule's ID, who made it (`"created_by"`) and why
-  Blip made it (`"asked_by"`, nil for the owner's) as its source. The step reads consent
-  and the clock before that commit. `Photon.Durable.Runtime.commit/2`
-  keeps all of it or none: a step whose task was marked for abort,
-  finished or restarted meanwhile commits nothing, so a firing happens
-  once and never after its schedule was edited or deleted.
+  row, applies `Photon.Schedules.Rules.fire/2`'s decision and records the
+  outcome on the row. The step reads consent and the clock before that
+  commit, which `Photon.Durable.Runtime.commit/2` fences (see
+  `Photon.Schedules`).
 
   `on_fail/3` records a failed task on the row it still carries, so the
   pages say the schedule stopped, and collects it for ambient mode's next
-  digest (`Photon.Signals.collect_tx/2`); it never retries, since a firing that
-  crashed would crash the same way again, and saving the schedule arms a
-  fresh task.
+  digest; it never retries, since a firing that crashed would crash the
+  same way again, and saving the schedule arms a fresh task.
   """
 
   @behaviour Photon.Durable.TaskKind
@@ -97,9 +90,8 @@ defmodule Photon.Schedules.Routine do
   # Every routine task names its schedule; there is nothing to record otherwise.
   def on_fail(_task, _reason, _tx), do: :ok
 
-  # A schedule that stopped is news for the next digest while ambient mode
-  # is on; `Photon.Signals.collect_tx/2` reads the mode in this commit and
-  # does nothing in quiet mode.
+  # `Photon.Signals.collect_tx/2` reads the mode in this commit and does
+  # nothing in quiet mode.
   defp collect_stopped_tx(tx, schedule, task_id, reason) do
     Signals.collect_tx(tx, %{
       kind: "schedule_stopped",
@@ -164,9 +156,8 @@ defmodule Photon.Schedules.Routine do
     |> Enum.any?(&(get_in(&1.content, ["source", "schedule_id"]) == schedule_id))
   end
 
-  # Applies the decision; returns the outcome and the thread to remember
-  # as the last one (unchanged by a skip, so a running thread keeps
-  # holding off the next new one).
+  # The last thread is unchanged by a skip, so a running thread keeps
+  # holding off the next new one.
   defp apply_decision(tx, schedule, :new_thread, {:start, outcome}, request_id) do
     {:ok, thread} =
       Threads.start_tx(tx, schedule.project_id, Rules.text(schedule.prompt),
@@ -212,11 +203,8 @@ defmodule Photon.Schedules.Routine do
   defp apply_decision(_tx, schedule, _target, {:skip, outcome, :quiet}, _request_id),
     do: {outcome, schedule.last_thread_id}
 
-  # Every firing names its schedule, who made it and why: threads a
-  # schedule Blip made starts or wakes are Blip's work, so Blip hears how
-  # they end (`Photon.Signals.Rules.blip_source?/1`), and a firing of one
-  # Blip made on its own is its follow-up, while one the owner asked for
-  # is a schedule (`Photon.Assistant.Origin`).
+  # Who made the schedule and why decide whose work the firing is (see
+  # `Photon.Schedules.Schedule`, `Photon.Signals.Rules.blip_source?/1`).
   defp source(schedule),
     do: %{
       "kind" => "routine",

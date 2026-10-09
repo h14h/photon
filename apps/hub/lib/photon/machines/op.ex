@@ -7,17 +7,15 @@ defmodule Photon.Machines.Op do
   (the snapshot is kept in `result` until the tool claims it) or `closed`
   (the tool has its result, or the op was canceled; `result` is null).
   `output` is what a shell command printed, kept when the call ended
-  another way (the user stopped it, say) and the op's final snapshot
-  carried output, so the conversation can show it after a reload; nil
-  otherwise.
+  another way and the op's final snapshot carried output; nil otherwise.
   The flags are facts the hub has learned:
 
     * `confirmed`: the node has sent a snapshot for the op, so it knows it
     * `pushed`: an `op.start` was built for the op at least once
     * `cancel`: the call ended another way, and the op must not run
 
-  `Photon.Machines.Rules` decides every change; `Photon.Machines` applies
-  them. `docs/operations.md#hub-rules` has the rules.
+  `Photon.Machines.Rules` decides every change
+  (`docs/operations.md#hub-rules`).
   """
 
   # Data: an Ecto schema, no behaviour of its own.

@@ -3,25 +3,13 @@ defmodule Photon.Ambient.Rules do
   Ambient mode's decisions, worked out from plain data with the time passed
   in.
 
-    * The setting: `config/2` reads the Settings form over the stored doc (a
-      missing or unexpected value keeps what the doc has), and `changes/3`
-      says what a Save does to the two timers and to what is pending.
-    * The timers: `next_firing/3` is the next time on a timer's grid
-      after a firing (missed slots are skipped, not fired in a burst), and
-      `next_review/2` the next 09:00 at the owner's UTC offset.
-    * A firing: `firing/1` decides whether it skips (off, Blip can't
-      reach its model, no consent, the last one still queued); `digest/3` sorts the pending items into new,
-      smaller and gone against the board; `review/3` picks the threads
-      the daily review lists. `last_touch/1` is when a thread was last
-      touched, for the review.
-
   Items and board entries are plain maps with the fields
   `Photon.Signals.DigestItem` and `Photon.Threads.board/1` give; every
   function reads them with defaults, so a row missing a field is sorted
   as gone or left out rather than raising.
   """
 
-  # Functional core: no processes, no I/O. The time comes in as an argument.
+  # Functional core: no processes, no I/O.
   use Boundary, type: :strict, deps: [Photon.Threads.State]
 
   alias Photon.Threads.State
@@ -61,7 +49,7 @@ defmodule Photon.Ambient.Rules do
   @typedoc """
   What a Save does (`changes/3`): each timer's action; `clear?`, whether
   to delete every pending item and withdraw the queued digest and review
-  (ambient mode was turned off); `turned_on?`, whether it was turned on.
+  (ambient mode was turned off).
   """
   @type changes :: %{
           digest: action(),
@@ -77,10 +65,9 @@ defmodule Photon.Ambient.Rules do
   @type entry :: map()
 
   @typedoc """
-  What the digest names besides the board: `prompts`, the schedules that
-  still exist, by ID; `tasks`, their current routine task, by ID (a
-  schedule missing here is taken to still have the task that failed);
-  `projects`, every project (with `id`, `slug` and `name`).
+  What the digest names besides the board, by ID: the prompts of the
+  schedules that still exist, and their current routine task (a schedule
+  missing from `tasks` is taken to still have the task that failed).
   """
   @type places :: %{
           required(:prompts) => %{optional(String.t()) => String.t()},
@@ -91,11 +78,8 @@ defmodule Photon.Ambient.Rules do
   @typedoc """
   One line of a digest: the item's kind, whether it is new to the owner,
   when it was collected, and what it names, read at digest time. Fields a
-  kind doesn't use are nil: `title` and `thread_id` for a thread,
-  `project_id`, `slug` and `project` for its project (nil for Blip's own
-  schedule), `note` for a finished run, `schedule_id`, `prompt` and
-  `reason` for a stopped schedule, `name`, `writer`, `writer_title` and
-  `deleted?` for a context file.
+  kind doesn't use are nil; the project fields are nil for Blip's own
+  schedule.
   """
   @type row :: %{
           kind: String.t(),
@@ -123,11 +107,7 @@ defmodule Photon.Ambient.Rules do
           failed: non_neg_integer()
         }
 
-  @typedoc """
-  The digest (`digest/3`): the new and smaller rows shown, how many more
-  of each there are, the IDs of items whose subject is gone, and the
-  board's counts.
-  """
+  @typedoc "The digest (`digest/3`); `gone` has the IDs of items whose subject is gone."
   @type digest :: %{
           new: [row()],
           smaller: [row()],
@@ -141,10 +121,9 @@ defmodule Photon.Ambient.Rules do
   @type review_opts :: %{quiet_after: non_neg_integer(), again_after: non_neg_integer()}
 
   @typedoc """
-  A thread in the review: where it is, its state, when it was last
-  touched (`since`), how its last run ended (`last_run_status`) and what
-  it last said that the board knows: the open question with the owner
-  (Blip's wording when it gave one), or the last run's note (`detail`).
+  A thread in the review: `since` is its last touch, and `detail` what it
+  last said that the board knows: the open question with the owner
+  (Blip's wording when it gave one), or the last run's note.
   """
   @type review_row :: %{
           thread_id: String.t(),
@@ -166,10 +145,10 @@ defmodule Photon.Ambient.Rules do
         }
 
   @typedoc """
-  What a firing knows before it reads the items (`firing/1`): whether
-  ambient mode is on, whether Blip can reach its model (`thinks?`: signed
-  in with plan use, or the scripted model), whether Settings lets
-  schedules use the owner's plan, and whether the last one still waits.
+  What a firing knows before it reads the items (`firing/1`): `thinks?`,
+  whether Blip can reach its model; `allowed?`, whether Settings lets
+  schedules use the owner's plan; `queued?`, whether the last one still
+  waits.
   """
   @type firing_facts :: %{
           on?: boolean(),
@@ -208,7 +187,6 @@ defmodule Photon.Ambient.Rules do
     }
   end
 
-  # The doc's setting, with the defaults for what it lacks.
   defp stored(doc) do
     doc = if is_map(doc), do: doc, else: %{}
 
@@ -316,11 +294,8 @@ defmodule Photon.Ambient.Rules do
   ## A firing
 
   @doc """
-  Whether a firing goes ahead, in order: ambient mode off is `"off"`;
-  Blip unable to reach its model (signed out of ChatGPT, or plan use not
-  allowed) is `"skipped_model"`, since its run could only fail; no
-  consent to use the owner's plan is `"skipped_consent"`; the last digest
-  or review still queued in Blip's inbox is `"skipped_queued"`. Every
+  Whether a firing goes ahead, or which skip it is. A firing while Blip
+  can't reach its model is skipped, since its run could only fail. Every
   skip leaves the items and the review marks as they are.
   """
   @spec firing(firing_facts()) :: :go | {:skip, String.t()}
@@ -343,21 +318,18 @@ defmodule Photon.Ambient.Rules do
       gone with the thread
     * `"schedule_stopped"`: new while the schedule exists and still has
       the task that failed; gone once it is deleted or saved again
-    * `"file_written"`: smaller; gone with the project
-    * `"project_created"`, `"purpose_changed"`: smaller; gone with the
-      project
+    * `"file_written"`, `"project_created"`, `"purpose_changed"`:
+      smaller; gone with the project
     * `"thread_started"`: smaller; gone with the thread
     * `"resolved"`: smaller while the thread is still resolved, else gone
     * anything else: gone
 
-  Items about the same subject fold into the newest: one per thread for
-  `"finished"`, `"thread_started"` and `"resolved"`, one per schedule, one
-  per project and file for `"file_written"`, one per project for
-  `"project_created"` and `"purpose_changed"`. Each group is ordered by
-  project name, then time, and cut at #{@new_limit} new and
-  #{@smaller_limit} smaller rows with how many more. `gone` has the IDs
-  of the items to delete without reporting; folded items aren't in it,
-  and go with the digest that carries their subject.
+  Items about the same subject (`Photon.Signals.Rules.item_key/1`) fold
+  into the newest. Each group is ordered by project name, then time, and
+  cut at #{@new_limit} new and #{@smaller_limit} smaller rows with how
+  many more. `gone` has the IDs of the items to delete without reporting;
+  folded items aren't in it, and go with the digest that carries their
+  subject.
   """
   @spec digest([item()], [entry()], places()) :: digest()
   def digest(items, board, places) do
@@ -382,7 +354,6 @@ defmodule Photon.Ambient.Rules do
     }
   end
 
-  # The board's threads by ID, the projects by ID and the prompts.
   defp lookup(board, places) do
     %{
       threads: Map.new(board, &{entry_id(&1), &1}),
@@ -406,7 +377,6 @@ defmodule Photon.Ambient.Rules do
 
   defp projects(_projects), do: %{}
 
-  # Each item is folded into its subject's newest row, or listed as gone.
   defp keep_newest({item, :gone}, {rows, gone}), do: {rows, [Map.get(item, :id) | gone]}
 
   defp keep_newest({_item, {subject, row}}, {rows, gone}) do
@@ -520,7 +490,6 @@ defmodule Photon.Ambient.Rules do
     end
   end
 
-  # The row for an item, with its thread and project when `entry` names them.
   defp row(item, new?, entry) do
     base = %{
       kind: Map.get(item, :kind),
@@ -638,8 +607,6 @@ defmodule Photon.Ambient.Rules do
     }
   end
 
-  # A waiting thread's open question with the owner (Blip's wording when
-  # it gave one), else the last run's note.
   defp detail(entry) do
     question =
       entry

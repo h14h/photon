@@ -1,20 +1,9 @@
 defmodule PhotonWeb do
   @moduledoc """
-  The entrypoint for defining your web interface, such
-  as controllers, components, channels, and so on.
-
-  This can be used in your application as:
-
-      use PhotonWeb, :controller
-      use PhotonWeb, :html
-
-  The definitions below will be executed for every controller,
-  component, etc, so keep them short and clean, focused
-  on imports, uses and aliases.
-
-  Do NOT define functions inside the quoted expressions
-  below. Instead, define additional modules and import
-  those modules here.
+  The web layer's `use PhotonWeb, :controller` (`:html`, `:live_view`,
+  ...) entrypoint. The quoted definitions run in every such module, so
+  they hold only imports, uses and aliases: functions go in their own
+  modules, imported here.
   """
 
   # The web layer: LiveViews, the node channel and controllers, which may
@@ -32,7 +21,6 @@ defmodule PhotonWeb do
     quote do
       use Phoenix.Router, helpers: false
 
-      # Import common connection and controller functions to use in pipelines
       import Plug.Conn
       import Phoenix.Controller
       import Phoenix.LiveView.Router
@@ -80,30 +68,23 @@ defmodule PhotonWeb do
     quote do
       use Phoenix.Component
 
-      # Import convenience functions from controllers
       import Phoenix.Controller,
         only: [get_csrf_token: 0, view_module: 1, view_template: 1]
 
-      # Include general helpers for rendering HTML
       unquote(html_helpers())
     end
   end
 
   defp html_helpers do
     quote do
-      # HTML escaping functionality
       import Phoenix.HTML
-      # Core UI components
       import PhotonWeb.CoreComponents
       import PhotonWeb.Blip, only: [blip: 1]
-      # Times in the owner's time zone
       import PhotonWeb.TimeComponents
 
-      # Common modules used in templates
       alias Phoenix.LiveView.JS
       alias PhotonWeb.Layouts
 
-      # Routes generation with the ~p sigil
       unquote(verified_routes())
     end
   end

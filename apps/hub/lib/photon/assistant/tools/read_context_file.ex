@@ -1,12 +1,9 @@
 defmodule Photon.Assistant.Tools.ReadContextFile do
   @moduledoc """
-  Blip's `read_context_file` tool: one of a project's context files after a
-  line naming it with its size, when it changed and who changed it, as a
-  thread's tool of the same name reads it but seen from Blip's side
-  (`Photon.Threads.read_file_text/3` with the viewer `"blip"`). A missing
-  file is an error that lists the files there are. The details name the
-  project and the file, for the line in Blip's panel. It changes nothing, so
-  a rerun after a restart is safe.
+  Blip's `read_context_file` tool: one of a project's context files as a
+  thread's tool of the same name reads it, seen from Blip's side
+  (`Photon.Threads.read_file_text/3` with the viewer `"blip"`). It changes
+  nothing, so a rerun after a restart is safe.
   """
   @behaviour Photon.Durable.Tool
 

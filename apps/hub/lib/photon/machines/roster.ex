@@ -12,18 +12,12 @@ defmodule Photon.Machines.Roster do
   in `docs/operations.md`).
 
   A connected node that doesn't list the `"ops:2"` capability runs a
-  photon-node from before the operation protocol this hub speaks, and is
+  photon-node older than the operation protocol this hub speaks, and is
   `:outdated`. `ops:2` is `ops:1` plus one promise: a `shell` operation
-  creates its working directory when it is missing, so a project's folder on
-  a machine is made on first use. A step 1 node would fail a thread's first
-  command with "start process ...: enoent" instead, so it gets no work until
-  it is reinstalled.
-
-  `ids/3` names the same machines as `build/3` without their state, in an
-  order that ignores who is connected: `local` first, then by ID. Machine
-  skills are listed in that order in every agent's prompt, so a machine
-  connecting or disconnecting never changes one
-  (`docs/decisions.md#prompts-and-compatibility`).
+  creates its working directory when it is missing, so a project's folder
+  on a machine is made on first use. An older node would fail a thread's
+  first command with "start process ...: enoent" instead, so it gets no
+  work until it is reinstalled.
   """
 
   # Functional core: no processes, no I/O.
@@ -64,6 +58,9 @@ defmodule Photon.Machines.Roster do
   @doc """
   The IDs of every machine the hub knows, from the same inputs as
   `build/3`: `local` first, then by ID, whichever of them are connected.
+  Machine skills are listed in this order in every agent's prompt, so a
+  machine connecting or disconnecting never changes one
+  (`docs/decisions.md#prompts-and-compatibility`).
   """
   @spec ids([info()], [String.t()], boolean()) :: [String.t()]
   def ids(online_infos, known_ids, local_node?) do

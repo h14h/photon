@@ -9,8 +9,7 @@ defmodule Photon.Durable.Supervisor do
     * `Photon.Durable.Store`: the commit line. It holds no state, so a
       restart loses nothing; a caller whose commit was in flight gets an
       exit, and nothing of that commit is stored.
-    * `Photon.Durable.Scheduler`: reconciles tasks after commits and on its
-      timer, and starts steps.
+    * `Photon.Durable.Scheduler`
 
   The strategy is `:one_for_one`, on purpose. A scheduler restart leaves
   the steps it started running; the new scheduler starts their tasks again,
@@ -19,8 +18,8 @@ defmodule Photon.Durable.Supervisor do
   restart needs nothing from the others. Workers use the default 5 second
   shutdown; the task supervisor, being a supervisor, waits for its steps.
 
-  `Photon.Application` starts this unless `config :photon, start_durable:
-  false` (tests start `children/0` themselves, inside each test).
+  Not started under `config :photon, start_durable: false`; tests start
+  `children/0` themselves.
   """
 
   use Supervisor

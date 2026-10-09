@@ -14,22 +14,9 @@ defmodule Photon.Machines.Rules do
   A push is `{event, payload}` from `PhotonCore.Operation.Wire`, for the
   machine's channel to send.
 
-  The rules, by number:
-
-    * 2: `push_for/1` and `on_join/1` build `op.start` only for an open row
-      without `cancel`, from the row as it is, and set `pushed`
-    * 3 to 6: `on_snapshot/3` confirms, finishes, acks or cancels
-    * 7: `on_join/1` resends `op.cancel` for canceled open rows;
-      `on_cancel/2` and `on_abandon/2` set `cancel` on an open row and close
-      a finished one
-    * 8: `on_claim/1` closes a finished row and hands over its snapshot
-    * 9: `insert?/2` lets `Machines.start/1` insert a row only for a live
-      tool task
-
-  A row whose call ended another way (it has `cancel`, or it closes on a
-  cancel) keeps what the command printed (`output/1`), from the op's
-  terminal snapshot, so the page can still show a stopped call's output
-  after a reload.
+  A row whose call ended another way keeps what the command printed
+  (`output/1`), so the page can still show a stopped call's output after
+  a reload.
   """
 
   # Functional core: no processes, no I/O.

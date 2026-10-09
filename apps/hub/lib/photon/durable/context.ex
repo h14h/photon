@@ -16,14 +16,10 @@ defmodule Photon.Durable.Context do
       result's `details["full_output"]` when the tool set one (where the
       complete output is kept)
 
-  The cut is at the current run's first `"user"` entry: the first one after
-  the newest entry that ended a run, an answer with no tool calls or an
-  error that isn't a notice. A steer placed partway through a run (after a
-  tool round) comes later, so it doesn't move the cut: the run's results
-  stay whole, and the model sees what it just asked for. The cut moves only
-  when a new run starts, so the requests within a run share a stable
-  prefix for prompt caching. The rule applies to every tool's results and
-  takes nothing from the profile.
+  The cut is at the current run's first `"user"` entry (where runs end is
+  `Photon.Durable.RunBoundary`). A steer placed mid-run doesn't move it, so
+  the run's results stay whole; the cut moves only when a new run starts,
+  so the requests within a run share a stable prefix for prompt caching.
 
   An earlier run can also ask to shrink further. When its first user
   entry's source has an `"older"` map (`%{"text" => stub,
@@ -38,9 +34,8 @@ defmodule Photon.Durable.Context do
       results are cut to 500 code points instead of 4,000, with the same
       head-and-tail cut and marker
 
-  Blip's digests and reviews use it, so a day of them doesn't fill every
-  later request; nothing here knows what a digest is. The current run is
-  never touched, and an entry without `"older"` is sent as above.
+  Blip's digests and reviews use it; nothing here knows what a digest is.
+  The current run is never touched.
   """
 
   # Functional core: no processes, no I/O.
@@ -80,11 +75,9 @@ defmodule Photon.Durable.Context do
     end
   end
 
-  # The entries in runs, oldest first; the last is the current run. A user
-  # entry starts a run when it is the first one, or the first after an
-  # entry that ended a run; later ones are steers placed mid-run and stay
-  # in theirs. Entries before the first user entry (a reset) are a run of
-  # their own, so with no user entry at all everything is the current run.
+  # The entries in runs, oldest first; the last is the current run. Later
+  # user entries in a run are steers. Entries before the first user entry
+  # are a run of their own, so with no user entry everything is current.
   defp runs(entries) do
     {runs, run, _open} =
       Enum.reduce(entries, {[], [], true}, fn
@@ -132,9 +125,7 @@ defmodule Photon.Durable.Context do
 
   defp shorten_all(entries, limit), do: Enum.map(entries, &shorten(&1, limit))
 
-  # A run (after its user entry) is left out when nobody steered it and it
-  # answered what its user entry said it would answer when there was
-  # nothing to say.
+  # Left out when nobody steered it and it answered `drop_if`.
   defp dropped?(rest, drop_if) when is_binary(drop_if) do
     not Enum.any?(rest, &(&1.kind == "user")) and
       case Enum.find(rest, &run_end?/1) do

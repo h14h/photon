@@ -6,82 +6,39 @@ defmodule Photon do
 
   The contexts (the APIs the web layer and nodes use):
 
-    * `Photon.Assistant`: Blip's conversation and memory, the page the
-      user has open under it, its `"assistant"` profile for the durable
-      harness, and its tools: over every project and thread (read, start,
-      message, stop, context files, project schedules and skills), over
-      threads' questions (answer one, or ask the owner), and over its own
-      memory, skills and schedules. Who asked for each of its runs, and
-      what a thread's question may not make it do, is
-      `Photon.Assistant.Origin`
-    * `Photon.Projects`: projects (a purpose, for any body of work) and
-      their context files, the Markdown notes the user and the project's
-      threads share
+    * `Photon.Assistant`: Blip's conversation, memory, page and tools
+    * `Photon.Projects`: projects and their shared context files
     * `Photon.Threads`: threads, the durable agent conversations inside a
-      project, their state (worked out from stored facts), and their
-      `"thread"` profile for the durable harness
-    * `Photon.Questions`: a thread's `ask_blip` questions, which Blip
-      answers or passes to the owner, and whose answers go back to the
-      waiting thread
-    * `Photon.Activity`: the activity log, everything Blip did and who
-      asked for it (the owner, a thread's question, a schedule, or Blip's
-      own follow-up), one row per tool call or unasked message
-    * `Photon.Signals`: what reaches Blip unasked, such as how the threads
-      it started end and the questions they ask, posted into Blip's
-      conversation by code, and the changes ambient mode collects for the
-      next digest; used by the other contexts, not the web layer
-    * `Photon.Skills`: skills, the instructions an agent loads when a task
-      calls for them, written or installed by the user and turned on for
-      Blip or per project
-    * `Photon.Schedules`: schedules, prompts that fire at set times: a
-      project's start or wake its threads, and Blip's post to Blip
-    * `Photon.Ambient`: ambient mode, a setting (off by default) that
-      lets Blip follow along: a digest of what changed every few hours
-      and a daily review of threads left alone, each posted into Blip's
-      conversation by a durable timer, and each skipped while Settings
-      doesn't let schedules use the owner's plan. A run either one
-      starts only reports until the owner answers
+      project, and their derived state
+    * `Photon.Questions`: a thread's `ask_blip` questions and their answers
+    * `Photon.Activity`: the log of everything Blip did and who asked
+    * `Photon.Signals`: what reaches Blip unasked; used by the other
+      contexts, not the web layer
+    * `Photon.Skills`: instructions an agent loads when a task calls for
+      them
+    * `Photon.Schedules`: prompts that fire at set times
+    * `Photon.Ambient`: ambient mode, Blip's digests and daily reviews
     * `Photon.Durable`: the durable agent harness Blip and threads run on
-    * `Photon.Machines`: the machines the hub knows, which are connected,
-      and the operations (shell commands, image reads) it runs on them;
-      `Photon.MachineTools` are the durable tools Blip and threads share
-      to start them
-    * `Photon.Settings`, `Photon.ChatGPT`: the model every conversation
-      uses, Blip's instructions, and the ChatGPT account
+    * `Photon.Machines`, `Photon.MachineTools`: the machines, their
+      operations, and the durable tools that start them
+    * `Photon.Settings`, `Photon.ChatGPT`: the model, Blip's instructions,
+      and the ChatGPT account
     * `Photon.Provision`, `Photon.NodeDist`, `Photon.Hub`,
       `Photon.Tailnet`: putting nodes on machines, and how they reach the hub
-    * `Photon.Auth`, `Photon.NodeKeys`: who may open the GUI (your devices
-      on the tailnet, or a password), and each node's own key
+    * `Photon.Auth`, `Photon.NodeKeys`: who may open the GUI, and each
+      node's own key
 
   None of them adds a process for a project, a thread, a skill, a
-  schedule, a signal, a question or an operation: projects, context
-  files, skills, questions, digest items and activity are rows, a thread
-  is a conversation in the durable harness, a signal is a message in
-  Blip's, a schedule is a row and a durable task waiting for its time (as
-  are ambient mode's two timers), and an operation or a question is a row
-  its tool call waits on. A thread's state is never stored:
+  schedule, a signal, a question or an operation: those are rows,
+  conversations in the durable harness, durable tasks, or messages in
+  Blip's conversation. A thread's state is never stored:
   `Photon.Threads.State` derives it from facts on the thread's row when
   it is read.
 
-  Layers, after *Designing Elixir Systems with OTP*: each context's
-  moduledoc names its pure core and its processes. The pure modules are
-  `Photon.Durable.{Context, Schema, Inbox, Policy, Turn, ToolCall,
-  Changes, Queries}`, `Photon.Assistant.{Prompt, Memory, Notice, Page,
-  Origin, Readout, MockScript, MockCoordinator, MockAmbient}`,
-  `Photon.Transcript` (what a conversation page shows),
-  `Photon.Projects.Rules`, `Photon.Threads.{Rules, State, Prompt,
-  MockScript, MockTitle}`, `Photon.Signals.{Rules, Text}`,
-  `Photon.Ambient.{Rules, Text}`, `Photon.Questions.Rules`,
-  `Photon.Activity.Rules`, `Photon.Skills.{Rules, SkillMd, Source,
-  Prompt, MockPhrases}`, `Photon.Schedules.Rules`,
-  `Photon.Machines.{Rules, Roster}`, `Photon.MachineTools.{Translate,
-  Wait, Guide, MockPhrases}`, `Photon.Provision.{Jobs, Script}`, and
-  `Photon.Markdown`.
+  The pure cores are listed under `FunctionalCore` in `.credo.exs`.
   `Photon.Application` holds the lifecycle plan. `PhotonWeb` is the
-  boundary for browsers and nodes: its LiveViews, channel and controllers
-  call the contexts above and hold no business logic; its pure
-  `PhotonWeb.{ProjectText, ScheduleText, SkillText, ThreadText,
-  ActivityText, AmbientText}` only put the pages' words together.
+  boundary for browsers and nodes: it calls the contexts above and holds
+  no business logic.
   """
 
   # The hub's contexts, each a boundary of its own; this root exports

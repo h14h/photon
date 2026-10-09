@@ -1,10 +1,9 @@
 defmodule Photon.Skills.Source do
   @moduledoc """
   Where a skill comes from, as pure functions: what a link is, which GitHub
-  addresses to ask, which folders in a repository hold a SKILL.md, and how a
-  SKILL.md and its folder become a candidate the install page shows.
-  `Photon.Skills.Fetch` makes the requests and hands the answers here;
-  `Photon.Skills.read/1` builds a pasted candidate here too.
+  addresses to ask, which folders hold a SKILL.md, and how a SKILL.md and
+  its folder become a candidate the install page shows.
+  `Photon.Skills.Fetch` makes the requests and hands the answers here.
 
   Install strips rather than refuses: other files in a skill's folder are
   never downloaded, front matter other than `name` and `description` is
@@ -72,10 +71,8 @@ defmodule Photon.Skills.Source do
   A skill the install page offers. `name` is as found, or
   `Rules.suggest_name/1`'s when that breaks the rule; it, `description` and
   `instructions` are nil when missing. `error` is nil, or why this one can't
-  be installed. `found` keeps what the notes were made from (the SKILL.md's
-  own name, the front matter it ignored, the folder's other files and
-  notes), so install can say them again for what the owner saved
-  (`saved/3`).
+  be installed. `found` keeps what the notes were made from, so install
+  can redo them for what the owner saved (`saved/3`).
   """
   @type candidate :: %{
           origin: String.t(),
@@ -107,9 +104,8 @@ defmodule Photon.Skills.Source do
           pos_integer() | :timeout | :too_big | :web_page | :not_text | :unreadable | String.t()
 
   @typedoc """
-  Who answered, for the error message: GitHub's API or GitHub's file
-  server (each with the place asked about, as a github.com address
-  without its scheme), or any other site.
+  Who answered, for the error message: GitHub's API or file server (each
+  with the place asked about, as `place/1` gives it), or any other site.
   """
   @type answerer :: {:api, String.t()} | {:github, String.t()} | :web
 
@@ -178,10 +174,9 @@ defmodule Photon.Skills.Source do
   def repo_url(link), do: "https://api.github.com/repos/#{repo_path(link)}"
 
   @doc """
-  The GitHub API's address for everything under the folder a link lists,
-  in one call: the linked folder, or a file's folder (the whole tree for
-  the root). Listing only that folder keeps a link into a large
-  repository within what GitHub lists in one answer.
+  The GitHub API's address for everything under the linked folder, or a
+  file's folder, in one call. Listing only that folder keeps a link into a
+  large repository within what GitHub lists in one answer.
   """
   @spec tree_url(github()) :: String.t()
   def tree_url(%{ref: ref} = link) when is_binary(ref) do
@@ -194,7 +189,6 @@ defmodule Photon.Skills.Source do
     "https://api.github.com/repos/#{repo_path(link)}/git/trees/#{tree}?recursive=1"
   end
 
-  # The folder whose tree a link lists: a file's folder, or the folder.
   defp listed_folder(path, :file), do: parent(path)
   defp listed_folder(path, :folder), do: path
 
@@ -232,9 +226,8 @@ defmodule Photon.Skills.Source do
   ## Finding skills in a tree
 
   @doc """
-  The skills a link to `path` finds in `tree`, GitHub's answer for the
-  folder it lists (`tree_url/1`: `"tree"` entries with `"path"` and
-  `"type"`, relative to that folder, and `"truncated"`):
+  The skills a link to `path` finds in `tree`, GitHub's answer for
+  `tree_url/1`:
 
     * a file link: the file's folder holds the skill, and the file is
       what to download
@@ -243,9 +236,8 @@ defmodule Photon.Skills.Source do
       at any depth, by path, at most 30 (the notice says how many there
       were); a SKILL.md inside another one's folder belongs to it
 
-  Paths in what it returns are the repository's. Returns the folders and
-  a notice (nil, or the cut to 30), or an error for none or a tree too
-  big for GitHub to list.
+  Paths in what it returns are the repository's. An error for none or a
+  tree too big for GitHub to list.
   """
   @spec skills_in_tree(map(), String.t(), :folder | :file) ::
           {:ok, [found()], String.t() | nil} | {:error, String.t()}
@@ -264,11 +256,7 @@ defmodule Photon.Skills.Source do
 
   def skills_in_tree(_answer, _path, _kind), do: {:error, @not_a_listing}
 
-  @doc """
-  What to say when GitHub can't list the folder at `folder` in one go:
-  for the root, link to a folder or a file instead; for a folder, link
-  deeper.
-  """
+  @doc "What to say when GitHub can't list the folder at `folder` in one go."
   @spec too_big_to_list(String.t()) :: String.t()
   def too_big_to_list(""), do: @too_big_to_list
   def too_big_to_list(_folder), do: @folder_too_big
@@ -386,9 +374,8 @@ defmodule Photon.Skills.Source do
   message as its error.
 
   `files_left_out` is what an agent might look for: the files the
-  instructions mention first, then the folder's other files,
-  deduplicated, at most 20. With no folder listing, the mentions are
-  `Rules.mentions/2`'s guesses from the text alone.
+  instructions mention (`Rules.mentions/2`) first, then the folder's
+  other files, at most 20.
   """
   @spec candidate(String.t(), folder(), {:ok, String.t()} | {:error, String.t()}) ::
           candidate()
@@ -435,17 +422,12 @@ defmodule Photon.Skills.Source do
   defp found_facts(folder, parsed),
     do: %{name: parsed.name, ignored: parsed.ignored, files: folder.files, notes: folder.notes}
 
-  # The files an agent might look for: those the instructions mention
-  # first, then the folder's others, at most 20.
   defp left_out(mentioned, files), do: Enum.take(Enum.uniq(mentioned ++ files), @most_named)
 
   @doc """
-  The notes and files left out to keep for `candidate` installed as the
-  owner saved it from the preview: under `name`, with `instructions`. A
-  name the owner changed is said as such, and the files the instructions
-  mention are those the saved instructions mention, so neither describes
-  text the skill no longer has. A candidate without `found` keeps its
-  own.
+  The notes and files left out for `candidate` as the owner saved it,
+  under `name` with `instructions`, so neither describes text the skill
+  no longer has. A candidate without `found` keeps its own.
   """
   @spec saved(map(), String.t(), String.t()) :: %{
           notes: [String.t()],
@@ -478,16 +460,13 @@ defmodule Photon.Skills.Source do
 
   @doc """
   What install says it left out, for the preview and the skill's
-  `install_notes`, in this order: the folder's other files (20 named,
-  then how many more), the front matter it ignored, the files the
-  instructions mention that weren't installed (`mentioned`, from
-  `Rules.mentions/2`), a name it changed and why, then the folder's own
-  notes.
+  `install_notes`: the folder's other files, ignored front matter, the
+  files the instructions mention (`mentioned`), a changed name and why,
+  then the folder's own notes.
   """
   @spec notes(folder(), SkillMd.parsed(), [String.t()]) :: [String.t()]
   def notes(folder, parsed, mentioned), do: notes(folder, parsed, mentioned, name(parsed.name))
 
-  # The notes for the skill saved under `name`.
   defp notes(folder, parsed, mentioned, name) do
     Enum.reject(
       [
@@ -516,8 +495,7 @@ defmodule Photon.Skills.Source do
   defp mentions_note(files),
     do: "The instructions mention #{some(files, " and ")}, which weren't installed."
 
-  # Up to 20 names, then how many more: "a, b and c", or "a, b, ... and
-  # 14 more". `last` joins the last two of a short list.
+  # `last` joins the last two of a short list.
   defp some(names, last) do
     {named, rest} = Enum.split(names, @most_named)
 
@@ -531,9 +509,8 @@ defmodule Photon.Skills.Source do
     end
   end
 
-  # A SKILL.md without a name, or one kept as it was, needs no note. One
-  # changed to the suggested name says why; one the owner changed says
-  # only that.
+  # A name changed to the suggested one says why; one the owner changed
+  # says only that.
   defp renamed_note(nil, _name), do: nil
   defp renamed_note(found, found), do: nil
 
@@ -549,9 +526,9 @@ defmodule Photon.Skills.Source do
   defp why(_format), do: "names use lowercase letters, digits and hyphens."
 
   @doc """
-  The answer for the install page: the candidates and the notice, or,
-  when a link found a single skill that can't be installed, its error,
-  so the page shows it under the field instead of a list of one.
+  The answer for the install page: when a link found a single skill that
+  can't be installed, its error, so the page shows it under the field
+  instead of a list of one.
   """
   @spec result([candidate()], String.t() | nil) ::
           {:ok, [candidate()], String.t() | nil} | {:error, String.t()}

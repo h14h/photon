@@ -13,9 +13,9 @@ defmodule Mix.Tasks.Photon.Package do
       mix photon.package --targets linux_x86_64,macos_aarch64
 
   Needs xz and the Zig version Burrito requires (0.16.0 for Burrito 1.6) on
-  the build machine. Burrito downloads a
-  prebuilt Erlang runtime per target that matches the build machine's exact
-  OTP version, so build with an OTP release it has, for example:
+  the build machine. Burrito downloads a prebuilt Erlang runtime per target
+  that matches the build machine's exact OTP version, so build with an OTP
+  release it has, for example:
 
       mise exec erlang@29.1 zig@0.16.0 -- mix photon.package
   """

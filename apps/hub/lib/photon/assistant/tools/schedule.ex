@@ -2,22 +2,16 @@ defmodule Photon.Assistant.Tools.Schedule do
   @moduledoc """
   Blip's `schedule` tool: a prompt that fires once or repeatedly. Without
   `project` it is one of Blip's own schedules, which posts into Blip's
-  conversation. With `project` it is that project's schedule, like one the
-  owner adds on the project's page: it starts a new thread each time, or
-  wakes the thread `thread` names. Threads a project schedule Blip made
+  conversation. With `project` it is that project's schedule: it starts a
+  new thread each time, or wakes the thread `thread` names. Threads it
   starts or wakes are Blip's work, so Blip hears how they end.
 
   The schedule is made inside the commit that records the call's result
   (`Photon.Schedules.tool_schedule_tx/4`), with the call's task ID as its
   request ID, so a call that runs again after a restart makes one
-  schedule. Its `asked_by` comes from the run that called it
-  (`Photon.Assistant.Origin.asked_by/1`): the owner when they wrote to
-  that run, Blip otherwise.
-
-  A run that carries a thread's question, and that the owner hasn't
-  written into, can't schedule anything, and only a run the owner typed
-  into can make a project's schedule, since its firings start threads
-  with no limit (`Photon.Assistant.may_act_tx/3`).
+  schedule. Its `asked_by` is `Photon.Assistant.Origin.asked_by/1`'s.
+  `Photon.Assistant.may_act_tx/3` may refuse it (`:schedule_work` for a
+  project's, since its firings start threads with no limit).
   """
   @behaviour Photon.Durable.Tool
 

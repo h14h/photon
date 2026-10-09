@@ -1,61 +1,46 @@
 defmodule PhotonWeb.ProjectLive do
   @moduledoc """
   A project's page, at `/projects/:slug`: its name, folder and purpose
-  (which the user can edit), its threads, and in the second column its
-  context files, the skills turned on for it (threads also get the skills
-  turned on for each machine), and its schedules.
+  (editable), its threads, and in the second column its context files,
+  the skills turned on for it (threads also get those on for each
+  machine), and its schedules.
 
-  The lists are streams (`#project-threads`, `#context-files`,
-  `#project-skills`, `#project-schedules`). The threads are the project's
-  board (`Photon.Threads.board/1`): each row shows its state
-  (`#project-thread-<id>-state`) with the mark and words the sidebar and
-  Home use (`PhotonWeb.CoreComponents.state_mark/1`,
-  `PhotonWeb.ThreadText.state/1`), and how long ago it was active when
-  nothing is going on in it. A row changes only by re-streaming; every
-  change resets the list it touches, since its order may have moved. Besides
-  the streams the socket keeps the project, the IDs of its threads (to tell
-  which `{:durable_tasks, tasks}` concern it without a query per message),
-  the edit form, and for the schedules the title of the thread each one
-  wakes (by schedule ID, which is also how a button's ID from the browser is
-  checked to be one of this project's), how many there are and whether
-  scheduled work is allowed (`Photon.Schedules.consent?/0`).
+  The lists are streams. The threads are the project's board
+  (`Photon.Threads.board/1`), each row with its state in the sidebar's and
+  Home's mark and words. A row changes only by re-streaming, and every
+  change resets the list it touches, since its order may have moved. The
+  socket also keeps the IDs of the project's threads, to tell which
+  `{:durable_tasks, tasks}` concern it without a query per message, and
+  the schedules by ID, which is also how a button's ID from the browser
+  is checked to be one of this project's.
 
-  Skills: the ones on here are a stream, each with `Turn off`; `Turn on
-  skills` opens a picker, a stream of the skills not on here, read only
-  while it is open. Clicking one turns it on (`Photon.Skills.enable/2`);
-  a refused enable (30 on already) shows in the picker.
+  The skills picker lists the skills not on here and is read only while
+  it is open; a refused enable (30 on already) shows in it. Run now on a
+  schedule (`Photon.Schedules.run_now/1`) reports its outcome as a flash.
+  While scheduled work is off (`Photon.Schedules.consent?/0`), a banner
+  says the schedules skip and links to Settings.
 
-  Schedules: each row says when it runs next or that it stopped
-  (`PhotonWeb.ScheduleComponents`), where it goes, and what its last run
-  did, with Run now (`Photon.Schedules.run_now/1`, whose outcome is a
-  flash), Edit and Delete. While scheduled work is off, a banner says the
-  schedules skip and links to Settings.
+  What it hears:
 
-  What it hears, and from where:
-
-    * `{:projects_changed, id}` (through `PhotonWeb.Shell`'s subscription):
-      for this project, reload it, its threads and its schedules (a thread
-      was started or sent a message, or the project was edited; the
-      schedule rows name threads, whose titles change when the model or
-      the owner renames them)
+    * `{:projects_changed, id}` (through `PhotonWeb.Shell`): for this
+      project, reload it, its threads and its schedules (whose rows name
+      threads, and thread titles change)
     * `{:durable_tasks, tasks}` (also through the shell): when a task
-      belongs to one of its threads, reload the threads, whose running
-      state may have changed
+      belongs to one of its threads, reload the threads
     * `{:questions_changed, thread_id}` (also through the shell): when it
       is one of its threads, reload the threads, since an `ask_blip`
       question moves a thread between asking Blip and waiting on you
     * `{:settings_changed, _}` (also through the shell): whether scheduled
       work is allowed, for the banner
     * `{:project_files_changed, id, key}` (`Projects.subscribe_files/1`):
-      reload the files, written by the user or a thread
+      reload the files
     * `{:skills_changed, _}` (`Skills.subscribe/0`): reload the skills on
       here, and the picker when it is open
     * `{:schedules_changed, id}` (`Schedules.subscribe/0`): for this
-      project, reload the schedules (one was changed, fired or stopped)
-    * `:tick`, its own timer, once a minute: reload the threads and files,
-      so "just now" turns into "5 minutes ago" on a page left open. The
-      schedules' times are absolute and the browser formats them, so the
-      tick leaves them alone
+      project, reload the schedules
+    * `:tick`, once a minute: reload the threads and files, so "just now"
+      turns into "5 minutes ago". Schedule times are absolute and
+      formatted by the browser, so the tick leaves them alone
 
   An unknown slug goes back to `/` with a flash.
   """
@@ -500,8 +485,7 @@ defmodule PhotonWeb.ProjectLive do
   attr :row, :map, required: true, doc: "a board entry, with `ago`"
 
   # A thread row's state: the mark and words while something is going on
-  # in it (running, asking Blip, waiting on the owner, failed, finished
-  # unread), with how long ago it was active once it isn't running, and
+  # in it, with how long ago it was active once it isn't running, and
   # only that when it's quiet or idle.
   defp thread_state(assigns) do
     assigns = assign(assigns, state: assigns.row.state, words: ThreadText.state(assigns.row))

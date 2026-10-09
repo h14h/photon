@@ -2,8 +2,6 @@ defmodule Photon.InstallScript do
   @moduledoc """
   The node install script (`priv/node/install.sh.eex`) and the websocket
   URL it points nodes at, as pure functions of the hub's base URL.
-  `Photon.NodeDist` serves the script, `Photon.Provision` sends it over
-  SSH, and `Photon.Hub` tells the UI the same URL.
   """
 
   use Boundary, type: :strict, deps: [EEx]

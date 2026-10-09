@@ -5,10 +5,9 @@ defmodule Photon.Durable.RunBoundary do
   hub's word about a question, or a schedule it skipped) sits between a
   run's entries without ending it; Stop's quiet error does end it.
 
-  The one rule the model's context (`Photon.Durable.Context`), the
-  conversation page (`Photon.Transcript`) and Blip's bubbles
-  (`Photon.Assistant.Notice`) share, so they agree on which run an entry
-  belongs to.
+  `Photon.Durable.Context`, `Photon.Transcript` and
+  `Photon.Assistant.Notice` share this rule, so they agree on which run an
+  entry belongs to.
   """
 
   # Functional core, top-level so the projections in other contexts can

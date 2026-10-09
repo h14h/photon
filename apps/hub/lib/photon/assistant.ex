@@ -7,76 +7,26 @@
 defmodule Photon.Assistant do
   @moduledoc """
   The assistant that lives on the hub: one long-running conversation the
-  user talks to in the web UI, run by `Photon.Durable`.
+  user talks to in the web UI, run by `Photon.Durable`. This module is its
+  API, which the web pages use, and its `Photon.Durable.Profile`.
 
-  It runs commands and looks at images on the user's machines itself, with
-  the machine tools (`Photon.MachineTools`: `shell`, `view_image`,
-  `list_machines`), keeps a memory, and keeps schedules in
-  `Photon.Schedules`: its own, which post into its conversation, and
-  projects', which start or wake threads (`schedule`, `list_schedules`,
-  `cancel_schedule`). Its prompt lists the skills turned on for Blip and
-  for each machine (`Photon.Skills.offered/1`), and `load_skill` loads
-  one; `list_skills` and `set_project_skill` show every skill and turn
-  one on or off for a project. It sees every project and thread with its read tools
-  (`list_projects`, `read_project`, `list_threads`, `read_thread`),
-  which find what they name through `find_project/1` and `find_thread/1`
-  and put their texts together in `Photon.Assistant.Readout`. It starts
-  projects and threads, messages threads and stops them
-  (`start_project`, `start_thread`, `message_thread`, `stop_thread`),
-  each inside the commit that records its result. It lists, reads, writes
-  and edits any project's context files (`list_context_files`,
-  `read_context_file`, `write_context_file`, `edit_context_file`), which
-  read through `Photon.Threads.describe_files/2` and `read_file_text/3`
-  as a thread's file tools do, and write as `"blip"` through
-  `Photon.Projects`.
+  Blip runs commands on the user's machines with `Photon.MachineTools`,
+  keeps a memory and schedules, loads skills, and reads, starts, messages
+  and stops every project's threads and context files with its own tools,
+  each inside the commit that records its result. It handles the threads'
+  `ask_blip` questions (`Photon.Questions`): it answers one, or asks the
+  owner, whose answer (`answer/2`) goes straight to the thread.
 
-  It handles the threads' `ask_blip` questions (`Photon.Questions`),
-  which reach it as signals: it answers one from what it knows
-  (`answer_question`), or asks the owner in its own words (`ask_owner`).
-  The owner answers from Blip's panel through `answer/2`, and the answer
-  goes straight to the thread.
-
-  Who asked for a run is read from the sources of the messages it
-  answers (`origin_tx/2`, `Photon.Assistant.Origin`): the owner, a
-  schedule, Blip's own follow-up on a thread update, or a thread's
-  `ask_blip` question. A run that carries a question the owner hasn't
-  written into can't start, wake, stop or schedule work or change a
-  project. Between two of the owner's messages Blip can start or message
-  threads only `unattended_limit/0` times in runs the owner didn't type
-  into, and it sets up a project's schedule only in a run the owner typed
-  into (`may_act_tx/3`), so a loop between Blip and a thread stops in
-  code. In ambient mode a run started by a digest or a daily review only
-  reports until the owner types into it: the tools that start or change
-  work refuse, so a digest can't cause the next one. Its prompt gains a
-  section on digests and reviews only while ambient mode is on
-  (`Photon.Signals.mode/0`), and an answer of `[nothing to tell]`
-  (`Photon.Transcript.nothing_to_tell?/1`) makes no activity row.
-
-  Everything Blip does goes in the activity log (`Photon.Activity`), from
-  the profile's two hooks: `on_tool_result/4` records each tool call's
-  result with who asked for it, and `on_settled/3` records what Blip told
-  the owner in a run they didn't type into.
-
-  This module is the assistant's API, which the web pages use, and its
-  `Photon.Durable.Profile`. Behind it, by layer:
-
-    * functional core (pure): `Photon.Assistant.Prompt` (the system
-      prompt), `Photon.Assistant.Memory`, `Photon.Assistant.Page` (the
-      page the user has open, and the note of it the model sees),
-      `Photon.Assistant.Notice` (what Blip says unasked),
-      `Photon.Assistant.Readout` (what the read tools say),
-      `Photon.Assistant.Origin` (who asked for a run, and what it may do),
-      `Photon.Assistant.MockScript` and `Photon.Assistant.MockCoordinator`
-      (the mock model)
-    * boundary: the tools in `Photon.Assistant.Tools`; the machine tools
-      are their own context, `Photon.MachineTools`
-    * workers: none of its own; Blip's schedules fire through the
-      `"routine"` task kind, `Photon.Schedules.Routine`
+  Who asked for a run, and what that lets it do, is
+  `Photon.Assistant.Origin`; `may_act_tx/3` applies it, so a thread's
+  question can't start or change work, Blip's unattended starts are
+  bounded by `unattended_limit/0`, and a digest or review run only
+  reports. Everything Blip does goes in the activity log
+  (`Photon.Activity`) from the profile's two hooks.
 
   Blip floats over every page, so it knows which project, context file or
   thread is on screen: `page_at/1` makes the page from its path, and
-  `send/2` with `page:` reads the page's facts through `Photon.Projects`
-  and `Photon.Threads` and puts a note of them in front of the message.
+  `send/2` with `page:` puts a note of it in front of the message.
   """
 
   use Boundary,
@@ -161,11 +111,9 @@ defmodule Photon.Assistant do
   @unattended_tools ~w(start_thread message_thread)
 
   # The source kinds of a message from the owner, which end an unattended
-  # stretch: what they typed, and their answer to a question.
+  # stretch.
   @owner_kinds ~w(user answer)
 
-  # How many times Blip may start or message threads between two of the
-  # owner's messages, when the config doesn't say.
   @unattended_limit 10
 
   @doc """
@@ -239,8 +187,7 @@ defmodule Photon.Assistant do
   end
 
   # The page as it is at send time, with its facts, or nil when its project
-  # is gone. The project's name or the thread's title may have changed
-  # since the page was read, so the page is made again.
+  # is gone; made again, since names and titles may have changed.
   defp page_now(%{"project_id" => project_id} = page) do
     case Projects.get(project_id) do
       nil -> nil
@@ -341,12 +288,10 @@ defmodule Photon.Assistant do
   ## Who asked, and what a run may do
 
   @doc """
-  Who asked for the run `task` belongs to (`Photon.Assistant.Origin.of/1`),
-  from the sources of the submissions its generation answers, read
-  inside the caller's commit. `task` is the generation or one of its tool
-  calls. Total, since the activity log's hooks call it on the harness's
-  abort and fail paths: a missing task or submission is left out, and no
-  sources make `by: "unknown"`.
+  Who asked for the run `task` (the generation or one of its tool calls)
+  belongs to (`Photon.Assistant.Origin.of/1`), inside the caller's commit.
+  Total, since the activity log's hooks call it on the harness's abort
+  and fail paths: a missing task or submission is left out.
   """
   @spec origin_tx(Tx.t(), TaskRecord.t() | nil) :: Origin.t()
   def origin_tx(tx, task) do
@@ -373,10 +318,8 @@ defmodule Photon.Assistant do
 
   @doc """
   How many times Blip has started or messaged a thread on its own (ok
-  `start_thread` and `message_thread` results marked unattended, from
-  runs the owner didn't type into) since the owner last wrote to it (a
-  message they typed, or their answer to a question), inside the
-  caller's commit. One query.
+  results marked unattended) since the owner last wrote to it (a message
+  they typed, or their answer to a question), inside the caller's commit.
   """
   @spec unattended_count_tx(Tx.t()) :: non_neg_integer()
   def unattended_count_tx(tx) do
@@ -395,17 +338,11 @@ defmodule Photon.Assistant do
 
   @doc """
   Whether Blip's tool call `task` may act, inside the commit that records
-  its result. A run that only reports (`report_only?`: a digest or daily
-  review the owner hasn't typed into) refuses every kind. Otherwise:
-
-    * `:change` for the tools that change a project or stop or schedule
-      work, which a thread's question forbids (`restricted?`)
-    * `:start` for the tools that start or wake a thread, which the
-      unattended limit bounds too
-    * `:schedule_work` for a project's schedule, which also needs the
-      owner to have typed into the run (`Origin.schedule_work_ok?/1`)
-
-  `{:ok, origin}`, the run's origin (`origin_tx/2`), or `{:error,
+  its result. A `restricted?` or `report_only?` run refuses every kind;
+  `:start` (start or wake a thread) is also bounded by the unattended
+  limit, and `:schedule_work` (a project's schedule) needs the owner to
+  have typed into the run. `:change` is any other tool that changes a
+  project or stops or schedules work. `{:ok, origin}` or `{:error,
   message}` for the model.
   """
   @spec may_act_tx(Tx.t(), TaskRecord.t(), :change | :start | :schedule_work) ::
@@ -434,10 +371,7 @@ defmodule Photon.Assistant do
 
   @doc """
   Stops the current run and withdraws the user's queued messages.
-  Background input that is waiting stays
-  (`Photon.Durable.Submission.background?/1`: scheduled prompts, signals
-  from threads (`Photon.Signals`) and relayed answers), since the work
-  that sent it keeps going.
+  Background input stays (`Photon.Durable.Submission.background?/1`).
   """
   @spec stop() :: :ok
   def stop do
@@ -456,19 +390,16 @@ defmodule Photon.Assistant do
 
   @doc """
   Blip's own schedules that are waiting for their next time, soonest
-  first, then any that stopped after an error, with why
-  (`Photon.Schedules.list/1`), for the home page and Blip's
-  `list_schedules`: a stopped one stays in sight until it is cancelled.
-  One-offs that fired are left out. A project's schedules are on its page.
+  first, then any that stopped after an error (they stay in sight until
+  cancelled). One-offs that fired are left out.
   """
   @spec schedules() :: [Schedules.listed()]
   def schedules, do: Enum.reject(Schedules.list(:blip), &(&1.state == :done))
 
   @doc """
-  A project's schedules as Blip's `read_project` and `list_schedules`
-  show them (`Photon.Assistant.Readout.schedule/0`): those waiting for
-  their next time, soonest first, then any that stopped after an error.
-  One-offs that fired are left out, as `schedules/0` leaves out Blip's.
+  A project's schedules as Blip's tools show them
+  (`Photon.Assistant.Readout.schedule/0`), in the order and with the
+  omissions of `schedules/0`.
   """
   @spec project_schedules(String.t()) :: [Readout.schedule()]
   def project_schedules(project_id) do
@@ -587,16 +518,13 @@ defmodule Photon.Assistant do
 
   ## The activity log's hooks
 
-  # Both run inside the harness's commits, on a Stop or a failed task inside
-  # the Scheduler's own, so they are total: `origin_tx/2`,
+  # Both must be total (see `Photon.Durable.Profile`): `origin_tx/2`,
   # `Origin.for_call/3` and `Activity.record_tx/2` take what they are given
   # as it is, and a missing row records less.
 
   @doc """
   Records the activity row for one of Blip's tool calls, with who asked
-  for it (`Photon.Assistant.Origin.for_call/3`: a call that handles a
-  thread's question is that thread's), in the commit that stores its
-  result, whatever ended the call.
+  for it (`Photon.Assistant.Origin.for_call/3`), whatever ended the call.
   """
   @impl true
   def on_tool_result(_conversation, task, entry, tx) do
@@ -610,18 +538,12 @@ defmodule Photon.Assistant do
   defp stored_call(_task), do: %{}
 
   @doc """
-  Records a message row when one of Blip's runs that the owner didn't
-  type into (a thread's update, a schedule, its own follow-up) ends a
-  model turn with an answer that has text: the owner didn't watch that
-  reply come in, so the activity page shows it. Runs the owner wrote
-  to, runs that only handle threads' questions (their calls already say
-  what Blip did, and the reply isn't for the owner), answers with no
-  text, and an answer of `[nothing to tell]` to a digest or review
-  (`Photon.Transcript.nothing_to_tell?/1`) record nothing.
-
-  First, in the same commit, a settled digest or review is used up or
-  given back (`Photon.Ambient.settled_tx/2`): a digest's items go once
-  Blip has read it, and wait for the next digest when its run failed.
+  Records a message row when a run the owner didn't type into ends with
+  an answer that has text, since the owner didn't watch it come in. Runs
+  that only handle threads' questions (`quiet?`), and an answer of
+  `[nothing to tell]` (`Photon.Transcript.nothing_to_tell?/1`), record
+  nothing. First, in the same commit, a settled digest or review is used
+  up or given back (`Photon.Ambient.settled_tx/2`).
   """
   @impl true
   def on_settled(conversation, settled, tx) do
@@ -642,8 +564,7 @@ defmodule Photon.Assistant do
 
   defp settled_tx(_tx, _conversation, _settled), do: :ok
 
-  # What Blip's answer `entry_id` told the owner: its text, or nil when it
-  # has none or is `[nothing to tell]`.
+  # nil when the answer has no text or is `[nothing to tell]`.
   defp told(conversation_id, entry_id) do
     with %Entry{data: %{"message" => message}} <- Durable.entry(conversation_id, entry_id),
          text when text != "" <- String.trim(Message.text_of(message)),

@@ -4,22 +4,22 @@ defmodule Photon.NodeKeys do
   (`PhotonWeb.NodeSocket`). A key works for one node ID only, so a node
   can't connect as another.
 
-  The hub keeps only each key's SHA-256 (`Photon.NodeKeys.Key`). `issue/2`
-  makes a new key whenever a node is installed or updated, replacing the
-  old one; `revoke/1` takes it away when the node is removed. Each key has a
-  `generation` from the clock, so a node's generations never repeat, not
-  even after a removal, and a connection made with an old key can always be
-  told apart. Every change is announced on `topic/0` as
-  `{:node_keys_changed, node_id}`, so a node still connected with an old
-  key is dropped (`PhotonWeb.NodeChannel`) and open GUI pages are checked
-  again (`PhotonWeb.Auth`).
+  The hub keeps only each key's SHA-256 (`Photon.NodeKeys.Key`). A node
+  gets a new key whenever it is installed or updated, replacing the old
+  one. Each key has a `generation` from the clock, so a node's generations
+  never repeat, not even after a removal, and a connection made with an
+  old key can always be told apart. Every change is announced on
+  `topic/0`, so a node still connected with an old key is dropped
+  (`PhotonWeb.NodeChannel`) and open GUI pages are checked again
+  (`PhotonWeb.Auth`).
 
-  On a tailnet, a key is tied to a device (Tailscale's stable device ID).
-  An install over SSH ties it to the machine it installs on before the key
-  exists anywhere. A key made for a manual install is tied to the first
-  device that connects with it, in one conditional update so two can't both
-  claim it; only one of the user's own devices or a tagged one may claim it
-  (`logins:`), and it stops working if none has within an hour.
+  On a tailnet, a key is tied to a device (Tailscale's stable device ID);
+  a hub without a tailnet leaves keys untied. An install over SSH ties it
+  to the machine it installs on before the key exists anywhere. A key made
+  for a manual install is tied to the first device that connects with it,
+  in one conditional update so two can't both claim it; only one of the
+  user's own devices or a tagged one may claim it (`logins:`), and it
+  stops working if none has within an hour.
 
   The tie outlives the key. A new key for the same node keeps it, and a
   removed node leaves its row behind (`revoked_at`, with no usable key). So
@@ -28,17 +28,10 @@ defmodule Photon.NodeKeys do
   user lets it back in with `forget/1`: a removal that failed to stop
   everything on the machine never unlocks the GUI for it.
 
-  Where a key was presented from is an `origin`. When the hub requires
-  tailnet identities (`require_tailnet: true`), a key presented from
-  somewhere the tailnet can't name is refused; a hub without a tailnet
-  leaves keys untied.
-
   The built-in node in the hub's own BEAM (development) gets `local_token/0`
   instead: made at boot, kept in memory, and good only for node `local`
   connecting from the hub machine itself. Its generation is -1, which no
   stored key has, and no other node may be called `local`.
-
-  `check/4` is pure.
   """
 
   use Boundary, deps: [Photon.Events, Photon.Repo, Photon.Tailnet, Ecto]
@@ -78,9 +71,9 @@ defmodule Photon.NodeKeys do
 
   @doc """
   Makes `node_id` a new key, replacing (and so revoking) any it had, and
-  returns it. With `device:`, the key is tied to that device now; otherwise
-  it keeps the device the node was tied to before (even after a removal),
-  or, for a new node, waits an hour for its first device.
+  returns it. With `device:`, the key is tied to that device now;
+  otherwise it keeps the node's earlier device (even after a removal), or
+  waits an hour for its first.
   """
   @spec issue(String.t(), keyword()) :: {:ok, String.t()}
   def issue(node_id, opts \\ []) do
@@ -218,9 +211,8 @@ defmodule Photon.NodeKeys do
     end
   end
 
-  # Ties an untied key to its first device, unless something else got there
-  # first (another device, or a new key), in which case what's stored now
-  # decides.
+  # Unless something else got there first (another device, or a new key),
+  # in which case what's stored now decides.
   defp bind(key, identity, origin, opts) do
     {count, _} =
       Key

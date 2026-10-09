@@ -4,28 +4,12 @@ defmodule Photon.Threads.MockTitle do
   (`Photon.Threads.Rules.title_request/2`), for tests and for working on
   the hub without a ChatGPT sign-in (`PHOTON_MOCK_MODEL=1`). It names the
   work in the first message the way the scripted thread
-  (`Photon.Threads.MockScript`) understands it:
-
-    * `on mm1: $ df -h /` is "Run df on mm1": what the command runs, in
-      order, past `sudo`, `env` and variable settings: each program by
-      name, and a loop or a condition as a whole ("a for loop", "an if
-      statement"), not the programs inside it. Two read "Run ps and grep
-      on mm1", more "Run df, ls and more on mm1", and a program named
-      twice is named once
-    * `on mm1: look at shots/pump.png` is "Look at pump.png on mm1"
-    * `machines` is "Check your machines", `files` "Check the context
-      files"
-    * `read notes.md`, `write notes.md: ...` and `edit notes.md: ...` are
-      "Read notes.md", "Write notes.md" and "Edit notes.md"
-    * `ask blip: which deploy branch?` is "Ask Blip about which deploy
-      branch" and `ask me: which zone first?` "Ask you about which zone
-      first" (the question's first five words), and `fail: ...` is "Fail
-      on purpose"
-
-  A schedule's `"[Scheduled] "` in front is dropped first, as the scripted
-  thread drops it. Anything else is its first line's first five words,
-  capitalized. A request that isn't a title request fails, as a model
-  error.
+  (`Photon.Threads.MockScript`) understands it: `on mm1: $ df -h /` is
+  "Run df on mm1" (each program by name past `sudo`, `env` and variable
+  settings, a loop or condition as a whole, at most two then "and
+  more"), `read notes.md` is "Read notes.md", and so on. Anything else is
+  its first line's first five words, capitalized. A request that isn't a
+  title request fails, as a model error.
   """
 
   # Functional core: no processes, no I/O.
@@ -87,7 +71,6 @@ defmodule Photon.Threads.MockTitle do
     ] ++ asking_phrasings()
   end
 
-  # Asking Blip, ending the run asking the user, and failing it.
   defp asking_phrasings do
     [
       {~r/\Aask blip\s*:\s*(\S.*)\z/s, fn [question] -> about("Ask Blip about", question) end},

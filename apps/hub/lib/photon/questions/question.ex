@@ -3,19 +3,16 @@ defmodule Photon.Questions.Question do
   An `ask_blip` question: one per tool call (`task_id`), asked by thread
   `thread_id`.
 
-  `status` moves from `"asked"` (Blip has it) to `"with_owner"` (Blip,
-  or the hub when Blip didn't get to it, passed it on: `passed_by`), and
-  ends `"answered"` (`answered_by` `"blip"` or `"owner"`) or
-  `"withdrawn"` (the call ended first). It is open while `"asked"` or
-  `"with_owner"`; `Photon.Questions.Rules.step/2` has the transitions.
+  `status` moves from `"asked"` (Blip has it) to `"with_owner"` (passed
+  on by Blip or the hub: `passed_by`), and ends `"answered"` or
+  `"withdrawn"` (the call ended first); `Photon.Questions.Rules.step/2`
+  has the transitions.
 
   `thread_title`, `project_slug` and `project_name` are as they were when
-  the thread asked, for Blip's signal and the notices in its
-  conversation; the pages show current titles. `submission_id` is the
-  message in Blip's conversation that carries the question, whose status
-  says whether Blip's run has been through it. `wording` is how Blip put
-  the question to the owner, nil when the hub passed the thread's own
-  words on.
+  the thread asked; the pages show current titles. `submission_id` is the
+  message in Blip's conversation that carries the question. `wording` is
+  how Blip put the question to the owner, nil when the hub passed the
+  thread's own words on.
   """
 
   # Data: an Ecto schema, no behaviour of its own.

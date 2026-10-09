@@ -2,73 +2,49 @@ defmodule PhotonWeb.ThreadLive do
   @moduledoc """
   A project's thread.
 
-  `:new`, at `/projects/:slug/threads/new`, starts one: the project's
-  purpose, and a composer for the first message. Sending it starts the
-  thread (`Photon.Threads.start/2`) and goes to its page. Without a model
-  the composer gives way to the ChatGPT sign-in, as in Blip's panel.
+  `:new` (`/projects/:slug/threads/new`) shows the project's purpose and
+  a composer; sending starts the thread (`Photon.Threads.start/2`) and
+  goes to its page.
 
-  `:show`, at `/projects/:slug/threads/:id`, is the conversation, shown the
-  way Blip's panel shows its own: the shared `PhotonWeb.ConversationComponents`
-  with the ID prefix `"thread-"` (Blip's panel is on the same document),
-  images from the thread's own route, and `PhotonWeb.ConversationView`
-  folding in what the page hears. Under it, the composer, with the steer or
-  follow-up toggle, Stop and the queued messages while the thread runs.
-  Stop is `Photon.Threads.stop/1`. Without a model the composer gives way
-  to the sign-in, and Stop moves to the header, so a running command can
-  still be stopped.
+  `:show` (`/projects/:slug/threads/:id`) is the conversation, rendered as
+  in Blip's panel by `PhotonWeb.ConversationComponents` with the ID
+  prefix `"thread-"` (Blip's panel is on the same document) and folded by
+  `PhotonWeb.ConversationView`. Without a model the composer gives way to
+  the ChatGPT sign-in and Stop (`Photon.Threads.stop/1`) moves to the
+  header, so a running command can still be stopped. With Blip's floating
+  panel open on a wide screen, the page keeps clear of it
+  (`data-blip-room`, see app.css).
 
-  The thread's state is its board entry, `Photon.Threads.state/1`: a chip by
-  the title (`#thread-state`, words from `PhotonWeb.ThreadText.state/1`),
-  and `Resolve` while it isn't running and isn't resolved, `Reopen` once it
-  is (`Photon.Threads.resolve/1` and `reopen/1`). Having the page open is
-  the owner looking: on connected mount, and on each announcement for its
-  project (a run ending among them), it calls `Photon.Threads.mark_seen/1`
-  before reading the state, which writes and announces nothing unless the
-  thread was unread.
+  The thread's state is its board entry (`Photon.Threads.state/1`), shown
+  as a chip with `Resolve` or `Reopen`. Having the page open is the owner
+  looking: on connected mount, and on each announcement for its project,
+  it calls `Photon.Threads.mark_seen/1` before reading the state, which
+  writes and announces nothing unless the thread was unread.
 
-  The entry's open `ask_blip` questions change the composer. While Blip
-  has one, a line above the composer says what the thread asked
-  (`#thread-asking-blip`) and a note under it says a message waits until
-  Blip answers. While one is with the owner, the text box and Send give
-  way to a banner per question (`#thread-question-<id>`) with its own
-  answer form, which calls `Photon.Questions.answer/2`; Stop stays. A
-  refusal shows under its form in the owner's words. Each form's text is
-  kept in `drafts` by question ID as it is typed, so a re-read draws it
-  again; a draft goes when its question closes. Only this thread's open
-  questions are answered: the ID comes from the browser.
+  The entry's open `ask_blip` questions change the composer: while Blip
+  has one, a line above it says what the thread asked and a message waits
+  until Blip answers; while one is with the owner, the text box gives way
+  to an answer form per question (`Photon.Questions.answer/2`). Drafts
+  are kept by question ID, so a re-read draws them again, and go when
+  their question closes. Only this thread's open questions are answered:
+  the ID comes from the browser.
 
-  What it hears, and from where:
+  What it hears:
 
     * `{:durable, id, changes}` and `{:live, id, event}`
       (`Photon.Threads.subscribe/1`): the thread's commits, and its
-      in-flight answer and running commands' output. A commit that
-      starts or ends its work also re-reads the state
-    * `{:projects_changed, id}` (through `PhotonWeb.Shell`'s subscription):
-      for this project, reload it and the thread's entry, since the
-      project's name and the thread's title are in the header (the title
-      changes when the model names the thread after its first run, or the
-      owner renames it), and its state may have moved (a run ended, it was
-      resolved or seen elsewhere)
-    * `{:questions_changed, id}` (also through the shell, which subscribes
-      with `Photon.Questions.subscribe/0`): for this thread, re-read its
-      entry, whose open questions changed
+      in-flight answer and running commands' output. A commit that starts
+      or ends its work also re-reads the state
+    * `{:projects_changed, id}` (through `PhotonWeb.Shell`): for this
+      project, reload it and the thread's entry, since the header shows
+      the project's name and the thread's title, and the state may have
+      moved
+    * `{:questions_changed, id}` (also through the shell): for this
+      thread, re-read its entry
 
-  `Schedule` (`#thread-schedule`) beside the title opens a new schedule
-  for the project with this thread as its target
-  (`/projects/:slug/schedules/new?thread=<id>`), for a prompt that should
-  wake the thread at set times.
-
-  The pencil by the title opens it in a small form in its place
-  (`#thread-rename-form`): Enter saves (`Photon.Threads.rename/2`), Esc
-  or Cancel puts the title back. With Blip's floating panel open on a
-  wide screen, the page keeps clear of it (`data-blip-room`, see app.css),
-  so the conversation stays readable beside it.
-
-  Everything else the shell passes on (`{:durable_tasks, _}` among them)
-  is ignored.
-
-  An unknown project or thread, or a thread under another project's slug,
-  goes back to `/` with a flash.
+  Everything else the shell passes on is ignored. An unknown project or
+  thread, or a thread under another project's slug, goes back to `/` with
+  a flash.
   """
 
   use PhotonWeb, :live_view

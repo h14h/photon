@@ -1,9 +1,5 @@
 defmodule Photon.Repo do
-  @moduledoc """
-  The hub's SQLite database (`<data dir>/photon.db`): the assistant's durable
-  state (`Photon.Durable`), the operations it runs on machines
-  (`Photon.Machines`) and the node keys (`Photon.NodeKeys`).
-  """
+  @moduledoc "The hub's SQLite database (`<data dir>/photon.db`)."
 
   use Boundary, deps: []
 

@@ -1,10 +1,8 @@
 defmodule PhotonWeb.AmbientText do
   @moduledoc """
-  The pages' words for ambient mode: the Settings section's hint and
-  warnings, the digest intervals, the status block (when the next digest and
-  review come, what is waiting, what the last ones did, a timer that
-  stopped), the flashes of the scripted model's run-now buttons, and the
-  home page's warnings and whether one of its rows was in Blip's review.
+  The pages' words for ambient mode: the Settings section's hint,
+  warnings and status block, the run-now flashes, and the home page's
+  warnings.
 
   Pure, over `Photon.Ambient.status/0` and board entries. Times are never
   formatted here: the browser knows the owner's time zone, so a page
@@ -38,19 +36,19 @@ defmodule PhotonWeb.AmbientText do
 
   @doc """
   Whether to warn that digests and reviews will skip for consent: ambient
-  mode is on, Blip can reach its model (otherwise `needs_model?/1` says
-  so instead, and the consent box isn't on the page), Settings doesn't let
-  schedules use the owner's plan, and the hub isn't on the scripted model
-  (which needs no consent).
+  mode is on, Blip can reach its model (else `needs_model?/1` warns and
+  the consent box isn't shown), Settings doesn't let schedules use the
+  owner's plan, and the hub isn't on the scripted model (which needs no
+  consent).
   """
   @spec needs_consent?(Ambient.status()) :: boolean()
   def needs_consent?(%{on?: on?, thinks?: thinks?, consent?: consent?, scripted?: scripted?}),
     do: on? and thinks? and not consent? and not scripted?
 
   @doc """
-  Whether to warn that digests and reviews will skip because Blip can't
-  reach ChatGPT (signed out, or plan use not allowed): ambient mode is on
-  and Blip can't think.
+  Whether to warn, with ambient mode on, that digests and reviews will
+  skip because Blip can't reach ChatGPT (signed out, or plan use not
+  allowed).
   """
   @spec needs_model?(Ambient.status()) :: boolean()
   def needs_model?(%{on?: on?, thinks?: thinks?}), do: on? and not thinks?
@@ -63,18 +61,14 @@ defmodule PhotonWeb.AmbientText do
   end
 
   @doc """
-  The form's ambient values from the saved setting, for merging into the
-  settings map the form starts from, so a Save sends them back as they
-  are.
+  The saved ambient values, to merge into the settings map the form
+  starts from so a Save sends them back unchanged.
   """
   @spec form_values(Ambient.status()) :: %{String.t() => String.t()}
   def form_values(%{on?: on?, every_minutes: every_minutes}),
     do: %{"ambient" => to_string(on?), "ambient_every" => to_string(every_minutes)}
 
-  @doc ~S"""
-  The digest interval's options for a select, from the minutes offered:
-  `{"Every hour", "60"}`, `{"Every 3 hours", "180"}`.
-  """
+  @doc ~S(The digest interval's select options, from the minutes offered: {"Every hour", "60"}.)
   @spec every_options([pos_integer()]) :: [{String.t(), String.t()}]
   def every_options(minutes), do: Enum.map(minutes, &{every(&1), to_string(&1)})
 
@@ -128,19 +122,14 @@ defmodule PhotonWeb.AmbientText do
   def pending(%{new: new, smaller: seen}),
     do: "#{count(new, "change")} waiting, and #{seen} you've seen or made yourself."
 
-  @doc ~S"""
-  The heading of a last firing, before its time: "Last digest" or "Last
-  review".
-  """
+  @doc ~S(The heading of a last firing, before its time: "Last digest" or "Last review".)
   @spec last_label(String.t()) :: String.t()
   def last_label("digest"), do: "Last digest"
   def last_label(_review), do: "Last review"
 
   @doc ~S"""
-  What a last firing did, to follow its time: "sent 3 changes.", "nothing
-  new, skipped.", "skipped, schedules can't use your plan.", "Blip still
-  had the last one waiting, skipped." An outcome this version doesn't know
-  reads as "ran.".
+  What a last firing did, to follow its time ("sent 3 changes."). An
+  outcome this version doesn't know reads as "ran.".
   """
   @spec last(String.t(), Ambient.result()) :: String.t()
   def last(job, %{outcome: "sent", count: n}), do: "sent #{count(n, noun(job))}."
@@ -159,11 +148,7 @@ defmodule PhotonWeb.AmbientText do
   def last(_job, %{outcome: "off"}), do: "ambient mode was off."
   def last(_job, _result), do: "ran."
 
-  @doc ~S"""
-  A timer that stopped after an error: "Digests stopped after an error:
-  <reason>. Save settings to start them again." (or "The daily review
-  stopped ...").
-  """
+  @doc "A timer that stopped after an error: its reason, and how to start it again."
   @spec stopped(Ambient.stopped()) :: String.t()
   def stopped(%{job: "review", reason: reason}),
     do: "The daily review stopped after an error: #{reason}. Save settings to start it again."
@@ -171,11 +156,9 @@ defmodule PhotonWeb.AmbientText do
   def stopped(%{reason: reason}),
     do: "Digests stopped after an error: #{reason}. Save settings to start them again."
 
-  @doc ~S"""
-  The flash after "Send a digest now" or "Run the review now", from what
-  `Photon.Ambient.digest_now/0` or `review_now/0` returned: "Sent Blip a
-  digest of 3 changes.", "Nothing new since the last digest.", "Turn on
-  ambient mode first."
+  @doc """
+  The flash after a run-now button, from what
+  `Photon.Ambient.digest_now/0` or `review_now/0` returned.
   """
   @spec ran(String.t(), Ambient.result()) :: String.t()
   def ran(_job, %{outcome: "off"}), do: "Turn on ambient mode first."
@@ -204,8 +187,7 @@ defmodule PhotonWeb.AmbientText do
   @doc """
   The flash's kind for `ran/2`'s words: `:error` when nothing was sent
   because something has to change first (ambient mode is off, or Blip
-  can't use the plan), so the flash doesn't show a check mark for it;
-  else `:info`.
+  can't use the plan), so no check mark shows; else `:info`.
   """
   @spec ran_kind(Ambient.result()) :: :info | :error
   def ran_kind(%{outcome: outcome}) when outcome in ~w(off skipped_consent skipped_model),

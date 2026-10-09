@@ -12,9 +12,8 @@ defmodule PhotonNode.Config do
   | `:workspace` | `PHOTON_NODE_WORKSPACE` | `<data_dir>/workspace` |
   | `:link` | none | `PhotonNode.Connection` |
 
-  `:link` is the module the executor sends its snapshots and output
-  through (`PhotonNode.Executor.Link`); only a host embedding the node or a
-  test would change it.
+  `:link` (see `PhotonNode.Executor.Link`) is for a host embedding the
+  node, or a test.
   """
 
   use Boundary, type: :strict, deps: []

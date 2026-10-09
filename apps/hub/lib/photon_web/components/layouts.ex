@@ -1,15 +1,12 @@
 defmodule PhotonWeb.Layouts do
   @moduledoc """
-  The app shell: a sidebar with Home (with how many threads need the
-  owner), Activity (everything Blip did), the projects, each with its most
-  recently active threads and any running one, each thread marked with
-  its state (`PhotonWeb.CoreComponents.state_mark/1`), Machines (how many
-  are online, linking to the nodes page), Skills and Settings; the page
-  fills the rest. On small screens the sidebar folds into a drawer behind
-  a top bar. The sidebar's data is `@shell`, kept current by `PhotonWeb.Shell`.
+  The app shell: a sidebar with Home, Activity, the projects and their
+  threads, Machines, Skills and Settings; the page fills the rest. On
+  small screens the sidebar folds into a drawer behind a top bar. The
+  sidebar's data is `@shell`, kept current by `PhotonWeb.Shell`.
 
-  Blip floats over all of it: `PhotonWeb.BlipLive`, rendered here once and
-  sticky, so it and its conversation stay put while you move between pages.
+  Blip (`PhotonWeb.BlipLive`) is rendered here once and sticky, so it and
+  its conversation stay put while you move between pages.
   """
   use PhotonWeb, :html
 

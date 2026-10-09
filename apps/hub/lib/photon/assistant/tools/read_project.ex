@@ -1,14 +1,10 @@
 defmodule Photon.Assistant.Tools.ReadProject do
   @moduledoc """
-  Blip's `read_project` tool: one project's name, slug and whole purpose,
-  its context files, its threads with their states, its schedules but
-  one-offs that fired (`Photon.Assistant.project_schedules/1`) and the
-  skills turned on for it (`Photon.Assistant.Readout.project/2`), then each
-  machine's skills (`Photon.Skills.machine_skills/0`), which its threads get
-  too for work on that machine, so a project with none of its own doesn't
-  read as having no skills at all. The details name the project, for the
-  line in Blip's panel. It changes nothing, so a rerun after a restart is
-  safe.
+  Blip's `read_project` tool (`Photon.Assistant.Readout.project/2`). It
+  includes each machine's skills (`Photon.Skills.machine_skills/0`), which
+  the project's threads get too, so a project with none of its own doesn't
+  read as having no skills at all. It changes nothing, so a rerun after a
+  restart is safe.
   """
   @behaviour Photon.Durable.Tool
 

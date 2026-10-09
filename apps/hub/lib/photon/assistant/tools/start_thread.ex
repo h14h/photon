@@ -5,11 +5,7 @@ defmodule Photon.Assistant.Tools.StartThread do
   so the thread is `started_by: "blip"` and Blip hears how its runs end).
   The thread is made inside the commit that records the call's result, with
   the call's task ID in its request ID, so a rerun after a restart makes one
-  thread.
-
-  It refuses in a run that carries a thread's question the owner hasn't
-  written into, and past the unattended limit
-  (`Photon.Assistant.may_act_tx/3`).
+  thread. `Photon.Assistant.may_act_tx/3` (`:start`) may refuse it.
   """
   @behaviour Photon.Durable.Tool
 

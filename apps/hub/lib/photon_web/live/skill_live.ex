@@ -4,49 +4,34 @@ defmodule PhotonWeb.SkillLive do
   shows, edits and turns one on.
 
   The editor is a form over a plain map (`name`, `description`,
-  `instructions` and, when editing, the hidden `version` it loaded), with
-  `Write` and `Preview` tabs for the instructions. Saving hands it to
-  `Photon.Skills`, which checks it and the version; its errors show under
-  their fields. A save that renames the skill patches the URL to the new
-  name. The form asks before the owner leaves it with unsaved text
-  (`PhotonWeb.EditorComponents.guarded_form/1`, shared with the context
-  file editor).
+  `instructions` and, when editing, the hidden `version` it loaded).
+  `Photon.Skills` checks it and the version on save. A save that renames
+  the skill patches the URL to the new name. The form asks before the
+  owner leaves it with unsaved text
+  (`PhotonWeb.EditorComponents.guarded_form/1`).
 
-  "Turned on for" has a switch for Blip, one per project and one per machine
-  the hub knows (`Photon.Machines.known/0`: connected or offline but not
-  removed), the projects and machines each a stream. Each switch calls
+  "Turned on for" has a switch for Blip, one per project and one per
+  machine the hub knows (`Photon.Machines.known/0`). Each switch calls
   `Skills.enable/2` or `disable/2` with the state it should end in, so a
-  double click or a stale page can't flip it the wrong way; a refused enable
-  (30 on already, or a machine removed since the page loaded) is a flash. A
-  skill on for a machine is offered to Blip and every thread when they work
-  there. The MACHINES group has a row of its own below `xl:`, so the
-  projects' grid keeps its width, and sits beside the other two from `xl:`.
+  double click or a stale page can't flip it the wrong way; a refused
+  enable (30 on already, or a machine removed since the page loaded) is a
+  flash.
 
-  The page follows `Skills.subscribe/0`. A toggle and a save announce the
-  same `{:skills_changed, id}`, so for the open skill the handler does two
-  separate things:
+  A toggle and a save announce the same `{:skills_changed, id}`
+  (`Skills.subscribe/0`), so for the open skill the page always re-reads
+  where the skill is on, and only when the stored version differs from
+  the one the form loaded does a clean form load it (following a rename),
+  or a dirty one keep the owner's text and show `#skill-stale`. `Keep my
+  text` takes the stored version's number, so the next save writes over
+  it. A save with an old version (`:stale`) shows the same banner. When
+  the text is replaced from the server, the fields get new DOM IDs
+  (`@revision`), because LiveView leaves a focused field's value alone. A
+  deleted skill sends the page to `/skills`.
 
-    * it always re-reads where the skill is on, so a toggle made on
-      `/skills` or a project page shows here
-    * only when the stored version differs from the one the form loaded
-      does a clean form load it (following a rename to its URL), or a
-      dirty one keep the owner's text and show `#skill-stale`, with `Load
-      the saved version` and `Keep my text` (takes the stored version's
-      number, so the next save writes over it). A toggle made here while
-      the owner types leaves the form alone.
-
-  A save with an old version (`:stale`) shows the same banner and keeps
-  the text. When the text is replaced from the server, the fields get new
-  DOM IDs (`@revision`), because LiveView leaves a focused field's value
-  alone. A deleted skill sends the page to `/skills`.
-
-  `{:projects_changed, _}` (through `PhotonWeb.Shell`) re-reads the
-  projects, so a new or renamed project shows among the switches, and
-  `:nodes_changed` and `{:node_keys_changed, _}` (also through the shell)
-  re-read the machines, so one installed or removed while the page is
-  open gains or loses its switch. Everything else the shell passes on is
-  ignored. An unknown skill goes
-  back to `/skills` with a flash.
+  `{:projects_changed, _}`, `:nodes_changed` and `{:node_keys_changed, _}`
+  (through `PhotonWeb.Shell`) re-read the projects or machines, so the
+  switches keep up. Everything else the shell passes on is ignored. An
+  unknown skill goes back to `/skills` with a flash.
   """
 
   use PhotonWeb, :live_view

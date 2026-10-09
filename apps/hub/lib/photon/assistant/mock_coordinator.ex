@@ -1,68 +1,30 @@
 defmodule Photon.Assistant.MockCoordinator do
   @moduledoc """
   The scripted Blip's phrasings for its tools over projects and threads,
-  which `Photon.Assistant.MockScript` tries after the machine and skill
-  phrasings and before its own:
+  listed in `help/0`, which `Photon.Assistant.MockScript` tries after the
+  machine and skill phrasings and before its own. `answer: <text>`
+  answers the newest question this conversation asked the owner about
+  (the last `ask_owner` call among the request's messages).
 
-    * `projects` lists the projects (`list_projects`)
-    * `project <slug>` reads one (`read_project`)
-    * `threads` and `threads in <slug>` list threads (`list_threads`)
-    * `read thread <id>` reads one (`read_thread`)
-    * `start project: <purpose>` starts a project (`start_project`)
-    * `start thread in <slug>: <message>` starts a thread (`start_thread`)
-    * `tell <id>: <message>` messages a thread (`message_thread`)
-    * `stop thread <id>` stops one (`stop_thread`)
-    * `files in <slug>` lists a project's context files
-      (`list_context_files`)
-    * `read <slug>/<name>` reads one (`read_context_file`)
-    * `write <slug>/<name>: <text>` writes `<text>`, which may run over
-      several lines, as the whole file (`write_context_file`)
-    * `edit <slug>/<name>: <old> => <new>` changes one passage
-      (`edit_context_file`)
-    * `in <n> minutes in <slug>: <prompt>` and `every <n> minutes in
-      <slug>: <prompt>` schedule work in a project, a new thread each
-      time (`schedule` with `project`), and `schedules in <slug>` lists
-      a project's schedules (`list_schedules`); `cancel schedule <id>`
-      cancels any schedule (`cancel_schedule`)
-    * `all skills` lists every skill (`list_skills`), and `turn on <skill>
-      in <slug>` or `turn off <skill> in <slug>` turns one on or off for
-      a project (`set_project_skill`)
-    * `answer <question id>: <text>` answers a thread's question
-      (`answer_question`), and `answer: <text>` answers the newest
-      question this conversation asked the owner about (the last
-      `ask_owner` call among the request's messages)
+  Messages the owner didn't type (`unasked/2`) are read from every text
+  part of the last user message, since a signal message may carry
+  several:
 
-  Messages the owner didn't type (`unasked/2`), read from every text part
-  of the last user message, since a signal message may carry several:
-
-    * a digest or a daily review of ambient mode: `Photon.Assistant.MockAmbient`'s,
-      which `unasked/2` tries first
-
+    * a digest or a daily review: `Photon.Assistant.MockAmbient`'s, tried
+      first
     * `[Question q_... from ...]` parts: a question whose text holds the
-      key of a memory line `- <key>: <value>` (in the request's system
-      text, under `## Memory`; at least three characters, ignoring case)
-      is answered with the value (`answer_question`); any other is passed
-      to the owner in the thread's words (`ask_owner`; the card and the
-      bubble name the thread). One call
-      per question, in one answer. A question ending in `(prose)` gets a
-      plain reply and no call, the way a real model sometimes slips, so
-      the hub passes it on itself
-    * `[Thread update]` parts and nothing else: one line per update
-      (`Fix the pump in Garden finished.`), no call
+      key of a memory line `- <key>: <value>` (under `## Memory` in the
+      system text; at least three characters, ignoring case) is answered
+      with the value (`answer_question`); any other is passed to the owner
+      (`ask_owner`). One call per question, in one answer. A question
+      ending in `(prose)` gets a plain reply and no call, the way a real
+      model sometimes slips, so the hub passes it on itself
+    * `[Thread update]` parts and nothing else: one line per update, no
+      call
     * the owner's answer to a question (`[Your answer to ...`): "Noted."
 
   What it says is for the owner: threads by title, never an ID, and the
-  owner as "you". Its intros don't repeat the ID a phrasing named the
-  thread or question by (`Telling the thread.`). After a result of its
-  tools over threads (`relay/3`), it says what happened in its own words
-  where the result is written for the model (`Started "Fix the pump" in
-  garden. I'll tell you how it goes.`, `I've asked you for "Fix the
-  pump". Your answer goes straight to the thread.`, `Answered "Fix the
-  pump".`); any other result of theirs it relays as the script's usual
-  relay prints it, with the IDs left out and the model's words for the
-  owner and itself turned round ("waiting on the user" reads "waiting on
-  you", "asking you" reads "asking me"). Other tools' results (a
-  command's output, a file) are relayed as they are.
+  owner as "you" (`relay/3`).
   """
 
   # Functional core: no processes, no I/O.
@@ -126,8 +88,7 @@ defmodule Photon.Assistant.MockCoordinator do
 
   @doc """
   The phrasings, in the order the script tries them, each with the reply
-  its captures make. `request` is the model request; these phrasings
-  don't look at it.
+  its captures make. `answer: <text>` reads the model `request`.
   """
   @spec phrasings(map()) :: [phrasing()]
   def phrasings(request),
@@ -137,7 +98,6 @@ defmodule Photon.Assistant.MockCoordinator do
         file_phrasings() ++
         schedule_phrasings() ++ skill_phrasings() ++ question_phrasings(request)
 
-  # The read tools' phrasings.
   defp read_phrasings do
     [
       {~r/\A(?:list )?projects\z/i,
@@ -150,7 +110,6 @@ defmodule Photon.Assistant.MockCoordinator do
     ]
   end
 
-  # The phrasings of the tools that start and stop work.
   defp work_phrasings do
     [
       {~r/\Astart project\s*:\s*(.+)\z/is, fn [purpose] -> start_project(purpose) end},
@@ -172,8 +131,7 @@ defmodule Photon.Assistant.MockCoordinator do
     ]
   end
 
-  # The phrasings for a project's schedules, and cancelling any schedule.
-  # Blip's own (`in <n> minutes: <prompt>`, `schedules`) are the script's.
+  # Blip's own schedule phrasings are the script's.
   defp schedule_phrasings do
     [
       {~r/\Ain\s+(\d+)\s+minutes?\s+in\s+(\S+?)\s*:\s*(.+)\z/s, &schedule_in(&1, "in_minutes")},
@@ -185,7 +143,6 @@ defmodule Photon.Assistant.MockCoordinator do
     ]
   end
 
-  # The phrasings for skills: every skill, and one on or off for a project.
   defp skill_phrasings do
     [
       {~r/\Aall skills\z/i, fn [] -> call("list_skills", %{}, "Here are the skills.") end},
@@ -193,8 +150,6 @@ defmodule Photon.Assistant.MockCoordinator do
     ]
   end
 
-  # The phrasings that answer a thread's question. `answer: <text>` finds
-  # the question in the request.
   defp question_phrasings(request) do
     [
       {~r/\Aanswer\s+(\S+?)\s*:\s*(.+)\z/is, fn [id, text] -> answer(id, text) end},
@@ -325,9 +280,9 @@ defmodule Photon.Assistant.MockCoordinator do
 
   @doc """
   What the scripted Blip says after its call to tool `name` (nil when the
-  call isn't found) returned `text`, given `relayed`, what the script's
-  usual relay makes of the result: for its tools over threads, its own
-  words, or the relayed result in the owner's words; for any other tool,
+  call isn't found) returned `text`, given `relayed`, the script's usual
+  relay of it: for its tools over threads, its own words, or `relayed`
+  with IDs left out and "you"/"me" turned round; for any other tool,
   `relayed` as it is.
   """
   @spec relay(String.t() | nil, String.t(), String.t()) :: String.t()
@@ -362,8 +317,6 @@ defmodule Photon.Assistant.MockCoordinator do
 
   defp own_words(_name, _text), do: nil
 
-  # A result in the owner's words: no IDs, the owner as "you" and Blip as
-  # "me".
   defp owner_words(text),
     do:
       Enum.reduce(@owner_words, text, fn {pattern, words}, text ->
@@ -374,10 +327,8 @@ defmodule Photon.Assistant.MockCoordinator do
 
   @doc """
   The scripted reply to a message the owner didn't type, from the text
-  parts of the last user message (`texts`): a digest or a daily review
-  (`Photon.Assistant.MockAmbient.unasked/2`, tried first), thread
-  questions, thread updates, or the owner's answer to a question going
-  by. Nil for anything else, which the phrasings handle.
+  parts of the last user message (`texts`); see the moduledoc. Nil for
+  anything else, which the phrasings handle.
   """
   @spec unasked([String.t()], map()) :: Message.t() | nil
   def unasked(texts, request), do: MockAmbient.unasked(texts, request) || signal(texts, request)

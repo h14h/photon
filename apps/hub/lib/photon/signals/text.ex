@@ -2,16 +2,10 @@ defmodule Photon.Signals.Text do
   @moduledoc """
   The words of what reaches Blip unasked.
 
-  A signal is one text part of a message to Blip, which the model reads:
-  a thread update (`update/2`) or a question (`question/2`). They name
-  the project and thread by name and title as they are when the signal is
-  posted, and the thread by ID, which Blip's tools take; a question is
-  also named by its ID. The note in front of the owner's answer
-  (`answer_note/1`) is read by the model too.
-
-  The notices (`escalated/1`, `withdrawn/1`) are entries in Blip's
-  conversation for the owner to read; the model never sees them, so they
-  name the thread by title and carry no ID.
+  What the model reads (updates, questions, the note before the owner's
+  answer) names the thread by ID, which Blip's tools take, as well as by
+  title. The notices (`escalated/1`, `withdrawn/1`) are for the owner
+  only; the model never sees them, so they carry no ID.
 
   Each function takes a signal's ref (`Photon.Signals.Rules.ref/0`) for
   where the thread is, and is total: a missing field reads as empty, a
@@ -59,10 +53,7 @@ defmodule Photon.Signals.Text do
     end
   end
 
-  @doc """
-  The note in front of the owner's answer in Blip's conversation, for a
-  question's ref: the answer has already gone to the thread.
-  """
+  @doc "The note in front of the owner's answer: it has already gone to the thread."
   @spec answer_note(map()) :: String.t()
   def answer_note(ref) do
     "[Your answer to #{field(ref, "question_id")} from #{where(ref)} went straight to the thread.]"
@@ -100,8 +91,7 @@ defmodule Photon.Signals.Text do
 
   defp one_line(_text), do: nil
 
-  # Trimmed and at most `limit` characters, ending in "..." when cut; nil
-  # when there is no text.
+  # Nil when there is no text.
   defp cut(text, limit) when is_binary(text) do
     case String.trim(text) do
       "" ->

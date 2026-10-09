@@ -1,27 +1,16 @@
 defmodule Photon.Assistant.MockAmbient do
   @moduledoc """
-  The scripted Blip's replies to ambient mode's messages: a digest
+  The scripted Blip's replies to ambient mode's messages, a digest
   (`[Digest]`) and a daily review (`[Daily review]`), as
-  `Photon.Ambient.Text` writes them.
-  `Photon.Assistant.MockCoordinator.unasked/2` tries `unasked/2` first.
+  `Photon.Ambient.Text` writes them. It never calls a tool.
 
-  Memory lines `- ignore: <word>` (in the request's system text, under
-  `## Memory`, as the question script reads memory) name words to leave
-  out: a line that contains one, ignoring case, isn't told.
-
-    * A digest: each line under "New to the user:" left after the filter
-      becomes a reply line (one line alone, more as a list), `Fix the pump in Garden finished: Replaced the
-      fuse.` or `The schedule "check the gutters" in Garden stopped after
-      an error.` Lines under "Already seen" are left out.
-    * A review: the lines left after the filter become `These have sat
-      for a while:`, one line each (`- Fix the pump in Garden (c_123),
-      stopped 4 days ago.`), then, as a paragraph of its own, how to pick
-      one up or close it. The
-      scripted reply shows IDs so a demo can name them; the real prompt
-      tells Blip not to.
-
-  With no line left, the reply is `[nothing to tell]`, which makes no
-  bubble and no activity row. It never calls a tool.
+  Memory lines `- ignore: <word>` (under `## Memory` in the request's
+  system text) name words to leave out: a line that contains one,
+  ignoring case, isn't told. A digest tells the lines under "New to the
+  user:" that are left; a review lists the threads left, then how to pick
+  one up or close it. The scripted review shows IDs so a demo can name
+  them; the real prompt tells Blip not to. With no line left, the reply
+  is `[nothing to tell]`.
   """
 
   # Functional core: no processes, no I/O.

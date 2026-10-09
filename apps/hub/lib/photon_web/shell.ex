@@ -1,34 +1,22 @@
 defmodule PhotonWeb.Shell do
   @moduledoc """
-  Keeps the app shell current on every page: the projects and their threads
-  for the sidebar, the machines the hub knows and which are online, the
-  model in use, and whether the hub is signed in with ChatGPT. Mounted for
-  the whole `live_session` and by `PhotonWeb.BlipLive`; pages get it as
-  `@shell`.
+  Keeps the app shell current on every page: the sidebar's projects and
+  threads (`Photon.Threads.sidebar/1`), the machines
+  (`Photon.Machines.roster/0`), the model in use, whether the hub is
+  signed in with ChatGPT, and `needs_you`, the count on Home
+  (`Photon.Threads.needs_you_count/0`). Mounted for the whole
+  `live_session` and by `PhotonWeb.BlipLive`; pages get it as `@shell`.
 
-  The sidebar's data is `Photon.Threads.sidebar/1`: each project (by name)
-  with its five most recently active threads, any other of its threads
-  that is running, and how many more it has. It is a plain assign, not a
-  stream: it is bounded (five threads a project plus the running
-  ones), and `@shell` is rendered by `Layouts.app`, outside each page's
-  own template.
-
-  Each listed thread carries its `state` (`Photon.Threads.State`), which
-  the sidebar shows as a mark. `@shell.needs_you` is how many threads need
-  the owner (`Photon.Threads.needs_you_count/0`: waiting on them, failed,
-  or finished and not looked at), the count on Home.
-
-  The machines are `Photon.Machines.roster/0`: the connected nodes, and the
-  known ones (a key that isn't revoked) offline.
+  The sidebar is a plain assign, not a stream: it is bounded (five
+  threads a project plus the running ones), and `@shell` is rendered by
+  `Layouts.app`, outside each page's own template.
 
   What rebuilds what:
 
     * `:nodes_changed`, `{:node_keys_changed, _}`, `{:settings_changed, _}`
       and `{:chatgpt_changed, _}` rebuild everything.
-    * `{:projects_changed, _}` (a project created or changed, a thread
-      started, sent a message, ended a run, seen or resolved) and
-      `{:questions_changed, _}` (a thread's `ask_blip` question asked,
-      passed on, answered or withdrawn) rebuild the sidebar and the count.
+    * `{:projects_changed, _}` and `{:questions_changed, _}` rebuild the
+      sidebar and the count.
     * `{:durable_tasks, tasks}` rebuilds the sidebar only when one of
       `tasks` belongs to a listed thread, so a busy hub doesn't re-read it
       on every task change (rule 73). A thread that isn't listed can only

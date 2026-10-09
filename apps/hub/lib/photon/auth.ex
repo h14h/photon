@@ -13,14 +13,12 @@ defmodule Photon.Auth do
     * `:password` - one password: `PHOTON_PASSWORD`, else one generated on
       first boot, logged once and kept in `<data dir>/password`. The
       production default.
-    * `:tailscale_or_password` - your devices on the tailnet as in
-      `:tailscale`, and the password for everyone else: a public hub
-      that's also on your tailnet (`PHOTON_AUTH=tailscale,password`).
+    * `:tailscale_or_password` - `:tailscale`, and the password for
+      everyone else (`PHOTON_AUTH=tailscale,password`).
     * `:off` - open: development and tests, or a hub that only another
       login can reach.
 
   Nodes don't use this: each has its own key (`Photon.NodeKeys`).
-  `check_device/3` is pure.
   """
 
   use Boundary, deps: [Photon.Paths, Photon.Tailnet]
@@ -94,12 +92,7 @@ defmodule Photon.Auth do
     end
   end
 
-  @typedoc """
-  What `gui_access/2` decides from: who the device is (as for
-  `check_device/3`), whether its address is on the tailnet, the logins let
-  in, the devices that run nodes, and whether the session signed in with the
-  password.
-  """
+  @typedoc "What `gui_access/2` decides from; `identity` as for `check_device/3`."
   @type gui_facts :: %{
           identity: {:ok, Photon.Tailnet.identity()} | :error,
           tailnet_address?: boolean(),
@@ -111,9 +104,9 @@ defmodule Photon.Auth do
   @doc """
   Whether a client may open the GUI in a tailscale mode: its device
   (`check_device/3`), or in `:tailscale_or_password` a signed-in session,
-  but never a machine that runs a node. A tailnet address tailscale couldn't
-  name may be a node, so it is told to try again rather than asked for the
-  password. `{:error, :not_device}` leaves room for the password.
+  but never a machine that runs a node. A tailnet address tailscale
+  couldn't name may be a node, so it is told to try again rather than
+  offered the password, which `{:error, :not_device}` leaves room for.
   """
   @spec gui_access(:tailscale | :tailscale_or_password, gui_facts()) ::
           :ok | {:error, String.t() | :not_device}

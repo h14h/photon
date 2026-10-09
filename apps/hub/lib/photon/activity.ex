@@ -3,30 +3,22 @@ defmodule Photon.Activity do
   The activity log: everything Blip did, and who asked for it.
 
   A row (`Photon.Activity.Action`) is a stored fact, written once in the
-  commit that stores what it records and never changed (rule 15):
+  commit that stores what it records and never changed (rule 15): every
+  result of a tool call Blip made, whatever ended it (a result, a raise,
+  a Stop, a failed task), and every answer Blip gave in a run the owner
+  didn't type into, since the owner didn't watch that reply come in.
 
-    * every result of a tool call Blip made, whatever ended it (a result,
-      a raise, a Stop, a failed task), from the `"assistant"` profile's
-      `on_tool_result/4` hook (`kind: "call"`)
-    * every answer Blip gave in a run the owner didn't type into (one a
-      thread's update or question, or a schedule, started), from its
-      `on_settled/3` hook (`kind: "message"`), since the owner didn't
-      watch that reply come in
-
-  Who asked is `Photon.Assistant.Origin`'s, worked out by the caller; the
-  line the page shows and whether the call changes anything are
-  `Photon.Activity.Rules`'. Blip's conversation holds the same calls, but
-  reading who asked from it means reading every entry with its output and
-  images: this table is the index the activity page lists from.
+  Who asked is `Photon.Assistant.Origin`'s, worked out by the caller.
+  Blip's conversation holds the same calls, but reading who asked from it
+  means reading every entry with its output and images: this table is the
+  index the activity page lists from.
 
   `record_tx/2` runs inside the harness's commits, on a Stop or a failed
-  task inside the Scheduler's own, so it is total: it takes the call as
-  stored, whatever its arguments are, and records less, never raises,
-  when something is missing. There is no pruning in this step.
+  task inside the Scheduler's own, so it is total: it records less, and
+  never raises, when something is missing. Rows are not pruned.
 
-  Every row announces `{:activity_added, id}` on `"activity"`
-  (`subscribe/0`) after its commit. There is no process here: the log is
-  rows behind this API.
+  Every row announces `{:activity_added, id}` (`subscribe/0`) after its
+  commit. There is no process here: the log is rows behind this API.
   """
 
   use Boundary,
@@ -75,12 +67,10 @@ defmodule Photon.Activity do
 
   @doc """
   Records one row inside the caller's commit and announces
-  `{:activity_added, id}` once it is stored. For a call, the summary
-  comes from the call as stored in its task (`task.input["call"]`), the
-  status and the details from its entry, and `project_id` and
-  `thread_id` from the details. A second record of the same entry, or
-  attributes that name no entry, record nothing. Total: it never
-  raises on what it is given.
+  `{:activity_added, id}` once it is stored. A call's summary comes from
+  the call as stored in its task, whatever its arguments are. A second
+  record of the same entry, or attributes that name no entry, record
+  nothing. Total: it never raises on what it is given.
   """
   @spec record_tx(Tx.t(), recorded() | term()) :: :ok
   def record_tx(tx, %{kind: "call", task: task, entry: %Entry{id: entry_id} = entry} = record)
@@ -120,7 +110,6 @@ defmodule Photon.Activity do
 
   def record_tx(_tx, _record), do: :ok
 
-  # The call as the model sent it, from its tool task.
   defp call(%TaskRecord{input: %{"call" => call}}) when is_map(call), do: call
   defp call(_task), do: %{}
 

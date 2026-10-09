@@ -4,9 +4,9 @@ defmodule Photon.Projects do
 
   A project is a context for any body of work, not only code: a purpose,
   the only required field, and a name, made from the purpose when left
-  blank. Nothing else prescribes how it is run. Its context files are
-  freeform Markdown notes kept on the hub, which the user edits on the
-  project's pages and the project's threads read and write with tools.
+  blank. Its context files are freeform Markdown notes kept on the hub,
+  which the user edits on the project's pages and threads and Blip read
+  and write with tools.
 
   Each project has a slug, made from its name when the project is created
   and never changed after. It names the project's folder on every machine
@@ -17,42 +17,22 @@ defmodule Photon.Projects do
   taken slugs are read inside the commit that inserts the project, and the
   unique index backs that up.
 
-  Every write is a `Photon.Durable.commit/1`, as `Photon.Machines` does it:
-  SQLite has one writer, and a thread's file write has to land in the same
-  commit as the tool result that reports it. Each write reads what it needs
-  inside the commit, asks `Photon.Projects.Rules` (rule 64: input is checked
-  once, here), applies the answer and announces it with
-  `Photon.Durable.Tx.announce/3`, so a page hears of a change only once it
-  is stored, and a commit that rolls back announces nothing:
-
-    * `"projects"` (`subscribe/0`): `{:projects_changed, project_id}` when a
-      project is created or edited, or a thread is started in it or sent a
-      message (`threads_changed_tx/2`)
-    * `"project:" <> id` (`subscribe_files/1`):
-      `{:project_files_changed, project_id, key}` when a context file is
-      created, written, edited or deleted, by the user, a thread or Blip
-
-  `write_file_tx/5` and `edit_file_tx/6` are for the file tools of
-  threads and of Blip, inside the commit that records the tool's result:
-  they check the name and content themselves and return `{:error,
-  message}` for the model, worded for the writer (a thread's ID or
-  `"blip"`), so the tools check nothing.
+  Every write is a `Photon.Durable.commit/1`: SQLite has one writer, and a
+  file tool's write has to land in the same commit as the tool result that
+  reports it. Each write reads what it needs inside the commit, asks
+  `Photon.Projects.Rules` (rule 64: input is checked once, here) and
+  announces with `Photon.Durable.Tx.announce/3`, so a page hears of a
+  change only once it is stored, and a commit that rolls back announces
+  nothing. `write_file_tx/5` and `edit_file_tx/6` return `{:error,
+  message}` worded for the model, so the file tools check nothing.
 
   ## Digest items
 
   While ambient mode is on, the owner's changes and a thread's file writes
-  are collected for Blip's next digest with `Photon.Signals.collect_tx/2`,
-  inside the commit that makes the change, which reads the mode there and
-  collects nothing in quiet mode:
-
-    * `"project_created"` from `create/1`, and `"purpose_changed"` from
-      an `update/2` that changes the name or the purpose
-    * `"file_written"` from `create_file/2`, `save_file/4` and
-      `delete_file/2` (writer `"user"`), and from a thread's
-      `write_file_tx/5` and `edit_file_tx/6` that succeed (the thread's ID)
-
-  What Blip does itself isn't collected: `create_tx/2`, which its
-  `start_project` tool calls, and the file tools with `"blip"` as writer.
+  are collected for Blip's next digest (`Photon.Signals.collect_tx/2`,
+  which reads the mode) inside the commit that makes the change; each
+  function says which kind. What Blip does itself isn't collected:
+  `create_tx/2` and the file tools with `"blip"` as writer.
 
   There is no process here: the rows hold the state and the Store's commit
   line orders the writes.
@@ -90,11 +70,17 @@ defmodule Photon.Projects do
 
   ## Subscriptions
 
-  @doc "Subscribes to `{:projects_changed, project_id}`."
+  @doc """
+  Subscribes to `{:projects_changed, project_id}`, sent when a project or
+  its list of threads changes.
+  """
   @spec subscribe() :: :ok
   def subscribe, do: Events.subscribe(@topic)
 
-  @doc "Subscribes to `{:project_files_changed, project_id, key}` for one project."
+  @doc """
+  Subscribes to `{:project_files_changed, project_id, key}`, sent when any
+  of one project's context files changes, by anyone.
+  """
   @spec subscribe_files(String.t()) :: :ok
   def subscribe_files(project_id), do: Events.subscribe(files_topic(project_id))
 
@@ -139,8 +125,8 @@ defmodule Photon.Projects do
 
   @doc """
   `create/1` inside the caller's commit, for Blip's `start_project` tool,
-  which makes the project in the commit that records its result. Errors
-  are `create/1`'s and make nothing, so the caller's commit can go on.
+  without the digest item. Errors are `create/1`'s and make nothing, so
+  the caller's commit can go on.
   """
   @spec create_tx(Tx.t(), map()) :: {:ok, Project.t()} | {:error, field_errors()}
   def create_tx(tx, params) do
@@ -192,10 +178,8 @@ defmodule Photon.Projects do
     do: collect_tx(tx, "purpose_changed", %{project_id: project.id})
 
   @doc """
-  Inside a commit that started a thread in project `project_id` or sent
-  one a message: announces `{:projects_changed, project_id}`, since the
-  project's list of threads, ordered by their last activity, changed.
-  `Photon.Threads` calls it.
+  Announces `{:projects_changed, project_id}` inside a commit that changed
+  one of the project's threads.
   """
   @spec threads_changed_tx(Tx.t(), String.t()) :: :ok
   def threads_changed_tx(tx, project_id),
@@ -321,10 +305,9 @@ defmodule Photon.Projects do
   Inside the commit that records a file tool's result: creates the file
   `name` or replaces all of it with `content`, with no version check (last
   write wins), as written by `writer`: a thread's ID, or `"blip"`. Checks
-  the name, the content and that the project is still there, and returns
-  a message for the model when one fails, worded for the writer; a
-  refused write changes nothing. In ambient mode a thread's write is
-  collected for the next digest (`"file_written"`); Blip's isn't.
+  the name, the content and that the project is still there; a refused
+  write changes nothing. In ambient mode a thread's write is collected
+  for the next digest (`"file_written"`); Blip's isn't.
   """
   @spec write_file_tx(Tx.t(), String.t(), String.t(), String.t(), ContextFile.writer()) ::
           {:ok, %{file: ContextFile.t(), created?: boolean()}} | {:error, String.t()}
@@ -342,11 +325,9 @@ defmodule Photon.Projects do
   @doc """
   Inside the commit that records a file tool's result: replaces
   `old_text`, which must occur exactly once in file `name`, with
-  `new_text`, as written by `writer` (a thread's ID, or `"blip"`). Returns
-  a message for the model, worded for the writer, when the project or the
-  file is missing, the passage isn't found exactly once or the result is
-  too long; a refused edit changes nothing. In ambient mode a thread's
-  edit is collected for the next digest (`"file_written"`); Blip's isn't.
+  `new_text`, as written by `writer` (a thread's ID, or `"blip"`). A
+  refused edit changes nothing. In ambient mode a thread's edit is
+  collected for the next digest (`"file_written"`); Blip's isn't.
   """
   @spec edit_file_tx(
           Tx.t(),
@@ -400,8 +381,6 @@ defmodule Photon.Projects do
 
   ## Digest items
 
-  # A file tool's write is collected for a thread, never for Blip, which
-  # did it itself.
   defp tool_written_tx(_tx, _file, @blip), do: :ok
   defp tool_written_tx(tx, file, thread_id), do: file_written_tx(tx, file, thread_id, nil)
 
@@ -420,12 +399,9 @@ defmodule Photon.Projects do
 
   ## Writing
 
-  # A file not stored yet, for `put_file/4` to create.
   defp new_file(project_id, name),
     do: %ContextFile{project_id: project_id, name: name, key: Rules.key(name)}
 
-  # Creates `file` (one from `new_file/2`) or writes over it, as written by
-  # `writer`, and announces it.
   defp put_file(tx, %ContextFile{} = file, content, writer) do
     file =
       case file do

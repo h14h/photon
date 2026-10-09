@@ -9,55 +9,41 @@ defmodule Photon.Skills do
   `{:project, project_id}` (that project's threads) or
   `{:machine, machine_id}` (work on that machine); a new skill is on
   nowhere. Turning a skill on stores one `Photon.Skills.Enablement` row, and
-  turning it off deletes it. The row's `scope` column is `"blip"`, the
-  project's ID, or `"machine:"` followed by the machine's ID (node IDs can't
-  hold a `:`, so the three forms can't collide); only this module turns a
-  scope into that string and back.
+  turning it off deletes it.
 
   A machine's skills are offered to every agent that can use the
   machine: Blip and every thread in every project, beside their own set
-  (`offered/1`), whatever that set holds. They are tied to the machine's
-  name, and only machines the hub knows count (`Photon.Machines.known/0`:
-  connected or offline, not removed). A removed machine's rows stay, but
-  nothing reads them: `scopes/1`, `list/0`, `machine_skills/0` and
-  `load_tx/3` leave them out, and turning a skill on for it is refused.
-  Reinstalled under the same name, the machine has its skills back.
+  (`offered/1`). They are tied to the machine's name, and only machines
+  the hub knows count (`Photon.Machines.known/0`: connected or offline,
+  not removed). A removed machine's rows stay, but `list/0`, `scopes/1`,
+  `machine_skills/0` and `load_tx/3` leave them out, and turning a skill
+  on for it is refused. Reinstalled
+  under the same name, the machine has its skills back.
 
   Each scope holds at most 30, since an agent's prompt lists every enabled
   skill's name and description on every request. The limit is per set, so
-  one prompt carries up to 30 × (machines with skills + 1): the agent's own
-  set and every machine's.
+  one prompt carries up to 30 × (machines with skills + 1).
 
-  Every write is a `Photon.Durable.commit/1`, as `Photon.Projects` does it:
-  it reads what it needs inside the commit, asks `Photon.Skills.Rules`
-  (rule 64: input is checked once, here), applies the answer and
-  announces `{:skills_changed, skill_id}` on `"skills"` (`subscribe/0`)
-  with `Photon.Durable.Tx.announce/3`, so a page hears of a change only
-  once it is stored: when a skill is created, installed, saved or deleted,
-  or turned on or off anywhere.
+  Every write is a `Photon.Durable.commit/1` that checks its input with
+  `Photon.Skills.Rules` (rule 64: input is checked once, here) and
+  announces `{:skills_changed, skill_id}` with
+  `Photon.Durable.Tx.announce/3`, so a page hears of a change only once
+  it is stored.
 
-  Agents see the skills on for their scope through
-  `Photon.Skills.Prompt` (the prompt's Skills section, which both profiles
-  build from `enabled/1` on every model request), and load one with
-  `load_skill`: Blip's and a thread's tools call `load_tx/3` inside the
-  commit that records the call's result, so a load and a toggle are
-  ordered by the Store and a load never returns a skill that was already
-  off. Which machines are known comes from `Photon.NodeKeys`, written
-  outside the Store, so a load racing a machine's removal may still
-  return its skill; the next prompt no longer lists it, which tells the
-  agent to stop following it. `Photon.Skills.MockPhrases` are the skill
-  phrasings both scripted models share.
+  The `load_skill` tools call `load_tx/3` inside the commit that records
+  the call's result, so a load and a toggle are ordered by the Store and
+  a load never returns a skill that was already off. Which machines are
+  known comes from `Photon.NodeKeys`, written outside the Store, so a load
+  racing a machine's removal may still return its skill; the next prompt
+  no longer lists it, which tells the agent to stop following it.
 
-  Installing starts from a candidate: `read/1` makes one from a pasted
-  SKILL.md, and `fetch/1` downloads them from a link (through
-  `Photon.Skills.Fetch`, with `Photon.Skills.Source` deciding what a link
-  is and what the answers mean). Neither writes anything; `install/2`
-  does, from the preview form and the candidate.
+  `read/1` and `fetch/1` make install candidates and write nothing;
+  `install/2` writes, from the preview form and the candidate.
 
-  Blip turns skills on and off for a project with its `set_project_skill`
-  tool, through `enable_tx/3` and `disable_tx/3` inside the commit that
-  records the call's result. Blip's own set and each machine's stay the
-  owner's to change, on the skills pages.
+  Blip may turn skills on and off only for a project (its
+  `set_project_skill` tool, through `enable_tx/3` and `disable_tx/3`).
+  Blip's own set and each machine's stay the owner's to change, on the
+  skills pages.
 
   There is no process here: the rows hold the state and the Store's
   commit line orders the writes. `fetch/1` runs in its caller's process
@@ -103,12 +89,9 @@ defmodule Photon.Skills do
   @type listed :: %{id: String.t(), skill: Skill.t(), scopes: [scope()]}
 
   @typedoc """
-  What install keeps from the SKILL.md it read: how it arrived (`"pasted"`
-  or `"fetched"`), the link for a fetched one, the notes the preview showed,
-  and the files left out that an agent might look for, and what those were
-  made from (`found`, see `Photon.Skills.Source.candidate/0`). The form
-  gives the name, description and instructions; these come from the
-  candidate the page holds. Other keys are ignored.
+  What install keeps from the candidate the page holds (see
+  `Photon.Skills.Source.candidate/0`); the name, description and
+  instructions come from the form. Other keys are ignored.
   """
   @type candidate :: %{
           required(:origin) => String.t(),
@@ -121,7 +104,10 @@ defmodule Photon.Skills do
 
   ## Subscriptions
 
-  @doc "Subscribes to `{:skills_changed, skill_id}`."
+  @doc """
+  Subscribes to `{:skills_changed, skill_id}`, sent when a skill is
+  created, installed, saved or deleted, or turned on or off anywhere.
+  """
   @spec subscribe() :: :ok
   def subscribe, do: Events.subscribe(@topic)
 
@@ -155,9 +141,8 @@ defmodule Photon.Skills do
   def get_by_name(name), do: Repo.get_by(Skill, name: name)
 
   @doc """
-  The message for `name` (trimmed) when another skill has it, or nil:
-  what the install page says of a listed skill or the name typed in its
-  preview. Install checks it again in its commit.
+  The message for `name` (trimmed) when another skill has it, or nil.
+  Install checks it again in its commit.
   """
   @spec name_taken(String.t() | nil) :: String.t() | nil
   def name_taken(name) when is_binary(name) do
@@ -172,9 +157,8 @@ defmodule Photon.Skills do
   def name_taken(_name), do: nil
 
   @doc """
-  The messages the install preview shows under its fields before Install,
-  for `params` (`name`, `description`): the rule's message for a name or
-  a description left empty, as a SKILL.md without one opens, and a name
+  The messages the install preview shows before Install, for `params`
+  (`name`, `description`): a name or description left empty, and a name
   another skill has. Everything else is checked on install.
   """
   @spec preview_errors(map()) :: field_errors()
@@ -197,9 +181,8 @@ defmodule Photon.Skills do
   defp blank?(_params, _field), do: false
 
   @doc """
-  The skills on in `scope`, by name: what its agents' prompts list and
-  what they may load. One query; both profiles run it on every model
-  request.
+  The skills on in `scope`, by name. One query; both profiles run it on
+  every model request.
   """
   @spec enabled(scope()) :: [Skill.t()]
   def enabled(scope) do
@@ -229,9 +212,8 @@ defmodule Photon.Skills do
 
   @doc """
   Each known machine with skills on, with them by name; machines in
-  `Photon.Machines.known/0`'s order (`local` first, then by ID), which
-  doesn't change as machines connect and disconnect. A machine with no
-  skills on is left out. One query, plus `known/0`'s read.
+  `Photon.Machines.known/0`'s order, which doesn't change as machines
+  connect and disconnect. One query, plus `known/0`'s read.
   """
   @spec machine_skills() :: [{String.t(), [Skill.t()]}]
   def machine_skills do
@@ -248,8 +230,7 @@ defmodule Photon.Skills do
 
   @doc """
   What an agent in `scope` is offered: its own set (`enabled/1`) and every
-  known machine's skills (`machine_skills/0`). Both profiles build the
-  prompt's Skills section from it on every model request.
+  known machine's skills (`machine_skills/0`).
   """
   @spec offered(agent()) :: Prompt.offered()
   def offered(scope), do: %{own: enabled(scope), machines: machine_skills()}
@@ -258,14 +239,9 @@ defmodule Photon.Skills do
   For the `load_skill` tools, inside the commit that records the call's
   result: the skill called `name` (trimmed and downcased) if it is on in
   `scope` or for a known machine, as the tool's result, or an error that
-  names the skills that are on (`Photon.Skills.Prompt.not_loaded/3`).
-
-  Which one loads is `Photon.Skills.Rules.find_offered/2`'s decision:
-  the agent's own set is searched first, and a skill found there loads
-  as today (`Photon.Skills.Prompt.loaded/1`, with the skill's name and
-  version and how to load it again in the details). One found only on
-  machines loads with them named (`Photon.Skills.Prompt.loaded/2`), and
-  the details add `"machines"`, their IDs in `known/0` order.
+  names the skills that are on. The agent's own set is searched first
+  (`Photon.Skills.Rules.find_offered/2`); a skill found only on machines
+  loads with them named, and the details add `"machines"`, their IDs.
   """
   @spec load_tx(Tx.t(), agent(), String.t()) ::
           {:ok, String.t(), %{String.t() => term()}} | {:error, String.t()}
@@ -292,8 +268,6 @@ defmodule Photon.Skills do
     }
   end
 
-  # Machine scopes only for the machines the hub knows: a removed
-  # machine's rows stay, hidden, until it is installed again.
   defp shown(query) do
     known = Enum.map(Machines.known(), &scope_column({:machine, &1}))
     where(query, [e], not like(e.scope, ^(@machine <> "%")) or e.scope in ^known)
@@ -306,10 +280,8 @@ defmodule Photon.Skills do
   ## Candidates to install
 
   @doc """
-  Reads a pasted SKILL.md into a candidate for the install preview, with
-  `origin: "pasted"` and notes on what install leaves out. Errors are the
-  parser's messages: no front matter, front matter that never ends, or no
-  instructions.
+  Reads a pasted SKILL.md into a candidate for the install preview. Errors
+  are the parser's messages.
   """
   @spec read(String.t()) :: {:ok, Source.candidate()} | {:error, String.t()}
   def read(text) do
@@ -322,11 +294,10 @@ defmodule Photon.Skills do
   @doc """
   Fetches the skills a link points to: a SKILL.md, a skill's folder on
   GitHub, or a GitHub folder or repository holding several (up to 30,
-  with a notice when there were more). Each candidate has
-  `origin: "fetched"`; one whose download failed carries its `error`.
-  A link that finds a single skill it can't read is an error instead.
-  Makes HTTP requests, so it runs in a task, never in a LiveView
-  callback.
+  with a notice when there were more). A candidate whose download failed
+  carries its `error`; a link that finds a single skill it can't read is
+  an error instead. Makes HTTP requests, so it runs in a task, never in a
+  LiveView callback.
   """
   @spec fetch(String.t()) :: Fetch.fetched()
   def fetch(url) do
@@ -339,10 +310,7 @@ defmodule Photon.Skills do
 
   ## Writing skills
 
-  @doc """
-  Creates a skill written in the app from `params` (`name`, `description`
-  and `instructions`; atom or string keys), on nowhere.
-  """
+  @doc "Creates a skill written in the app from `params`, on nowhere."
   @spec create(map()) :: {:ok, Skill.t()} | {:error, field_errors()}
   def create(params) do
     with {:ok, attrs} <- Rules.skill(params, nil) do
@@ -351,12 +319,10 @@ defmodule Photon.Skills do
   end
 
   @doc """
-  Installs a skill: the name, description and instructions from the preview
-  form's `params`, and how it arrived, its link, its notes and the files
-  left out from `candidate`, never from the form. The notes and files left
-  out are said again for what was saved (`Photon.Skills.Source.saved/3`): a
-  name the owner changed, and only the files the saved instructions mention.
-  On nowhere.
+  Installs a skill, on nowhere: the name, description and instructions
+  from the preview form's `params`, the rest from `candidate`, never from
+  the form. The notes and files left out are redone for what was saved
+  (`Photon.Skills.Source.saved/3`).
   """
   @spec install(map(), candidate()) :: {:ok, Skill.t()} | {:error, field_errors()}
   def install(params, candidate) do
@@ -449,10 +415,7 @@ defmodule Photon.Skills do
   @spec enable(String.t(), scope()) :: :ok | {:error, :not_found | String.t()}
   def enable(skill_id, scope), do: Durable.commit(&enable_tx(&1, skill_id, scope))
 
-  @doc """
-  `enable/2` inside the caller's commit: Blip's `set_project_skill` tool
-  turns a skill on in the commit that records its result.
-  """
+  @doc "`enable/2` inside the caller's commit."
   @spec enable_tx(Tx.t(), String.t(), scope()) :: :ok | {:error, :not_found | String.t()}
   def enable_tx(tx, skill_id, scope) do
     column = scope_column(scope)
@@ -476,10 +439,7 @@ defmodule Photon.Skills do
   @spec disable(String.t(), scope()) :: :ok
   def disable(skill_id, scope), do: Durable.commit(&disable_tx(&1, skill_id, scope))
 
-  @doc """
-  `disable/2` inside the caller's commit, for Blip's `set_project_skill`
-  tool.
-  """
+  @doc "`disable/2` inside the caller's commit."
   @spec disable_tx(Tx.t(), String.t(), scope()) :: :ok
   def disable_tx(tx, skill_id, scope) do
     deleted =
@@ -525,7 +485,6 @@ defmodule Photon.Skills do
     end
   end
 
-  # Only this module turns a scope into the column's string and back.
   defp scope_column(:blip), do: @blip
   defp scope_column({:project, project_id}) when is_binary(project_id), do: project_id
   defp scope_column({:machine, machine_id}) when is_binary(machine_id), do: @machine <> machine_id

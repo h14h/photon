@@ -3,42 +3,28 @@ defmodule Photon.Assistant.Origin do
   Who asked for one of Blip's runs, and what that lets the run do, as pure
   functions over the `source` maps of the submissions the run answers.
 
-  `of/1` names who asked (`by`, and the schedule or thread it was for),
-  whether the owner typed into the run (`owner_wrote?`), the `ask_blip`
-  questions it carries, and whether it is `restricted?`: a run that
-  carries a thread's question and that the owner hasn't typed into can't
-  start, wake, stop or schedule threads, or change a project, because a
-  thread can't start work (the owner's rule), and a question is a thread
-  talking to Blip. An `"answer"` source (the owner's answer to a
-  question, already sent to the thread) counts as the owner asking but
-  doesn't lift the limits.
+  A run that carries a thread's question and that the owner hasn't typed
+  into is `restricted?`: it can't start, wake, stop or schedule threads,
+  or change a project, because a thread can't start work (the owner's
+  rule). An `"answer"` source (the owner's answer to a question, already
+  sent to the thread) counts as the owner asking but doesn't lift the
+  limits. A thread update leads to Blip's follow-up, never to "a thread
+  asked": Blip acts on an update only to carry out what the owner asked
+  earlier.
 
-  A thread update leads to Blip's follow-up, never to "a thread asked":
-  Blip acts on an update only to carry out what the owner asked earlier.
-  Only a question is a thread asking, and `for_call/3` credits each call
-  that handles one to the thread whose question it is.
-
-  `unattended_ok?/3` bounds what Blip starts on its own: between two of the
-  owner's messages, Blip can start or message threads at most the limit's
-  number of times in runs the owner didn't type into, so a loop between Blip
-  and a thread stops in code
-  (`docs/decisions.md#what-blip-may-do-on-its-own`). Only those calls count:
-  `unattended_details/1` marks them in their results. `schedule_work_ok?/1`
+  `unattended_ok?/3` bounds what Blip starts on its own, so a loop
+  between Blip and a thread stops in code
+  (`docs/decisions.md#what-blip-may-do-on-its-own`); `schedule_work_ok?/1`
   keeps project schedules, whose firings start threads with no limit, to
   runs the owner typed into.
 
-  A run that only handles threads' questions (`quiet?`: signals carrying
-  questions and no updates, nothing the owner or a schedule sent) answers
-  to the threads, not the owner: Blip's reply in it makes no bubble and
-  no "Told you" row. Its `ask_owner` question still reaches the owner.
+  A run that only handles threads' questions (`quiet?`) answers to the
+  threads, not the owner: Blip's reply in it makes no bubble and no "Told
+  you" row. Its `ask_owner` question still reaches the owner.
 
-  In ambient mode a digest or a daily review reaches Blip as a signal too. A
-  run it starts is Blip's follow-up on it (`by: "follow_up"`, `id: "digest"`
-  or `"review"`), and it only reports (`report_only?`) until the owner types
-  into it: every tool that starts, messages or stops threads, or changes a
-  project or a schedule, refuses with `report_only_message/0`. Such a run
-  starts nothing, so it can't cause the work that would make the next
-  digest.
+  A digest or review run only reports (`report_only?`) until the owner
+  types into it: every tool that starts or changes work refuses, so it
+  can't cause the work that would make the next digest.
 
   These run on the harness's hook paths too (the activity log), so they
   are total: any term in, a value out.
@@ -56,12 +42,9 @@ defmodule Photon.Assistant.Origin do
   @type question :: %{question_id: String.t(), thread_id: String.t() | nil}
 
   @typedoc """
-  Who asked for a run (`by`, and `id`, the schedule or the one thread it
+  Who asked for a run (`by`, and `id`: the schedule or the one thread it
   was for, or `"digest"` or `"review"`), whether the owner typed into it,
-  the questions it carries, whether the limits on a thread's question
-  hold in it, whether it only handles threads' questions (`quiet?`), and
-  whether it only reports (`report_only?`: a digest or review run the
-  owner hasn't typed into).
+  the questions it carries, and the flags the moduledoc describes.
   """
   @type t :: %{
           by: by(),
@@ -96,9 +79,7 @@ defmodule Photon.Assistant.Origin do
       with `"digest"` or `"review"`
     * otherwise `"unknown"`
 
-  `report_only?` is true when the run carries a digest or review ref and
-  the owner didn't type into it; an `"answer"` source doesn't lift it, as
-  it doesn't lift `restricted?`.
+  An `"answer"` source lifts neither `report_only?` nor `restricted?`.
   """
   @spec of(term()) :: t()
   def of(sources) do
@@ -118,8 +99,6 @@ defmodule Photon.Assistant.Origin do
     }
   end
 
-  # What a run's signal refs carry: its questions, the threads its
-  # updates are about, and the kinds of its digest or review.
   defp carried(refs) do
     %{
       questions: for(%{"kind" => "question"} = ref <- refs, do: question(ref)),
@@ -145,7 +124,6 @@ defmodule Photon.Assistant.Origin do
     end
   end
 
-  # Who asked for a run that only signals started.
   defp signalled(%{questions: [_ | _] = questions}),
     do: {"thread", one(Enum.map(questions, & &1.thread_id))}
 
@@ -204,11 +182,9 @@ defmodule Photon.Assistant.Origin do
   defp arguments(_args), do: :error
 
   @doc """
-  Why a schedule Blip makes in a run of `origin` was made, for its
-  `asked_by`: `"owner"` when the owner typed into the run, `"blip"`
-  otherwise (Blip set it up on its own, say from a schedule's firing or
-  a thread update). Its firings then read as a schedule or as Blip's
-  follow-up (`of/1`).
+  The `asked_by` of a schedule Blip makes in a run of `origin`:
+  `"owner"` when the owner typed into the run, `"blip"` otherwise. Its
+  firings then read as a schedule or as Blip's follow-up (`of/1`).
   """
   @spec asked_by(t() | term()) :: String.t()
   def asked_by(%{owner_wrote?: true}), do: "owner"
@@ -226,20 +202,14 @@ defmodule Photon.Assistant.Origin do
 
   @doc """
   What a `start_thread` or `message_thread` call in a run of `origin`
-  adds to its result's details: `%{"unattended" => true}` when the owner
-  didn't type into the run, so the call counts towards the unattended
-  limit, else nothing.
+  adds to its result's details: `%{"unattended" => true}`, which counts
+  towards the unattended limit, when the owner didn't type into the run.
   """
   @spec unattended_details(t() | term()) :: %{optional(String.t()) => true}
   def unattended_details(%{owner_wrote?: true}), do: %{}
   def unattended_details(_origin), do: %{"unattended" => true}
 
-  @doc """
-  Whether Blip may make a project's schedule in a run of `origin`: only
-  when the owner typed into it. Each firing starts or wakes a thread,
-  with no limit, so Blip can't set one up on its own, nor because a
-  thread said so.
-  """
+  @doc "Whether Blip may make a project's schedule in a run of `origin`."
   @spec schedule_work_ok?(t() | term()) :: boolean()
   def schedule_work_ok?(%{owner_wrote?: true}), do: true
   def schedule_work_ok?(_origin), do: false

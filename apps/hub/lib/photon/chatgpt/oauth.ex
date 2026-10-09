@@ -1,15 +1,14 @@
 defmodule Photon.ChatGPT.OAuth do
   @moduledoc """
   The rules of Sign in with ChatGPT, for an open-source app, as pure
-  functions: the sign-in link, the address the browser lands on, the
-  token requests, the tokens' claims, and when to refresh.
+  functions.
 
-  How sign-in goes. The hub makes a link with a PKCE challenge, a `state`
-  and a `nonce`, and keeps their secrets. The user approves Photon in
-  ChatGPT, and the browser is sent to `http://127.0.0.1:<port>/auth/callback`,
-  the only kind of address OpenAI allows an open-source app. That page
-  doesn't load (the hub isn't the user's computer), so the user pastes its
-  address into Photon, which checks `state` and trades the code for tokens.
+  The hub makes a link with a PKCE challenge, a `state` and a `nonce`, and
+  keeps their secrets. The user approves Photon in ChatGPT, and the
+  browser is sent to `http://127.0.0.1:<port>/auth/callback`, the only
+  kind of address OpenAI allows an open-source app. That page doesn't load
+  (the hub isn't the user's computer), so the user pastes its address into
+  Photon, which checks `state` and trades the code for tokens.
 
   The first sign-in registers Photon with the user's account: it asks as
   `dynamic_agent_client`, and the address carries the client ID OpenAI
@@ -40,11 +39,7 @@ defmodule Photon.ChatGPT.OAuth do
   @sign_in_again ~w(invalid_grant invalid_refresh_token token_expired refresh_token_expired
                     refresh_token_invalidated refresh_token_reused)
 
-  @typedoc """
-  A sign-in under way: what the hub keeps until the user pastes the
-  address: the PKCE verifier, `state`, `nonce`, the callback address and
-  the client ID it asked as.
-  """
+  @typedoc "A sign-in under way: what the hub keeps until the user pastes the address."
   @type pending :: %{
           verifier: String.t(),
           state: String.t(),
@@ -70,9 +65,7 @@ defmodule Photon.ChatGPT.OAuth do
   @spec host_id(String.t()) :: String.t()
   def host_id(uuid), do: "urn:uuid:" <> uuid
 
-  @doc """
-  A UUID v4 in its usual form, from 16 random bytes (the caller reads them).
-  """
+  @doc "A UUID v4 in its usual form, from 16 random bytes (the caller reads them)."
   @spec uuid(<<_::128>>) :: String.t()
   def uuid(<<a::48, _::4, b::12, _::2, c::62>>) do
     <<a::48, 4::4, b::12, 2::2, c::62>>
@@ -284,7 +277,6 @@ defmodule Photon.ChatGPT.OAuth do
 
   def claims(_token), do: {:error, "no ID token"}
 
-  # Each check is a failure's message, or nil when the claims pass it.
   defp check_claims(claims, expect, now) do
     [
       issuer_check(claims),

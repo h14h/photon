@@ -1,34 +1,19 @@
 defmodule Photon.Threads.MockScript do
   @moduledoc """
   A thread's scripted model, for tests and for working on the hub without a
-  ChatGPT sign-in (`PHOTON_MOCK_MODEL=1` in development). It understands a
-  few fixed phrasings:
+  ChatGPT sign-in (`PHOTON_MOCK_MODEL=1` in development). It follows the
+  fixed phrasings its help text lists: Blip's machine and skill ones
+  (`Photon.MachineTools.MockPhrases`, `Photon.Skills.MockPhrases`), one
+  per context-file tool, `ask blip: <question>`, `ask me: <question>`
+  (answers with the question, so the run ends asking the user) and
+  `fail: <reason>` (fails the model request, which the scripted model
+  doesn't retry, so the run fails).
 
-    * `machines`, `on <machine>: $ <command>` and
-      `on <machine>: look at <path>`, the same as Blip's
-      (`Photon.MachineTools.MockPhrases`)
-    * `files` or `list files` lists the context files
-      (`list_context_files`)
-    * `read <name>` reads one (`read_context_file`)
-    * `write <name>: <text>` writes `<text>`, which may run over several
-      lines, as the whole file (`write_context_file`)
-    * `edit <name>: <old> => <new>` changes one passage
-      (`edit_context_file`)
-    * `skills` says which skills the prompt lists, and `load skill <name>`
-      loads one (`load_skill`), the same as Blip's
-      (`Photon.Skills.MockPhrases`)
-    * `ask blip: <question>` asks Blip the question (`ask_blip`), and the
-      call waits for the answer, which it then relays
-    * `ask me: <question>` answers with the question, ending in `?`, so
-      the run ends asking the user and the thread waits on them
-    * `fail: <reason>` fails the model request with `<reason>`, so the
-      run fails (the scripted model's errors aren't retried)
-
-  After a tool result it relays the result, as Blip's does (Blip's answer
-  to `ask_blip` as prose). Anything else
-  gets a help text. It reads the last text part of the last user message,
-  without a leading `"[Scheduled] "`, as Blip's does, so a project
-  schedule's prompt such as `on local: $ uptime` runs on it too.
+  After a tool result it relays the result (Blip's answer to `ask_blip` as
+  prose); anything else gets the help text. It reads the last text part of
+  the last user message without a leading `"[Scheduled] "`, as Blip's
+  does, so a project schedule's prompt such as `on local: $ uptime` runs
+  on it too.
   """
 
   # Functional core: no processes, no I/O.
@@ -114,8 +99,7 @@ defmodule Photon.Threads.MockScript do
     end)
   end
 
-  # The phrasings it understands, in the order it tries them, each with the
-  # reply its captures make: the shared machine and skill ones first.
+  # In the order it tries them, each with the reply its captures make.
   defp phrasings(request) do
     MockPhrases.phrasings() ++
       SkillPhrases.phrasings(request) ++
@@ -127,7 +111,6 @@ defmodule Photon.Threads.MockScript do
       ] ++ asking_phrasings()
   end
 
-  # Asking Blip, ending the run asking the user, and failing it.
   defp asking_phrasings do
     [
       {~r/\Aask blip\s*:\s*(\S.*)\z/s, &ask_blip/1},
@@ -159,7 +142,6 @@ defmodule Photon.Threads.MockScript do
   defp ask_blip([question]),
     do: call("ask_blip", %{"question" => String.trim(question)}, "Asking Blip.")
 
-  # The question as the answer, so the run ends asking.
   defp ask_me([question]) do
     question
     |> String.trim()

@@ -4,7 +4,8 @@ defmodule Photon.Skills.Enablement do
   this row exists; there is no "off" row.
 
   `scope` is `"blip"`, a project's ID (`p_...`), or `"machine:<id>"` for a
-  machine (`"machine:mm1"`). Only `Photon.Skills` turns it to and from the
+  machine (`"machine:mm1"`); node IDs can't hold a `:`, so the three forms
+  can't collide. Only `Photon.Skills` turns it to and from the
   `:blip | {:project, id} | {:machine, id}` the rest of the code uses.
   """
 

@@ -1,23 +1,17 @@
 defmodule Photon.Activity.Action do
   @moduledoc """
-  One row of the activity log: something Blip did, and who asked for it.
-  Written once, in the commit that stored what it records, and never
-  changed.
-
+  One row of the activity log (see `Photon.Activity`).
     * `kind` - `"call"` (a tool call, `tool` its name) or `"message"`
       (Blip told the owner something in a run the owner didn't type into;
       `tool` is nil)
     * `summary` - the line the page shows, at most 200 characters
-      (`Photon.Activity.Rules.summary/3`, `message_summary/1`)
     * `status` - the call's result: `"ok"`, `"error"`, `"interrupted"` or
       `"aborted"`; `"ok"` for a message
     * `changes` - whether the tool changes something
       (`Photon.Activity.Rules.changes?/1`); false for reads and messages
-    * `origin` and `origin_id` - who asked: `"owner"`, `"thread"` (the
-      thread whose question it was), `"schedule"` (the schedule),
-      `"follow_up"` (the thread it followed up on, the schedule Blip
-      made for itself, `"digest"` or `"review"` for ambient mode's
-      digest and daily review, or nil) or `"unknown"`
+    * `origin` and `origin_id` - who asked
+      (`Photon.Activity.Rules.origins/0`), and the thread, schedule,
+      `"digest"` or `"review"` it came from, or nil
     * `project_id`, `thread_id` - what the call acted on, from its result's
       details; nil when it named none
     * `entry_id` - the `"tool_result"` entry, or for a message the answer

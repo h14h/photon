@@ -3,11 +3,9 @@ defmodule Photon.Threads.Tools.EditContextFile do
   The `edit_context_file` tool: replaces one passage of one of the project's
   context files, which must occur in it exactly once.
 
-  Like `write_context_file`, the edit happens inside the commit that
-  records the call's result (`{:commit, fun}`), through
-  `Photon.Projects.edit_file_tx/6`, which reads the current content,
-  checks everything and announces the change. A refused edit changes
-  nothing.
+  As with `write_context_file`, the edit happens inside the commit that
+  records the call's result, through `Photon.Projects.edit_file_tx/6`. A
+  refused edit changes nothing.
   """
   @behaviour Photon.Durable.Tool
 

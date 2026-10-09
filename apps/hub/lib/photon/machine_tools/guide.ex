@@ -11,11 +11,8 @@ defmodule Photon.MachineTools.Guide do
   use Boundary, top_level?: true, type: :strict, deps: []
 
   @doc """
-  What a `shell` call is like, for a prompt's Markdown list: a fresh shell
-  per call in `where` ("the machine's workspace", "the project's folder"),
-  background children killed with the command's process group, the
-  `set -m; nohup` pattern for something that keeps running, and that a
-  call holds the conversation until its command exits.
+  What a `shell` call is like, for a prompt's Markdown list, run in
+  `where` ("the machine's workspace", "the project's folder").
 
   It is two list items. The caller writes the first item's `- ` and any
   lead-in before it; the second item starts with its own `- ` on a new

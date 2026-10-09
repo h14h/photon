@@ -1,9 +1,7 @@
 defmodule PhotonWeb.ProjectText do
   @moduledoc """
-  The words the project pages use for times, file sizes and who changed a
-  context file: "5 minutes ago", "1.2 KB", "by you", "by Blip", or "in
-  Fix the pump" for a change a thread made (the page can link the
-  thread's title, so it isn't quoted).
+  The words the project pages use for times, file sizes and who changed
+  a context file.
 
   Pure: the time to measure from and the thread titles are passed in, so
   a page reads the clock and the titles once and these only format them.

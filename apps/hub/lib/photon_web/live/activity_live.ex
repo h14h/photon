@@ -3,28 +3,21 @@ defmodule PhotonWeb.ActivityLive do
   The activity page at `/activity`: everything Blip did, and who asked,
   newest first, from `Photon.Activity`'s log.
 
-  The rows are a stream (`#activity-list`), 50 at a time; `Show older`
-  appends the next 50 past the last row shown, kept as `cursor`. The
-  filter form (`#activity-filter`) narrows them to one kind of asker
-  and to the calls that change something, and resets the stream. A row
-  recorded while the page is open arrives as `{:activity_added, id}`
+  The rows are a stream, 50 at a time; `Show older` appends the next 50
+  past `cursor`. The filter resets the stream. A row recorded while the
+  page is open arrives as `{:activity_added, id}`
   (`Photon.Activity.subscribe/0`) and goes on top when it passes the
   filter. Since streams can't be counted, `empty?` says whether any row
-  is shown, for `#no-activity`.
+  is shown.
 
-  Each page of rows is shown with the titles, prompts and projects it
-  names, read with it (`Photon.Threads.places/1`,
-  `Photon.Schedules.prompts/1`, `Photon.Projects.list/0`); the words and
-  what links where are `PhotonWeb.ActivityText`'s. Times are shown in
-  the owner's time zone (`PhotonWeb.TimeComponents.local_time/1`).
-
-  The threads the rows on screen name are kept with the titles they
-  were shown under (`named`). On `{:projects_changed, _}` (through
-  `PhotonWeb.Shell`: a thread named after its first run, or renamed),
-  the page reads those titles again, one read by ID however often
-  projects change (rule 73), and only when one changed reads the rows
-  on screen again (`shown` of them), so they say the new title.
-  Everything else the shell passes on is ignored.
+  Each page of rows is read with the titles, prompts and projects it
+  names; the words and what links where are `PhotonWeb.ActivityText`'s.
+  The threads the rows on screen name are kept with the titles they were
+  shown under (`named`). On `{:projects_changed, _}` (through
+  `PhotonWeb.Shell`) the page reads those titles again, one read by ID
+  however often projects change (rule 73), and only when one changed
+  reads the rows on screen again. Everything else the shell passes on is
+  ignored.
   """
 
   use PhotonWeb, :live_view
@@ -218,8 +211,6 @@ defmodule PhotonWeb.ActivityLive do
   attr :row, :map, required: true
 
   # One thing Blip did: its mark, what it did, who asked, where, and when.
-  # The summary already ends ": failed" or ": stopped"; the mark's colour
-  # and its title say so at a glance.
   defp action_row(assigns) do
     ~H"""
     <li

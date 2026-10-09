@@ -3,15 +3,12 @@ defmodule Photon.Tailnet do
   The machines on this hub's tailnet, from `tailscale status --json` on the
   hub machine (override the binary with `PHOTON_TAILSCALE`).
 
-  `whois/1`, `owner_login/0` and `own_names/0` cache their answers for a
-  minute in a public ETS table. This module's process (one, started by `Photon.Application`)
-  exists only to own that table, so it lives as long as the hub does; it
-  handles no messages. Lookups and inserts go straight to the table from
-  the caller, and on a miss the caller runs `tailscale` itself, so a burst
-  of misses for the same address can each run it once before the first
-  answer is cached.
-
-  `parse/1`, `parse_whois/1` and `fresh?/2` are pure.
+  Answers are cached for a minute in a public ETS table. This module's
+  process exists only to own that table, so it lives as long as the hub
+  does; it handles no messages. Lookups and inserts go straight to the
+  table from the caller, and on a miss the caller runs `tailscale` itself,
+  so a burst of misses for the same address can each run it once before
+  the first answer is cached.
   """
 
   use Boundary, deps: []
@@ -168,7 +165,6 @@ defmodule Photon.Tailnet do
 
   defp owner(_json), do: nil
 
-  # A user's login, from status's table of users by ID.
   defp login(%{} = users, user), do: get_in(users, [to_string(user), "LoginName"])
   defp login(_users, _user), do: nil
 

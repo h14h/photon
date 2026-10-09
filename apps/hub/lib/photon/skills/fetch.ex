@@ -2,22 +2,19 @@ defmodule Photon.Skills.Fetch do
   @moduledoc """
   Downloads skills for `Photon.Skills.fetch/1`, the only place Photon
   fetches them. `Photon.Skills.Source` decides what to ask for and what the
-  answers mean; this makes the requests with `Req`.
+  answers mean.
 
   A GitHub link costs at most two API calls without a sign-in (the
-  repository, for a root link's default branch, and the tree under the
-  linked folder, or a file's folder, in one call), then one download per
-  SKILL.md. Those downloads run
-  through `Task.async_stream/3`, six at a time, each given 20 seconds
-  (rule 93). Every request is bounded: no retries, at most 3 redirects,
-  15 seconds in all (a server that sends a byte now and then can't hold
-  the install page on Fetching), and it stops reading past 256 KB (8 MB
-  for an API answer, since a large repository's tree is long).
+  repository, for a root link's default branch, and the tree), then one
+  download per SKILL.md, six at a time through `Task.async_stream/3`,
+  each given 20 seconds (rule 93). Every request is bounded: no retries,
+  at most 3 redirects, 15 seconds in all (a server that sends a byte now
+  and then can't hold the install page on Fetching), and it stops reading
+  past 256 KB (8 MB for an API answer, since a large repository's tree is
+  long).
 
-  Each request runs in a task linked to the caller, so it can be stopped
-  at its deadline; the caller's process (the install page's
-  `start_async` task) waits for the answer, and the stream's tasks are
-  linked to it too.
+  Each request runs in a task linked to the caller (the install page's
+  `start_async` task), so it can be stopped at its deadline.
   """
 
   alias Photon.Skills.Source
@@ -111,7 +108,6 @@ defmodule Photon.Skills.Fetch do
     end)
   end
 
-  # The folder's SKILL.md (or the linked file), from GitHub's file server.
   defp candidate(folder, link, file) do
     place = Source.place(%{link | kind: :file, path: file})
 

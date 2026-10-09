@@ -23,14 +23,12 @@ defmodule PhotonCore.LLM.Responses.Request do
       after a caption naming its call.
 
   Tools go in one namespace (`"functions"`), as Sign in with ChatGPT asks.
-  Tools the API runs itself (`config[:hosted_tools]`, e.g.
-  `%{"type" => "web_search"}`) go beside the namespace. What they did comes
-  back as output items (a `"web_search_call"`), kept with the reasoning
-  items and handed back the same way, in the order they came.
-  A request's `:cache_key` (a conversation or session ID) becomes the
-  `prompt_cache_key`, so its growing history is cached between turns. Sign
-  in with ChatGPT accepts no output cap or sampling settings, so a request's
-  `:max_tokens` isn't sent.
+  Tools the API runs itself (`config[:hosted_tools]`) go beside it; what
+  they did comes back as output items (a `"web_search_call"`), kept with
+  the reasoning items and handed back the same way, in order. `:cache_key`
+  becomes the `prompt_cache_key`, so a conversation's growing history is
+  cached between turns. Sign in with ChatGPT accepts no output cap or
+  sampling settings, so `:max_tokens` isn't sent.
   """
 
   use Boundary, type: :strict, deps: [PhotonCore, Jason]

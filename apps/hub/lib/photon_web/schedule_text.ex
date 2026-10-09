@@ -1,10 +1,7 @@
 defmodule PhotonWeb.ScheduleText do
   @moduledoc """
-  The words the pages use for schedules: how often one repeats ("every
-  day"), what its last firing did ("skipped: scheduled work is off"), its
-  when line for each state ("Every day · next", "Done", "Stopped after
-  an error: ..."), where it goes ("Starts a new thread each time", "Wakes
-  "Fix the pump""), and what Run now did ("Started a thread.").
+  The words the pages use for schedules: how often one repeats, what its
+  last firing did, its when line, where it goes, and what Run now did.
 
   Pure: times are never formatted here. The browser knows the owner's time
   zone, so a page renders each time with `PhotonWeb.TimeComponents.local_time/1`
@@ -19,10 +16,9 @@ defmodule PhotonWeb.ScheduleText do
   @week 7 * @day
 
   @doc ~S"""
-  How often a schedule repeats, from its `every_minutes`: "every 5
-  minutes", "every hour", "every 2 hours", "every day", "every 3 days",
-  "every week". The largest of weeks, days and hours that divides the
-  interval names it; anything else is said in minutes ("every 90
+  How often a schedule repeats, from its `every_minutes`: the largest of
+  weeks, days and hours that divides the interval names it ("every day",
+  "every 2 hours"); anything else is said in minutes ("every 90
   minutes").
   """
   @spec every(pos_integer()) :: String.t()
@@ -37,10 +33,8 @@ defmodule PhotonWeb.ScheduleText do
 
   @doc ~S"""
   What a firing did, from the row's `last_outcome`
-  (`Photon.Schedules.Rules.fire/2`): "started", "sent",
-  "queued behind a run", a "skipped: ..." reason, or
-  "stopped after an error". An outcome this version doesn't know reads as
-  "ran".
+  (`Photon.Schedules.Rules.fire/2`), as in "queued behind a run". An
+  outcome this version doesn't know reads as "ran".
   """
   @spec outcome(Schedule.outcome()) :: String.t()
   def outcome("started"), do: "started"
@@ -60,12 +54,11 @@ defmodule PhotonWeb.ScheduleText do
     * `{:next, words}` while it waits: "Every day · next" or "Once ·",
       for the page to follow with the next time
     * `{:done, "Done"}` for a one-off that fired
-    * `{:stopped, words}` when its task failed, said in the error colour:
-      "Stopped after an error: <reason>. Save it to start it again." for a
-      project's repeating schedule, or "... Pick a time and save it to run
-      it." for a one-off, whose time has passed. One of Blip's can't be
-      saved from a page (`whose` is `:blip`): "... Cancel it, and ask Blip
-      to schedule it again."
+    * `{:stopped, words}` when its task failed, in the error colour, with
+      how to start it again: save it (a repeating schedule), pick a time
+      and save it (a one-off, whose time has passed), or, for one of
+      Blip's (`whose` is `:blip`), which a page can't save, cancel it and
+      ask Blip again
   """
   @spec state(Schedules.state(), pos_integer() | nil, :project | :blip) ::
           {:next | :done | :stopped, String.t()}
@@ -113,10 +106,8 @@ defmodule PhotonWeb.ScheduleText do
 
   @doc ~S"""
   The flash after Run now, from what the firing did and the title of the
-  thread it woke (nil for a new thread each time): "Started a thread.",
-  ~s(Sent to "Fix the pump".), ~s(Queued for "Fix the pump", behind its
-  run.), or a skip's reason as a sentence ("Skipped: the last thread was
-  still running.").
+  thread it woke (nil for a new thread each time), as in ~s(Sent to "Fix
+  the pump".).
   """
   @spec ran(Schedule.outcome(), String.t() | nil) :: String.t()
   def ran("started", _title), do: "Started a thread."

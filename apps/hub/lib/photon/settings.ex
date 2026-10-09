@@ -2,11 +2,10 @@ defmodule Photon.Settings do
   @moduledoc """
   Hub settings, persisted as JSON (mode 0600) in the data directory.
 
-  The model comes from the signed-in ChatGPT plan (`Photon.ChatGPT`); these
-  are the choices about it: which model Blip uses and how hard it reasons. The rest is what Blip should know about the user
-  (their name, time zone and standing instructions), and whether the user
-  lets Photon use their plan for scheduled work that runs while they're
-  away, which Sign in with ChatGPT asks an app to get express consent for.
+  Which model Blip uses and how hard it reasons, what Blip should know
+  about the user, and whether the user lets Photon use their plan for
+  scheduled work that runs while they're away, which Sign in with ChatGPT
+  asks an app to get express consent for.
 
   `load/0` and `save/1` read or write the file. Everything else is a pure
   function of a settings map, so callers load once and pass the map along.

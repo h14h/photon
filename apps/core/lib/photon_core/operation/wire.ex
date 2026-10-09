@@ -19,21 +19,15 @@ defmodule PhotonCore.Operation.Wire do
     * `op.output`: `id`, `stream` (`"out"` or `"err"`) and `text`, new
       command output. Never stored.
 
-  Each builder returns `{event, payload}`, ready to push. Each parser takes a
-  payload as it arrived and returns `{:ok, map}` with only the fields named
-  here, or `{:error, reason}` when a field is missing or has the wrong type.
+  Each parser takes a payload as it arrived and returns `{:ok, map}` with
+  only the fields named here, or `{:error, reason}` when a field is missing
+  or has the wrong type.
   Unknown fields are dropped, so either side can be updated first. Parsers
   check shapes, not meaning: `op.start` accepts any `kind` and any `args`
   map, and the node decides what it can run. Operation IDs must be safe as
   file names (`PhotonCore.ID.valid?/1`) and start with `op_`, since the node
-  names a directory after each.
-
-  `event/1` names each event, for handlers that match on it:
-
-      @snapshot Wire.event(:snapshot)
-      def handle_in(@snapshot, payload, socket), do: ...
-
-  `docs/operations.md` has the rules each side follows.
+  names a directory after each. `docs/operations.md` has the rules each
+  side follows.
   """
 
   alias PhotonCore.{ID, Operation}
@@ -63,7 +57,7 @@ defmodule PhotonCore.Operation.Wire do
   @spec capability() :: String.t()
   def capability, do: @capability
 
-  @doc "The event name of `message`."
+  @doc "The event name of `message`, for handlers that match on it."
   @spec event(message()) :: String.t()
   def event(:start), do: @start
   def event(:cancel), do: @cancel

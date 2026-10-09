@@ -1,20 +1,17 @@
 defmodule PhotonNode.Ops.Owner do
   @moduledoc """
-  The contract between an operation process and whatever owns it: the
-  process that persists its snapshots, forwards them, and decides what a
-  crash means. The executor (`PhotonNode.Executor`) owns the hub's
-  operations; tests stand in their own owner.
+  The contract between an operation process and its owner, which persists
+  its snapshots, forwards them, and decides what a crash means: the
+  executor (`PhotonNode.Executor`) for the hub's operations, or a test's
+  stand-in. The owner is `{owner_module, owner_id}`, named in data, so
+  operation processes never call it by name and Boundary sees no
+  dependency from `PhotonNode.Ops` on it.
 
-  An operation process is started with `{op, owner}`, where `owner` is
-  `{owner_module, owner_id}`. The module is named in data, so the
-  operation processes never call their owners by name, and Boundary sees no
-  dependency from `PhotonNode.Ops` on them.
-
-  What every implementation must keep: an operation process never dies
+  Every implementation must keep this: an operation process never dies
   because of its owner. `checkpoint/2` and `report/2` catch every exit
   from the owner, not only `:noproc` (a timeout, or an owner that dies
   while the call waits), and return `:ignored` and `:down`. An uncaught
-  exit would stop `PhotonNode.Ops.Shell`, and its `terminate/2` kills the
+  exit would stop `PhotonNode.Ops.Shell`, whose `terminate/2` kills the
   running command.
   """
 
@@ -25,12 +22,10 @@ defmodule PhotonNode.Ops.Owner do
 
   @doc """
   Persists a checkpoint the operation must not act on until it is stored
-  (a shell command's `process` checkpoint), and says whether to go on.
-
-  Returns `:ok` once it is stored, `:cancel` if the operation should cancel
-  instead, `:ignored` if the owner doesn't know the operation or didn't
-  answer (any exit), or `{:error, reason}` if it couldn't be stored. Only
-  `:ok` lets the operation act; on `{:error, reason}` it fails.
+  (a shell command's `process` checkpoint). Only `:ok`, once it is stored,
+  lets the operation act. `:cancel`: cancel instead. `:ignored`: the owner
+  doesn't know the operation or didn't answer (any exit). `{:error,
+  reason}`: it couldn't be stored, and the operation fails.
   """
   @callback checkpoint(owner_id :: term(), op :: Operation.t()) ::
               :ok | :cancel | :ignored | {:error, String.t()}

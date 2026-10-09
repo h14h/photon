@@ -1,13 +1,10 @@
 defmodule Photon.Projects.Rules do
   @moduledoc """
-  The rules for projects and their context files, as pure functions.
-  `Photon.Projects` reads what it needs inside a Store commit, asks these
-  what to do, and applies the answer in the same commit. IDs and times are
-  minted there, never here.
-
-  Errors are messages that say what to do, ready to show a user or hand a
-  thread's model: a map of field to message for form input
-  (`project/2`), a plain message for file names, content and edits.
+  The rules for projects and their context files, as pure functions;
+  `Photon.Projects` applies their answers and mints IDs and times. Errors
+  are messages that say what to do, ready to show a user or hand a model:
+  a map of field to message for form input (`project/2`), a plain message
+  for file names, content and edits.
   """
 
   # Functional core: no processes, no I/O.
@@ -38,8 +35,7 @@ defmodule Photon.Projects.Rules do
 
   @doc """
   A context-file tool parameter both agents' tools share, for
-  `Photon.Durable.ToolSchema`: `:name` (a file to read), `:new_name` (a file
-  to write, with the naming rules), `:content`, `:old_text` or `:new_text`.
+  `Photon.Durable.ToolSchema`.
   """
   @spec file_field(:name | :new_name | :content | :old_text | :new_text) :: {:string, String.t()}
   def file_field(:name), do: {:string, "The file's name, like notes.md."}
@@ -61,9 +57,8 @@ defmodule Photon.Projects.Rules do
   @doc """
   Checks a project's `params` (atom or string keys `name` and `purpose`)
   against `current`, the project being edited, or nil for a new one. A
-  field missing from `params` keeps its current value. Both are trimmed,
-  the name's inner whitespace collapsed; a blank name is made from the
-  purpose (`name_from/1`).
+  field missing from `params` keeps its current value; a blank name is
+  made from the purpose (`name_from/1`).
   """
   @spec project(map(), Project.t() | nil) :: {:ok, project_attrs()} | {:error, field_errors()}
   def project(params, current) do
@@ -265,8 +260,7 @@ defmodule Photon.Projects.Rules do
 
   @doc """
   Replaces `old_text` with `new_text` in the content of file `name`, when
-  `old_text` occurs exactly once; otherwise a message saying it wasn't
-  found, or how many times it was and that more of the passage is needed.
+  `old_text` occurs exactly once (overlapping occurrences count).
   """
   @spec edit(String.t(), String.t(), String.t(), String.t()) ::
           {:ok, String.t()} | {:error, String.t()}

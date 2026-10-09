@@ -1,13 +1,9 @@
 defmodule Photon.NodeKeys.Key do
   @moduledoc """
-  A node's key, as the hub keeps it: the SHA-256 of the key (never the key
-  itself); the tailnet device it is tied to (`device`, Tailscale's stable
-  ID, and that device's name), which outlives the key when a new one
-  replaces it; `generation`, which never repeats for a node (it comes from
-  the clock); for a key no device is tied to yet, when it stops working
-  unused (`expires_at`); and, for a removed node, when it was removed
-  (`revoked_at`): the row stays, with no usable key, to keep its machine
-  out of the GUI.
+  A node's key, as the hub keeps it: the SHA-256 of the key, never the key
+  itself. `expires_at` is when a key no device is tied to yet stops
+  working unused; `revoked_at` marks a removed node, whose row stays, with
+  no usable key, to keep its machine out of the GUI (see `Photon.NodeKeys`).
   """
 
   # Data: an Ecto schema, no behaviour of its own.

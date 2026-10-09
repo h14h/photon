@@ -3,8 +3,6 @@ defmodule PhotonCore.LLM.Error do
   Why a model request failed. `retryable` marks failures worth another
   attempt (rate limits, server errors, dropped connections); `retry_after`
   is the provider's requested delay in milliseconds, when it gave one.
-
-  Build one with `new/3`, which requires a kind and a message.
   """
 
   # Data: why a request failed. Its own top-level boundary, so functional

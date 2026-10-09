@@ -3,26 +3,14 @@ defmodule Photon.Signals.Rules do
   Which settles reach Blip, and how a signal joins Blip's inbox, as pure
   functions over source maps and submission content.
 
-  `thread_update/2` decides, in code, whether Blip hears about a thread's
-  settled run. In quiet mode Blip hears about work it started however it
-  ends, and about failures and questions in the owner's threads; a stop is
-  never a signal. Ambient mode is quiet mode with one more cell: the owner's
-  run that ends `"done"` without asking anything is `:digest`, an item for
-  the next digest rather than a signal. Whose work it was comes from the
-  settled submissions' sources (`blip_source?/1`), not from who started the
-  thread.
-
-  `ambient_kind/1` tells a digest or a daily review message from the
-  other signal messages, so `Photon.Signals` can find one still queued,
-  and `ambient_ref/1` reads its ref. `item_key/1` is a digest item's
-  subject, which makes one row per subject.
+  Whose work a run was comes from the settled submissions' sources
+  (`blip_source?/1`), not from who started the thread.
 
   A signal is one text part and one ref in a `"signal"` message to Blip.
-  `merges?/2` says whether a queued message takes another signal: only
-  one whose refs are all of the new ref's kind, so updates collect in one
-  message and questions in another, and a question never shares a run
-  with an update. `merge/3` and `without/2` add and take back one signal,
-  keeping its part and ref at the same index.
+  A queued message takes another signal only when its refs are all of
+  the new ref's kind (`merges?/2`), so updates collect in one message and
+  questions in another, and a question never shares a run with an
+  update. A signal's part and ref sit at the same index.
 
   Everything here runs inside the harness's settle hook, so it is total:
   any term in, a value out.
@@ -37,13 +25,13 @@ defmodule Photon.Signals.Rules do
   """
   @type kind :: :finished | :asking | :failed | :digest
 
-  @typedoc "Which signals reach Blip: step 4's quiet mode, or ambient mode on top of it."
+  @typedoc "Which signals reach Blip: quiet mode, or ambient mode on top of it."
   @type mode :: :quiet | :ambient
 
   @typedoc """
-  A settle's facts: how it ended (`outcome`), whether a `"done"` answer
-  asks the user something (`asked?`), whether the run ends with it
-  (`ended?`), and the settled submissions' source maps (`sources`).
+  A settle's facts: whether a `"done"` answer asks the user something
+  (`asked?`), whether the run ends with it (`ended?`), and the settled
+  submissions' source maps.
   """
   @type facts :: %{
           outcome: String.t(),
@@ -55,7 +43,7 @@ defmodule Photon.Signals.Rules do
   @typedoc "A signal's ref, as stored in its message's `source[\"signals\"]`."
   @type ref :: %{optional(String.t()) => term()}
 
-  @typedoc "Where a thread is, for a ref: its ID and title, its project's ID, slug and name."
+  @typedoc "Where a thread is, for a ref."
   @type place :: %{
           thread_id: String.t(),
           title: String.t(),
@@ -66,19 +54,17 @@ defmodule Photon.Signals.Rules do
 
   @doc """
   What Blip hears about a thread's settled run in `mode`, or nil. With a
-  Blip source among the settled submissions (`blip_source?/1`): a finished
-  run is `:finished`, one that ended asking the user `:asking`, a failure
-  `:failed`. Without one (the owner's message, the owner's schedule, or
-  nothing placed at all): only `:asking` when the run ended asking, and
+  Blip source among the settled submissions: `:finished`, `:asking` (it
+  ended asking the user) or `:failed`. Without one (the owner's message,
+  the owner's schedule, or nothing placed at all): only `:asking` and
   `:failed`. A stop is never a signal. Asking only counts when the run
   ended: with the next message already queued, its answer is on the way,
   so Blip's own work then reads as `:finished`.
 
-  In `:ambient` mode every cell is the same but one: without a Blip
-  source, a `"done"` run that ends without asking is `:digest`. A settle
-  the run goes on from (`ended?: false`) is nil in both modes, so a
-  thread answering one queued input after another makes one item, at its
-  end.
+  `:ambient` mode adds one cell: without a Blip source, a `"done"` run
+  that ends without asking is `:digest`. A settle the run goes on from
+  (`ended?: false`) is never `:digest`, so a thread answering one queued
+  input after another makes one item, at its end.
   """
   @spec thread_update(facts() | term(), mode() | term()) :: kind() | nil
   def thread_update(%{outcome: outcome} = facts, mode) when mode in [:quiet, :ambient] do
@@ -100,10 +86,9 @@ defmodule Photon.Signals.Rules do
   defp quiet(_outcome, _asking?, _blip?), do: nil
 
   @doc """
-  Which ambient message a message with `source` is: `"digest"` or
-  `"review"` when it is a signal message carrying a ref of that kind,
-  else nil. A digest or review ref never merges with another kind
-  (`merges?/2`), so its first ref says.
+  `"digest"` or `"review"` when `source` is a signal message carrying a
+  ref of that kind, else nil. Such a ref never merges with another kind,
+  so the first ref says.
   """
   @spec ambient_kind(term()) :: String.t() | nil
   def ambient_kind(%{"kind" => "signal", "signals" => [%{"kind" => kind} | _rest]})
@@ -112,10 +97,7 @@ defmodule Photon.Signals.Rules do
 
   def ambient_kind(_source), do: nil
 
-  @doc """
-  The digest or review ref a message with `source` carries (its first
-  ref, as `ambient_kind/1` reads it), or nil for any other message.
-  """
+  @doc "The digest or review ref a message with `source` carries, or nil for any other message."
   @spec ambient_ref(term()) :: ref() | nil
   def ambient_ref(%{"signals" => [ref | _rest]} = source) do
     if ambient_kind(source), do: ref
@@ -174,10 +156,7 @@ defmodule Photon.Signals.Rules do
   def key({:settle, [], task_id}), do: "settle:#{task_id}:end"
   def key({:question, id}), do: "question:" <> id
 
-  @doc """
-  The ref of a thread update: what the panel draws the line from and
-  links to. `status` is the update's kind.
-  """
+  @doc "The ref of a thread update, which the panel draws and links from; `status` is its kind."
   @spec update_ref(kind(), String.t(), place()) :: ref()
   def update_ref(kind, key, place) do
     place

@@ -9,72 +9,40 @@ defmodule Photon.Ambient do
 
   ## The setting
 
-  Its settings are the durable doc `global/ambient`, which `Photon.Signals`
-  reads and writes for everyone, since the threads' settle hook reads the
-  mode in its own commit. `configure/1` reads the Settings form over the doc
-  (`Photon.Ambient.Rules.config/2`: a missing or unexpected value keeps what
-  was there) and, in one commit, writes the doc and arms or retires the two
-  timers by `Photon.Ambient.Rules.changes/3`. A file write and a database
-  commit can't be one step, so the setting lives here and not in the settings
-  file: no timer ever runs against a doc that says off. `status/0` is what
-  the Settings and home pages show.
+  Its settings are the durable doc `global/ambient` (see `Photon.Signals`).
+  A Save writes the doc and arms or retires the two timers in one commit,
+  so no timer ever runs against a doc that says off; a file write and a
+  database commit can't be one step, so the setting lives here and not in
+  the settings file.
 
   ## The timers
 
   Each timer is a durable task of kind `"ambient"` (`Photon.Ambient.Timer`),
   the shape of a schedule's routine: it waits until its time, fires in
   one fenced commit (`Photon.Durable.Runtime.commit/2`), and waits again on
-  its grid (`Photon.Ambient.Rules.next_firing/3`; slots missed while the
-  hub was down fire once, not in a burst). The next times are read from
-  the tasks, never stored on the doc (rule 15). Retiring a timer is
+  its grid (`Photon.Ambient.Rules.next_firing/3`). The next times are read
+  from the tasks, never stored on the doc (rule 15). Retiring a timer is
   `Photon.Durable.Tx.request_abort/3` in the commit that changes the
   setting, so a firing step of the old task commits nothing afterwards.
 
   ## A firing
 
   `fire_tx/3` is every read and write of one firing, inside the caller's
-  commit, so a firing the fence ignores leaves everything as it was. It
-  skips while ambient mode is off, while Blip can't reach its model
-  (signed out of ChatGPT, or plan use not allowed), while Settings
-  doesn't let schedules use the owner's plan, and while the last digest
-  (or review) still waits in Blip's inbox
-  (`Photon.Ambient.Rules.firing/1`). Otherwise:
+  commit, so a firing the fence ignores leaves everything as it was.
+  Unless it skips (`Photon.Ambient.Rules.firing/1`):
 
-    * a digest reads the pending items (`Photon.Signals.pending_tx/1`,
-      collected where each change is made) and sorts them against the
-      board (`Photon.Ambient.Rules.digest/3`). With nothing new to the
-      owner it posts nothing; the smaller items wait. With something new
-      it posts one `[Digest]` signal (`Photon.Ambient.Text`) and marks
-      every item it read as carried by it, in the same commit, so none is
-      reported twice.
-    * a review picks the threads untouched for `quiet_after`
-      (`Photon.Ambient.Rules.review/3`), posts one `[Daily review]`
-      signal, and marks them reviewed (`Photon.Threads.mark_reviewed_tx/3`),
-      so each is raised once per quiet spell and again after
+    * a digest sorts the pending items against the board
+      (`Photon.Ambient.Rules.digest/3`). With nothing new to the owner it
+      posts nothing and the smaller items wait. Otherwise it posts one
+      `[Digest]` signal and marks every item it read as carried by it, in
+      the same commit, so none is reported twice.
+    * a review posts one `[Daily review]` signal for the threads
+      `Photon.Ambient.Rules.review/3` picks and marks them reviewed, so
+      each is raised once per quiet spell and again after
       `review_again_days`.
 
-  ## After Blip's run
-
-  What a digest carried is used up only when Blip has read it.
-  `settled_tx/2`, from Blip's settle hook, deletes a digest's items when
-  the run on it answers or the owner stops it; when the run fails (the
-  request failed, or the round limit), the items wait for the next
-  digest again and a review's threads lose their mark, since Blip never
-  told the owner about them. A digest or review the owner withdraws from
-  Blip's inbox (`withdrawn_tx/2`) is dropped as turning ambient mode off
-  drops it: its items are deleted, and its threads lose their mark.
-
-  Either records its outcome on the doc and announces `{:ambient_changed}`.
-  `digest_now/0` and `review_now/0` run the same firing in a commit of
-  their own, for the scripted model's buttons and the tests.
-
-  ## Turning it off
-
-  Turning it off, in one commit: both timers are retired, every pending
-  item is deleted, a digest or review still queued in Blip's inbox is
-  withdrawn, and the threads a withdrawn review named lose their mark.
-  Collection reads the mode in each change's own commit, so nothing is
-  collected afterwards.
+  What a digest carried is used up only when Blip has read it
+  (`settled_tx/2`, `withdrawn_tx/2`).
 
   ## Cost
 
@@ -113,8 +81,7 @@ defmodule Photon.Ambient do
 
   @day_ms 86_400_000
 
-  # How long after a review listed a thread it may list it again, when the
-  # config doesn't say.
+  # How long after a review listed a thread it may list it again.
   @review_again_days 7
 
   @typedoc "Unix milliseconds."
@@ -125,8 +92,8 @@ defmodule Photon.Ambient do
 
   @typedoc """
   What a firing goes on, read before its commit: whether Blip can reach
-  its model (`thinks?`), whether it may use the owner's plan
-  (`allowed?`), the key of the signal it posts, and the clock.
+  its model, whether it may use the owner's plan, the key of the signal it
+  posts, and the clock.
   """
   @type firing :: %{thinks?: boolean(), allowed?: boolean(), key: String.t(), now: ms()}
 
@@ -142,11 +109,9 @@ defmodule Photon.Ambient do
   @type stopped :: %{job: job(), reason: String.t()}
 
   @typedoc """
-  What the Settings page shows: the setting, the timers' next times (nil
-  when not running), the pending items counted by the digest's own rule, the
-  last firing of each, a timer that stopped, whether Settings lets schedules
-  use the owner's plan, whether Blip can reach its model, and whether the
-  hub runs the scripted model.
+  What the Settings page shows. The timers' next times are nil when not
+  running; `consent?` is whether Settings lets schedules use the owner's
+  plan, and `thinks?` whether Blip can reach its model.
   """
   @type status :: %{
           on?: boolean(),
@@ -162,10 +127,7 @@ defmodule Photon.Ambient do
           scripted?: boolean()
         }
 
-  @typedoc """
-  What the home page's warnings read (`brief/0`): `t:status/0` without
-  the timers' next times and the pending counts.
-  """
+  @typedoc "`t:status/0` without the timers' next times and the pending counts."
   @type brief :: %{
           on?: boolean(),
           last_digest: result() | nil,
@@ -187,10 +149,9 @@ defmodule Photon.Ambient do
   def every_options, do: Rules.every_options()
 
   @doc """
-  Ambient mode as the pages show it (`t:status/0`). The pending counts
-  are what a digest would send now: the items sorted against the board
-  by `Photon.Ambient.Rules.digest/3`, so opening a finished thread moves
-  it from new to smaller.
+  Ambient mode as the pages show it. The pending counts are what a digest
+  would send now (`Photon.Ambient.Rules.digest/3`), so opening a finished
+  thread moves it from new to smaller.
   """
   @spec status() :: status()
   def status do
@@ -208,10 +169,8 @@ defmodule Photon.Ambient do
   end
 
   @doc """
-  What the home page's warnings need (`t:brief/0`): the setting, the last
-  firings, a stopped timer, consent and whether Blip can think. Unlike
-  `status/0` it reads no items and no board, so a page can call it on
-  every `{:ambient_changed}`.
+  What the home page's warnings need. Unlike `status/0` it reads no items
+  and no board, so a page can call it on every `{:ambient_changed}`.
   """
   @spec brief() :: brief()
   def brief, do: brief_of(Signals.ambient_doc())
@@ -230,8 +189,7 @@ defmodule Photon.Ambient do
 
   @doc false
   # Whether Blip can reach its model now: signed in to ChatGPT with plan
-  # use allowed, or the scripted model. A firing reads it before its
-  # commit, as it reads consent.
+  # use allowed, or the scripted model. A firing reads it before its commit.
   @spec thinks?() :: boolean()
   def thinks?, do: ChatGPT.ready?(ChatGPT.status())
 
@@ -283,14 +241,13 @@ defmodule Photon.Ambient do
   ## The setting
 
   @doc """
-  Saves ambient mode's part of the Settings form (`"ambient"`,
-  `"ambient_every"`, `"utc_offset"`; any other key is ignored, and a missing
-  one keeps what was saved) in one commit, with the timers the setting calls
-  for: armed when it is turned on, replaced when the interval or the offset
-  changed or a timer isn't running, and retired when it is turned off.
-  Turning it off also deletes every pending item, withdraws a digest or
-  review still queued in Blip's inbox, and clears the marks of the threads a
-  withdrawn review named. Announces `{:ambient_changed}`. Never an error.
+  Saves ambient mode's part of the Settings form in one commit
+  (`Photon.Ambient.Rules.config/2`), with the timers the setting calls for
+  (`Photon.Ambient.Rules.changes/3`). Turning it off also deletes every
+  pending item, withdraws a digest or review still queued in Blip's inbox,
+  and clears the marks of the threads a withdrawn review named; collection
+  stops from the next commit. Announces `{:ambient_changed}`. Never an
+  error.
   """
   @spec configure(map()) :: :ok
   def configure(params) do
@@ -326,8 +283,6 @@ defmodule Photon.Ambient do
     Tx.announce(tx, Signals.ambient_topic(), {:ambient_changed})
   end
 
-  # A timer's task is live while it exists, hasn't ended and isn't on its
-  # way out.
   defp live?(_tx, nil), do: false
 
   defp live?(tx, task_id) do
@@ -342,7 +297,7 @@ defmodule Photon.Ambient do
   defp version(%{"version" => version}) when is_integer(version), do: version
   defp version(_doc), do: 0
 
-  # Applies one timer's action; returns the doc's task ID for it.
+  # Returns the doc's task ID for the timer.
   defp timer_tx(_tx, _job, :keep, task_id, %{config: %{on?: true}}), do: task_id
   defp timer_tx(_tx, _job, :keep, _task_id, _arming), do: nil
 
@@ -358,8 +313,6 @@ defmodule Photon.Ambient do
     arm_tx(tx, job, arming)
   end
 
-  # Marks a timer's task for abort (a no-op on one that ended); its firing
-  # step is then fenced out.
   defp retire_tx(_tx, nil), do: :ok
 
   defp retire_tx(tx, task_id) do
@@ -391,16 +344,12 @@ defmodule Photon.Ambient do
     task.id
   end
 
-  # Everything pending when it is turned off: the items, carried or not,
-  # and a digest or review Blip hasn't seen, whose threads lose their
-  # review mark.
   defp clear_tx(tx) do
     :ok = Signals.drop_items_tx(tx, :all)
     thread_ids = Enum.flat_map(Signals.withdraw_ambient_tx(tx), &review_threads/1)
     Threads.unmark_reviewed_tx(tx, Enum.uniq(thread_ids))
   end
 
-  # The threads a review ref listed; none for any other ref.
   defp review_threads(%{"kind" => "review", "items" => items}) when is_list(items),
     do: for(%{"thread_id" => id} when is_binary(id) <- items, do: id)
 
@@ -410,17 +359,12 @@ defmodule Photon.Ambient do
 
   @doc """
   What a settle of Blip's run means for the digests and reviews it
-  closed, inside the settle's commit (Blip's `on_settled/3`):
-
-    * a digest the run answered, or that the owner stopped: the items it
-      carries are deleted
-    * a digest whose run failed (the request failed, the round limit, the
-      task failed): its items wait for the next digest again
-    * a review whose run failed: its threads lose their review mark, so
-      Home doesn't say they were in a review Blip never told the owner
-      about, and the next review lists them
-
-  Total, as the settle hook must be: anything else does nothing.
+  closed, inside the settle's commit (Blip's `on_settled/3`): a digest
+  the run answered, or that the owner stopped, has its items deleted.
+  When the run failed (the request failed, the round limit, the task
+  failed), a digest's items wait for the next digest again and a review's
+  threads lose their review mark, since Blip never told the owner about
+  them. Total, as the settle hook must be: anything else does nothing.
   """
   @spec settled_tx(Tx.t(), map()) :: :ok
   def settled_tx(tx, %{outcome: outcome, submissions: submissions}) when is_list(submissions) do
@@ -482,9 +426,8 @@ defmodule Photon.Ambient do
   ## Firing
 
   @doc """
-  Sends a digest now, outside the timer, as a firing would (consent taken
-  as given), and returns what it did. The timer doesn't move. Only the
-  scripted model's button and the tests call it.
+  Sends a digest now, as a firing would (consent taken as given), without
+  moving the timer. Only the scripted model's button and the tests call it.
   """
   @spec digest_now() :: result()
   def digest_now, do: fire_now("digest")
@@ -505,10 +448,8 @@ defmodule Photon.Ambient do
   end
 
   @doc false
-  # One firing of `job` inside the caller's commit, for the timer and
-  # `digest_now/0` and `review_now/0`. Records the outcome on the doc and
-  # announces it, except while ambient mode is off, when it does nothing at
-  # all.
+  # One firing of `job` inside the caller's commit. Records the outcome on
+  # the doc and announces it, except while ambient mode is off.
   @spec fire_tx(Tx.t(), job(), firing()) :: result()
   def fire_tx(tx, job, firing) when job in @jobs do
     doc = Signals.ambient_doc_tx(tx)
@@ -612,8 +553,6 @@ defmodule Photon.Ambient do
     %{quiet_after: Threads.quiet_after(), again_after: days * 86_400}
   end
 
-  # Posts the signal; "sent" when it starts Blip's run, "queued" when Blip
-  # was busy and it waits.
   defp post_tx(tx, signal) do
     idle? = Tx.active_run(tx, Signals.blip_conversation_tx(tx)) == nil
     # The submission is Blip's to run; the firing only says whether it
@@ -622,9 +561,8 @@ defmodule Photon.Ambient do
     if idle?, do: "sent", else: "queued"
   end
 
-  # Writes the outcome on the doc for the pages and announces it; a firing
-  # while ambient mode is off (only `digest_now/0` or `review_now/0` can
-  # reach one) leaves the doc alone.
+  # A firing while ambient mode is off (only `digest_now/0` or
+  # `review_now/0` can reach one) leaves the doc alone.
   defp record_tx(_tx, _job, %{outcome: "off"}), do: :ok
 
   defp record_tx(tx, job, result) do

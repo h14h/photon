@@ -2,48 +2,20 @@ defmodule Photon.Assistant.MockScript do
   @moduledoc """
   The assistant's scripted model, for tests and for working on the hub
   without a ChatGPT sign-in (`PHOTON_MOCK_MODEL=1` in development). It
-  understands a few fixed phrasings:
-
-    * `machines` lists machines (`list_machines`)
-    * `on <machine>: $ <command>` runs a command (`shell`)
-    * `on <machine>: look at <path>` looks at an image (`view_image`)
-    * `remember <fact>` adds to memory
-    * `in <n> minutes: <prompt>` and `every <n> minutes: <prompt>` schedule
-    * `schedules` lists schedules
-    * `here` says the first line of the page note the message came with
-      (`Photon.Assistant.Page.note/2`), or that it doesn't know the page
-    * `skills` says which skills the prompt lists, and `load skill <name>`
-      loads one (`load_skill`)
-    * the phrasings for its tools over projects and threads, in
-      `Photon.Assistant.MockCoordinator`: `projects`, `project <slug>`,
-      `threads`, `threads in <slug>`, `read thread <id>`, `start project:
-      <purpose>`, `start thread in <slug>: <message>`, `tell <id>:
-      <message>`, `stop thread <id>`, `files in <slug>`, `read
-      <slug>/<name>`, `write <slug>/<name>: <text>`, `edit <slug>/<name>:
-      <old> => <new>`, `in <n> minutes in <slug>: <prompt>`, `every <n>
-      minutes in <slug>: <prompt>`, `schedules in <slug>`, `cancel schedule
-      <id>`, `all skills`,
-      `turn on <skill> in <slug>`, `turn off <skill> in <slug>`, `answer
-      <question id>: <text>`, `answer: <text>`
+  understands the fixed phrasings its help reply lists, tried in order:
+  `Photon.MachineTools.MockPhrases` and `Photon.Skills.MockPhrases`
+  (shared with a thread's scripted model), then
+  `Photon.Assistant.MockCoordinator`'s, then its own.
 
   It reads the last text part of the user's message, which is what the
   user typed: a message sent from a page has the page's note in front of
   it, as a part of its own. A message the user didn't type (a thread's
-  question or update, a digest or daily review of ambient mode, or the
-  user's answer to a question going by) is
-  `Photon.Assistant.MockCoordinator.unasked/2`'s, which reads every text
-  part and tries `Photon.Assistant.MockAmbient` first.
+  question or update, a digest or review, or the user's answer to a
+  question going by) is `Photon.Assistant.MockCoordinator.unasked/2`'s.
 
-  After a tool result it relays the result. An image result gets "Here it
-  is." and its dimensions line. A result of its tools over threads is
-  said for the owner, by title and without IDs
-  (`Photon.Assistant.MockCoordinator.relay/3`), so it finds which tool
-  the result answers among the request's calls.
-
-  The three machine phrasings and the relay are
-  `Photon.MachineTools.MockPhrases`, and the skill phrasings
-  `Photon.Skills.MockPhrases`; a thread's scripted model uses both too.
-  The coordinator's phrasings come after those and before its own.
+  After a tool result it relays the result; a result of its tools over
+  threads is said for the owner, by title and without IDs
+  (`Photon.Assistant.MockCoordinator.relay/3`).
   """
 
   # Functional core: no processes, no I/O.
@@ -100,7 +72,6 @@ defmodule Photon.Assistant.MockScript do
     end
   end
 
-  # The name of the tool call `id` among `messages`, or nil.
   defp called(messages, id) do
     Enum.find_value(messages, fn message ->
       Enum.find_value(Message.tool_calls(message), &(&1["id"] == id and &1["name"]))
@@ -145,9 +116,7 @@ defmodule Photon.Assistant.MockScript do
     end)
   end
 
-  # The phrasings it understands, in the order it tries them, each with the
-  # reply its captures make: the shared machine and skill ones first, then
-  # the coordinator's.
+  # In the order it tries them, each with the reply its captures make.
   defp phrasings(request) do
     MockPhrases.phrasings() ++
       SkillPhrases.phrasings(request) ++

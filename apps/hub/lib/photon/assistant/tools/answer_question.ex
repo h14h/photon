@@ -5,19 +5,12 @@ defmodule Photon.Assistant.Tools.AnswerQuestion do
   with the answer. It answers inside the commit that records the call's
   result, so a rerun after a restart answers once.
 
-  Who answers depends on the run making the call
-  (`Photon.Assistant.origin_tx/2`, read in the same commit): a question
-  Blip still has is Blip's to answer from what it knows. One already
-  passed to the owner takes Blip's answer only when the owner wrote to
-  Blip in this run, and is then recorded as the owner's, since Blip is
-  passing on what they said; otherwise it is refused, so a guess of
-  Blip's never passes as the owner's decision.
-
-  Its result's details name the question and the thread, and carry the
-  answer, which the question's card in Blip's panel shows.
-
-  A refusal is Blip's words for it (`Photon.Assistant.question_refusal/2`);
-  an unknown ID lists the open questions.
+  A question Blip still has is Blip's to answer from what it knows. One
+  already passed to the owner takes Blip's answer only when the owner
+  wrote to Blip in this run (`Photon.Assistant.origin_tx/2`), and is then
+  recorded as the owner's; otherwise it is refused, so a guess of Blip's
+  never passes as the owner's decision. A refusal is
+  `Photon.Assistant.question_refusal/2`'s.
   """
   @behaviour Photon.Durable.Tool
 

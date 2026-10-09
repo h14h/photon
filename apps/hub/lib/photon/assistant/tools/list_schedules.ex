@@ -1,12 +1,10 @@
 defmodule Photon.Assistant.Tools.ListSchedules do
   @moduledoc """
-  Blip's `list_schedules` tool. Without `project`: Blip's own schedules
-  that are waiting for their next time, and those that stopped after an
-  error, with why (`Photon.Assistant.schedules/0`). With `project`: that
-  project's, the same way, each with what it does when it fires (starts a
-  new thread, or wakes one), as `read_project` lists them
-  (`Photon.Assistant.project_schedules/1`, `Photon.Assistant.Readout.schedules/4`).
-  Each has its `sc_` ID for `cancel_schedule`.
+  Blip's `list_schedules` tool: Blip's own schedules
+  (`Photon.Assistant.schedules/0`), or with `project` that project's
+  (`Photon.Assistant.project_schedules/1`,
+  `Photon.Assistant.Readout.schedules/4`), each with its `sc_` ID for
+  `cancel_schedule`.
   """
   @behaviour Photon.Durable.Tool
 

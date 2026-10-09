@@ -14,19 +14,12 @@ defmodule Photon.Schedules do
   whether the schedule is waiting, done or stopped are read from it,
   never stored on the row (rule 15).
 
-  Where a firing goes follows from the row (`Photon.Schedules.Rules.target/1`):
-  Blip's conversation, one thread, or a new thread, each with
-  `"[Scheduled] <prompt>"` as the message. A firing reads the row and the
-  facts it needs and applies `Photon.Schedules.Rules.fire/2`'s decision
-  in one commit, so the facts are current when the decision lands:
-
-    * consent: a firing uses the owner's ChatGPT plan only when Settings
-      allows scheduled work (or on the scripted model, which uses nobody's
-      plan); otherwise it is skipped, with a notice in Blip's conversation
-      or the thread
-    * overlap: a new-thread schedule skips while the thread it last
-      started is still running, and a prompt never queues behind one of
-      its own, so a stuck thread doesn't pile up firings (rule 73)
+  A firing reads the row and the facts it needs and applies
+  `Photon.Schedules.Rules.fire/2`'s decision in one commit, so the facts
+  are current when the decision lands. It skips without consent
+  (`consent?/0`), and while its last new thread is running or its last
+  prompt is still queued, so a stuck thread doesn't pile up firings
+  (rule 73).
 
   Every edit replaces the task and every delete retires it, in the same
   commit as the row's change. The fence is `Photon.Durable.Runtime.commit/2`:
@@ -41,13 +34,7 @@ defmodule Photon.Schedules do
   schedules and projects' inside the commits that record their results
   (`tool_schedule_tx/4`, `delete_tx/3`), so a tool call that runs again
   after a restart makes or removes nothing twice. A project schedule Blip
-  makes is a row like the form's, with `created_by: "blip"`, and fires
-  under the same consent. Each row Blip makes says why (`asked_by`), and
-  every firing's source carries who made it and why, for the signals to
-  Blip and the activity log.
-
-  Every change and every firing announces `{:schedules_changed,
-  project_id}` (nil for Blip's) on `"schedules"` after its commit.
+  makes fires under the same consent as the owner's.
 
   There is no process here: the rows and the durable tasks hold the
   state, the Scheduler wakes the tasks, and the Store's commit line
@@ -83,15 +70,14 @@ defmodule Photon.Schedules do
 
   @typedoc """
   Where a schedule from Blip's `schedule` tool fires: Blip's conversation,
-  or a project, waking one of its threads or (nil) starting a new thread
-  each time.
+  or a project's thread (nil for a new thread each time).
   """
   @type tool_target :: {:blip, String.t()} | {:project, String.t(), String.t() | nil}
 
   @typedoc """
   How Blip's `schedule` call makes a schedule: why (`asked_by`, `"owner"`
-  or `"blip"`), the call's request ID, and the clock it read (Unix
-  milliseconds).
+  or `"blip"`), the call's request ID (`"schedule:<task id>"`), and the
+  clock it read.
   """
   @type made :: %{asked_by: String.t(), request_id: String.t(), now: Rules.ms()}
 
@@ -102,10 +88,7 @@ defmodule Photon.Schedules do
   """
   @type state :: :waiting | :done | {:stopped, String.t()}
 
-  @typedoc """
-  A schedule with its next time (nil unless it is waiting) and state;
-  `id` is the schedule's, for the pages' streams.
-  """
+  @typedoc "A schedule with its next time (nil unless it is waiting) and state."
   @type listed :: %{
           id: String.t(),
           schedule: Schedule.t(),
@@ -172,8 +155,7 @@ defmodule Photon.Schedules do
 
   @doc """
   The prompts of schedules `ids`, by ID; an ID with no schedule (a
-  cancelled one is deleted) is left out. The activity page says which
-  schedule asked with it.
+  cancelled one is deleted) is left out.
   """
   @spec prompts([String.t()]) :: %{optional(String.t()) => String.t()}
   def prompts([]), do: %{}
@@ -188,9 +170,7 @@ defmodule Photon.Schedules do
 
   @doc """
   The prompt and current routine task of schedules `ids`, by ID; an ID
-  with no schedule is left out. Ambient mode's digest reads it: a
-  schedule that stopped is news only while it still has the task that
-  failed, so one saved again since is not.
+  with no schedule is left out.
   """
   @spec lookup([String.t()]) :: %{
           optional(String.t()) => %{prompt: String.t(), task_id: String.t() | nil}
@@ -256,10 +236,7 @@ defmodule Photon.Schedules do
 
   @doc """
   The schedule form's values for editing `schedule`, as `new_params/1`
-  gives them for a new one: its prompt, its first time, Once or Every
-  with the interval in its largest whole unit, and its thread or
-  `"new_thread"`. A one-off keeps every day ready for when the owner
-  picks Every.
+  gives them for a new one.
   """
   @spec edit_params(Schedule.t()) :: %{String.t() => String.t()}
   def edit_params(%Schedule{} = schedule) do
@@ -285,9 +262,9 @@ defmodule Photon.Schedules do
 
   @doc """
   Creates a schedule in project `project_id` from the owner's form
-  (`Photon.Schedules.Rules.schedule/2`: `prompt`, `at`, `repeat`, `every`,
-  `unit`, `target`), with its routine task, in one commit. Errors:
-  `:not_found` when the project doesn't exist, or a field map.
+  (`Photon.Schedules.Rules.schedule/2`), with its routine task, in one
+  commit. Errors: `:not_found` when the project doesn't exist, or a field
+  map.
   """
   @spec create({:project, String.t()}, map()) ::
           {:ok, Schedule.t()} | {:error, :not_found | field_errors()}
@@ -315,13 +292,10 @@ defmodule Photon.Schedules do
 
   @doc """
   Saves project schedule `id` from its form, given the `version` the form
-  loaded. In one commit it re-checks the params, retires the old task,
-  bumps the version and arms a new task at the first time the old one
-  hadn't fired. When there is none (a one-off that already fired at the
-  time it keeps, or a repeating one made a one-off at the time it just
-  fired), the schedule is done and no timer is left running. Errors:
-  `:not_found` (no such project schedule), `:stale` (it changed since
-  the form loaded it), or a field map.
+  loaded, replacing its task in the same commit. When no time is left to
+  fire, the schedule is done and no timer is left running. Errors:
+  `:not_found` (no such project schedule), `:stale` (it changed since the
+  form loaded it), or a field map.
   """
   @spec update(String.t(), map(), pos_integer()) ::
           {:ok, Schedule.t()} | {:error, :not_found | :stale | field_errors()}
@@ -376,14 +350,10 @@ defmodule Photon.Schedules do
   defp not_stale(%Schedule{version: version}, version), do: :ok
   defp not_stale(%Schedule{}, _version), do: {:error, :stale}
 
-  # Every edit replaces the task: the new one waits for the first time the
-  # old one hadn't fired. When there is none, the schedule is done: a
-  # one-off edited after it fired, keeping its time, or a repeating one
-  # made a one-off at the time it just fired. A finished old task stays
-  # the row's, so the row still reads as done (or stopped); a live one is
-  # retired like any replaced task and the row names none, which reads as
-  # done too. A new schedule has no old task. Blip's tool names the
-  # task's request ID; otherwise it is the schedule's version
+  # When no time is left to fire, a finished old task stays the row's, so
+  # the row still reads as done (or stopped); a live one is retired and the
+  # row names none, which reads as done too. Blip's tool names the task's
+  # request ID; otherwise it is the schedule's version
   # (`Photon.Schedules.Routine.task/3`).
   defp arm_tx(tx, schedule, old, now, request_id \\ nil) do
     fired_through = old && Rules.fired_through(old.input, old.checkpoint, old.status)
@@ -423,25 +393,18 @@ defmodule Photon.Schedules do
   defp every_ms(%Schedule{every_minutes: minutes}), do: minutes * 60_000
 
   @doc """
-  Makes a schedule from Blip's `schedule` tool's arguments (`prompt`,
-  `in_minutes` or `at`, `every_minutes`, read by
-  `Photon.Schedules.Rules.from_tool/2` with the tool's messages) inside
-  the commit that records the tool's result, so the row and its routine
-  task exist only if the result does. `target` says where it fires:
-  `{:blip, conversation_id}` posts into Blip's conversation, and
-  `{:project, project_id, thread_id}` is a project schedule like the
-  form's, waking `thread_id` or, with nil, starting a new thread each
-  time. A thread that isn't the project's is refused
-  (`Photon.Schedules.Rules.tool_thread/3`), as is a project that went
-  before the commit.
+  Makes a schedule from Blip's `schedule` tool's arguments
+  (`Photon.Schedules.Rules.from_tool/2`) inside the commit that records
+  the tool's result, so the row and its routine task exist only if the
+  result does. A thread that isn't the project's is refused, as is a
+  project that went before the commit.
 
-  `made` says how the call made it (`t:made/0`). The row is
-  `created_by: "blip"`, with `asked_by` (`"owner"` or `"blip"`) from the run
-  that called the tool; every firing carries both. `request_id` is the tool
-  call's (`"schedule:<task id>"`), kept as the routine task's request ID: a
-  call that runs again with it gets the schedule it already made, not a
-  second one. `now` is the clock the tool read (Unix milliseconds), shared
-  by the rules and the arming, so a time the rules accept always fires.
+  The row is `created_by: "blip"` with `made`'s `asked_by`; every firing's
+  source carries both, for the signals to Blip and the activity log.
+  `request_id` is kept as the routine task's request ID: a call that runs
+  again with it gets the schedule it already made, not a second one.
+  `now` is shared by the rules and the arming, so a time the rules accept
+  always fires.
   """
   @spec tool_schedule_tx(Tx.t(), tool_target(), map(), made()) ::
           {:ok, Schedule.t()} | {:error, String.t()}
@@ -473,8 +436,6 @@ defmodule Photon.Schedules do
     end
   end
 
-  # The row's place for a tool target: Blip's conversation, or a project
-  # and the thread it wakes (nil for a new thread each time).
   defp tool_place({:blip, conversation_id}),
     do: {:ok, %{project_id: nil, conversation_id: conversation_id}}
 
@@ -489,7 +450,6 @@ defmodule Photon.Schedules do
     end
   end
 
-  # The schedule whose routine task carries `request_id`, if one was made.
   defp made_for(request_id) do
     query =
       from(s in Schedule,
@@ -501,11 +461,7 @@ defmodule Photon.Schedules do
     Repo.one(query)
   end
 
-  @doc """
-  When a schedule fires, in the words of Blip's tools: "first at
-  2026-10-08 09:00 UTC, then every 1440 minutes", or only the first part
-  for a one-off.
-  """
+  @doc "When a schedule fires, as `Photon.Schedules.Rules.when_text/2` words it."
   @spec when_text(Schedule.t()) :: String.t()
   def when_text(%Schedule{} = schedule),
     do: Rules.when_text(schedule.first_at, schedule.every_minutes)
@@ -523,10 +479,9 @@ defmodule Photon.Schedules do
 
   @doc """
   Deletes schedule `id` inside the caller's commit, as `delete/1` does,
-  but only when it is in `scope`: the home page's cancel button passes
-  `:blip`, so a project's schedule is `{:error, :not_found}` to it, like
-  one that doesn't exist. Blip's `cancel_schedule` tool passes `:any`,
-  since Blip manages project schedules too.
+  but only when it is in `scope` (`:any` for Blip's `cancel_schedule`
+  tool, since Blip manages project schedules too); one outside it is
+  `{:error, :not_found}`, like one that doesn't exist.
   """
   @spec delete_tx(Tx.t(), String.t(), scope() | :any) :: :ok | {:error, :not_found}
   def delete_tx(tx, id, scope) do

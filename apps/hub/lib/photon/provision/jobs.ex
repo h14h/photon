@@ -1,9 +1,7 @@
 defmodule Photon.Provision.Jobs do
   @moduledoc """
   The provisioning job table, as pure functions: one job per machine,
-  keyed by machine name, each with its `action`, `status` (`:running`,
-  `:ok` or `:error`), newest-first `log` (the last 300 lines) and when it
-  started. `Photon.Provision` keeps the table and broadcasts it.
+  keyed by machine name, with its log newest first (the last 300 lines).
   """
 
   # Functional core: no processes, no I/O.

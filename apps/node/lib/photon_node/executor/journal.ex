@@ -1,36 +1,23 @@
 defmodule PhotonNode.Executor.Journal do
   @moduledoc """
   The node's durable record of the hub's operations (`docs/operations.md`,
-  node rules 1 and 5 to 8): one file per operation,
-  `<ops dir>/<op_id>/op.json`, next to the shell's `out`, `err`, `pid`,
-  `exit`, `stopped`, `canceled` and `unstarted` files.
+  node rules 1 and 5 to 8): one entry per operation,
+  `%{"op" => snapshot, "cancel" => boolean}`, in
+  `<ops dir>/<op_id>/op.json`, next to the shell's output and marker files.
 
-  Each file holds an entry, `%{"op" => snapshot, "cancel" => boolean}`: the
-  operation's latest snapshot and whether the hub has canceled it. `write/3`
-  replaces it whole or not at all. The entry goes to `op.json.tmp`, mode
-  0600, which is synced and renamed over `op.json`, and then the directory
-  is synced so the rename survives a power loss. A crash at any point leaves
-  either the old entry or the new one, never a torn file, so `read/2`
-  returns the last entry that was fully written. A leftover `op.json.tmp`
-  is overwritten by the next write and otherwise ignored.
+  `write/3` replaces an entry whole or not at all: it writes
+  `op.json.tmp` (mode 0600), syncs it, renames it over `op.json`, then
+  syncs the directory so the rename survives a power loss. A crash at any
+  point leaves the old entry or the new one, never a torn file; a leftover
+  `op.json.tmp` is overwritten by the next write and otherwise ignored.
+  `{:error, reason}` means the new entry isn't in place: once the rename
+  has happened, a failed directory sync is only logged. The executor
+  relies on this (node rule 8).
 
-  `write/3` returns `{:error, reason}` only when the new entry isn't in
-  place: once the rename has happened the entry is the new one, so a
-  failed directory sync is logged rather than returned. The executor
-  relies on this: an error means nothing changed (node rule 8).
-
-  `discard/2` deletes the entry alone, for a `ready` entry that a result
-  the executor couldn't journal has left behind (node rule 8).
-
-  After `op.ack`, `forget/2` deletes the entry and the files only a running
-  command needs. `out` and `err` stay, since a truncated result names
-  them, until `sweep/3` removes directories without an entry that are
-  older than its age limit (node rule 6).
-
-  Boundary helper for `PhotonNode.Executor`: file I/O, no process. Only the
-  executor process calls it, so writes to one operation's entry never race.
-  Operation IDs come from `PhotonCore.Operation.Wire`, which lets through
-  only IDs that are safe as directory names.
+  File I/O, no process. Only the executor process calls it, so writes to
+  one entry never race. Operation IDs come from
+  `PhotonCore.Operation.Wire`, which lets through only IDs safe as
+  directory names.
   """
 
   require Logger
@@ -227,8 +214,8 @@ defmodule PhotonNode.Executor.Journal do
   @doc """
   Deletes the operation's entry and its `pid`, `exit`, `stopped`,
   `canceled` and `unstarted` files, after the hub has acknowledged its
-  result. `out` and `err` stay for `sweep/3`. Files that are already gone
-  are fine.
+  result. `out` and `err` stay for `sweep/3`, since a truncated result
+  names them (node rule 6). Files that are already gone are fine.
   """
   @spec forget(String.t(), String.t()) :: :ok | {:error, String.t()}
   def forget(ops_dir, id) do

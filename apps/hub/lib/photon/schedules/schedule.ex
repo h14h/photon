@@ -8,22 +8,20 @@ defmodule Photon.Schedules.Schedule do
   names, or, with no `conversation_id`, starts a new thread each time.
 
   `first_at` is the first time, and with `every_minutes` the grid of
-  times after it (nil for a one-off). `version` is 1 when the schedule is
-  created and goes up by one on every edit. `task_id` is the routine task
-  that carries the current version; the schedule's next time and state
-  are read from that task, never stored here (rule 15). `created_by` is
-  `"owner"` (the project page) or `"blip"` (Blip's `schedule` tool, for
-  itself or in a project). `asked_by` says why Blip made one: `"owner"`
-  when the owner wrote to the run that called the tool, `"blip"` when
-  Blip set it up on its own; nil for the owner's. Every firing carries
-  both in its source (`Photon.Schedules.Routine`), so a thread a Blip-made
-  schedule starts counts as Blip's work, and a firing of a reminder the
-  owner asked for reads as a schedule, not as Blip's follow-up.
+  times after it (nil for a one-off). `version` goes up by one on every
+  edit. `task_id` is the routine task that carries the current version;
+  the schedule's next time and state are read from that task, never
+  stored here (rule 15). `created_by` is `"owner"` or `"blip"`.
+  `asked_by` says why Blip made one: `"owner"` when the owner wrote to the
+  run that called the tool, `"blip"` when Blip set it up on its own; nil
+  for the owner's. Every firing carries both in its source, so a thread a
+  Blip-made schedule starts counts as Blip's work, and a firing of a
+  reminder the owner asked for reads as a schedule, not as Blip's
+  follow-up (`Photon.Assistant.Origin`).
 
   `last_run_at`, `last_outcome` and `last_thread_id` sum up the last
-  firing, run-now included: when, what it did (`"started"`, `"sent"`,
-  `"queued"`, a `"skipped_..."` reason, or `"failed"` when the task
-  failed) and the thread it started or woke.
+  firing, run-now included; `last_outcome` is `"failed"` when the task
+  failed.
   """
 
   # Data: an Ecto schema, no behaviour of its own.

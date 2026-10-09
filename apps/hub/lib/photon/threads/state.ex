@@ -3,10 +3,7 @@ defmodule Photon.Threads.State do
   A thread's state, worked out by code from facts the hub stores: never by a
   model, and never stored itself (rule 15).
 
-  `of/3` takes the facts (whether a run is in progress, the thread's open
-  `ask_blip` question, how its last run ended, when the owner last looked
-  or resolved it) and the time, and gives the first state whose rule
-  holds:
+  `of/3` gives the first state whose rule holds:
 
     1. a question is with the owner: `:waiting`
     2. a run is in progress and its question is with Blip: `:asking`
@@ -20,19 +17,10 @@ defmodule Photon.Threads.State do
     9. otherwise `:idle`
 
   Quiet is for work left unfinished: a finished run the owner has read is
-  done, however old. `label/2` gives the words the pages and Blip's tools
-  show for a state, so they read the same everywhere.
+  done, however old.
 
-  When a run ends, `asks?/1` says whether its answer ended with a question
-  to the user, and `note/2` makes the short note stored with it. Both are
-  total: they take any term and return a value, since they run inside the
-  harness's settle hook.
-
-  `sections/1` groups the board (`Photon.Threads.board/1`) into the home
-  page's sections: what waits on the owner (questions passed to them, and
-  threads whose last answer asked), failed and finished threads, what is
-  running (threads waiting on Blip after the ones at work), and threads gone
-  quiet, each in its order and cut to its limit with a count of the rest.
+  `asks?/1` and `note/2` are total (any term in, a value out), since they
+  run inside the harness's settle hook.
   """
 
   # Functional core: no processes, no I/O. The time comes in as an argument.
@@ -44,11 +32,11 @@ defmodule Photon.Threads.State do
   @type t :: :waiting | :asking | :running | :failed | :unread | :quiet | :idle
 
   @typedoc """
-  What a state is worked out from: `busy?` (a run is in progress),
-  `question` (`:with_owner` when any open `ask_blip` question is with the
-  owner, else `:with_blip` when one is asked, else nil), the last run's
-  facts as stored on the thread, `active_at` (the thread's last message),
-  `seen_at` and `resolved_at`.
+  What a state is worked out from: `busy?` means a run is in progress (from
+  the durable harness); `question` is `:with_owner` when any open
+  `ask_blip` question is with the owner, else `:with_blip` when one is
+  asked, else nil; `active_at` is the thread's last message; the rest are
+  as stored on the thread.
   """
   @type facts :: %{
           required(:busy?) => boolean(),
@@ -66,10 +54,9 @@ defmodule Photon.Threads.State do
   @type opts :: %{quiet_after: non_neg_integer()}
 
   @typedoc """
-  A thread on the board as `sections/1` reads it: its state, its row
-  (`thread`, with the facts `Photon.Threads.Thread` records and `active_at`)
-  and its open questions (maps with `id`, `status`, `inserted_at` and
-  `passed_at`). Any other keys go along with it.
+  A thread on the board as `sections/1` reads it: `thread` is its row and
+  `questions` its open questions (maps with `id`, `status`, `inserted_at`
+  and `passed_at`). Any other keys go along with it.
   """
   @type entry :: %{
           required(:state) => t(),
@@ -90,10 +77,7 @@ defmodule Photon.Threads.State do
   @typedoc "A section cut to its limit: the rows shown and how many more there are."
   @type cut :: %{rows: [entry()], more: non_neg_integer()}
 
-  @typedoc """
-  The home page's sections (`sections/1`), and `needs_you`, how many
-  threads are waiting on the owner, failed or unread.
-  """
+  @typedoc "The home page's sections (`sections/1`)."
   @type sections :: %{
           needs_you: non_neg_integer(),
           waiting: [waiting_row()],
@@ -141,8 +125,7 @@ defmodule Photon.Threads.State do
 
   @doc """
   Whether the thread's last run finished (`"done"`) and the owner hasn't
-  had its page open since: never, or only before the run ended. A thread
-  row or a facts map both work.
+  had its page open since. A thread row or a facts map both work.
   """
   @spec unseen?(map()) :: boolean()
   def unseen?(%{last_run_status: "done", seen_at: nil}), do: true
@@ -162,8 +145,7 @@ defmodule Photon.Threads.State do
 
   @doc """
   When anything last happened on a thread: the later of its last message
-  (`active_at`) and its last run's end, or nil when it has neither. A
-  thread row or a facts map both work.
+  and its last run's end, or nil. A thread row or a facts map both work.
   """
   @spec last_activity(map()) :: DateTime.t() | nil
   def last_activity(facts) do
@@ -175,20 +157,15 @@ defmodule Photon.Threads.State do
   @doc """
   The board's entries grouped into the home page's sections:
 
-    * `waiting`: every open question that is with the owner, and every
-      thread waiting on the owner without one (its last answer asked),
-      the longest wait first: a question from when it was passed on, a
-      thread from when its run ended. All of them.
-    * `failed` and `unread`: the failed threads and the finished ones not
-      yet looked at, the most recent run end first, at most
+    * `waiting`: every open question with the owner, and every thread
+      waiting on the owner without one, the longest wait first. All of
+      them.
+    * `failed` and `unread`: the most recent run end first, at most
       #{@failed_limit} each.
-    * `running`: the threads at work, the longest running first (by their
-      last message, which started or steered the run), then the threads
-      waiting on Blip, the oldest question first. All of them.
-    * `quiet`: the threads gone quiet, the oldest activity first, at most
-      #{@quiet_limit}.
+    * `running`: the threads at work, the longest running first, then
+      those waiting on Blip, the oldest question first. All of them.
+    * `quiet`: the oldest activity first, at most #{@quiet_limit}.
 
-  A cut section gives the rows shown and how many more there are.
   `needs_you` counts the threads that are waiting, failed or unread,
   each once however many questions it has, as the sidebar's badge does.
   Idle threads are in no section.
@@ -212,7 +189,6 @@ defmodule Photon.Threads.State do
 
   defp in_state(by_state, state), do: Map.get(by_state, state, [])
 
-  # Failed or unread threads, the most recent run end first, cut.
   defp newest_first(entries, limit), do: entries |> sort_by(&ended_at/1, :desc) |> cut(limit)
 
   defp quiet_rows(by_state) do
@@ -222,16 +198,12 @@ defmodule Photon.Threads.State do
     |> cut(@quiet_limit)
   end
 
-  # The threads at work, the longest running first, then those waiting on
-  # Blip, the oldest question first.
   defp running_rows(by_state) do
     working = by_state |> in_state(:running) |> sort_by(&active_at/1, :asc)
     asking = by_state |> in_state(:asking) |> sort_by(&first_asked_at/1, :asc)
     working ++ asking
   end
 
-  # The questions with the owner, from any thread, and the waiting threads
-  # that have none, the longest wait first.
   defp waiting_rows(board) do
     questions =
       for entry <- board,
@@ -279,9 +251,8 @@ defmodule Photon.Threads.State do
   end
 
   @doc """
-  The words for a state, as every page and Blip's tools show it. An idle
-  thread reads "Resolved" when the owner resolved it, "Done" when its
-  last run finished, and "Idle" otherwise.
+  The words for a state, as every page and Blip's tools show it, so they
+  read the same everywhere.
   """
   @spec label(t(), map()) :: String.t()
   def label(:waiting, _facts), do: "Waiting on you"
@@ -317,11 +288,10 @@ defmodule Photon.Threads.State do
   def asks?(_not_text), do: false
 
   @doc """
-  The note stored with a run's end, from how it ended and its text: for
-  `"done"`, the answer's first paragraph, or its last when it asks
-  (`asks?/1`); for `"failed"`, the reason. Whitespace is collapsed and
-  the note cut to #{@note_limit} characters at a word boundary, with
-  "..." when cut. Nil for a stopped run, and for no text.
+  The note stored with a run's end: for `"done"`, the answer's first
+  paragraph, or its last when it asks (`asks?/1`); for `"failed"`, the
+  reason; cut to #{@note_limit} characters. Nil for a stopped run, and
+  for no text.
   """
   @spec note(term(), term()) :: String.t() | nil
   def note("done", text) when is_binary(text) do

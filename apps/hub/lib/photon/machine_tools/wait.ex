@@ -17,10 +17,9 @@ defmodule Photon.MachineTools.Wait do
   started instead of starting another (hub rule 1). The time and the limits
   are arguments; nothing here reads the clock or the config.
 
-  `offline_message/3` picks what the model is told when a call gives up,
-  from what `Photon.Machines.abandon_tx/2` found inside the commit that ends
-  it: only an op that was never pushed and never confirmed certainly didn't
-  run (hub rule 7 in `docs/operations.md`).
+  Only an op that was never pushed and never confirmed certainly didn't
+  run (hub rule 7 in `docs/operations.md`), and `offline_message/3` says
+  so only then.
   """
 
   # Functional core: no processes, no I/O.
@@ -74,10 +73,8 @@ defmodule Photon.MachineTools.Wait do
 
   @doc """
   What the model is told when a call on `machine` gives up after the
-  machine was offline for `limit_ms`, given what the commit that ended the
-  call found. It says the command didn't run only when the op was never
-  pushed and never confirmed; otherwise it may have run, and the text says
-  what happens to it.
+  machine was offline for `limit_ms`, given what
+  `Photon.Machines.abandon_tx/2` found in the commit that ended the call.
   """
   @spec offline_message(String.t(), facts(), non_neg_integer()) :: String.t()
   def offline_message(machine, %{pushed: false, confirmed: false}, limit_ms),

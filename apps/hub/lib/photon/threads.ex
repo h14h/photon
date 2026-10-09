@@ -5,102 +5,58 @@
 # credo:disable-for-next-line Credo.Check.Refactor.ModuleDependencies
 defmodule Photon.Threads do
   @moduledoc """
-  Threads: durable agent conversations inside a project.
+  Threads: durable agent conversations inside a project, and the
+  `"thread"` profile that `Photon.Durable` runs them under.
 
-  A thread is one conversation under the `"thread"` profile, run by
-  `Photon.Durable` like Blip's, and a row in `threads` that ties it to its
+  A thread is a conversation plus a row in `threads` tying it to its
   project, with its title and when it last got a message (`active_at`).
-  Every thread belongs to a project. The user starts threads, and so does
-  Blip, whose `start_thread`, `message_thread` and `stop_thread` tools go
-  through `start_tx/4`, `send_tx/4` (with source `%{"kind" => "blip"}`)
-  and `stop_tx/2` inside the commit that records their result. A thread
-  can't start one, schedule anything or touch Blip's memory, and its prompt
-  says nothing about the user. What it needs to know of the user it asks
-  Blip with `ask_blip` (`Photon.Threads.Tools.AskBlip`, through
-  `Photon.Questions`), and its call waits for the answer.
+  The user starts and wakes threads; so do Blip's tools and the project's
+  schedules, through `start_tx/4` and `send_tx/4` (and Blip's `stop_tx/2`)
+  inside the commit that records their result (a schedule's message
+  carries the schedule as its source and a request ID, so one firing
+  makes one submission). A thread can't start one, schedule anything or touch Blip's
+  memory, and its prompt says nothing about the user: it asks Blip with
+  `ask_blip` (`Photon.Threads.Tools.AskBlip`) and waits for the answer.
 
-  A thread works with the machine tools (`Photon.MachineTools`: `shell`,
-  `view_image`, `list_machines`) in its project's folder on whichever
-  machine a call names (`workdir/1` is the project's slug), and reads and
-  writes the project's context files with four tools of its own
-  (`Photon.Threads.Tools`). Its prompt lists the skills turned on for its
-  project and for each machine (`Photon.Skills.offered/1`), and
-  `load_skill` loads one. It can search the
-  web, and uses the model and reasoning level in Settings.
-
-  This module is the threads context's API, which the web pages use, and
-  the `"thread"` profile's module, as `Photon.Assistant` is both for Blip.
-  Behind it, by layer:
-
-    * data: `Photon.Threads.Thread`
-    * functional core (pure): `Photon.Threads.Rules` (titles, who started
-      a thread, and how the tools describe files),
-      `Photon.Threads.State` (a thread's state from its facts),
-      `Photon.Threads.Prompt` (the system prompt),
-      `Photon.Threads.MockScript` (the scripted model)
-    * boundary: the tools in `Photon.Threads.Tools`: the context-file
-      tools, which write through `Photon.Projects` inside the commit that
-      records their result, `load_skill`, which reads through
-      `Photon.Skills` the same way, and `ask_blip`, which asks through
-      `Photon.Questions` and parks on the answer
+  A thread runs the machine tools in its project's folder (`workdir/1` is
+  the project's slug), has its own context-file tools and `load_skill`
+  (`Photon.Threads.Tools`), and uses the model and reasoning level in
+  Settings.
 
   Starting a thread makes the row, the conversation and the first message
   in one commit, so there is never a thread without its first message or a
-  conversation without its row.
-
-  The project's schedules start and wake threads too, inside their own
-  commits, through `start_tx/4` and `send_tx/4`: the message then carries
-  the schedule as its source and a request ID, so one firing makes one
-  submission. A thread itself has no way to reach them.
-
-  A thread's first title is made from its first message
-  (`Photon.Threads.Rules.title/1`). The same commit creates a background
-  task, `Photon.Threads.Titling`, that asks the model once for a short
-  title when the first run ends; the owner can also rename a thread
-  (`rename/2`). Either change announces `{:projects_changed, project_id}`,
-  so the sidebar, the pages and Blip's chip show the new title. Starting one and sending one a message
-  move its `active_at` and announce `{:projects_changed, project_id}`
-  (through `Photon.Projects.threads_changed_tx/2`) in the same commit.
-  Whether a thread is running is derived from its durable run
+  conversation without its row. The first title comes from that message
+  (`Photon.Threads.Rules.title/1`); the same commit creates the
+  `Photon.Threads.Titling` task that asks the model once for a short title
+  when the first run ends. Every change to a thread announces
+  `{:projects_changed, project_id}` (through
+  `Photon.Projects.threads_changed_tx/2`) in the same commit. Whether a
+  thread is running is derived from its durable run
   (`Photon.Durable.busy/1`), never stored (rule 15).
 
   ## State
 
-  A thread's state (running, asking Blip, waiting on you, failed, finished
-  and unread, quiet, idle; `Photon.Threads.State`) is worked out when it is
-  read (`board/1`, `state/1`, `sidebar/1`), from its open `ask_blip`
-  questions (`Photon.Questions`) and facts on its row recorded when
-  something happened:
-
-    * who started it (`started_by`), from its first message's source
-    * how its last run ended: the `"thread"` profile's `on_settled/3`
-      hook runs inside the harness's commit that settles a run, and when
-      the run ends there it records `"done"`, `"failed"` or `"stopped"`,
-      whether the answer asked the user something, and a short note, then
-      announces `{:projects_changed, project_id}`. On a Stop or a failed
-      task that commit is the Scheduler's, so the hook never raises: a
-      missing row or answer records less.
-    * when the owner last had the thread open (`mark_seen/1`,
-      `mark_all_seen/0`), and whether they resolved it (`resolve/1`,
-      `reopen/1`; a new message clears it)
+  A thread's state (`Photon.Threads.State`) is worked out when it is read,
+  from its open `ask_blip` questions and facts on its row: who started it
+  (`started_by`), how its last run ended, when the owner last had it open
+  (`mark_seen/1`) and whether they resolved it (`resolve/1`; a new message
+  clears it). How the last run ended is recorded by the profile's
+  `on_settled/3` hook inside the harness's commit that settles the run. On
+  a Stop or a failed task that commit is the Scheduler's, so the hook
+  never raises: a missing row or answer records less.
 
   ## Signals to Blip
 
-  The same hook decides, in code, whether Blip hears about the settle
-  (`Photon.Signals.Rules.thread_update/2`, in the mode `Photon.Signals`
-  gives), and posts it into Blip's conversation in the same commit
-  (`Photon.Signals.post_tx/2`). Whose work it was comes from the settled
-  messages' sources: Blip's own messages, and firings of schedules Blip
-  made, are Blip's, and Blip hears how they end; everything else is the
-  owner's, and Blip hears only when it fails or ends asking the user
-  something. A stop is never a signal. While ambient mode is on, the
-  owner's run that finishes without asking is collected as a digest item
-  instead (`Photon.Signals.collect_tx/2`), in the same commit, and so are
-  a thread the owner starts (`start/2`, not `start_tx/4`, which Blip's
-  tools and schedules use) and the owner's Resolve (`resolve/1`).
-  Ambient mode's daily review records when it listed a thread
-  (`mark_reviewed_tx/3`, `reviewed_at`), a fact Home and the next review
-  read and the thread's state doesn't.
+  The same hook decides whether Blip hears about the settle
+  (`Photon.Signals.Rules.thread_update/2`) and posts it into Blip's
+  conversation in the same commit (`Photon.Signals.post_tx/2`). Blip's own
+  messages and firings of schedules Blip made are Blip's work, and Blip
+  hears how they end; of the owner's, Blip hears only a failure or a run
+  that ends asking the user something. A stop is never a signal. In
+  ambient mode the owner's run that finishes without asking, a thread the
+  owner starts (`start/2`, not `start_tx/4`) and the owner's Resolve are
+  collected as digest items instead (`Photon.Signals.collect_tx/2`), in
+  the same commit.
 
   There is no process here: the harness runs the conversations, and the
   rows hold the rest.
@@ -156,8 +112,6 @@ defmodule Photon.Threads do
 
   @profile "thread"
 
-  # How many of a thread's newest assistant messages `latest_answer/1` looks
-  # through for one with text (the others only call tools).
   @answer_lookback 20
 
   @tools [
@@ -169,8 +123,6 @@ defmodule Photon.Threads do
     Tools.AskBlip
   ]
 
-  # How long a stopped thread is left alone before it reads as quiet, when
-  # the config doesn't say.
   @quiet_after_hours 72
 
   @typedoc "A project's ID, slug and name, as the board and sidebar give them."
@@ -186,8 +138,7 @@ defmodule Photon.Threads do
         }
 
   @typedoc """
-  A thread on the board (`board/1`): the thread, its project, its state,
-  whether it has a question Blip still holds, and its open `ask_blip`
+  A thread on the board (`board/1`); `questions` are its open `ask_blip`
   questions, oldest first.
   """
   @type board_entry :: %{
@@ -202,14 +153,12 @@ defmodule Photon.Threads do
   ## Starting and talking to threads
 
   @doc """
-  Starts a thread in project `project_id` with the user's first message:
-  the thread's row, its conversation, the message and the task that names
-  the thread after its first run, in one commit. The first title comes
-  from the message, and `started_by` from its source
-  (`Photon.Threads.Rules.started_by/1`). Errors: `:blank` when the message has no
-  text, `:not_found` when the project doesn't exist; either makes nothing.
-  In ambient mode a thread the owner starts is collected for the next
-  digest (`"thread_started"`), in the same commit.
+  Starts a thread in project `project_id` with the user's first message,
+  in one commit; `started_by` comes from the message's source
+  (`Photon.Threads.Rules.started_by/1`). Errors: `:blank` when the
+  message has no text, `:not_found` when the project doesn't exist;
+  either makes nothing. In ambient mode the start is collected for the
+  next digest (`"thread_started"`), in the same commit.
   """
   @spec start(String.t(), String.t()) :: {:ok, Thread.t()} | {:error, :blank | :not_found}
   def start(project_id, text), do: Durable.commit(&owner_start_tx(&1, project_id, text))
@@ -222,8 +171,8 @@ defmodule Photon.Threads do
   end
 
   @doc """
-  `start/2` inside the caller's commit, for `Photon.Schedules` to start a
-  thread when a schedule fires. Options:
+  `start/2` inside the caller's commit, for schedules and Blip's tools,
+  without the digest item. Options:
 
     * `:source` - where the first message came from, stored with it
       (default `%{"kind" => "user"}`)
@@ -248,8 +197,7 @@ defmodule Photon.Threads do
     end
   end
 
-  # The thread of project `project_id` whose conversation has a submission
-  # with `request_id`, or nil (always nil without a request ID).
+  # Always nil without a request ID.
   defp started(_project_id, nil), do: nil
 
   defp started(project_id, request_id) do
@@ -279,8 +227,7 @@ defmodule Photon.Threads do
     thread
   end
 
-  # The task that names the thread once its first run ends
-  # (`Photon.Threads.Titling`), unless the hub is set not to (tests).
+  # Unless the hub is set not to (tests).
   defp title_later(tx, thread_id, title, text) do
     with true <- Application.get_env(:photon, __MODULE__, [])[:auto_title] != false,
          %{id: run_id} <- Tx.active_run(tx, thread_id) do
@@ -292,10 +239,10 @@ defmodule Photon.Threads do
   end
 
   @doc """
-  Stores the title `Photon.Threads.Titling` asked the model for, inside
-  its commit, and announces it: only while the thread still has its first
-  title `fallback` (the owner may have renamed it), and only when there is
-  a new one (`title` is nil when the model gave none).
+  Stores the title `Photon.Threads.Titling` got from the model, inside its
+  commit: only while the thread still has its first title `fallback` (the
+  owner may have renamed it), and only when `title` is a new one (nil
+  when the model gave none).
   """
   @spec titled_tx(Tx.t(), String.t(), String.t(), String.t() | nil) :: :ok
   def titled_tx(tx, thread_id, fallback, title) do
@@ -309,10 +256,9 @@ defmodule Photon.Threads do
   end
 
   @doc """
-  Renames thread `thread_id` to what the owner typed (whitespace
-  collapsed, at most 80 characters; see `Photon.Threads.Rules.rename/1`),
-  and announces it. Errors: `:blank`, and `:not_found` when there is no
-  such thread.
+  Renames thread `thread_id` to what the owner typed, cleaned up by
+  `Photon.Threads.Rules.rename/1`. Errors: `:blank`, and `:not_found`
+  when there is no such thread.
   """
   @spec rename(String.t(), String.t()) :: {:ok, Thread.t()} | {:error, :blank | :not_found}
   def rename(thread_id, text) do
@@ -331,18 +277,18 @@ defmodule Photon.Threads do
     end
   end
 
-  # The thread's title, and the announcement that updates the pages showing
-  # it. The conversation keeps its first title: nothing shows it, and only
-  # the harness writes its rows.
+  # The conversation keeps its first title: nothing shows it, and only the
+  # harness writes its rows.
   defp retitle_tx(tx, thread, title) do
     _thread = Repo.update!(Ecto.Changeset.change(thread, title: title))
     Projects.threads_changed_tx(tx, thread.project_id)
   end
 
   @doc """
-  Sends the user's message to thread `thread_id`, and moves the thread's
-  `active_at` and clears its `resolved_at`, in one commit. The options are `send_tx/4`'s.
-  Errors: `:blank`, `:not_found`, and `:busy` for `when_busy: "reject"`.
+  Sends the user's message to thread `thread_id`, moving its `active_at`
+  and clearing its `resolved_at`, in one commit. The options are
+  `send_tx/4`'s. Errors: `:blank`, `:not_found`, and `:busy` for
+  `when_busy: "reject"`.
   """
   @spec send(String.t(), String.t(), keyword()) ::
           {:ok, Submission.t()} | {:error, :blank | :not_found | :busy}
@@ -354,13 +300,12 @@ defmodule Photon.Threads do
   end
 
   @doc """
-  `send/3` inside the caller's commit, for `Photon.Schedules` to wake a
-  thread when a schedule fires. The options are
+  `send/3` inside the caller's commit. The options are
   `Photon.Durable.submit/3`'s: `:source` (default `%{"kind" =>
   "user"}`), `:request_id` (a repeated one returns the submission already
-  made instead of making another) and `:when_busy`. With `when_busy:
-  "reject"` a busy thread rolls back the caller's whole commit with
-  `:busy`. `:blank` and `:not_found` make nothing.
+  made) and `:when_busy`. With `when_busy: "reject"` a busy thread rolls
+  back the caller's whole commit with `:busy`. `:blank` and `:not_found`
+  make nothing.
   """
   @spec send_tx(Tx.t(), String.t(), String.t(), keyword()) ::
           {:ok, Submission.t()} | {:error, :blank | :not_found}
@@ -382,7 +327,6 @@ defmodule Photon.Threads do
     end
   end
 
-  # A submission's options, with the user as its source unless one is given.
   defp submit_opts(opts), do: Keyword.put_new(opts, :source, %{"kind" => "user"})
 
   defp blank?(text), do: not is_binary(text) or String.trim(text) == ""
@@ -398,9 +342,9 @@ defmodule Photon.Threads do
   end
 
   @doc """
-  `stop/1` inside the caller's commit, for Blip's `stop_thread` tool:
-  `:stopped` when the thread had a run to stop (it ends once the
-  harness has stopped it), `:idle` when it had none.
+  `stop/1` inside the caller's commit: `:stopped` when the thread had a
+  run to stop (it ends once the harness has stopped it), `:idle` when it
+  had none.
   """
   @spec stop_tx(Tx.t(), String.t()) :: :stopped | :idle
   def stop_tx(tx, thread_id) do
@@ -434,9 +378,8 @@ defmodule Photon.Threads do
 
   @doc """
   The sidebar's projects, by name, each with its `limit` most recently
-  active threads plus any other of its threads that is running (most
-  recent first, each with `running?` and its `state`), and `more`, how
-  many threads it has besides those.
+  active threads plus any other of its threads that is running, and
+  `more`, how many threads it has besides those.
   """
   @spec sidebar(pos_integer()) :: [sidebar_project()]
   def sidebar(limit) do
@@ -472,8 +415,7 @@ defmodule Photon.Threads do
     }
   end
 
-  # Each project's `limit` most recently active threads and the running
-  # ones, with each project's thread count, in one query.
+  # One query, with each project's thread count.
   defp listed(limit, running_ids) do
     ranked =
       from(t in Thread,
@@ -512,11 +454,8 @@ defmodule Photon.Threads do
   ## State
 
   @doc """
-  Every thread in `scope` (`:all`, or `{:project, project_id}`) with its
-  state (`Photon.Threads.State`), most recently active first, in a fixed
-  number of queries however many threads there are: the threads with
-  their projects, which are running, and their open questions. The pages
-  group and cut it.
+  Every thread in `scope` with its state, most recently active first, in
+  a fixed number of queries however many threads there are.
   """
   @spec board(:all | {:project, String.t()}) :: [board_entry()]
   def board(scope) do
@@ -585,8 +524,7 @@ defmodule Photon.Threads do
     }
   end
 
-  # What `State.of/3` works the state out from, for a thread row (or a
-  # map with its fields), whether it is running, and its open questions.
+  # `thread` is a thread row or a map with its fields.
   defp facts(thread, busy?, questions) do
     thread
     |> Map.take([
@@ -600,8 +538,6 @@ defmodule Photon.Threads do
     |> Map.merge(%{busy?: busy?, question: question(questions)})
   end
 
-  # Where a thread's open questions are: with the owner if any is, else
-  # with Blip if any is asked, else nil.
   defp question(questions) do
     cond do
       Enum.any?(questions, &(&1.status == "with_owner")) -> :with_owner
@@ -615,25 +551,22 @@ defmodule Photon.Threads do
   @doc """
   How long, in seconds, a stopped thread is left alone before it reads as
   quiet (`config :photon, Photon.Threads, quiet_after_hours:`, 72 by
-  default). Ambient mode's daily review uses it too, so it covers the
-  threads Home lists as gone quiet.
+  default). Ambient mode's daily review uses it too.
   """
   @spec quiet_after() :: non_neg_integer()
   def quiet_after do
     case :photon |> Application.get_env(__MODULE__, []) |> Keyword.get(:quiet_after_hours) do
       hours when is_integer(hours) and hours >= 0 -> hours * 3600
-      # Unset, or not a whole number of hours: the default.
       _other -> @quiet_after_hours * 3600
     end
   end
 
   @doc """
   Records that the owner has looked at thread `thread_id` (its page is
-  open), in one commit, when it is unread: its last run finished
-  (`"done"`) and the owner hasn't seen it since. Announces
-  `{:projects_changed, project_id}` only then, so a page that calls this
-  on every update doesn't loop on its own announcement. Blip reading a
-  thread doesn't count: seen is the owner's.
+  open), when it is unread: its last run finished (`"done"`) and the
+  owner hasn't seen it since. Announces only then, so a page that calls
+  this on every update doesn't loop on its own announcement. Blip reading
+  a thread doesn't count: seen is the owner's.
   """
   @spec mark_seen(String.t()) :: :ok | {:error, :not_found}
   def mark_seen(thread_id), do: Durable.commit(&mark_seen_tx(&1, thread_id))
@@ -649,9 +582,8 @@ defmodule Photon.Threads do
   end
 
   @doc """
-  Marks every thread that reads as finished and unread (`:unread` on the
-  board) as seen, in one commit, announcing once per project touched.
-  Returns how many it marked.
+  Marks every `:unread` thread seen, in one commit, announcing once per
+  project touched. Returns how many it marked.
   """
   @spec mark_all_seen() :: non_neg_integer()
   def mark_all_seen do
@@ -679,9 +611,9 @@ defmodule Photon.Threads do
   Marks thread `thread_id` resolved: it reads as idle ("Resolved") until
   its next message, whatever its last run did. A running thread can be
   resolved; its state changes once the run ends. Input already queued
-  for it starts a new run afterwards, which clears the mark again.
-  Announces it. In ambient mode it is collected for the next digest
-  (`"resolved"`), in the same commit.
+  for it starts a new run afterwards, which clears the mark again. In
+  ambient mode it is collected for the next digest (`"resolved"`), in the
+  same commit.
   """
   @spec resolve(String.t()) :: :ok | {:error, :not_found}
   def resolve(thread_id), do: Durable.commit(&owner_resolve_tx(&1, thread_id))
@@ -697,7 +629,7 @@ defmodule Photon.Threads do
     end
   end
 
-  @doc "Takes back `resolve/1`, and announces it."
+  @doc "Takes back `resolve/1`."
   @spec reopen(String.t()) :: :ok | {:error, :not_found}
   def reopen(thread_id), do: Durable.commit(&resolved_tx(&1, thread_id, nil))
 
@@ -713,10 +645,8 @@ defmodule Photon.Threads do
     Projects.threads_changed_tx(tx, thread.project_id)
   end
 
-  # An owner's start or Resolve, collected for the next digest while
-  # ambient mode is on (`Photon.Signals.collect_tx/2` reads the mode in
-  # this commit). One row per thread and kind: a second Resolve replaces
-  # the first.
+  # `Photon.Signals.collect_tx/2` reads the mode in this commit. One row
+  # per thread and kind: a second Resolve replaces the first.
   defp collect_tx(tx, kind, thread) do
     Signals.collect_tx(tx, %{
       kind: kind,
@@ -729,9 +659,9 @@ defmodule Photon.Threads do
 
   @doc """
   Records, inside the caller's commit, that ambient mode's daily review
-  listed threads `thread_ids` at `now` (`reviewed_at`), and announces
-  `{:projects_changed, project_id}` once per project. The mark is a fact the
-  next review and Home read; a thread's state doesn't.
+  listed threads `thread_ids` at `now` (`reviewed_at`), announcing once
+  per project. The next review and Home read the mark; a thread's state
+  doesn't.
   """
   @spec mark_reviewed_tx(Tx.t(), [String.t()], DateTime.t()) :: :ok
   def mark_reviewed_tx(tx, thread_ids, %DateTime{} = now),
@@ -739,8 +669,8 @@ defmodule Photon.Threads do
 
   @doc """
   Clears the review marks of threads `thread_ids` inside the caller's
-  commit, and announces once per project: for a review withdrawn before
-  Blip read it, when ambient mode is turned off.
+  commit, announcing once per project: for a review withdrawn before Blip
+  read it, when ambient mode is turned off.
   """
   @spec unmark_reviewed_tx(Tx.t(), [String.t()]) :: :ok
   def unmark_reviewed_tx(tx, thread_ids), do: set_reviewed_tx(tx, thread_ids, nil)
@@ -771,11 +701,7 @@ defmodule Photon.Threads do
     |> Repo.one() || raise "There's no thread #{thread_id}."
   end
 
-  @doc """
-  The titles of threads `thread_ids`, by ID; an ID with no thread is left
-  out. The context-file tools and the project pages use it to name the
-  thread that last wrote a file.
-  """
+  @doc "The titles of threads `thread_ids`, by ID; an ID with no thread is left out."
   @spec titles([String.t()]) :: %{optional(String.t()) => String.t()}
   def titles([]), do: %{}
 
@@ -789,8 +715,7 @@ defmodule Photon.Threads do
 
   @doc """
   The titles and projects of threads `thread_ids`, by ID; an ID with no
-  thread is left out. The activity page names and links the threads its
-  rows mention with it, which needs each thread's project for the link.
+  thread is left out.
   """
   @spec places([String.t()]) :: %{
           optional(String.t()) => %{title: String.t(), project_id: String.t()}
@@ -808,10 +733,8 @@ defmodule Photon.Threads do
   ## Context files, as the file tools describe them
 
   @doc """
-  The project's context files, newest change first, each with its size and
-  who changed it last, as `viewer` sees them: a thread's ID for a thread's
-  `list_context_files`, or `"blip"` for Blip's
-  (`Photon.Threads.Rules.listing/3`). Says so when there are none.
+  The project's context files as `list_context_files` describes them to
+  `viewer`, a thread's ID or `"blip"` (`Photon.Threads.Rules.listing/3`).
   """
   @spec describe_files(String.t(), String.t()) :: String.t()
   def describe_files(project_id, viewer) do
@@ -821,9 +744,9 @@ defmodule Photon.Threads do
   end
 
   @doc """
-  The project's context file `name` after a line naming it with its size,
-  when it changed and who changed it, as `viewer` sees it (a thread's ID
-  or `"blip"`). A missing file is an error that lists the files there are.
+  The `read_context_file` result for file `name`, as `viewer` (a thread's
+  ID or `"blip"`) sees it. A missing file is an error that lists the
+  files there are.
   """
   @spec read_file_text(String.t(), String.t(), String.t()) ::
           {:ok, String.t()} | {:error, String.t()}
@@ -840,10 +763,8 @@ defmodule Photon.Threads do
   end
 
   @doc """
-  The text of the thread's latest answer: its newest assistant message that
-  has text, or nil when it has none yet. A message that only calls tools has
-  no text, so it is skipped; only the last #{@answer_lookback} assistant
-  messages are looked at.
+  The text of the thread's newest assistant message that has text, or nil.
+  Only the last #{@answer_lookback} assistant messages are looked at.
   """
   @spec latest_answer(String.t()) :: String.t() | nil
   def latest_answer(thread_id) do
@@ -886,9 +807,8 @@ defmodule Photon.Threads do
 
   @doc """
   The image at `index` among a tool result's images in thread
-  `thread_id`'s conversation, for the page to load on its own:
-  `{:ok, mime, bytes}`, or `:error` if there is no such thread, entry in
-  it, or image.
+  `thread_id`'s conversation, for the page to load on its own; `:error`
+  if there is no such thread, entry in it, or image.
   """
   @spec image(String.t(), String.t(), non_neg_integer()) ::
           {:ok, String.t(), binary()} | :error
@@ -936,11 +856,9 @@ defmodule Photon.Threads do
   @impl true
   def on_settled(conversation, settled, tx), do: settled_tx(tx, conversation, settled)
 
-  # A generation settled what it placed. When the run ends with it, records
-  # how on the thread row and announces it; in every case, posts the signal
-  # Blip hears about it, if any. It runs inside the harness's commit, on a
-  # Stop or a failed task inside the Scheduler's, so it is total: a missing
-  # row, project or answer records less, and nothing here raises.
+  # Runs inside the harness's commit, on a Stop or a failed task inside the
+  # Scheduler's, so it is total: a missing row, project or answer records
+  # less, and nothing here raises.
   defp settled_tx(tx, conversation, settled) do
     case get(conversation.id) do
       %Thread{} = thread ->
@@ -972,10 +890,9 @@ defmodule Photon.Threads do
 
   defp record_end_tx(_tx, _thread, _settled, _text), do: :ok
 
-  # A settle the generation goes on from places the next queued input: a new
-  # run, which a Resolve made before it doesn't cover, just as a new message
-  # clears it. Without this, input queued before the owner resolved a
-  # running thread could fail or ask them unseen.
+  # A settle the generation goes on from starts a new run, which a Resolve
+  # made before it doesn't cover. Without this, input queued before the
+  # owner resolved a running thread could fail or ask them unseen.
   defp reopen_tx(tx, %Thread{resolved_at: %DateTime{}} = thread, %{ended?: false}) do
     {_count, _rows} =
       Thread |> where([t], t.id == ^thread.id) |> Repo.update_all(set: [resolved_at: nil])
@@ -985,11 +902,8 @@ defmodule Photon.Threads do
 
   defp reopen_tx(_tx, _thread, _settled), do: :ok
 
-  # Whether Blip hears about this settle is decided by
-  # `Photon.Signals.Rules` from the settled submissions' sources, in the
-  # mode read in this commit; the signal names the thread and project as
-  # they are now. In ambient mode the owner's finished run is a digest
-  # item instead, which replaces an earlier finish of the same thread.
+  # The signal names the thread and project as they are now. A digest item
+  # replaces an earlier finish of the same thread.
   defp signal_tx(tx, thread, settled, text) do
     case SignalRules.thread_update(signal_facts(settled, text), Signals.mode_tx(tx)) do
       nil ->
@@ -1055,8 +969,8 @@ defmodule Photon.Threads do
     }
   end
 
-  # The text a run's end is noted from: the answer for `"done"`, the
-  # reason otherwise; nil when the answer entry is missing.
+  # The answer for `"done"`, the reason otherwise; nil when the answer
+  # entry is missing.
   defp run_text(thread_id, %{outcome: "done", answer_entry_id: entry_id})
        when is_binary(entry_id) do
     case Durable.entry(thread_id, entry_id) do
@@ -1067,8 +981,8 @@ defmodule Photon.Threads do
 
   defp run_text(_thread_id, settled), do: Map.get(settled, :reason)
 
-  # The project of thread `thread_id`. A thread whose row or project is
-  # missing can't run: the generation or tool call fails with this message.
+  # A thread whose row or project is missing can't run: the generation or
+  # tool call fails with this message.
   defp project!(thread_id) do
     Project
     |> join(:inner, [p], t in Thread, on: t.project_id == p.id)

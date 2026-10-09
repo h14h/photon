@@ -1,66 +1,45 @@
 defmodule PhotonNode.Executor do
   @moduledoc """
   Runs the hub's operations on this node (`docs/operations.md`, node rules 1
-  to 9), and is the node's API for them: `start/1` (a parsed `op.start`),
-  `cancel/1`, `ack/1` and `snapshots/0` (every journaled snapshot, for the
-  hub link to send after each join).
+  to 9): one process for all of them, owning their journal
+  (`PhotonNode.Executor.Journal`) and their processes
+  (`PhotonNode.Ops.Owner`). Every journal write goes through it, so a
+  cancel flag and a snapshot never overwrite each other.
 
-  One process for all of the hub's operations. It owns the journal
-  (`PhotonNode.Executor.Journal`): every write goes through it, so a cancel
-  flag and a snapshot never overwrite each other. It starts operation
-  processes with `PhotonNode.Ops.add/2` and owns them
-  (`PhotonNode.Ops.Owner`): each reports its snapshots here, and
-  each snapshot is fitted to the frame budget (`Request.fit/2`), journaled
-  and then forwarded to the hub through `PhotonNode.Executor.Link`. A shell
-  command's `process` checkpoint is answered only once it is journaled, and
-  `:cancel` if the journal says canceled, so a command never spawns before
-  its start is on disk (node rule 4). Live output goes straight from the
-  operation process to the link, never through here.
+  Each snapshot an operation reports is fitted to the frame budget
+  (`Request.fit/2`), journaled, then forwarded through
+  `PhotonNode.Executor.Link`. A shell command's `process` checkpoint is
+  answered only once it is journaled, and `:cancel` if the journal says
+  canceled (node rule 4). Live output goes from the operation process
+  straight to the link. The decisions are pure
+  (`PhotonNode.Executor.Request`, `PhotonNode.Executor.Rules`); this module
+  reads the journal and the registry, calls them, and does what they say
+  (rule 71).
 
-  The decisions are pure: `PhotonNode.Executor.Request` judges an
-  `op.start` and builds the answers for operations the node won't run, and
-  `PhotonNode.Executor.Rules` says what `op.start`, the start-up scan and an
-  operation process's exit mean. This module reads the journal and the
-  operation registry, calls them, and does what they say (rule 71).
+  A failed journal write never runs anything (node rule 8). A result that
+  couldn't be journaled is forwarded anyway and held in memory
+  (`unjournaled`) until its `op.ack`. Every decision reads it in place of
+  the journal's older entry, and a `ready` entry under it is removed
+  (`Rules.on_unjournaled/1`), so nothing starts the operation again.
 
-  A failed journal write never runs anything (node rule 8): a `ready` entry
-  that can't be written is answered with `Request.unrecorded/2` and starts
-  no process, and a `process` checkpoint that can't be written is
-  `{:error, reason}`, which fails the operation. A later snapshot that
-  can't be written is logged and forwarded anyway. A result (a terminal
-  snapshot) forwarded that way is held in memory (`unjournaled`) until its
-  `op.ack`, and every decision reads it in place of the journal's older
-  entry, so nothing starts or restarts the operation meanwhile. If that
-  older entry is `ready`, it is removed as well (`Rules.on_unjournaled/1`):
-  the scan after a restart would otherwise start an operation the hub was
-  told had ended.
-
-  An operation process never dies because of its owner. `checkpoint/2` and
-  `report/2` call this process with no timeout and catch every exit,
-  returning `:ignored` and `:down`. A call that waits on a busy executor (a
-  journal scan, an fsync of a large image snapshot) just waits; one whose
-  executor dies returns at once. This process never calls an operation
+  `checkpoint/2` and `report/2` wait with no timeout (a journal scan, or
+  the fsync of a large image snapshot) and return at once if this process
+  dies. The wait can't deadlock: this process never calls an operation
   process synchronously (`Ops.add/2` starts a child whose `init/1` returns
-  at once, or sends `:resend`), so the wait can't deadlock.
+  at once, or sends `:resend`).
 
-  Lifecycle: started by `PhotonNode` after the operation supervisor and
-  before the hub connection, `:permanent`. `init/1` returns at once;
-  `handle_continue/2` scans the journal and resumes every unfinished
-  operation (`Rules.on_scan/2`): one still running is asked to resend its
-  snapshot, one that isn't is started again from its snapshot, and either
-  is told to cancel when its entry says so. Finished ones wait for the next
-  join and their `op.ack`. It monitors every operation process (rule 87)
-  and applies `Rules.down/3` to each exit: a crash fails the operation,
-  and a clean exit before a terminal snapshot restarts it once. A crash of
-  this process loses its monitors and restart counts, which the scan
-  rebuilds; the operation processes keep running and their calls return
-  `:down` or `:ignored` meanwhile. Once a day (and at start-up) it sweeps
-  the output of operations acknowledged more than 7 days ago.
+  On start it scans the journal and resends or resumes every unfinished
+  operation (`Rules.on_scan/2`). It monitors every operation process (rule
+  87) and applies `Rules.down/3` to each exit. A crash of this process
+  loses its monitors, restart counts and any result it held unjournaled
+  (node rule 8). The scan rebuilds the monitors and each operation's state
+  from the journal and the operations' files; restart counts start again
+  from zero, so an operation may get one more restart.
+  Once a day (and at start-up) it sweeps the output of operations
+  acknowledged more than 7 days ago.
   """
 
-  # The executor: this API and server, its journal, its functional core
-  # (`Request`, `Rules`) as strict sub-boundaries, and `Link`, the contract
-  # the hub link implements.
+  # `Link` is the contract the hub link implements.
   use Boundary,
     deps: [PhotonNode, PhotonNode.Config, PhotonNode.Ops, PhotonCore, Jason],
     exports: [Link]
@@ -77,8 +56,7 @@ defmodule PhotonNode.Executor do
   alias PhotonNode.Ops
   alias PhotonNode.Ops.{Env, Owner}
 
-  # The owner pair the executor's operations carry; there is one executor,
-  # so its owner ID only says whose they are.
+  # One executor, so its owner ID only says whose operations they are.
   @owner {__MODULE__, :hub}
 
   @max_age 7 * 24 * 60 * 60
@@ -88,10 +66,9 @@ defmodule PhotonNode.Executor do
   defstruct [:facts, monitors: %{}, restarted: MapSet.new(), unjournaled: %{}]
 
   @typedoc """
-  The process state: what operations need to know about this node
-  (`Request.facts/0`), the monitors of operation processes, the
-  operations restarted once after a clean exit, and the results forwarded
-  without being journaled, by operation ID, until their `op.ack`.
+  The process state: the node's facts for `Request`, the monitors of
+  operation processes, the operations restarted once after a clean exit,
+  and the results forwarded without being journaled, until their `op.ack`.
   """
   @type t :: %__MODULE__{
           facts: Request.facts(),
@@ -106,22 +83,19 @@ defmodule PhotonNode.Executor do
   def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
   @doc """
-  Handles a parsed `op.start` (`PhotonCore.Operation.Wire.parse_start/1`):
-  runs a new operation once its `ready` entry is journaled, or sends the
-  latest snapshot of one the node has, resuming it if nothing runs it, or
-  answers with a `failed` snapshot (an unsupported kind, bad arguments, a
-  journal write that failed, or an operation the hub has seen and the node
-  has no record of). Returns once that is done; an executor that dies
-  first makes it exit.
+  Handles a parsed `op.start` (`PhotonCore.Operation.Wire.parse_start/1`)
+  as `Rules.on_start/3` decides, or answers it with a `failed` snapshot (an
+  unsupported kind, bad arguments, a failed journal write). Returns once
+  that is done; exits if the executor dies first.
   """
   @spec start(Request.start()) :: :ok
   def start(start), do: GenServer.call(__MODULE__, {:start, start}, :infinity)
 
   @doc """
-  Handles `op.cancel`: journals the cancel and tells the operation process.
-  An operation the node has never seen is journaled as canceled before it
-  started, and that snapshot is sent, so a later `op.start` runs nothing.
-  A finished operation is left alone.
+  Handles `op.cancel` (node rule 7): journals the cancel and tells the
+  operation process. One the node has never seen is journaled as canceled
+  and that snapshot sent, so a later `op.start` runs nothing. A finished
+  operation is left alone.
   """
   @spec cancel(String.t()) :: :ok
   def cancel(id), do: GenServer.call(__MODULE__, {:cancel, id}, :infinity)
@@ -364,9 +338,8 @@ defmodule PhotonNode.Executor do
 
   ## Operation processes
 
-  # Starts an operation from its entry, or asks the process that runs it
-  # to resend its snapshot (`Ops.add/2` does whichever applies), monitors
-  # it, and tells it to cancel when `cancel?` (node rule 2).
+  # `Ops.add/2` starts the operation or has its process resend; then it is
+  # monitored, and told to cancel when `cancel?` (node rule 2).
   defp revive(state, %{"op" => op} = entry, cancel?) do
     case Ops.add(op, @owner) do
       {:ok, pid} ->
@@ -456,8 +429,7 @@ defmodule PhotonNode.Executor do
     |> Enum.map(fn {_id, op} -> op end)
   end
 
-  # Node rule 9: fitted to the frame budget, then journaled. Returns the
-  # write's result and the fitted snapshot.
+  # Node rule 9: fitted to the frame budget, then journaled.
   defp journal(state, op, cancel) do
     op = Request.fit(op, Request.snapshot_budget())
     {Journal.write(ops_dir(state), op["id"], entry(op, cancel)), op}
@@ -476,10 +448,7 @@ defmodule PhotonNode.Executor do
     end
   end
 
-  # Node rule 8: a result the journal couldn't take is held until its
-  # `op.ack` (see `read/2`), and a `ready` entry it leaves behind is
-  # removed, so neither this process nor a restarted one starts the
-  # operation after the hub was told how it ended.
+  # Node rule 8: see the moduledoc and `read/2`.
   defp hold(state, %{"id" => id} = op) do
     if Operation.terminal?(op) do
       :ok = remove_runnable(state, id)
@@ -503,7 +472,6 @@ defmodule PhotonNode.Executor do
 
   defp entry(op, cancel), do: %{"op" => op, "cancel" => cancel}
 
-  # Sends a snapshot to the hub.
   defp answer(state, op) do
     :ok = Link.snapshot(op)
     state

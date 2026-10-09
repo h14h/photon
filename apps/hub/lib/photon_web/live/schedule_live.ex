@@ -3,41 +3,30 @@ defmodule PhotonWeb.ScheduleLive do
   A project's schedule: `:new` at `/projects/:slug/schedules/new` makes one,
   `:edit` at `/projects/:slug/schedules/:id` shows and edits one.
 
-  The form (`#schedule-form`) is a plain map with string keys, as
-  `Photon.Schedules.new_params/1` and `edit_params/1` give it: the
-  prompt, the first time (the hidden UTC field behind
-  `local_datetime_input/1`, which the browser fills from the owner's local
-  time), Once or Every with the interval, and the thread (a new one each
-  time, or one of the project's by last activity). `?thread=<id>` on
-  `:new` picks that thread. Saving hands it to `Photon.Schedules`, which
-  checks it; its errors show under their fields, and a saved schedule
-  returns to the project page. The form asks before the owner leaves it
-  with unsaved changes (`PhotonWeb.EditorComponents.guarded_form/1`).
+  The form is a plain map with string keys, as
+  `Photon.Schedules.new_params/1` and `edit_params/1` give it. The first
+  time is a hidden UTC field behind `local_datetime_input/1`, which the
+  browser fills from the owner's local time. `?thread=<id>` on `:new`
+  picks that thread. The form asks before the owner leaves it with
+  unsaved changes (`PhotonWeb.EditorComponents.guarded_form/1`).
 
-  `:edit` also shows when the schedule runs next and what its last run
-  did (`#schedule-next`, `#schedule-last`), with Run now and Delete. The
-  form carries the version it loaded in a hidden field and saves with
+  `:edit` carries the version it loaded in a hidden field and saves with
   `Schedules.update/3`, so a save over an edit made in another tab is
-  refused (`:stale`) and shows `#schedule-stale`, keeping what was typed,
-  with `Load the saved version` and `Keep my text` (takes the stored
-  version's number, so the next save writes over it), as the skill
-  editor does.
+  refused (`:stale`) and shows `#schedule-stale`, keeping what was typed;
+  `Keep my text` takes the stored version's number, so the next save
+  writes over it.
 
-  On `:edit` the page follows `Schedules.subscribe/0`. A firing, a Run now
-  and a failure announce `{:schedules_changed, project_id}` as edits do,
+  On `:edit` the page follows `Schedules.subscribe/0`. Firings, Run now
+  and failures announce `{:schedules_changed, project_id}` as edits do,
   and a five-minute schedule fires every five minutes, so the handler
-  never touches the form: it re-reads the schedule and refreshes only the
-  next and last run, and shows `#schedule-stale` when the version moved.
-  A schedule deleted elsewhere sends the page back to the project.
-
-  `{:projects_changed, id}` for the project (through `PhotonWeb.Shell`)
-  re-reads the project and its threads, so a new or renamed thread shows
-  in the thread list and the last run's line. Everything else the shell
-  passes on is ignored.
+  never touches the form: it refreshes only the next and last run, and
+  shows `#schedule-stale` when the version moved. A schedule deleted
+  elsewhere sends the page back to the project. `{:projects_changed, id}`
+  (through `PhotonWeb.Shell`) re-reads the project and its threads.
+  Everything else the shell passes on is ignored.
 
   An unknown project or schedule, or a schedule under another project's
-  slug (or one of Blip's), goes back to `/` with a flash, as the thread
-  and file pages do.
+  slug (or one of Blip's), goes back to `/` with a flash.
   """
 
   use PhotonWeb, :live_view

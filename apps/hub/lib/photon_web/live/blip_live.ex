@@ -1,83 +1,52 @@
 defmodule PhotonWeb.BlipLive do
   @moduledoc """
-  Blip, floating over every page: the one Blip on screen, and the
-  conversation with it. `PhotonWeb.Layouts.app/1` renders it once, sticky,
-  so Blip, its panel and the conversation stay put while the page under it
-  changes.
+  Blip, floating over every page, and the conversation with it.
+  `PhotonWeb.Layouts.app/1` renders it once, sticky, so it stays put
+  while the page under it changes. Only the dock, panel, bubbles, unread
+  count, empty state and mood are Blip's own: the conversation is
+  rendered by `PhotonWeb.ConversationComponents` and folded by
+  `PhotonWeb.ConversationView`, as on a thread page (Blip's IDs have no
+  prefix, and its images load from
+  `PhotonWeb.ConversationImageController`'s Blip route).
 
-  Blip rests in the bottom-right corner, its face showing its mood. Click
-  it (or press Ctrl/⌘+J) and it opens into the chat panel, moving into the
-  panel's header. The panel floats in the corner, pins to the right as a
-  column, or fills the window (`@panel`). Esc or a click outside closes a
-  floating panel; a pinned one stays. The `.BlipDock` hook makes each
-  change at once in the browser, animated where the browser can, and then
-  tells the server.
+  Blip opens into the chat panel on a click or Ctrl/⌘+J. The panel
+  floats, pins to the right, or fills the window (`@panel`); Esc or a
+  click outside closes a floating one. The `.BlipDock` hook makes each
+  change in the browser at once, then tells the server.
 
-  While the panel is closed, Blip speaks up about its answers and failures
-  in the conversation (`Photon.Assistant.Notice`), in a speech bubble above
-  it holding the whole first paragraph (`@bubbles`, newest first). A new
-  bubble pushes the one before it up and out, except a thread's question
-  for the owner, which stays until it is dismissed or read, so what Blip
-  says after passing it on doesn't hide it. Each can be dismissed (×, or
-  Esc for all), and goes by itself once there's been time to read it. Blip
-  counts what's unread until the panel opens.
+  While the panel is closed, Blip speaks up about its answers and
+  failures (`Photon.Assistant.Notice`) in speech bubbles (`@bubbles`,
+  newest first) and counts what's unread. A new bubble pushes the one
+  before it out, except a thread's question for the owner, which stays
+  until dismissed or read, so what Blip says after passing it on doesn't
+  hide it.
 
-  It knows which page is under it: the `.BlipDock` hook reports each path
-  the browser shows (`page`), again after a reconnect (a fresh mount starts
-  with no page), and on a page inside a project (the project,
-  a context file, a new thread, a thread) `Photon.Assistant.page_at/1`
-  gives the page (`@page`). The message box shows it as a chip, "About
-  Garden / Fix the pump"; its × leaves it out (`@page_dismissed`, until
-  the next page). When that project changes (`{:projects_changed, id}`,
-  through `PhotonWeb.Shell`: a new name, or a thread's new title), the
-  page is read again from its path (`@page_path`), so the chip keeps up. A message sent with the chip goes with the page, and
-  the model sees a note of it in front of the message.
+  The hook reports each path the browser shows (`page`), again after a
+  reconnect. On a page inside a project, `Photon.Assistant.page_at/1`
+  gives `@page`, shown as a chip in the message box ("About Garden / Fix
+  the pump"; its × leaves it out until the next page) and sent with the
+  message, so the model sees a note of it. On `{:projects_changed, id}`
+  (through `PhotonWeb.Shell`) the page is read again from `@page_path`
+  and the named threads' titles are read again, so chips, cards and
+  bubbles keep up.
 
-  A thread's question with the owner shows in the conversation as a card
-  (`PhotonWeb.ConversationComponents.question_card/1`). Its `Answer` puts
-  a reply chip on the message box in place of the page chip (`@reply`,
-  "Answering Fix the pump", × to drop it): what is sent with it goes to
-  `Photon.Assistant.answer/2`, straight to the thread, instead of to
-  Blip. A refused answer (already answered elsewhere, say) shows its
-  reason above the box (`@reply_error`) and gives back what was typed.
-  The chip goes when its question is answered or withdrawn. Where each
-  question stands is `@questions`, which `PhotonWeb.ConversationView`
-  folds from the conversation, the answers still queued included, so a
-  card stops offering `Answer` as soon as the answer is sent, even while
-  Blip is busy. On mount, the rows of the questions that fold as open
-  close any that were settled where the conversation doesn't show it. Only a question that is open on the page takes a reply:
-  the ID comes from the browser.
+  A question card's `Answer` puts a reply chip in place of the page chip
+  (`@reply`): what is sent with it goes straight to the thread through
+  `Photon.Assistant.answer/2`, not to Blip. A refused answer shows its
+  reason (`@reply_error`) and gives back what was typed. `@questions`
+  counts the answers still queued, so a card stops offering `Answer` as
+  soon as one is sent, even while Blip is busy; on mount, the rows of the
+  questions that fold as open close any settled where the conversation
+  doesn't show it. Only a question open on the page takes a reply: the
+  ID comes from the browser.
 
-  Threads show under their current titles: the panel reads the titles of
-  the threads the conversation names when it mounts, when new entries
-  name others, and again on every `{:projects_changed, _}` (a thread
-  named after its first run, or renamed), and the lines, cards, chips
-  and bubbles that name a thread re-render with its new title
-  (`@titles`, see `PhotonWeb.ConversationView`).
+  For a quiet digest, Blip's `[nothing to tell]` answer and the answers
+  its run made on the way draw nothing (`@hidden`, from
+  `Photon.Transcript.untold_run/2`), so only the digest's line is left.
 
-  A digest or daily review (ambient mode) shows as one collapsed line
-  that opens to its items, and Blip's `[nothing to tell]` answer to one
-  draws nothing (`hide_untold`), and nor do the answers that run made on
-  the way (`@hidden`, from `Photon.Transcript.untold_run/2`, re-rendered
-  when the run's last answer comes), so a quiet digest leaves only its
-  line.
-
-  The conversation is shared with a project's thread page.
-  `PhotonWeb.ConversationComponents` renders it: the entries, each tool
-  call inside the answer that made it, a running call's output tail, the
-  images calls returned, the in-flight answer and the composer. Blip's use
-  no ID prefix, and its images load from
-  `PhotonWeb.ConversationImageController`'s Blip route.
-  `PhotonWeb.ConversationView` folds the conversation's commits and live
-  events into this page's assigns. Only the dock, panel, bubbles, unread
-  count, empty state and mood are Blip's own.
-
-  What the conversation shows, how live events fold into the in-flight
-  answer and the running calls' output, and Blip's mood are
-  `Photon.Transcript`. The mood comes from what is happening
-  now, except for an outcome (a finish or a failure), which is held for a
-  moment so it can be seen: `@outcome`, cleared by a `{:blip_rest, ref}`
-  timer.
+  The mood comes from `Photon.Transcript`, except that an outcome (a
+  finish or a failure) is held for a moment so it can be seen:
+  `@outcome`, cleared by a `{:blip_rest, ref}` timer.
   """
 
   use PhotonWeb, :live_view
@@ -348,11 +317,9 @@ defmodule PhotonWeb.BlipLive do
     assign(socket, outcome: outcome, outcome_ref: ref)
   end
 
-  # Closed, Blip says the latest thing in a bubble, pushing the one before it
-  # up and out, and counts them all. A thread's question stays, whatever
-  # Blip says after it, until it is dismissed or its time runs out; each
-  # question gets its own bubble. Open, the conversation shows its own
-  # answers, failures and questions, so there's nothing more to say.
+  # Closed, Blip says the latest thing in a bubble and counts them all; a
+  # thread's question keeps its own bubble until dismissed or timed out.
+  # Open, the conversation already shows it all.
   defp notify(%{assigns: %{panel: "closed"}} = socket, [_ | _] = notices) do
     said = notices |> said() |> Enum.map(&as_bubble/1) |> Enum.reverse()
 
@@ -809,8 +776,7 @@ defmodule PhotonWeb.BlipLive do
   attr :titles, :map, required: true
 
   # Blip saying something, in a speech bubble above it: the whole first
-  # paragraph. Clicking it opens the chat. The × dismisses it. The tail
-  # points down at Blip.
+  # paragraph.
   defp bubble(assigns) do
     ~H"""
     <div

@@ -5,12 +5,9 @@ defmodule Photon.Skills.MockPhrases do
   (`Photon.Threads.MockScript`) share:
 
     * `skills` (or `list skills`) says which skills the request's system
-      prompt lists, with their versions, without a tool call, so tests and a
-      hub on the scripted model can see what the prompt listed: the agent's
-      own, then, when the prompt lists any, each machine's
+      prompt lists, with their versions, without a tool call, so tests and
+      a hub on the scripted model can see what the prompt listed
     * `load skill <name>` calls `load_skill` with `name`
-
-  After a `load_skill` result, the scripts' usual relay prints it.
   """
 
   # Functional core: no processes, no I/O.

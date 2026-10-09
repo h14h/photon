@@ -1,14 +1,10 @@
 defmodule PhotonNode.Connection do
   @moduledoc """
-  The node's websocket link to the hub, as a Phoenix Channels client.
-
-  Reconnects and rejoins with backoff. It carries the operation protocol
-  (see `PhotonNode`): the hub's `op.start`, `op.cancel` and `op.ack` are
-  parsed with `PhotonCore.Operation.Wire` and handed to
-  `PhotonNode.Executor`, and `snapshot/1` and `output/3` implement
-  `PhotonNode.Executor.Link`, sending `op.snapshot` and `op.output`. After
-  every (re)join it pushes every journaled snapshot
-  (`PhotonNode.Executor.snapshots/0`).
+  The node's websocket link to the hub, a Phoenix Channels client that
+  reconnects and rejoins with backoff. It hands the hub's messages, parsed
+  with `PhotonCore.Operation.Wire`, to `PhotonNode.Executor`, implements
+  `PhotonNode.Executor.Link`, and after every (re)join pushes every
+  journaled snapshot (`PhotonNode.Executor.snapshots/0`).
 
   It doesn't catch failures from the executor (node rule 8 in
   `docs/operations.md`): a call that fails crashes this process, the socket
@@ -16,17 +12,14 @@ defmodule PhotonNode.Connection do
   parse is logged and ignored, as are unknown events.
 
   The link callbacks are plain sends to this process, and what arrives
-  while the channel isn't joined is dropped, on purpose. A lost snapshot is
-  in the executor's journal, which every join sends again. Output is never
-  stored, so losing some only thins a stream. Their producers are bounded:
-  one snapshot per checkpoint, and shell output sampled once a second in
-  chunks of at most 64 KB per stream. A faster producer would need back
-  pressure here, since this process pushes everything it is sent.
+  while the channel isn't joined is dropped, on purpose (see
+  `PhotonNode.Executor.Link`). This process pushes everything it is sent,
+  with no back pressure, so its producers must stay bounded: one snapshot
+  per checkpoint, and shell output sampled once a second in chunks of at
+  most 64 KB per stream.
   """
 
-  # The hub link depends on the executor (it hands it the hub's
-  # operations); the executor reaches it only through
-  # `PhotonNode.Executor.Link`.
+  # The executor reaches this module only through `PhotonNode.Executor.Link`.
   use Boundary, deps: [PhotonNode, PhotonNode.Config, PhotonNode.Executor, PhotonCore]
 
   use Slipstream, restart: :permanent

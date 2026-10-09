@@ -7,10 +7,7 @@ defmodule PhotonCore.LLM.Mock do
   assistant message (see `PhotonCore.Message`), or `{:error, message}`. The
   answer is streamed back word by word like a real one, then its tool calls.
   Usage is estimated at four bytes per token. A script's error comes back as
-  a non-retryable HTTP 500.
-
-  This is the provider adapter `PhotonCore.LLM` uses for `"mock"`; the
-  helpers below are for writing scripts.
+  a non-retryable HTTP 500. The helpers below are for writing scripts.
   """
 
   # Top-level, so the hub's scripted models depend on it and not on the client.

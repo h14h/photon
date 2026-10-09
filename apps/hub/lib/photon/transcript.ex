@@ -4,53 +4,16 @@ defmodule Photon.Transcript do
   conversation's entries and its `{:live, ...}` events. Blip's panel
   (`PhotonWeb.BlipLive`) drives them, and so does a thread's page.
 
-    * which entries are shown (`shown?/1`), and what the user typed in a
-      message (`typed/2`), without the note of the page Blip was told
-      about or the note in front of an answer to a thread's question, and
-      nothing for a thread's signal; tool results aren't shown on
-      their own but inside the assistant entry whose call they answer, so
-      the page keeps an index of results by call ID and of calls by ID
-      (`index/1`, `add_result/2`, `add_calls/2`). The index leaves image
-      data out: the page loads each image by its result's entry ID
-      (`image/2`), so the page's state and its renders stay small
-    * the in-flight answer (`live/2`): text, reasoning, web searches and
-      tool calls being prepared, or a retry notice, until the response is
-      committed
-    * the output of calls still running (`tool_output/2`): the last 8,000
-      characters of each, kept apart from the in-flight answer, since a
-      call runs after the answer that made it is committed; a stopped
-      call keeps it after its result lands (`settle_output/3`)
-    * the web searches an answer ran (`searches/1`), and how each reads
-      (`search_label/1`)
-    * a tool call's status as the page shows it (`action_status/2`), and
-      how a machine call's line reads (`machine_action/4`)
-    * Blip's mood (`mood/1`), and the outcome a batch of new entries is
-      worth showing for a moment (`outcome/3`)
-    * in Blip's panel: a signal message's lines (`signal_lines/1`), which
-      entries show as a question's card (`question_card/1` for an ok
-      `ask_owner` result, `escalation/1` for the hub's notice), and where
-      each question put to the owner stands (`questions/3`), folded from
-      the entries and the answers still queued in Blip's inbox
-    * which threads an entry or a queued message names (`thread_ids/1`),
-      and the title a page shows for one (`title/3`): its current title,
-      which the page reads by ID and keeps up to date, else the title the
-      entry recorded when it was written (a thread's first title is the
-      start of its first message until its run ends and it is named), so
-      a renamed or newly named thread reads the same everywhere; a
-      notice's words with the thread's current title (`notice_text/2`)
-    * whether Blip's answer is `[nothing to tell]` (`nothing_to_tell?/1`),
-      its reply to a digest or daily review with nothing worth the
-      owner's attention, which makes no bubble and no activity row, and
-      whether an entry is such an answer, which Blip's panel draws as
-      nothing (`untold?/1`), along with what that run said on the way
-      (`untold_run/2`)
-    * a digest or daily review in Blip's panel (ambient mode): the ref a
-      signal message carries (`ambient_ref/1`), its collapsed line
-      (`ambient_heading/1`), the lines it opens to (`ambient_lines/3`,
-      each thread under its current title), how many more it carried
-      (`ambient_more/1`), and its chip while it waits in Blip's inbox
-      (`ambient_chip/1`). A digest's and a review's items name their
-      threads for `thread_ids/1` like any signal's
+  Tool results aren't shown on their own but inside the assistant entry
+  whose call they answer, so the page keeps an index of results by call ID
+  and of calls by ID (`index/1`). The index leaves image data out: the
+  page loads each image by its result's entry ID (`image/2`), so the
+  page's state and its renders stay small.
+
+  A thread is shown under its current title, which the page reads by ID
+  (`thread_ids/1`) and keeps up to date, else the title the entry recorded
+  when it was written (`title/3`), so a renamed or newly named thread
+  reads the same everywhere.
   """
 
   # Functional core: no processes, no I/O.
@@ -191,17 +154,15 @@ defmodule Photon.Transcript do
   What else Blip's panel hides in a batch of entries that follows the
   batches `state` has seen: when a digest's or daily review's run that
   nobody else wrote into ends `[nothing to tell]` (`untold?/1`), the
-  answers it made on the way (their text and tool calls, with the
-  results drawn inside them). The owner wasn't told anything, so the
-  panel leaves only the digest's own line, as Blip's later requests
-  leave the whole run out. Returns those answers' IDs, which may be
-  from earlier batches, and the state for the next batch.
+  answers it made on the way, so the panel leaves only the digest's own
+  line. Returns those answers' IDs, which may be from earlier batches,
+  and the state for the next batch.
   """
   @spec untold_run([Entry.t() | map()], untold_state()) :: {[String.t()], untold_state()}
   def untold_run(entries, state), do: Enum.flat_map_reduce(entries, state, &untold_step/2)
 
-  # A user entry starts the next run, or joins the one in progress (an
-  # owner's steer), which is then no longer the digest's alone.
+  # A steer joins the run in progress, which is then no longer the
+  # digest's alone.
   defp untold_step(%{kind: "user", data: data}, %{ended?: true}),
     do: {[], %{ambient?: ambient_ref(data["source"]) != nil, ids: [], ended?: false}}
 
@@ -215,7 +176,6 @@ defmodule Photon.Transcript do
     end
   end
 
-  # A notice comes between a run's entries; any other error ends the run.
   defp untold_step(%{kind: "error"} = entry, state) do
     if RunBoundary.ends?(entry), do: {[], %{state | ids: [], ended?: true}}, else: {[], state}
   end
@@ -228,16 +188,11 @@ defmodule Photon.Transcript do
 
   @doc """
   A user message's text as the user typed it, from the message (or its
-  content) and the `"source"` it was submitted with:
-
-    * a message sent with a page (`source["page"]`) starts with a note of
-      that page for the model, so only its last text part was typed
-    * the owner's answer to a thread's question (source kind `"answer"`)
-      starts with a note that it went to the thread, so only its last
-      text part was typed
-    * a signal from a thread (source kind `"signal"`) is nothing the owner
-      typed
-    * any other message's text is all of it
+  content) and the `"source"` it was submitted with. A message sent with
+  a page (`source["page"]`) or the owner's answer to a question (source
+  kind `"answer"`) starts with a note for the model, so only its last
+  text part was typed; a signal (source kind `"signal"`) is nothing the
+  owner typed.
   """
   @spec typed(Message.t() | Message.content(), map() | nil) :: String.t()
   def typed(%{"content" => content}, source), do: typed(content, source)
@@ -431,7 +386,7 @@ defmodule Photon.Transcript do
 
   def ambient_more(_ref), do: nil
 
-  # New and smaller changes, the listed items and the ones past the cut.
+  # {new, smaller} changes, the listed items and the ones past the cut.
   defp digest_counts(ref) do
     items = if is_list(ref["items"]), do: ref["items"], else: []
     new = Enum.count(items, &match?(%{"new" => true}, &1))
@@ -449,13 +404,10 @@ defmodule Photon.Transcript do
 
   @doc """
   The lines an opened digest or daily review shows, one per item it
-  lists, in order (see `t:ambient_line/0`). Each thread is named by its
-  current title in `titles`, else the title the digest recorded
-  (`title/3`), so one written before the thread was named reads with its
-  name. `at` is when the message was posted: a review's lines say how
-  long each thread had sat as of then ("stopped 4 days ago"), or just
-  its state without it. Items that aren't maps, and any other ref, give
-  none.
+  lists, in order, each thread under `title/3`. `at` is when the message
+  was posted: a review's lines say how long each thread had sat as of
+  then ("stopped 4 days ago"), or just its state without it. Items that
+  aren't maps, and any other ref, give none.
   """
   @spec ambient_lines(term(), titles(), DateTime.t() | nil) :: [ambient_line()]
   def ambient_lines(ref, titles, at \\ nil)
@@ -489,9 +441,7 @@ defmodule Photon.Transcript do
     })
   end
 
-  # What a digest item's line says, past its kind and project: its subject,
-  # where it links and what happened, and a lead before the subject (or no
-  # project in front, when the subject is the project).
+  # A digest item's line past its kind and project.
   defp digest_line("finished", %{"new" => true} = item, titles),
     do: thread_line(item, titles, "finished")
 
@@ -546,7 +496,6 @@ defmodule Photon.Transcript do
       words: words
     }
 
-  # Who wrote a file: the owner, a thread by its current title, or nobody named.
   defp writer(%{"writer" => "user"}, _titles), do: " by you"
 
   defp writer(%{"writer" => writer} = item, titles) when is_binary(writer) do
@@ -573,8 +522,6 @@ defmodule Photon.Transcript do
   defp link(kind, slug, id) when is_binary(slug) and is_binary(id), do: {kind, slug, id}
   defp link(_kind, _slug, _id), do: nil
 
-  # A review's words: the thread's state, and how long it had sat when the
-  # review was posted.
   defp review_words("failed", since, at), do: "failed" <> ago(since, at)
   defp review_words("waiting", since, at), do: "waiting on you" <> sat_for(since, at)
   defp review_words(_quiet, since, at), do: "stopped" <> ago(since, at)
@@ -652,18 +599,12 @@ defmodule Photon.Transcript do
   @doc """
   The questions Blip's conversation has put to the owner, by ID, folded
   from its entries and the submissions still queued in its inbox, on top
-  of `known` (what an earlier fold gave):
-
-    * an ok `ask_owner` result, or the hub's escalation notice, opens one
-      (`:open`), with the thread's title
-    * the owner's answer (a user entry with source kind `"answer"`), an
-      ok `answer_question` result, or a queued `"answer"` submission
-      answers it (`:answered`, with the answer when it is known)
-    * a withdraw notice withdraws it (`:withdrawn`)
-
-  A queued answer counts because the answer has already gone to the
-  thread; its entry only comes when Blip's inbox gets to it. Answered and
-  withdrawn are final: nothing later reopens or changes them.
+  of `known` (what an earlier fold gave). An ok `ask_owner` result or the
+  hub's escalation notice opens one; the owner's answer, an ok
+  `answer_question` result, or a queued `"answer"` submission (already
+  gone to the thread) answers it; a withdraw notice withdraws it.
+  Answered and withdrawn are final: nothing later reopens or changes
+  them.
   """
   @spec questions([Entry.t()], [map()], %{String.t() => question()}) :: %{
           String.t() => question()
@@ -754,8 +695,7 @@ defmodule Photon.Transcript do
   defp text_or_nil(text) when is_binary(text) and text != "", do: text
   defp text_or_nil(_text), do: nil
 
-  # What one entry says about question `id`: where it stands afterwards,
-  # and its thread from `place` (a map with `"thread_id"` and `"title"`).
+  # `place` is a map with `"thread_id"` and `"title"`.
   defp event(id, status, place, answer),
     do:
       {id,
@@ -913,11 +853,10 @@ defmodule Photon.Transcript do
   def tool_output(outputs, _event), do: outputs
 
   @doc """
-  The running calls' output once call `call_id` has its result (the
-  result entry's data, as `add_result/2` keeps it): a call the user
-  stopped keeps what it printed before the stop, since its result says
-  only that it was stopped; any other call's output goes, as its result
-  holds it.
+  The running calls' output once call `call_id` has its result (as
+  `add_result/2` keeps it): a call the user stopped keeps what it printed,
+  since its result says only that it was stopped; any other call's output
+  goes, as its result holds it.
   """
   @spec settle_output(outputs(), String.t() | nil, map() | nil) :: outputs()
   def settle_output(outputs, call_id, result) do
@@ -991,12 +930,10 @@ defmodule Photon.Transcript do
 
   @doc """
   How a `shell` or `view_image` call's line reads, given its arguments, its
-  result's details and its status (`action_status/2`): the verb, in the
-  present while the call runs ("Running", "Looking at"), in the past once
-  it has ended ("Ran", "Looked at"), or saying it was stopped ("Stopped",
-  "Stopped looking at"), the command or path, and the machine. The machine is always named, `local` too: from the arguments,
-  or the result's details if the arguments have none (nil only when
-  neither does).
+  result's details and its status (`action_status/2`): the verb for the
+  status ("Running", "Ran", "Stopped"), the command or path, and the
+  machine, always named (`local` too): from the arguments, else the
+  result's details, nil only when neither has one.
   """
   @spec machine_action(String.t(), map(), map(), :pending | :done | :error | :stopped) ::
           %{verb: String.t(), subject: term(), machine: String.t() | nil}

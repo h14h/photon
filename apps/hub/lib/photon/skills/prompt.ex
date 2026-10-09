@@ -5,35 +5,23 @@ defmodule Photon.Skills.Prompt do
   name, description and parameters, which Blip's `load_skill` and a thread's
   share.
 
-  `section/1` lists the enabled skills' names, IDs, versions and
-  descriptions, and says what to do when a skill loaded earlier is no
-  longer listed, or is listed with another ID or version. The ID tells
-  apart two skills that had the same name in turn: one deleted and
-  another written or installed under its name starts again at version 1.
-  With no skills it is nil, so a prompt without enabled skills has no
-  trace of the feature. It changes only when a skill
-  is turned on or off, renamed, re-described or saved, so prompt caches
-  stay warm between those.
+  The section lists each skill's ID and version beside its name, so an
+  agent can tell when a skill it loaded earlier changed or went: one
+  deleted and another written or installed under its name starts again at
+  version 1. It changes only when a skill is turned on or off, renamed,
+  re-described or saved, or a machine's skills change or a machine with
+  skills is installed or removed (never as machines connect), so prompt
+  caches stay warm between those.
 
-  `loaded/1` wraps the instructions in a `<skill>` element that names the
-  ID and version, and, for a skill installed without some of its files, adds a
-  line naming them and telling the agent not to look for them: they are on
-  no machine, and a file of the same name in a project's folder is
-  something else.
+  A loaded skill installed without some of its files says not to look for
+  them: they are on no machine, and a file of the same name in a project's
+  folder is something else.
 
-  A skill turned on for a machine is offered to every agent, beside its own
-  set (`t:offered/0`). `section/1` lists those after the agent's own, each
-  under its machine in a `<machine_skills>` block, and says to load them
-  before starting work on that machine and to follow them only there,
-  including a skill loaded earlier from the agent's own set that is now
-  listed only under a machine (turned off for the agent's own set, left on
-  for the machine). That part changes only when a machine's skills change or
-  a machine with skills is installed or removed, never as machines connect.
-  `loaded/2` names the machines a skill is on for and says to follow it when
-  working there, and `not_loaded/3` lists the machines' skills too. With no
-  machines, `section/1`, `loaded/2` and `not_loaded/3` give exactly the text
-  they gave before machines had skills, so a hub with none sends agents the
-  same prompts and results.
+  Machine skills (`t:offered/0`) are listed after the agent's own, each
+  under its machine, to be loaded before work on that machine and followed
+  only there. With no machine skills, `section/1`, `loaded/2` and
+  `not_loaded/3` give exactly the text they gave before machines had
+  skills, so a hub with none sends agents the same prompts and results.
   """
 
   # Functional core: no processes, no I/O.
@@ -79,11 +67,9 @@ defmodule Photon.Skills.Prompt do
         }
 
   @doc """
-  The Skills section of a prompt for what the agent is `offered`: its own
-  set, in the order to list them, then each machine's, under its name.
-  Nil when both are empty. With no machine skills it is the text of the
-  agent's own set alone, so a hub with none sends the prompt it did
-  before machines had skills.
+  The Skills section of a prompt for what the agent is `offered`. Nil when
+  both are empty, so a prompt without enabled skills has no trace of the
+  feature.
   """
   @spec section(offered()) :: String.t() | nil
   def section(%{own: [], machines: []}), do: nil
@@ -93,14 +79,11 @@ defmodule Photon.Skills.Prompt do
     |> Enum.join("\n\n")
   end
 
-  # The agent's own skills, or nothing when it has none.
   defp own_part([]), do: []
 
   defp own_part(skills),
     do: ["<available_skills>\n#{Enum.map_join(skills, "\n", &skill_line/1)}\n</available_skills>"]
 
-  # Each machine's skills under its name, after a paragraph saying when
-  # to load them, or nothing when no machine has any.
   defp machine_part([]), do: []
 
   defp machine_part(machines) do
@@ -130,20 +113,14 @@ defmodule Photon.Skills.Prompt do
     |> String.replace("'", "&#39;")
   end
 
-  @doc """
-  A loaded skill, as `load_skill` returns it: the instructions inside a
-  `<skill>` element naming the skill, its ID and its version, then, when install
-  left files out, the line that names them. The same as `loaded(skill, [])`.
-  """
+  @doc "A loaded skill, as `load_skill` returns it: `loaded(skill, [])`."
   @spec loaded(loadable()) :: String.t()
   def loaded(skill), do: loaded(skill, [])
 
   @doc """
   A loaded skill that is on for `machines` (their IDs, in the order to
-  name them) rather than in the agent's own set: the `<skill>` element
-  also names them, and a line after it says to follow the skill when
-  working on them, before the line naming files install left out, if
-  any. With no machines, `loaded/1`'s text.
+  name them) rather than in the agent's own set, with a line saying to
+  follow it when working on them.
   """
   @spec loaded(loadable(), [String.t()]) :: String.t()
   def loaded(skill, machines) do
@@ -185,19 +162,14 @@ defmodule Photon.Skills.Prompt do
       "from the instructions, and tell the user if the task needs a missing file."
   end
 
-  @doc """
-  The error when no skill called `name` is turned on here; `enabled` are
-  the names of the skills that are, by name. The same as
-  `not_loaded(name, enabled, [])`.
-  """
+  @doc "`not_loaded(name, enabled, [])`."
   @spec not_loaded(String.t(), [String.t()]) :: String.t()
   def not_loaded(name, enabled), do: not_loaded(name, enabled, [])
 
   @doc """
   The error when no skill called `name` is turned on here or for a
   machine: `own` are the names of the skills on here, and `machines` each
-  machine with skills on and their names, `{machine_id, names}`. With no
-  machines, the text `not_loaded/2` gives.
+  machine with skills on and their names.
   """
   @spec not_loaded(String.t(), [String.t()], [{String.t(), [String.t()]}]) :: String.t()
   def not_loaded(_name, [], []), do: "No skills are turned on here."

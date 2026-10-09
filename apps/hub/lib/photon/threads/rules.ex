@@ -1,12 +1,7 @@
 defmodule Photon.Threads.Rules do
   @moduledoc """
-  The rules for threads, as pure functions: a thread's titles, and how the
-  context-file tools describe files to a thread's model.
-
-  A thread starts with a title made from its first message (`title/1`).
-  After its first run, the model is asked once for a short one
-  (`title_request/2`), and what it says is taken only if it reads as a
-  title (`model_title/1`). The owner can rename a thread (`rename/1`).
+  The rules for threads, as pure functions: who started a thread, its
+  titles, and how the context-file tools describe files to a model.
 
   Files are described by who last wrote them, from the reader's point of
   view (the viewer: a thread's ID, or `"blip"` for Blip's own file tools):
@@ -74,11 +69,10 @@ defmodule Photon.Threads.Rules do
 
   @doc """
   A thread's first title, from its first message: the first line that
-  isn't blank, without Markdown's marks (a heading's `#`, a list's `-`,
-  backticks, `**`) and with its whitespace collapsed, cut to at most 50
-  characters at a word boundary and `...` added when cut. "Untitled
-  thread" when the message has no text. A schedule's message is titled
-  by its prompt, without the `[Scheduled] ` in front.
+  isn't blank, without Markdown's marks, cut to at most 50 characters at a
+  word boundary with `...` when cut. "Untitled thread" when the message
+  has no text. A schedule's message is titled by its prompt, without the
+  `[Scheduled] ` in front.
   """
   @spec title(String.t()) :: String.t()
   def title(text) do
@@ -93,9 +87,8 @@ defmodule Photon.Threads.Rules do
 
   @doc """
   The request that asks the model for a thread's title, given its first
-  message and its first answer (nil when it has none): the system prompt
-  and one user message holding the start of each. The caller adds the
-  model.
+  message and its first answer (nil when it has none). The caller adds
+  the model.
   """
   @spec title_request(String.t(), String.t() | nil) :: %{
           system: String.t(),
@@ -133,8 +126,7 @@ defmodule Photon.Threads.Rules do
   The title in a model's answer to `title_request/2`: its first line that
   isn't blank, without quotes, Markdown's marks, a "Title:" in front or
   punctuation at the end, cut to 50 characters at a word boundary.
-  `:error` when nothing is left, or it runs over 10 words, so it isn't a
-  title.
+  `:error` when nothing is left or it runs over 10 words.
   """
   @spec model_title(String.t()) :: {:ok, String.t()} | :error
   def model_title(text) do
@@ -174,8 +166,8 @@ defmodule Photon.Threads.Rules do
     |> Enum.find("", &(&1 != ""))
   end
 
-  # A line without Markdown's marks: a heading's, quote's or list item's in
-  # front, and backticks and bold or italic stars anywhere.
+  # A heading's, quote's or list item's mark in front, and backticks and
+  # bold or italic marks anywhere.
   defp unmark(line) do
     line
     |> String.replace(~r/\A(?:#+|>|[-*+]|\d+[.)])\s+/u, "")
@@ -190,8 +182,7 @@ defmodule Photon.Threads.Rules do
   @doc """
   The `list_context_files` result: one line per file, newest change first,
   like `- notes.md (1,234 characters, changed 2026-10-07 14:03 UTC by
-  you)`, as seen by `viewer` (a thread's ID, or `"blip"`). Other threads
-  are named from `titles`.
+  you)`, as seen by `viewer`.
   """
   @spec listing([file()], viewer(), titles()) :: String.t()
   def listing([], _viewer, _titles), do: "This project has no context files yet."

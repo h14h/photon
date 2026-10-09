@@ -4,18 +4,13 @@ defmodule PhotonWeb.TimeComponents do
 
   The hub keeps times in UTC and has no time zone database (Settings' time
   zone is free text for Blip's prompt), but the browser knows the owner's
-  zone. So the server renders UTC and a colocated hook converts it:
-
-    * `local_time/1` is a `<time>` with the ISO time in `datetime` and a
-      UTC fallback ("Oct 8, 14:00 UTC") as its text, which the
-      `.LocalTime` hook rewrites with `Intl.DateTimeFormat` when it mounts
-      and after every patch
-    * `local_datetime_input/1` is a `datetime-local` input the owner edits
-      in local time and the hidden field the server reads, in UTC. The
-      `.LocalDateTime` hook fills the input from `data-utc` and writes
-      every edit back into the hidden field as ISO UTC, then dispatches an
-      `input` event so the form's `phx-change` sees it. Tests set the
-      hidden field directly with `render_change/2`.
+  zone. So the server renders UTC and colocated hooks convert it:
+  `.LocalTime` rewrites `local_time/1`'s UTC fallback with
+  `Intl.DateTimeFormat` on mount and after every patch, and
+  `.LocalDateTime` writes each edit of `local_datetime_input/1` back into
+  its hidden field as ISO UTC, then dispatches an `input` event so the
+  form's `phx-change` sees it. Tests set the hidden field directly with
+  `render_change/2`.
 
   Imported in every LiveView through `PhotonWeb`'s `html_helpers`.
   """

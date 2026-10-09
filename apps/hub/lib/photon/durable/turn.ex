@@ -2,8 +2,7 @@ defmodule Photon.Durable.Turn do
   @moduledoc """
   The pure half of a generation (`Photon.Durable.Generation`): the model
   request a turn sends, what its answer leads to, and the entries, task
-  attributes, settlements and transitions that record it. The generation
-  makes the model request and commits what these functions describe.
+  attributes, settlements and transitions that record it.
 
   An answer leads to one of three outcomes (`outcome/2`):
 

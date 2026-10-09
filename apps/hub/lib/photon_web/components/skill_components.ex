@@ -1,8 +1,8 @@
 defmodule PhotonWeb.SkillComponents do
   @moduledoc """
-  What the skill pages share: `install_notes/1`, what install leaves out
-  of a skill, on the install page's preview (`PhotonWeb.SkillInstallLive`)
-  and on the skill's own page (`PhotonWeb.SkillLive`).
+  What the skill pages share: the install page's preview
+  (`PhotonWeb.SkillInstallLive`) and the skill's own page
+  (`PhotonWeb.SkillLive`).
   """
 
   use Phoenix.Component

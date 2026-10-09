@@ -4,28 +4,20 @@ defmodule Photon.Assistant.Notice do
   closed, it shows in a speech bubble above Blip: the first paragraph of an
   answer, whole, as Markdown. `PhotonWeb.BlipLive` drives these.
 
-  Blip speaks up only about its own answers and failures in the
-  conversation (`from_entries/1`), never with tips, and about a thread's
-  question once it is with the owner (`:question`): Blip's `ask_owner`
-  passing it on, in Blip's words, or the hub's notice that it passed on
-  one Blip didn't get to, in the thread's. So a question reaches the
-  owner with the panel shut. A signal message is never a notice; Blip's
-  reply to it is, as any answer is, except in a run that only handles
-  threads' questions (`Photon.Assistant.Origin`'s `quiet?`): there Blip
-  answers to the threads, so the owner hears only the questions it
-  passes on. `scan/2` follows the runs across batches for that. An
-  answer of `[nothing to tell]` (`Photon.Transcript.nothing_to_tell?/1`,
-  Blip's reply to a digest or daily review with nothing worth saying)
-  is never a notice either: silence is the point. In a run that only
-  reports on a digest or review (`Origin`'s `report_only?`), only Blip's
-  final answer can be one: what it says on the way, next to its tool
-  calls ("Let me check the pump thread."), isn't for the owner, and the
-  answer may yet be `[nothing to tell]`.
+  Blip speaks up only about its own answers and failures, never with
+  tips, and about a thread's question once it is with the owner (Blip's
+  `ask_owner`, or the hub's notice that it passed one on), so a question
+  reaches the owner with the panel shut. Never a notice:
 
-  A question's notice names its thread by the title the conversation
-  recorded, and keeps the thread's ID: `text/2` says it with the
-  thread's current title, so a bubble on screen when the thread is named
-  or renamed reads the new title.
+    * a signal message (Blip's reply to it is, as any answer is)
+    * a reply in a run that only handles threads' questions
+      (`Photon.Assistant.Origin`'s `quiet?`); `scan/2` follows runs
+      across batches for that
+    * an answer of `[nothing to tell]`
+      (`Photon.Transcript.nothing_to_tell?/1`): silence is the point
+    * in a `report_only?` run, anything but the final answer: what Blip
+      says next to its tool calls isn't for the owner, and the answer may
+      yet be `[nothing to tell]`
   """
 
   # Functional core: no processes, no I/O.
@@ -70,9 +62,8 @@ defmodule Photon.Assistant.Notice do
   def from_entries(entries), do: entries |> scan(initial()) |> elem(0)
 
   @doc """
-  `from_entries/1` for a batch that follows the batches `state` has seen:
-  what the batch is worth saying, and the state for the next batch. A
-  reply in a run that only handles threads' questions says nothing.
+  `from_entries/1` for a batch that follows the batches `state` has seen,
+  with the state for the next batch.
   """
   @spec scan([Entry.t()], state()) :: {[t()], state()}
   def scan(entries, state) do
@@ -145,8 +136,7 @@ defmodule Photon.Assistant.Notice do
   defp reply(""), do: nil
   defp reply(text), do: %{kind: :reply, text: text}
 
-  # `"Fix the pump" asks: <the question>`, the question on one line and
-  # cut to what a bubble holds.
+  # `"Fix the pump" asks: <the question>`, on one line.
   defp question(thread_id, title, text) do
     title = if is_binary(title) and title != "", do: title
     named = if title, do: ~s("#{title}"), else: "A thread"
@@ -162,10 +152,10 @@ defmodule Photon.Assistant.Notice do
   end
 
   @doc """
-  What a notice says, with its thread under its current title from
-  `titles` (thread ID to title, nil for a thread that is gone): a
-  question's notice names the thread it came from by the title it had
-  then, which may since have changed. Anything else says its text.
+  What a notice says. A question's notice recorded its thread's title at
+  the time; this names the thread by its current title from `titles`
+  (thread ID to title, nil for a thread that is gone), so a bubble on
+  screen reads a rename.
   """
   @spec text(t(), Transcript.titles()) :: String.t()
   def text(%{kind: :question, text: text, thread_id: id, title: old}, titles)

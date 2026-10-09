@@ -26,36 +26,10 @@ defmodule Photon.Durable do
 
       config :photon, Photon.Durable, profiles: %{"assistant" => Photon.Assistant}
 
-  A profile may also hook into what the harness stores: `on_settled/3` when
-  a generation settles its input, `on_tool_result/4` when a tool call's
-  result is recorded, each inside the commit that stores it (see
-  `Photon.Durable.Profile`, and why hooks must never raise).
-
-  Task kinds beyond the built-in `"generation"` and `"tool"` are registered
-  the same way, under `:kinds`.
-
-  ## Layers
-
-  Behind this API, after *Designing Elixir Systems with OTP*:
-
-    * data: the Ecto schemas `Photon.Durable.Conversation`, `Entry`, `Doc`,
-      `TaskRecord`, `Submission` and `Signal`
-    * functional core (pure): `Photon.Durable.Context` (model input),
-      `Photon.Durable.Schema` (argument checks), `Photon.Durable.Inbox`
-      (submission rules), `Photon.Durable.Policy` (the scheduler's rules),
-      `Photon.Durable.Turn` (what a generation's answer leads to),
-      `Photon.Durable.ToolCall` (what a tool call runs and records),
-      `Photon.Durable.Changes` (what a commit announces) and
-      `Photon.Durable.Queries` (the reads, as queries)
-    * boundary: this module; `Photon.Durable.Store` (the commit line) with
-      `Photon.Durable.Tx` (the writes a commit can make);
-      `Photon.Durable.Scheduler`, the server that runs tasks; and
-      `Photon.Durable.Runtime` and `Photon.Durable.ToolAPI`, what steps and
-      tools get to work with
-    * workers: one step process per running task, running a task kind
-      (`Photon.Durable.Generation`, `Photon.Durable.ToolTask`, and the
-      assistant's kinds) under `Photon.Durable.TaskSupervisor`
-    * lifecycle: `Photon.Durable.Supervisor`
+  A profile may also hook into what the harness stores (`on_settled/3`,
+  `on_tool_result/4`), inside the commit that stores it; see
+  `Photon.Durable.Profile`. Task kinds beyond the built-in `"generation"`
+  and `"tool"` are registered the same way, under `:kinds`.
   """
 
   # Callers see this API, the data it returns, and the contracts and
@@ -374,9 +348,9 @@ defmodule Photon.Durable do
   defdelegate next_input(queued), to: Inbox
 
   @doc false
-  # After a conversation's run ended without handing its inbox on (it failed
-  # or was aborted), the next queued input starts a new run, as
-  # `submit_tx/4` would have started it on an idle conversation.
+  # After a run ended without handing its inbox on (it failed or was
+  # aborted), the next queued input starts a new run, as `submit_tx/4`
+  # would on an idle conversation.
   @spec continue_inbox(Tx.t(), TaskRecord.t()) :: :ok
   def continue_inbox(tx, %TaskRecord{owner_task_id: nil, background: false} = run)
       when is_binary(run.conversation_id) do
@@ -414,9 +388,7 @@ defmodule Photon.Durable do
   end
 
   @doc false
-  # A tool call's result was appended as `entry`: calls the profile's
-  # `on_tool_result/4` inside the same commit, when it has one. Total, as
-  # settled/3 is.
+  # `on_tool_result/4` for an appended result, as settled/3 does.
   @spec tool_result(Tx.t(), TaskRecord.t(), Entry.t()) :: :ok
   def tool_result(tx, %TaskRecord{} = task, %Entry{} = entry) do
     case hook(tx, task.conversation_id, :on_tool_result, 4) do
@@ -424,8 +396,7 @@ defmodule Photon.Durable do
         :ok
 
       {profile, conversation} ->
-        # As in settled/3: the hook's writes are in the commit, and its
-        # return value is nothing the harness acts on.
+        # As in settled/3: its writes are in the commit; its result is unused.
         _ = profile.on_tool_result(conversation, task, entry, tx)
         :ok
     end

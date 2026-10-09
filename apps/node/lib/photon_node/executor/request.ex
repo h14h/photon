@@ -2,16 +2,12 @@ defmodule PhotonNode.Executor.Request do
   @moduledoc """
   Turns the hub's `op.start` into an operation this node can run, and
   builds the snapshots the executor sends for operations it won't run.
-
-  `operation/2` judges a parsed `op.start` (`PhotonCore.Operation.Wire`
-  checks only its shape) and fills in what the node knows: the shell to run
-  commands with, the ops directory (`<data_dir>/ops`, where each operation
-  keeps its journal and output files) and the workspace. `facts` carries
-  them, so this module reads nothing itself:
+  Pure: what the node knows comes in as `facts`, e.g.
 
       %{shell: "/bin/bash", ops_dir: "/data/ops", workspace: "/data/workspace"}
 
-  Arguments by kind:
+  `operation/2` judges the arguments (`PhotonCore.Operation.Wire` checks
+  only their shape):
 
     * `shell`: `command` (a string with no NUL byte, at most 100,000
       bytes), `directory` (a string or null; null is the workspace, and a
@@ -22,21 +18,12 @@ defmodule PhotonNode.Executor.Request do
       (base64 bytes, at most 5,000,000, so a snapshot carrying the image
       stays under the frame limit).
 
-  An unknown kind or a bad argument is `{:error, reason}`, and `rejected/2`
-  makes that the operation's `failed` snapshot. `lost/2`, `never_started/1`,
-  `unrecorded/2` and `unreadable/2` are the snapshots for the other
-  operations the node answers without running (node rules 3, 7 and 8 in
-  `docs/operations.md`, and a journal entry that can't be read). `failed/2`
-  is the snapshot of an operation whose process crashed or couldn't start.
-  Each carries its message in `terminal_error`; a `view_image` one also has
-  it in `result.error`, where a failed image job puts its reason.
-
-  `fit/2` keeps a snapshot's JSON under a byte budget (node rule 9).
-
-  Pure: no processes, files or clock.
+  Each snapshot built here for an operation that didn't run or failed
+  carries its message in `terminal_error`; a `view_image` one also has it
+  in `result.error`, where a failed image job puts its reason.
   """
 
-  # Functional core (see PhotonNode.Executor): no processes, no I/O.
+  # Functional core: no processes, no I/O.
   use Boundary, type: :strict, deps: [PhotonCore, Jason]
 
   alias PhotonCore.{Operation, Output}
@@ -223,7 +210,6 @@ defmodule PhotonNode.Executor.Request do
 
   defp nul?(text), do: :binary.match(text, <<0>>) != :nomatch
 
-  # `path` as an absolute path, taking a relative one from `base`.
   defp resolve(path, base) do
     if Path.type(path) == :absolute, do: path, else: Path.join(base, path)
   end
@@ -260,16 +246,15 @@ defmodule PhotonNode.Executor.Request do
   `snapshot` with its JSON encoding at most `budget` bytes (node rule 9).
 
   Output bounds count code points, and a NUL encodes as `\\u0000`, so two
-  streams of 1,000,000 code points can encode to 12 MB. A snapshot over
-  the budget has `result.out`, `result.err` and `terminal_error` cut
-  further by encoded bytes. The budget left after the rest of the snapshot
-  is shared out so the smaller fields stay whole. Each cut field keeps its
-  head and its tail around a marker with the number of bytes left out of
-  the full output and, for `out` and `err`, the path of the file that has
-  it, and its `out_truncated` or `err_truncated` flag is set. A snapshot
-  under the budget comes back unchanged. One whose other fields alone are
-  over it (it can't happen within the argument limits) comes back with
-  those three fields cut to their markers.
+  streams of 1,000,000 code points can encode to 12 MB. A snapshot under
+  the budget comes back unchanged. Over it, `result.out`, `result.err` and
+  `terminal_error` are cut further by encoded bytes, the room left shared
+  out so the smaller fields stay whole. Each cut field keeps its head and
+  tail around a marker with the number of bytes left out and, for `out`
+  and `err`, the path of the full output, and its `out_truncated` or
+  `err_truncated` flag is set. If the other fields alone are over the
+  budget (impossible within the argument limits), the three fields are cut
+  to their markers.
   """
   @spec fit(Operation.t(), pos_integer()) :: Operation.t()
   def fit(snapshot, budget) do
@@ -299,8 +284,6 @@ defmodule PhotonNode.Executor.Request do
 
   defp encoded_size(snapshot), do: snapshot |> Jason.encode!() |> byte_size()
 
-  # The text fields fit/2 may cut, with what each needs: where it sits, the
-  # file holding all of it and that file's size, and its truncated flag.
   defp cuttable(%{"state" => state} = snapshot) when is_map(state) do
     for spec <- @cuttable,
         text = get_in(snapshot, spec.keys),

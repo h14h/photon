@@ -2,27 +2,20 @@ defmodule Photon.Ambient.Text do
   @moduledoc """
   The words of ambient mode's messages to Blip.
 
-  A digest (`digest/2`) or a daily review (`review/3`) is one text part
-  of a message in Blip's conversation, which the model reads. It names
-  each project by name and each thread by title and ID, as they are when
-  the message is written. Each also has:
+  A digest or a daily review is one text part of a message in Blip's
+  conversation, which the model reads. It names each project by name and
+  each thread by title and ID, as they are when the message is written;
+  the pages draw it from its ref with the threads' current titles. Its
+  older stub is the one line Blip's later requests see in its place, and
+  carries the answer that leaves the run out of them altogether
+  (`"[nothing to tell]"`).
 
-    * a ref (`digest_ref/2`, `review_ref/2`) for the message's
-      `source["signals"]`, from which the pages draw it with the threads'
-      current titles
-    * an older stub (`digest_older/2`, `review_older/2`) for the
-      message's `source["older"]`: the one line Blip's later requests see
-      in its place, and the answer that leaves the run out of them
-      altogether (`"[nothing to tell]"`)
-
-  They take what `Photon.Ambient.Rules.digest/3` and `review/3` give, and
-  the time, all passed in. Every text is bounded: notes are cut to 280
-  characters in a digest, a review's lines to 400, a digest to 6,000
-  characters and a stub to 300. Times are UTC, since the hub
-  doesn't know the owner's time zone.
+  Every text is bounded: notes are cut to 280 characters in a digest, a
+  review's lines to 400, a digest to 6,000 characters and a stub to 300.
+  Times are UTC, since the hub doesn't know the owner's time zone.
   """
 
-  # Functional core: no processes, no I/O. The time comes in as an argument.
+  # Functional core: no processes, no I/O.
   use Boundary, type: :strict, deps: []
 
   @note_limit 280
@@ -49,10 +42,8 @@ defmodule Photon.Ambient.Text do
   @doc """
   The digest's text. Its window starts at the doc's `"last_sent_at"` (the
   last digest posted; a skipped firing doesn't move it), or, before the
-  first, at `"on_since"`, when ambient mode was turned on. The "Already
-  seen" block is left out when it is empty, and zero counts are left out
-  of the closing line. Rows that don't fit in #{@digest_limit} characters
-  are counted with the rest.
+  first, at `"on_since"`, when ambient mode was turned on. Rows that don't
+  fit in #{@digest_limit} characters are counted with the rest.
   """
   @spec digest(digest(), map()) :: String.t()
   def digest(digest, doc) do
@@ -78,7 +69,6 @@ defmodule Photon.Ambient.Text do
     |> clip(@digest_limit)
   end
 
-  # The text's lines, nested lists flattened and nils left out, trimmed.
   defp lines(parts),
     do: parts |> List.flatten() |> Enum.reject(&is_nil/1) |> Enum.join("\n") |> String.trim()
 
@@ -202,11 +192,7 @@ defmodule Photon.Ambient.Text do
     {Enum.reverse(kept), left, dropped}
   end
 
-  @doc """
-  The digest's ref for the message's `source["signals"]`: its key, one
-  item per row (the new rows with their notes and reasons), and how many
-  more of each.
-  """
+  @doc "The digest's ref for the message's `source[\"signals\"]`: one item per row."
   @spec digest_ref(digest(), String.t()) :: map()
   def digest_ref(digest, key) do
     %{
@@ -276,11 +262,8 @@ defmodule Photon.Ambient.Text do
   ## The review
 
   @doc """
-  The daily review's text: a header saying how many threads have sat
-  untouched and for how long (`quiet_after`), one line per thread shown
-  (cut to #{@line_limit} characters), and how many more. `answers` has
-  each thread's latest answer by ID, which a stopped thread's line
-  quotes.
+  The daily review's text. `answers` has each thread's latest answer by
+  ID, which a stopped thread's line quotes.
   """
   @spec review(review(), %{optional(String.t()) => String.t() | nil}, DateTime.t()) ::
           String.t()
@@ -329,11 +312,7 @@ defmodule Photon.Ambient.Text do
     end
   end
 
-  @doc """
-  The review's ref for the message's `source["signals"]`: its key, one
-  item per thread shown with its state and last touch (ISO 8601), and how
-  many more.
-  """
+  @doc "The review's ref for the message's `source[\"signals\"]`: one item per thread shown."
   @spec review_ref(review(), String.t()) :: map()
   def review_ref(review, key) do
     items =
@@ -371,8 +350,8 @@ defmodule Photon.Ambient.Text do
     )
   end
 
-  # The stub's text: `with_subjects` given as many subjects (and how many
-  # more) as fit in 300 characters, or `bare` when none does.
+  # `with_subjects` given as many subjects (and how many more) as fit, or
+  # `bare` when none does.
   defp older(with_subjects, bare, subjects, total) do
     shown = Enum.take(subjects, @older_subjects)
 
@@ -450,7 +429,6 @@ defmodule Photon.Ambient.Text do
     end
   end
 
-  # `text` cut to `limit` characters, ending "..." when it was longer.
   defp clip(text, limit) do
     if String.length(text) <= limit,
       do: text,

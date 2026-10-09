@@ -4,9 +4,8 @@ defmodule PhotonCore.ID do
   random bits, in lowercase base32hex (`0-9a-v`), 26 characters. Safe as file
   names and in URLs.
 
-  A new ID is a decision that needs the clock and randomness, so it has two
-  halves: `encode/3` is pure, and `new/1` hands it the clock and `:crypto`.
-  Code that has to be repeatable takes IDs (or `encode/3`'s inputs) as
+  `encode/3` is pure and `new/1` hands it the clock and `:crypto`, so code
+  that has to be repeatable takes IDs (or `encode/3`'s inputs) as
   arguments instead of calling `new/1`.
   """
 

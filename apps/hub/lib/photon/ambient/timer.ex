@@ -5,21 +5,16 @@ defmodule Photon.Ambient.Timer do
   reused for both jobs: a background task with no conversation sleeps
   durably until its time, fires, and waits again.
 
-  The task's input is `"job"` (`"digest"` or `"review"`), `"first_at"`
-  (Unix milliseconds) and `"every_ms"` (the digest's interval, or a day);
-  its checkpoint is `"next_at"` and how many times it has fired
-  (`"runs"`). `Photon.Ambient.configure/1` creates it (`task/2`) in the
-  commit that turns ambient mode on or changes it, and retires it in the
-  commit that turns it off or replaces it.
+  The task's input is `"job"`, `"first_at"` (Unix milliseconds) and
+  `"every_ms"` (the digest's interval, or a day); its checkpoint is
+  `"next_at"` and how many times it has fired (`"runs"`).
 
-  A firing reads whether Blip can reach its model, consent and the clock,
-  then runs `Photon.Ambient.fire_tx/3`
-  and its next wait in one `Photon.Durable.Runtime.commit/2`: a step whose
-  task was retired, or that is left over from before a Scheduler restart,
-  commits nothing. The signal's key is the task and its run count, so a
-  step that runs again can't post a second message. The next time is on
-  the timer's grid (`Photon.Ambient.Rules.next_firing/3`): a hub that was
-  down past its time fires once when it comes back, then keeps to it.
+  A firing runs `Photon.Ambient.fire_tx/3` and its next wait in one
+  `Photon.Durable.Runtime.commit/2`: a step whose task was retired, or
+  that is left over from before a Scheduler restart, commits nothing. The
+  signal's key is the task and its run count, so a step that runs again
+  can't post a second message. A hub that was down past its time fires
+  once when it comes back (`Photon.Ambient.Rules.next_firing/3`).
 
   `on_fail/3` records the failure on the doc while the task is still the
   doc's, so the pages say ambient mode stopped and why. It never retries,

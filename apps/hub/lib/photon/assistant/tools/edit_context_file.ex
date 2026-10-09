@@ -2,16 +2,9 @@ defmodule Photon.Assistant.Tools.EditContextFile do
   @moduledoc """
   Blip's `edit_context_file` tool: replaces one passage of one of a
   project's context files, which must occur in it exactly once, as written
-  by Blip (`updated_by: "blip"`).
-
-  Like `write_context_file`, the edit happens inside the commit that
-  records the call's result (`{:commit, fun}`), through
-  `Photon.Projects.edit_file_tx/6`, which reads the current content,
-  checks everything and announces the change. A refused edit changes
-  nothing.
-
-  A run that carries a thread's question, and that the owner hasn't
-  written into, can't change a project (`Photon.Assistant.may_act_tx/3`).
+  by Blip (`updated_by: "blip"`), inside the commit that records the
+  call's result (`Photon.Projects.edit_file_tx/6`). A refused edit changes
+  nothing. `Photon.Assistant.may_act_tx/3` (`:change`) may refuse it.
   """
   @behaviour Photon.Durable.Tool
 

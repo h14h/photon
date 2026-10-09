@@ -2,13 +2,9 @@ defmodule PhotonCore.LLM.Responses do
   @moduledoc """
   The OpenAI Responses API adapter, which Sign in with ChatGPT uses: one
   streamed HTTP request to `<base_url>/responses`, with the signed-in
-  user's access token.
-
-  This module is the boundary and does the I/O: it posts the body with
-  `Req`, feeds the stream to `Responses.Response` chunk by chunk as it
-  arrives, and hands each event to `on_event` in the calling process. The
-  wire format is pure and lives in `Responses.Request` and
-  `Responses.Response`; failed requests are read by `PhotonCore.LLM.HTTPError`.
+  user's access token. It does the I/O, handing each event to `on_event`
+  in the calling process as it arrives; the wire format is pure, in
+  `Responses.Request` and `Responses.Response`.
   """
 
   # The HTTP adapter. Its children, the wire format, are pure.

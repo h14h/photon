@@ -6,20 +6,18 @@ defmodule Photon.Markdown do
   link schemes are blocked by Comrak. Never enable `unsafe` or HEEx rendering
   here, since model output must not become executable HTML or LiveView bindings.
 
-  Text that is still streaming in is shown a block at a time (`settled/1`),
-  the way T3 Code does it: a paragraph, list item or code block appears
-  once it's finished, rather than word by word.
+  Text that is still streaming in is shown a block at a time (`settled/1`):
+  a paragraph, list item or code block appears once it's finished, rather
+  than word by word.
   """
 
   # Functional core: no processes, no I/O.
   use Boundary, type: :strict, deps: [MDEx]
 
-  # What ends a block (see settled/1). Fences may be indented, since a fence
-  # inside a list item is; a blank line holds only spaces and tabs; a list
+  # Fences may be indented, since a fence inside a list item is; a list
   # item needs the space after its marker, so a half-written `-` or `1.`
   # never counts; a section title is a heading or a line of only bold text,
-  # which models often use as one; an unindented heading ends the block
-  # above it even without a blank line.
+  # which models often use as one.
   @fence ~r/^( *)(`{3,}|~{3,})/
   @blank ~r/^[ \t]*$/
   @list_item ~r/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/

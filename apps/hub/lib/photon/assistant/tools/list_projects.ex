@@ -1,8 +1,6 @@
 defmodule Photon.Assistant.Tools.ListProjects do
   @moduledoc """
-  Blip's `list_projects` tool: every project, by name, with the first
-  sentence of its purpose, how many of its threads are in each state and how
-  many context files it has (`Photon.Assistant.Readout.projects/3`). It
+  Blip's `list_projects` tool (`Photon.Assistant.Readout.projects/3`). It
   changes nothing, so a rerun after a restart is safe.
   """
   @behaviour Photon.Durable.Tool
