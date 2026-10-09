@@ -52,13 +52,17 @@ defmodule Photon.DataCase do
   def await_change(conversation_id, fun, timeout \\ 5_000),
     do: await_change_by(conversation_id, fun, System.monotonic_time(:millisecond) + timeout)
 
+  # Checks the deadline before each receive, so a mailbox of commits that
+  # don't match can't keep it waiting past the deadline.
   defp await_change_by(conversation_id, fun, deadline) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+    if remaining <= 0, do: ExUnit.Assertions.flunk("no matching commit for #{conversation_id}")
+
     receive do
       {:durable, ^conversation_id, changes} ->
         if fun.(changes), do: changes, else: await_change_by(conversation_id, fun, deadline)
     after
-      max(deadline - System.monotonic_time(:millisecond), 0) ->
-        ExUnit.Assertions.flunk("no matching commit for #{conversation_id}")
+      remaining -> ExUnit.Assertions.flunk("no matching commit for #{conversation_id}")
     end
   end
 

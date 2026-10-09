@@ -4,6 +4,12 @@ import Config
 # its own data dir and database (MIX_TEST_PARTITION is 1..N).
 test_data = Path.expand("../_build/test-data#{System.get_env("MIX_TEST_PARTITION")}", __DIR__)
 
+# A partition keeps its own record of failed tests too, which
+# scripts/test-partitioned merges into the usual one.
+if System.get_env("MIX_TEST_PARTITION") do
+  config :ex_unit, failures_manifest_path: Path.join(test_data, ".mix_test_failures")
+end
+
 config :photon,
   data_dir: test_data,
   local_node: false,

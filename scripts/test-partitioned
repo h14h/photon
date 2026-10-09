@@ -5,22 +5,50 @@
 # `mix test --cover`, in about half the time for the hub.
 #
 #   scripts/test-partitioned hub
+#
+# Each partition keeps its own record of failed tests (config/test.exs);
+# they are merged into the app's, so `mix test --failed` afterwards reruns
+# the failures of every partition.
 set -eu
 app=${1:?usage: scripts/test-partitioned <app>}
 partitions=${PARTITIONS:-4}
+# Only the hub's config/test.exs gives partitions their own data dirs.
+case "$app" in
+  hub) otp_app=photon ;;
+  *) echo "scripts/test-partitioned: only the hub is set up for partitions" >&2; exit 2 ;;
+esac
 cd "$(dirname "$0")/../apps/$app"
 
 MIX_ENV=test mix compile
 rm -f cover/*.coverdata
 logs=$(mktemp -d)
+manifest=_build/test/lib/$otp_app/.mix/.mix_test_failures
+partition_manifest() { echo "_build/test-data$1/.mix_test_failures"; }
 
 i=1
 while [ "$i" -le "$partitions" ]; do
-  (MIX_TEST_PARTITION=$i mix test --partitions "$partitions" --cover >"$logs/$i.log" 2>&1 &&
-    touch "$logs/$i.ok") &
+  rm -f "$(partition_manifest "$i")"
+  (MIX_TEST_PARTITION=$i mix test --partitions "$partitions" --cover \
+    >"$logs/$i.log" 2>&1 && touch "$logs/$i.ok") &
   i=$((i + 1))
 done
 wait
+
+# Each partition started with no record, so its record is exactly its
+# failures; their union replaces the app's.
+elixir -e '
+  [target | sources] = System.argv()
+  merged =
+    for source <- sources, File.exists?(source), reduce: %{} do
+      acc ->
+        case source |> File.read!() |> :erlang.binary_to_term() do
+          {_vsn, %{} = failures} when is_map(acc) -> Map.merge(acc, failures)
+          _all -> :all
+        end
+    end
+  File.mkdir_p!(Path.dirname(target))
+  File.write!(target, :erlang.term_to_binary({1, merged}))  # the format of ExUnit.FailuresManifest
+' "$manifest" $(i=1; while [ "$i" -le "$partitions" ]; do partition_manifest "$i"; i=$((i + 1)); done)
 
 failed=0
 i=1
