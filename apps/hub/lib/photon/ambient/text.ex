@@ -1,7 +1,6 @@
 defmodule Photon.Ambient.Text do
   @moduledoc """
-  The words of ambient mode's messages to Blip (sections 3.4 and 4.4 of
-  `docs/plans/step-5-ambient-mode.md`).
+  The words of ambient mode's messages to Blip.
 
   A digest (`digest/2`) or a daily review (`review/3`) is one text part
   of a message in Blip's conversation, which the model reads. It names

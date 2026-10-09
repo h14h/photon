@@ -1,11 +1,10 @@
 defmodule Photon.Repo.Migrations.DigestItemsCarried do
   use Ecto.Migration
 
-  # Ambient mode's digest items, after the step 5 review (section 3.2 of
-  # `docs/plans/step-5-ambient-mode.md`): an item a posted digest carries
-  # stays until Blip's run on that digest settles, so a run that fails
-  # gives it back; and a stopped schedule's item names the task that
-  # failed, so a schedule saved again since is no longer news.
+  # Ambient mode's digest items: an item a posted digest carries stays until
+  # Blip's run on that digest settles, so a run that fails gives it back;
+  # and a stopped schedule's item names the task that failed, so a schedule
+  # saved again since is no longer news.
   def change do
     alter table(:digest_items) do
       # The key of the digest that carries the item, or nil while it waits.

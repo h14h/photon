@@ -1,13 +1,11 @@
 defmodule Photon.Ambient.Rules do
   @moduledoc """
-  Ambient mode's decisions (sections 2.3, 3.3, 4.1 and 4.2 of
-  `docs/plans/step-5-ambient-mode.md`), worked out from plain data with
-  the time passed in.
+  Ambient mode's decisions, worked out from plain data with the time passed
+  in.
 
-    * The setting: `config/2` reads the Settings form over the stored doc
-      (a missing or unexpected value keeps what the doc has), and
-      `changes/3` says what a Save does to the two timers and to what is
-      pending, by the table in section 2.3.
+    * The setting: `config/2` reads the Settings form over the stored doc (a
+      missing or unexpected value keeps what the doc has), and `changes/3`
+      says what a Save does to the two timers and to what is pending.
     * The timers: `next_firing/3` is the next time on a timer's grid
       after a firing (missed slots are skipped, not fired in a burst), and
       `next_review/2` the next 09:00 at the owner's UTC offset.
@@ -42,7 +40,7 @@ defmodule Photon.Ambient.Rules do
   # The longest review: threads shown, the rest counted.
   @review_limit 10
 
-  # Board states the review covers (section 4.2).
+  # Board states the review covers.
   @review_states [:quiet, :failed, :waiting]
 
   @typedoc "Unix milliseconds."
@@ -251,8 +249,8 @@ defmodule Photon.Ambient.Rules do
   defp whole(_value), do: :error
 
   @doc """
-  What a Save does, from the stored doc, the setting it leaves
-  (`config/2`) and which timers are live, by section 2.3's table:
+  What a Save does, from the stored doc, the setting it leaves (`config/2`)
+  and which timers are live:
 
     * turned off: each live timer is retired, and everything pending is
       cleared (`clear?`)
@@ -339,8 +337,7 @@ defmodule Photon.Ambient.Rules do
   ## The digest
 
   @doc """
-  The pending items sorted by section 3.1's tables, against the board and
-  the places they name:
+  The pending items sorted against the board and the places they name:
 
     * `"finished"`: new while its thread reads `:unread`, else smaller;
       gone with the thread

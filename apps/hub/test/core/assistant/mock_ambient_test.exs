@@ -1,8 +1,8 @@
 defmodule Photon.Assistant.MockAmbientTest do
   @moduledoc """
-  The scripted Blip's replies to digests and daily reviews (section 8.1
-  of the step 5 plan), on texts `Photon.Ambient.Text` writes, on their
-  own and through `Photon.Assistant.MockScript`.
+  The scripted Blip's replies to digests and daily reviews, on texts
+  `Photon.Ambient.Text` writes, on their own and through
+  `Photon.Assistant.MockScript`.
   """
 
   use Photon.Case, async: true

@@ -1,7 +1,6 @@
 defmodule Photon.Threads.Titling do
   @moduledoc """
-  The `"thread_title"` task: names a thread once its first run has ended
-  (section 2.4 of `docs/plans/step-2-projects-and-threads.md`).
+  The `"thread_title"` task: names a thread once its first run has ended.
 
   `Photon.Threads.start/2` creates it in the commit that starts the
   thread, as background work waiting on the thread's first run, so it

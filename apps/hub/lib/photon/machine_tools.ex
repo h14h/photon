@@ -1,16 +1,13 @@
 defmodule Photon.MachineTools do
   @moduledoc """
   The tools that run work on the user's machines: `shell` runs a command,
-  `view_image` shows the model an image file, and `list_machines` says
-  which machines there are (section 3 of
-  `docs/plans/step-1-machine-tools.md`) and which skills are turned on
-  for each, read from `Photon.Skills` (section 5 of
-  `docs/plans/machine-skills.md`). They live outside
-  `Photon.Assistant` because more than one profile uses them (Blip's and
-  a thread's); a profile lists `tools/0` among its own. Each call runs in
-  the conversation's working directory on the machine it names
-  (`api.workdir`, from the profile): the machine's workspace for Blip, the
-  project's folder for a thread.
+  `view_image` shows the model an image file, and `list_machines` says which
+  machines there are and which skills are turned on for each, read from
+  `Photon.Skills`. They live outside `Photon.Assistant` because more than
+  one profile uses them (Blip's and a thread's); a profile lists `tools/0`
+  among its own. Each call runs in the conversation's working directory on
+  the machine it names (`api.workdir`, from the profile): the machine's
+  workspace for Blip, the project's folder for a thread.
 
   Each `shell` or `view_image` call is one operation on one machine
   (`Photon.Machines`). The call derives the op ID from its durable task,

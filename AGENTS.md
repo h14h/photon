@@ -3,7 +3,7 @@ This is an all-Elixir monorepo: a Phoenix hub and the nodes that run its command
 ## Layout
 
 - `apps/core` (`:photon_core`): shared code: the streaming model client the hub uses (ChatGPT through the Responses API, and a scripted mock), the message format, and the operation snapshot and its `op.*` messages, which both apps use (`PhotonCore.Operation`, `Operation.Wire`). Sign in with ChatGPT is the only way to give Photon a model; `PHOTON_MOCK_MODEL=1` swaps in the hub's scripted model for local development
-- `apps/node` (`:photon_node`): the node, an executor for the hub's operations: `PhotonNode.Executor` and its journal, the operation processes (`PhotonNode.Ops`, ported from unreal-agent; see `docs/unreal-agent-port-spec.md`) and the hub connection, packaged with Burrito
+- `apps/node` (`:photon_node`): the node, an executor for the hub's operations: `PhotonNode.Executor` and its journal, the operation processes (`PhotonNode.Ops`, ported from unreal-agent; see `docs/operations.md`) and the hub connection, packaged with Burrito
 - `apps/hub` (`:photon`): the Phoenix hub, its durable harness (`Photon.Durable`, after pi-durable), the assistant and its machine tools (`Photon.MachineTools`, `Photon.Machines`)
 
 Each app is its own Mix project linked by path dependencies, so run Mix in the app's directory, e.g. `cd apps/hub && mix test`. The Phoenix guidelines below apply to `apps/hub`.
@@ -32,11 +32,9 @@ After first pulling these tools into an existing checkout, Boundary may report s
 
 ### Phoenix v1.8 guidelines
 
-- **Always** begin your LiveView templates with `<Layouts.app flash={@flash} ...>` which wraps all inner content
-- The `MyAppWeb.Layouts` module is aliased in the `my_app_web.ex` file, so you can use it without needing to alias it again
-- Anytime you run into errors with no `current_scope` assign:
-  - You failed to follow the Authenticated Routes guidelines, or you failed to pass `current_scope` to `<Layouts.app>`
-  - **Always** fix the `current_scope` error by moving your routes to the proper `live_session` and ensure you pass `current_scope` as needed
+- **Always** begin your LiveView templates with `<Layouts.app flash={@flash} shell={@shell} socket={@socket}>`, which wraps all inner content and renders Blip
+- `PhotonWeb.Layouts` is aliased in `photon_web.ex`, so you can use it without aliasing it again
+- Every page lives in the router's one `live_session :gui`, whose `on_mount` hooks (`PhotonWeb.Auth`, `PhotonWeb.Shell`) check access and assign `@shell`. A new LiveView route goes in that session; there is no `current_scope`
 - Phoenix v1.8 moved the `<.flash_group>` component to the `Layouts` module. You are **forbidden** from calling `<.flash_group>` outside of the `layouts.ex` module
 - Out of the box, `core_components.ex` imports an `<.icon name="hero-x-mark" class="w-5 h-5"/>` component for hero icons. **Always** use the `<.icon>` component for icons, **never** use `Heroicons` modules or similar
 - **Always** use the imported `<.input>` component for form inputs from `core_components.ex` when available. `<.input>` is imported and using it will save steps and prevent errors

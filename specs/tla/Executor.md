@@ -4,15 +4,14 @@
 (`apps/node/lib/photon_node/executor.ex`, its decisions in
 `executor/rules.ex`, its journal in `executor/journal.ex`), the shell
 operation processes it owns (`ops.ex`, `ops/shell.ex`), the OS commands
-they start, and a stand-in for the hub that follows the hub rules of
-section 2.3 of `docs/plans/step-1-machine-tools.md`. Faults: executor
-crashes at any point inside any of its handlers, operation process
-crashes, abrupt node crashes (commands survive), node stops (a shell kills
-its command and leaves the `stopped` marker, or leaves the `unstarted`
-marker if it was still waiting to start one), dropped connections, extra
-`op.start` pushes, cancels (a shell leaves the `canceled` marker before a
-cancel's kill), and commands that leave background children or never
-exit.
+they start, and a stand-in for the hub that follows the hub rules in
+`docs/operations.md`. Faults: executor crashes at any point inside any of
+its handlers, operation process crashes, abrupt node crashes (commands
+survive), node stops (a shell kills its command and leaves the `stopped`
+marker, or leaves the `unstarted` marker if it was still waiting to start
+one), dropped connections, extra `op.start` pushes, cancels (a shell
+leaves the `canceled` marker before a cancel's kill), and commands that
+leave background children or never exit.
 
 It replaces `Coordinator.tla`, which modeled one node session's
 coordinator with the same shell operations under it. Build step 1 deleted
@@ -113,10 +112,11 @@ own code.
   journaled first.
 - Output, `op.output`, `fit/2` and the 6 MB budget, the sweep, and
   `Request.operation/2`'s argument checks are left out.
-- The hub stand-in records a result for every terminal snapshot on an
-  open row, canceled or not, where `Photon.Machines` closes a canceled
-  row without its result. Its rules are otherwise the plan's, and its own
-  crashes and commits are `HubOps.tla`'s.
+- The hub stand-in records a result for every terminal snapshot on an open
+  row, canceled or not, where `Photon.Machines` closes a canceled row
+  without its result. Its rules are otherwise those in
+  `docs/operations.md`, and its own crashes and commits are
+  `HubOps.tla`'s.
 - The `Connection` pushes a forwarded snapshot only while joined, at once:
   its mailbox (where forwards wait while it joins) is `HubOps.tla`'s
   `fq`.
@@ -319,11 +319,11 @@ recovery reads it when the snapshot has no pgid.
 ### Node rule 10. A stopped node reported a killed command as completed
 
 `Executor-bug-stopped-marker.cfg` (`no_stopped_marker`), `ResultTruthful`,
-17 states. New with this spec; the plan's node rule 10 was written for it.
-The node stops on purpose while the command runs, so the shell's
-`terminate/2` kills its group. The wrapper, outside the group, writes exit
-143 for it. After the restart, recovery finds the exit file and reports
-the command `completed` with partial output.
+17 states. New with this spec; node rule 10 was written for it. The node
+stops on purpose while the command runs, so the shell's `terminate/2`
+kills its group. The wrapper, outside the group, writes exit 143 for it.
+After the restart, recovery finds the exit file and reports the command
+`completed` with partial output.
 
 Fixed: `terminate/2` writes the `stopped` marker before it kills, and
 `recover/1` checks the marker before the exit file and fails the op.
@@ -411,8 +411,8 @@ handled its exit. `Ops.add/2` checks that a listed process is alive before
 it asks it to resend, and otherwise starts a new one, and `Rules.down/3`
 treats a `:noproc` exit like a clean one (restarted once). The model has
 no registry (an op's process is gone the moment it exits), so this rests
-on the ExUnit tests (`shell_test.exs`, `executor_test.exs`, `rules_test.exs`;
-node-op-stale-registry in `docs/verification.md`).
+on the ExUnit tests (`shell_test.exs`, `executor_test.exs` and
+`rules_test.exs`, which call it node-op-stale-registry).
 
 ## TLC note
 

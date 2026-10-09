@@ -1,26 +1,21 @@
 defmodule Photon.Threads.Prompt do
   @moduledoc """
-  A thread's system prompt, as a pure function of its project, the time
-  and the skills it is offered: those turned on for the project, and
-  those turned on for each machine (section 3.2 of
-  `docs/plans/step-2-projects-and-threads.md`, section 2.6 of
-  `docs/plans/step-3-skills-and-schedules.md`, and section 3 of
-  `docs/plans/machine-skills.md`). `Photon.Threads` reads the project and
-  the skills and calls this.
+  A thread's system prompt, as a pure function of its project, the time and
+  the skills it is offered: those turned on for the project, and those
+  turned on for each machine. `Photon.Threads` reads the project and the
+  skills and calls this.
 
   It says who the thread is, the project's name and purpose, how it works
   (the machine tools in the project's folder, the context files, messages
   from the project's schedules, the web, asking Blip for the user's
-  judgement with `ask_blip`, and ending an answer with a question only
-  when it needs the user's reply; section 4.7 of
-  `docs/plans/step-4-blip-as-coordinator.md`),
-  the skills (`Photon.Skills.Prompt.section/1`: the project's, then each
-  machine's under its name; left out when none are on) and the time to
-  the hour. It changes only when the project's name or purpose changes, a
-  skill is turned on or off or changed, a machine with skills is
-  installed or removed, or on the hour, so provider prompt caches stay
-  warm; that's also why it doesn't list the context files, which the
-  model lists with a tool.
+  judgement with `ask_blip`, and ending an answer with a question only when
+  it needs the user's reply; see `docs/decisions.md#thread-state`), the
+  skills (`Photon.Skills.Prompt.section/1`: the project's, then each
+  machine's under its name; left out when none are on) and the time to the
+  hour. It changes only when the project's name or purpose changes, a skill
+  is turned on or off or changed, a machine with skills is installed or
+  removed, or on the hour, so provider prompt caches stay warm; that's also
+  why it doesn't list the context files, which the model lists with a tool.
 
   Nothing about the user goes in: not Blip's voice, not the user's name,
   time zone or instructions from Settings, and not Blip's memory. A

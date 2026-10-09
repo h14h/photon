@@ -268,7 +268,7 @@ defmodule Photon.NodeInstallTest do
     assert failure =~ "SSH to nope failed: ssh: connect to host nope port 22: Connection refused"
   end
 
-  # H10: a job that died without reporting its end left its machine
+  # A job that died without reporting its end used to leave its machine
   # "already busy" until the hub restarted.
   test "a job that dies without reporting fails, and its machine is free again", ctx do
     shim(Path.join(ctx.bin, "ssh"), "sleep 2")

@@ -153,7 +153,7 @@ defmodule Photon.ThreadsTest do
       opts = [source: @source, request_id: "schedule:sc_backups:t_1:0"]
       start = &Threads.start_tx(&1, project.id, "[Scheduled] Check the backups", opts)
 
-      # Titled by the prompt (section 3.2), without the "[Scheduled] " in front.
+      # Titled by the prompt, without the "[Scheduled] " in front.
       assert {:ok, %Thread{id: id, title: "Check the backups"}} = Durable.commit(start)
 
       project_id = project.id

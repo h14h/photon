@@ -1,12 +1,11 @@
 defmodule PhotonWeb.ActivityText do
   @moduledoc """
-  The activity page's words and what each row shows (section 10.7 of
-  `docs/plans/step-4-blip-as-coordinator.md`): the filter's options and
-  how its form reads, whether a new row passes the filter, the empty
-  state, which threads and schedules a page of rows names, and a row as
-  the page draws it: its summary, its status, who asked
-  (`Photon.Activity.Rules.origin_label/2`, with the thread to link when
-  the asker is a thread the page found) and where it acted.
+  The activity page's words and what each row shows: the filter's options
+  and how its form reads, whether a new row passes the filter, the empty
+  state, which threads and schedules a page of rows names, and a row as the
+  page draws it: its summary, its status, who asked
+  (`Photon.Activity.Rules.origin_label/2`, with the thread to link when the
+  asker is a thread the page found) and where it acted.
 
   Threads are named by their titles as the page reads them, not as they
   were when the row was written: a thread is named after its first run

@@ -38,10 +38,9 @@ defmodule Photon.Durable.Context do
       results are cut to 500 code points instead of 4,000, with the same
       head-and-tail cut and marker
 
-  Blip's digests and reviews use it (section 5.3 of
-  `docs/plans/step-5-ambient-mode.md`), so a day of them doesn't fill
-  every later request; nothing here knows what a digest is. The current
-  run is never touched, and an entry without `"older"` is sent as above.
+  Blip's digests and reviews use it, so a day of them doesn't fill every
+  later request; nothing here knows what a digest is. The current run is
+  never touched, and an entry without `"older"` is sent as above.
   """
 
   # Functional core: no processes, no I/O.

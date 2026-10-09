@@ -1,13 +1,11 @@
 defmodule Photon.Signals do
   @moduledoc """
-  What reaches Blip unasked (sections 3 and 4 of
-  `docs/plans/step-4-blip-as-coordinator.md`): thread updates and
-  `ask_blip` questions, posted into Blip's conversation as messages with
-  source kind `"signal"`; the owner's answers to questions, which have
-  already gone to the thread (`answer_tx/3`, source kind `"answer"`); and
-  notices for the owner when a question is passed on or withdrawn
-  (`notice_tx/3`). It also owns finding Blip's conversation
-  (`blip_conversation_id/0`), since `Photon.Threads` and
+  What reaches Blip unasked: thread updates and `ask_blip` questions, posted
+  into Blip's conversation as messages with source kind `"signal"`; the
+  owner's answers to questions, which have already gone to the thread
+  (`answer_tx/3`, source kind `"answer"`); and notices for the owner when a
+  question is passed on or withdrawn (`notice_tx/3`). It also owns finding
+  Blip's conversation (`blip_conversation_id/0`), since `Photon.Threads` and
   `Photon.Questions` post into it and can't depend on `Photon.Assistant`,
   which depends on them.
 
@@ -31,32 +29,30 @@ defmodule Photon.Signals do
 
   ## Ambient mode
 
-  Ambient mode (`docs/plans/step-5-ambient-mode.md`) is a setting, off by
-  default. Its settings are the durable doc `global/ambient`, which this
-  module reads and writes (`ambient_doc/0`, `ambient_doc_tx/1`,
-  `put_ambient_doc_tx/2`) because the threads' settle hook reads it inside
-  its commit and can't depend on `Photon.Ambient`, which depends on
-  `Photon.Threads`. What the doc holds is `Photon.Ambient`'s, which writes
-  it in the commit that arms or retires its timers; here only `"on"` is
-  read: `mode/0` and `mode_tx/1` are `:ambient` when it is true, else
-  `:quiet`.
+  Ambient mode is a setting, off by default. Its settings are the durable
+  doc `global/ambient`, which this module reads and writes (`ambient_doc/0`,
+  `ambient_doc_tx/1`, `put_ambient_doc_tx/2`) because the threads' settle
+  hook reads it inside its commit and can't depend on `Photon.Ambient`,
+  which depends on `Photon.Threads`. What the doc holds is
+  `Photon.Ambient`'s, which writes it in the commit that arms or retires its
+  timers; here only `"on"` is read: `mode/0` and `mode_tx/1` are `:ambient`
+  when it is true, else `:quiet`.
 
-  While it is on, the changes Blip doesn't hear about at once are
-  collected as digest items (`Photon.Signals.DigestItem`, section 3.2):
-  `collect_tx/2` runs inside the commit that makes each change, reads the
-  mode there, and writes nothing in quiet mode, so turning ambient mode
-  off in one commit stops collection from the next. An item's key is its
-  subject (`Photon.Signals.Rules.item_key/1`), and a newer change to the
-  same subject replaces the row, so the table holds at most one row per
-  thread, schedule, project or file however long digests skip (rule 73).
-  A digest reads the items waiting (`pending_tx/1`) and marks those it
-  carries with its key (`carry_items_tx/3`) in the commit that posts it;
-  when Blip's run on it settles they are deleted (`drop_carried_tx/2`),
-  or wait again if the run failed (`release_items_tx/2`).
-  `queued_ambient?/2` says whether a digest or review still waits in
-  Blip's inbox, and `withdraw_ambient_tx/1` takes them back when ambient
-  mode is turned off. Every write announces `{:ambient_changed}` on
-  `ambient_topic/0`.
+  While it is on, the changes Blip doesn't hear about at once are collected
+  as digest items (`Photon.Signals.DigestItem`): `collect_tx/2` runs inside
+  the commit that makes each change, reads the mode there, and writes
+  nothing in quiet mode, so turning ambient mode off in one commit stops
+  collection from the next. An item's key is its subject
+  (`Photon.Signals.Rules.item_key/1`), and a newer change to the same
+  subject replaces the row, so the table holds at most one row per thread,
+  schedule, project or file however long digests skip (rule 73). A digest
+  reads the items waiting (`pending_tx/1`) and marks those it carries with
+  its key (`carry_items_tx/3`) in the commit that posts it; when Blip's run
+  on it settles they are deleted (`drop_carried_tx/2`), or wait again if the
+  run failed (`release_items_tx/2`). `queued_ambient?/2` says whether a
+  digest or review still waits in Blip's inbox, and `withdraw_ambient_tx/1`
+  takes them back when ambient mode is turned off. Every write announces
+  `{:ambient_changed}` on `ambient_topic/0`.
 
   There is no process here: signals are submissions in Blip's
   conversation, the items are rows, and the harness runs them.
@@ -130,9 +126,8 @@ defmodule Photon.Signals do
         }
 
   @typedoc """
-  A digest item to collect (section 3.2 of
-  `docs/plans/step-5-ambient-mode.md`): its `kind`, and what it names;
-  missing fields are nil. Its key is worked out from them
+  A digest item to collect: its `kind`, and what it names; missing fields
+  are nil. Its key is worked out from them
   (`Photon.Signals.Rules.item_key/1`).
   """
   @type item :: %{
@@ -447,12 +442,12 @@ defmodule Photon.Signals do
 
   @doc """
   The owner's answer to `question`, as a message in Blip's conversation,
-  inside the caller's commit (section 4.5): a note that the answer has
-  already gone straight to the thread, then the answer as the owner
-  wrote it. Its source (`"answer"`) names the question and the thread, so
-  the panel can show what it answered. Like any message it starts a run
-  when Blip is idle and waits as a follow-up when Blip is busy; Blip's
-  Stop keeps it. One per question (its request ID).
+  inside the caller's commit: a note that the answer has already gone
+  straight to the thread, then the answer as the owner wrote it. Its source
+  (`"answer"`) names the question and the thread, so the panel can show what
+  it answered. Like any message it starts a run when Blip is idle and waits
+  as a follow-up when Blip is busy; Blip's Stop keeps it. One per question
+  (its request ID).
   """
   @spec answer_tx(Tx.t(), question(), String.t()) :: Submission.t()
   def answer_tx(tx, question, text) do

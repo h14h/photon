@@ -1,5 +1,5 @@
 defmodule Photon.Skills.MockPhrasesTest do
-  @moduledoc "The skill phrasings the scripted models share (section 4 of the step 3 plan)."
+  @moduledoc "The skill phrasings the scripted models share."
 
   use Photon.Case, async: true
 

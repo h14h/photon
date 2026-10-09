@@ -1,8 +1,7 @@
 defmodule Photon.Questions do
   @moduledoc """
-  `ask_blip` questions (section 4 of
-  `docs/plans/step-4-blip-as-coordinator.md`): a thread asks Blip one
-  specific question and its tool call waits, durably, for the answer.
+  `ask_blip` questions: a thread asks Blip one specific question and its
+  tool call waits, durably, for the answer.
 
   A question is a row (`Photon.Questions.Question`), one per tool call.
   Its states and transitions are `Photon.Questions.Rules`:

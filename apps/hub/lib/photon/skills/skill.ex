@@ -1,7 +1,6 @@
 defmodule Photon.Skills.Skill do
   @moduledoc """
-  A skill: instructions an agent loads when a task calls for them
-  (section 2.1 of `docs/plans/step-3-skills-and-schedules.md`).
+  A skill: instructions an agent loads when a task calls for them.
 
   `name` is unique; agents load the skill by it and its page's URL uses
   it. `description` says when to use it, and is what agents see before

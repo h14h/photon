@@ -1,8 +1,7 @@
 defmodule Photon.Skills.SkillMd do
   @moduledoc """
-  Reads a SKILL.md (section 2.3 of
-  `docs/plans/step-3-skills-and-schedules.md`): YAML front matter between a
-  first line `---` and the next line `---`, then the instructions.
+  Reads a SKILL.md: YAML front matter between a first line `---` and the
+  next line `---`, then the instructions.
 
   The project has no YAML library, so this reads the subset SKILL.md files
   use:

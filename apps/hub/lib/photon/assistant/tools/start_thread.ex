@@ -1,12 +1,11 @@
 defmodule Photon.Assistant.Tools.StartThread do
   @moduledoc """
-  Blip's `start_thread` tool (section 5.2 of
-  `docs/plans/step-4-blip-as-coordinator.md`): a new thread in a project,
-  with Blip's message as its first (`Photon.Threads.start_tx/4`, source
-  `%{"kind" => "blip"}`, so the thread is `started_by: "blip"` and Blip
-  hears how its runs end). The thread is made inside the commit that
-  records the call's result, with the call's task ID in its request ID,
-  so a rerun after a restart makes one thread.
+  Blip's `start_thread` tool: a new thread in a project, with Blip's message
+  as its first (`Photon.Threads.start_tx/4`, source `%{"kind" => "blip"}`,
+  so the thread is `started_by: "blip"` and Blip hears how its runs end).
+  The thread is made inside the commit that records the call's result, with
+  the call's task ID in its request ID, so a rerun after a restart makes one
+  thread.
 
   It refuses in a run that carries a thread's question the owner hasn't
   written into, and past the unattended limit

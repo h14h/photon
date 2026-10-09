@@ -1,8 +1,7 @@
 defmodule Photon.SignalsTest do
   @moduledoc """
-  Signals to Blip through the threads' settle hook and `Photon.Signals`
-  (section 3 of `docs/plans/step-4-blip-as-coordinator.md`), on the
-  durable harness with the scripted models. Which settles become signals
+  Signals to Blip through the threads' settle hook and `Photon.Signals`, on
+  the durable harness with the scripted models. Which settles become signals
   is covered cell by cell in `test/core/signals/rules_test.exs`; here, that
   the hook posts them, and how they and `ask_blip` questions join Blip's
   inbox.

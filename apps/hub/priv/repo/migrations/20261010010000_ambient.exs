@@ -1,11 +1,9 @@
 defmodule Photon.Repo.Migrations.Ambient do
   use Ecto.Migration
 
-  # Ambient mode (sections 3.2 and 4.2 of
-  # `docs/plans/step-5-ambient-mode.md`): the changes waiting for the next
-  # digest, and when a daily review last listed a thread. No foreign keys:
-  # an item whose thread, project or schedule is gone is dropped when the
-  # digest reads it.
+  # Ambient mode: the changes waiting for the next digest, and when a daily
+  # review last listed a thread. No foreign keys: an item whose thread,
+  # project or schedule is gone is dropped when the digest reads it.
   def change do
     create table(:digest_items, primary_key: false) do
       add :id, :string, primary_key: true

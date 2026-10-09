@@ -1,10 +1,9 @@
 defmodule PhotonWeb.ThreadText do
   @moduledoc """
-  The words the pages use for threads' states (section 10.3 of
-  `docs/plans/step-4-blip-as-coordinator.md`): a state's label ("Waiting
-  on you", "Asking Blip"), the home page's summary ("3 things need
-  you."), "and 4 more" under a cut list, what Mark all read did, a gone
-  quiet thread's line, and a question squeezed onto one line.
+  The words the pages use for threads' states: a state's label
+  ("Waiting on you", "Asking Blip"), the home page's summary
+  ("3 things need you."), "and 4 more" under a cut list, what Mark all read
+  did, a gone quiet thread's line, and a question squeezed onto one line.
 
   The labels are `Photon.Threads.State.label/2`'s, so the pages and
   Blip's tools say the same. Pure: times are never formatted here; the

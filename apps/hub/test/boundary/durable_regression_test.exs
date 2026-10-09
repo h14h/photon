@@ -1,7 +1,8 @@
 defmodule Photon.DurableRegressionTest do
   @moduledoc """
   Regression tests for the durable harness, each named after the
-  verification finding it pins (see docs/verification.md).
+  verification finding it pins (the Durable F-numbers are written up in
+  `specs/tla/Durable.md`).
   """
 
   use Photon.DataCase, async: false

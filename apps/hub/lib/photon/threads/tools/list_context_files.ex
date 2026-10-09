@@ -2,9 +2,8 @@ defmodule Photon.Threads.Tools.ListContextFiles do
   @moduledoc """
   The `list_context_files` tool: the thread's project's context files,
   newest change first, each with its size, when it changed and who changed
-  it (section 3.3 of `docs/plans/step-2-projects-and-threads.md`), through
-  `Photon.Threads.describe_files/2`, which Blip's tool of the same name
-  shares. It changes nothing, so a rerun after a restart is safe.
+  it, through `Photon.Threads.describe_files/2`, which Blip's tool of the
+  same name shares. It changes nothing, so a rerun after a restart is safe.
   """
   @behaviour Photon.Durable.Tool
 

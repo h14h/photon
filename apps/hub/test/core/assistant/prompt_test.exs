@@ -158,7 +158,7 @@ defmodule Photon.Assistant.PromptTest do
       machines: []
     }
 
-    # Pinned word for word: section 5.5 of docs/plans/step-5-ambient-mode.md.
+    # Pinned word for word: the Ambient mode section of Blip's prompt.
     @section ~S"""
     ## Ambient mode
 

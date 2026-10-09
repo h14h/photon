@@ -5,26 +5,25 @@ defmodule Photon.Machines.Roster do
   from the registry, the IDs of node keys that aren't revoked, and whether
   the hub runs its own node (`config :photon, :local_node`).
 
-  The hub's own machine, `local`, has no node key. When the hub runs its
-  own node, `local` is known whether or not it is connected, so a call on
-  it waits while it is offline (at hub boot the durable harness reruns
-  calls before the local node connects) instead of failing as unknown
-  (section 2.3, hub rule 12, of `docs/plans/step-1-machine-tools.md`).
+  The hub's own machine, `local`, has no node key. When the hub runs its own
+  node, `local` is known whether or not it is connected, so a call on it
+  waits while it is offline (at hub boot the durable harness reruns calls
+  before the local node connects) instead of failing as unknown (hub rule 12
+  in `docs/operations.md`).
 
   A connected node that doesn't list the `"ops:2"` capability runs a
   photon-node from before the operation protocol this hub speaks, and is
   `:outdated`. `ops:2` is `ops:1` plus one promise: a `shell` operation
-  creates its working directory when it is missing, so a project's folder
-  on a machine is made on first use (section 3.4 of
-  `docs/plans/step-2-projects-and-threads.md`). A step 1 node would fail
-  a thread's first command with "start process ...: enoent" instead, so it
-  gets no work until it is reinstalled.
+  creates its working directory when it is missing, so a project's folder on
+  a machine is made on first use. A step 1 node would fail a thread's first
+  command with "start process ...: enoent" instead, so it gets no work until
+  it is reinstalled.
 
   `ids/3` names the same machines as `build/3` without their state, in an
   order that ignores who is connected: `local` first, then by ID. Machine
   skills are listed in that order in every agent's prompt, so a machine
-  connecting or disconnecting never changes one (section 2.2 of
-  `docs/plans/machine-skills.md`).
+  connecting or disconnecting never changes one
+  (`docs/decisions.md#prompts-and-compatibility`).
   """
 
   # Functional core: no processes, no I/O.

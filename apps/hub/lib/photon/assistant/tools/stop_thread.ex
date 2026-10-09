@@ -1,8 +1,7 @@
 defmodule Photon.Assistant.Tools.StopThread do
   @moduledoc """
-  Blip's `stop_thread` tool (section 5.2 of
-  `docs/plans/step-4-blip-as-coordinator.md`): stops any thread's run and
-  withdraws what is queued for it, as the Stop button on its page does
+  Blip's `stop_thread` tool: stops any thread's run and withdraws what is
+  queued for it, as the Stop button on its page does
   (`Photon.Threads.stop_tx/2`), inside the commit that records the call's
   result. A stop is never a signal, so Blip doesn't hear about it again.
 

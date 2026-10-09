@@ -1,11 +1,10 @@
 defmodule Photon.MachineTools.Guide do
   @moduledoc """
   The prompt lines about the machine tools that Blip's prompt
-  (`Photon.Assistant.Prompt`) and a thread's share, so the two say the
-  same thing about how a `shell` call behaves (section 3.6 of
-  `docs/plans/step-2-projects-and-threads.md`). Each prompt adds its own
-  lines around them: Blip's about `schedule`, a thread's about its
-  project's folder.
+  (`Photon.Assistant.Prompt`) and a thread's share, so the two say the same
+  thing about how a `shell` call behaves. Each prompt adds its own lines
+  around them: Blip's about `schedule`, a thread's about its project's
+  folder.
   """
 
   # Functional core: no processes, no I/O.

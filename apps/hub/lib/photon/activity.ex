@@ -1,7 +1,6 @@
 defmodule Photon.Activity do
   @moduledoc """
-  The activity log (section 6 of `docs/plans/step-4-blip-as-coordinator.md`):
-  everything Blip did, and who asked for it.
+  The activity log: everything Blip did, and who asked for it.
 
   A row (`Photon.Activity.Action`) is a stored fact, written once in the
   commit that stores what it records and never changed (rule 15):

@@ -1,10 +1,9 @@
 defmodule PhotonNode.Executor.Journal do
   @moduledoc """
-  The node's durable record of the hub's operations
-  (`docs/plans/step-1-machine-tools.md`, section 2.3, node rules 1 and 5
-  to 8): one file per operation, `<ops dir>/<op_id>/op.json`, next to the
-  shell's `out`, `err`, `pid`, `exit`, `stopped`, `canceled` and
-  `unstarted` files.
+  The node's durable record of the hub's operations (`docs/operations.md`,
+  node rules 1 and 5 to 8): one file per operation,
+  `<ops dir>/<op_id>/op.json`, next to the shell's `out`, `err`, `pid`,
+  `exit`, `stopped`, `canceled` and `unstarted` files.
 
   Each file holds an entry, `%{"op" => snapshot, "cancel" => boolean}`: the
   operation's latest snapshot and whether the hub has canceled it. `write/3`

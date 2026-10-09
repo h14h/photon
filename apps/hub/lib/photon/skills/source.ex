@@ -1,12 +1,10 @@
 defmodule Photon.Skills.Source do
   @moduledoc """
-  Where a skill comes from (section 2.4 of
-  `docs/plans/step-3-skills-and-schedules.md`), as pure functions: what a
-  link is, which GitHub addresses to ask, which folders in a repository
-  hold a SKILL.md, and how a SKILL.md and its folder become a candidate
-  the install page shows. `Photon.Skills.Fetch` makes the requests and
-  hands the answers here; `Photon.Skills.read/1` builds a pasted
-  candidate here too.
+  Where a skill comes from, as pure functions: what a link is, which GitHub
+  addresses to ask, which folders in a repository hold a SKILL.md, and how a
+  SKILL.md and its folder become a candidate the install page shows.
+  `Photon.Skills.Fetch` makes the requests and hands the answers here;
+  `Photon.Skills.read/1` builds a pasted candidate here too.
 
   Install strips rather than refuses: other files in a skill's folder are
   never downloaded, front matter other than `name` and `description` is
@@ -71,13 +69,13 @@ defmodule Photon.Skills.Source do
         }
 
   @typedoc """
-  A skill the install page offers (section 2.4). `name` is as found, or
-  `Rules.suggest_name/1`'s when that breaks the rule; it, `description`
-  and `instructions` are nil when missing. `error` is nil, or why this
-  one can't be installed. `found` keeps what the notes were made from
-  (the SKILL.md's own name, the front matter it ignored, the folder's
-  other files and notes), so install can say them again for what the
-  owner saved (`saved/3`).
+  A skill the install page offers. `name` is as found, or
+  `Rules.suggest_name/1`'s when that breaks the rule; it, `description` and
+  `instructions` are nil when missing. `error` is nil, or why this one can't
+  be installed. `found` keeps what the notes were made from (the SKILL.md's
+  own name, the front matter it ignored, the folder's other files and
+  notes), so install can say them again for what the owner saved
+  (`saved/3`).
   """
   @type candidate :: %{
           origin: String.t(),

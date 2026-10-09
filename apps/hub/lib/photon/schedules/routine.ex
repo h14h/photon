@@ -1,10 +1,9 @@
 defmodule Photon.Schedules.Routine do
   @moduledoc """
-  The `"routine"` task kind: a schedule's timer (section 3.3 of
-  `docs/plans/step-3-skills-and-schedules.md`). A background task with no
+  The `"routine"` task kind: a schedule's timer. A background task with no
   conversation of its own sleeps durably until the schedule's next time,
-  fires it, and waits again; a one-off finishes after it fires. Slots
-  missed while the hub was down are skipped, not fired in a burst
+  fires it, and waits again; a one-off finishes after it fires. Slots missed
+  while the hub was down are skipped, not fired in a burst
   (`Photon.Schedules.Rules.next_after/3`).
 
   The task's input is `"schedule_id"`, `"first_at"` (Unix milliseconds,
@@ -99,9 +98,8 @@ defmodule Photon.Schedules.Routine do
   def on_fail(_task, _reason, _tx), do: :ok
 
   # A schedule that stopped is news for the next digest while ambient mode
-  # is on (section 3.2 of `docs/plans/step-5-ambient-mode.md`);
-  # `Photon.Signals.collect_tx/2` reads the mode in this commit and does
-  # nothing in quiet mode.
+  # is on; `Photon.Signals.collect_tx/2` reads the mode in this commit and
+  # does nothing in quiet mode.
   defp collect_stopped_tx(tx, schedule, task_id, reason) do
     Signals.collect_tx(tx, %{
       kind: "schedule_stopped",
@@ -115,9 +113,8 @@ defmodule Photon.Schedules.Routine do
   ## A firing
 
   @doc false
-  # Fires schedule `id` inside the caller's commit: steps 1 to 5 of
-  # section 3.3, for a firing step and for run-now. Returns what it did,
-  # or :gone when there is no such row.
+  # Fires schedule `id` inside the caller's commit, for a firing step and
+  # for run-now. Returns what it did, or :gone when there is no such row.
   @spec fire_tx(Tx.t(), String.t(), firing()) :: {:ok, Rules.outcome()} | :gone
   def fire_tx(tx, id, firing) do
     case Repo.get(Schedule, id) do

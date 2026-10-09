@@ -1,15 +1,14 @@
 defmodule Photon.MachineTools.Translate do
   @moduledoc """
   Translates between the machine tools and operations, as pure functions
-  (sections 3.1 and 3.4 of `docs/plans/step-1-machine-tools.md`). Ported
-  from the node's `Tools.Bash` and `Tools.ViewImage`.
+  (`docs/operations.md#results-and-output-caps`). Ported from the node's
+  `Tools.Bash` and `Tools.ViewImage`.
 
   Arguments one way: `shell_args/2` and `view_image_args/2` check a tool
   call's arguments and return the op's `args` for `op.start`, with the
-  conversation's working directory as `directory`: relative to the
-  machine's workspace (a project's slug, for a thread), or nil for the
-  workspace itself (Blip). The node resolves it and makes it on first use
-  (section 3.4 of `docs/plans/step-2-projects-and-threads.md`).
+  conversation's working directory as `directory`: relative to the machine's
+  workspace (a project's slug, for a thread), or nil for the workspace
+  itself (Blip). The node resolves it and makes it on first use.
 
   Snapshots the other way: `result/3` turns a terminal snapshot into the
   content the model sees, and `details/3` into what the UI keeps with it.
@@ -30,7 +29,7 @@ defmodule Photon.MachineTools.Translate do
   alias PhotonCore.{Message, Operation, Output}
 
   # A command is passed to the shell as one argument, and Linux refuses one
-  # over 128 KB, so a longer one couldn't run anyway (section 2.2).
+  # over 128 KB, so a longer one couldn't run anyway.
   @max_command_bytes 100_000
 
   # The largest base64 image a result may carry, about 3.7 MB of image data.

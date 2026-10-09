@@ -5,8 +5,7 @@
 # credo:disable-for-next-line Credo.Check.Refactor.ModuleDependencies
 defmodule Photon.Threads do
   @moduledoc """
-  Threads: durable agent conversations inside a project (sections 2.4 and
-  3 of `docs/plans/step-2-projects-and-threads.md`).
+  Threads: durable agent conversations inside a project.
 
   A thread is one conversation under the `"thread"` profile, run by
   `Photon.Durable` like Blip's, and a row in `threads` that ties it to its
@@ -67,12 +66,11 @@ defmodule Photon.Threads do
 
   ## State
 
-  A thread's state (running, asking Blip, waiting on you, failed,
-  finished and unread, quiet, idle; `Photon.Threads.State`) is worked out
-  when it is read (`board/1`, `state/1`, `sidebar/1`), from its open
-  `ask_blip` questions (`Photon.Questions`) and facts on its row recorded
-  when something happened (section 2 of
-  `docs/plans/step-4-blip-as-coordinator.md`):
+  A thread's state (running, asking Blip, waiting on you, failed, finished
+  and unread, quiet, idle; `Photon.Threads.State`) is worked out when it is
+  read (`board/1`, `state/1`, `sidebar/1`), from its open `ask_blip`
+  questions (`Photon.Questions`) and facts on its row recorded when
+  something happened:
 
     * who started it (`started_by`), from its first message's source
     * how its last run ended: the `"thread"` profile's `on_settled/3`
@@ -165,7 +163,7 @@ defmodule Photon.Threads do
   ]
 
   # How long a stopped thread is left alone before it reads as quiet, when
-  # the config doesn't say (section 2.3).
+  # the config doesn't say.
   @quiet_after_hours 72
 
   @typedoc "A project's ID, slug and name, as the board and sidebar give them."
@@ -724,10 +722,9 @@ defmodule Photon.Threads do
 
   @doc """
   Records, inside the caller's commit, that ambient mode's daily review
-  listed threads `thread_ids` at `now` (`reviewed_at`, section 4.2 of
-  `docs/plans/step-5-ambient-mode.md`), and announces
-  `{:projects_changed, project_id}` once per project. The mark is a fact
-  the next review and Home read; a thread's state doesn't.
+  listed threads `thread_ids` at `now` (`reviewed_at`), and announces
+  `{:projects_changed, project_id}` once per project. The mark is a fact the
+  next review and Home read; a thread's state doesn't.
   """
   @spec mark_reviewed_tx(Tx.t(), [String.t()], DateTime.t()) :: :ok
   def mark_reviewed_tx(tx, thread_ids, %DateTime{} = now),
@@ -932,12 +929,11 @@ defmodule Photon.Threads do
   @impl true
   def on_settled(conversation, settled, tx), do: settled_tx(tx, conversation, settled)
 
-  # A generation settled what it placed (sections 2.4 and 3.2). When the
-  # run ends with it, records how on the thread row and announces it; in
-  # every case, posts the signal Blip hears about it, if any. It runs
-  # inside the harness's commit, on a Stop or a failed task inside the
-  # Scheduler's, so it is total: a missing row, project or answer records
-  # less, and nothing here raises.
+  # A generation settled what it placed. When the run ends with it, records
+  # how on the thread row and announces it; in every case, posts the signal
+  # Blip hears about it, if any. It runs inside the harness's commit, on a
+  # Stop or a failed task inside the Scheduler's, so it is total: a missing
+  # row, project or answer records less, and nothing here raises.
   defp settled_tx(tx, conversation, settled) do
     case get(conversation.id) do
       %Thread{} = thread ->
@@ -969,10 +965,10 @@ defmodule Photon.Threads do
 
   defp record_end_tx(_tx, _thread, _settled, _text), do: :ok
 
-  # A settle the generation goes on from places the next queued input: a
-  # new run, which a Resolve made before it doesn't cover, just as a new
-  # message clears it (section 2.5). Without this, input queued before the
-  # owner resolved a running thread could fail or ask them unseen.
+  # A settle the generation goes on from places the next queued input: a new
+  # run, which a Resolve made before it doesn't cover, just as a new message
+  # clears it. Without this, input queued before the owner resolved a
+  # running thread could fail or ask them unseen.
   defp reopen_tx(tx, %Thread{resolved_at: %DateTime{}} = thread, %{ended?: false}) do
     {_count, _rows} =
       Thread |> where([t], t.id == ^thread.id) |> Repo.update_all(set: [resolved_at: nil])

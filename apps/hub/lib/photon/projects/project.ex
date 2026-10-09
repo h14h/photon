@@ -1,8 +1,7 @@
 defmodule Photon.Projects.Project do
   @moduledoc """
-  A project: a purpose and a name, for any body of work (section 2.1 of
-  `docs/plans/step-2-projects-and-threads.md`). Nothing else is stored
-  about how the project is run.
+  A project: a purpose and a name, for any body of work. Nothing else is
+  stored about how the project is run.
 
   `slug` names the project's folder on every machine
   (`<workspace>/<slug>`) and appears in its URLs. It is made once, from the

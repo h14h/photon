@@ -1,18 +1,17 @@
 defmodule Photon.MachineToolsE2ETest do
   @moduledoc """
-  Blip's machine tools against a real node: the hub's durable harness,
-  the real node channel and a real `PhotonNode` (executor, journal and
-  shell processes) talking over a websocket, as the hub's own `local`
-  node does in development (`docs/plans/step-1-machine-tools.md`, section
-  6.1).
+  Blip's machine tools against a real node: the hub's durable harness, the
+  real node channel and a real `PhotonNode` (executor, journal and shell
+  processes) talking over a websocket, as the hub's own `local` node does in
+  development.
 
   The test endpoint has `server: false`, so each test starts a Bandit
   listener for `PhotonWeb.Endpoint` on a free loopback port and points the
-  node at it. Bandit serves the endpoint's node socket in the test env, so
-  the plan's fallback (a bridge process joining through
-  `Phoenix.ChannelTest`) isn't needed. The node dials in with the built-in
-  node's key (`Photon.NodeKeys.local_token/0`), which loopback may use, as
-  machine `local`.
+  node at it. Bandit serves the endpoint's node socket in the test env, so a
+  fallback (a bridge process joining through `Phoenix.ChannelTest`) isn't
+  needed. The node dials in with the built-in node's key
+  (`Photon.NodeKeys.local_token/0`), which loopback may use, as machine
+  `local`.
 
   Blip and threads are driven with their scripted models (`config
   :photon, :mock_model`): `on local: $ <command>` calls `shell`, and `on
@@ -20,29 +19,26 @@ defmodule Photon.MachineToolsE2ETest do
   a minute, so a node that is restarted on purpose comes back long before a
   call gives up.
 
-  The thread test (`docs/plans/step-2-projects-and-threads.md`, section
-  7.5) checks what only a real node shows: a thread's commands run in its
-  project's folder, `<workspace>/<slug>`, which the node makes on first
-  use, and the project's threads share it.
+  The thread test checks what only a real node shows: a thread's commands
+  run in its project's folder, `<workspace>/<slug>`, which the node makes on
+  first use, and the project's threads share it.
 
-  The schedule test (`docs/plans/step-3-skills-and-schedules.md`, section
-  8.4) puts step 3's two features on the same path: a project schedule's
-  durable task fires on time and starts a thread whose scheduled prompt
-  runs on the node in the project's folder, and that thread loads a skill
-  turned on for the project.
+  The schedule test puts skills and schedules on the same path: a project
+  schedule's durable task fires on time and starts a thread whose scheduled
+  prompt runs on the node in the project's folder, and that thread loads a
+  skill turned on for the project.
 
-  The coordinator test (`docs/plans/step-4-blip-as-coordinator.md`,
-  section 12.4) walks step 4's demo path on the node: Blip starts a thread
-  that runs in its project's folder and hears how it ended, the thread
-  asks Blip one question Blip answers from its memory and one it passes to
-  the owner, and the activity log says who asked for each thing Blip did.
+  The coordinator test walks Blip's coordinator path on the node: Blip
+  starts a thread that runs in its project's folder and hears how it ended,
+  the thread asks Blip one question Blip answers from its memory and one it
+  passes to the owner, and the activity log says who asked for each thing
+  Blip did.
 
-  The ambient mode test (`docs/plans/step-5-ambient-mode.md`, section
-  11.4) walks step 5's demo on the node: a thread the owner started
-  finishes there unseen, a digest tells Blip and Blip tells the owner, a
-  second digest has nothing to send, the daily review raises a stopped
-  thread and a failed one, and once ambient mode is off a finished thread
-  leaves nothing for a digest and the timers are gone.
+  The ambient mode test walks ambient mode on the node: a thread the owner
+  started finishes there unseen, a digest tells Blip and Blip tells the
+  owner, a second digest has nothing to send, the daily review raises a
+  stopped thread and a failed one, and once ambient mode is off a finished
+  thread leaves nothing for a digest and the timers are gone.
   """
 
   use Photon.DataCase, async: false

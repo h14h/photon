@@ -1,8 +1,7 @@
 defmodule PhotonWeb.ActivityLive do
   @moduledoc """
-  The activity page at `/activity` (section 10.7 of
-  `docs/plans/step-4-blip-as-coordinator.md`): everything Blip did, and
-  who asked, newest first, from `Photon.Activity`'s log.
+  The activity page at `/activity`: everything Blip did, and who asked,
+  newest first, from `Photon.Activity`'s log.
 
   The rows are a stream (`#activity-list`), 50 at a time; `Show older`
   appends the next 50 past the last row shown, kept as `cursor`. The

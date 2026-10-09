@@ -2,8 +2,7 @@ defmodule Photon.Projects.ContextFile do
   @moduledoc """
   A project's context file: a freeform Markdown note kept on the hub, which
   the user edits on the project's pages and the project's threads read and
-  write with tools (section 2.3 of
-  `docs/plans/step-2-projects-and-threads.md`).
+  write with tools.
 
   `key` is `name` downcased, unique within the project, so `Notes.md` and
   `notes.md` can't both exist. `version` is 1 when the file is created and

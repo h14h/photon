@@ -1,9 +1,8 @@
 defmodule Photon.Threads.Tools.WriteContextFile do
   @moduledoc """
-  The `write_context_file` tool: creates one of the project's context
-  files or replaces all of it (section 3.3 of
-  `docs/plans/step-2-projects-and-threads.md`). There is no version check:
-  the last write wins.
+  The `write_context_file` tool: creates one of the project's context files
+  or replaces all of it. There is no version check: the last write wins
+  (`docs/decisions.md#context-files`).
 
   The write happens inside the commit that records the call's result
   (`{:commit, fun}`), through `Photon.Projects.write_file_tx/5`, which

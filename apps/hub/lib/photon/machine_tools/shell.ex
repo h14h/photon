@@ -1,7 +1,6 @@
 defmodule Photon.MachineTools.Shell do
   @moduledoc """
-  The `shell` tool: runs one command on a machine and returns its output
-  (section 3.1 of `docs/plans/step-1-machine-tools.md`).
+  The `shell` tool: runs one command on a machine and returns its output.
   `Photon.MachineTools.Call` does the work.
   """
   @behaviour Photon.Durable.Tool

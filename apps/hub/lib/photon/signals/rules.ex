@@ -1,18 +1,16 @@
 defmodule Photon.Signals.Rules do
   @moduledoc """
-  Which settles reach Blip, and how a signal joins Blip's inbox (sections
-  3.2 and 3.3 of `docs/plans/step-4-blip-as-coordinator.md`), as pure
+  Which settles reach Blip, and how a signal joins Blip's inbox, as pure
   functions over source maps and submission content.
 
   `thread_update/2` decides, in code, whether Blip hears about a thread's
   settled run. In quiet mode Blip hears about work it started however it
-  ends, and about failures and questions in the owner's threads; a stop
-  is never a signal. Ambient mode (section 3.2 of
-  `docs/plans/step-5-ambient-mode.md`) is quiet mode with one more cell:
-  the owner's run that ends `"done"` without asking anything is
-  `:digest`, an item for the next digest rather than a signal. Whose work
-  it was comes from the settled submissions' sources (`blip_source?/1`),
-  not from who started the thread.
+  ends, and about failures and questions in the owner's threads; a stop is
+  never a signal. Ambient mode is quiet mode with one more cell: the owner's
+  run that ends `"done"` without asking anything is `:digest`, an item for
+  the next digest rather than a signal. Whose work it was comes from the
+  settled submissions' sources (`blip_source?/1`), not from who started the
+  thread.
 
   `ambient_kind/1` tells a digest or a daily review message from the
   other signal messages, so `Photon.Signals` can find one still queued,
@@ -126,9 +124,8 @@ defmodule Photon.Signals.Rules do
   def ambient_ref(_source), do: nil
 
   @doc """
-  A digest item's key: its subject (section 3.2 of
-  `docs/plans/step-5-ambient-mode.md`), so one subject holds one row and
-  a newer change to it replaces the older one:
+  A digest item's key: its subject, so one subject holds one row and a newer
+  change to it replaces the older one:
 
     * `"finished"`, `"thread_started"`, `"resolved"`: `"<kind>:<thread id>"`
     * `"schedule_stopped"`: `"schedule_stopped:<schedule id>"`

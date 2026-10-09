@@ -233,10 +233,12 @@ also run from source with a key from the Nodes page:
 
 Going deeper:
 
-- [docs/architecture.md](docs/architecture.md): every module by layer, the
-  supervision trees, and a log of how the code got here
-- [docs/projects-and-blip.md](docs/projects-and-blip.md): the design behind
-  projects, threads, skills, schedules and Blip as coordinator
+- [docs/architecture.md](docs/architecture.md): the code by layer, the
+  commit line, and the supervision trees
+- [docs/operations.md](docs/operations.md): the hub–node operation
+  protocol and its rules
+- [docs/decisions.md](docs/decisions.md): design choices and their reasons,
+  and what isn't built yet
 - [docs/verification.md](docs/verification.md): how Photon is tested
 - `apps/hub/lib/photon/durable.ex`, `apps/node/lib/photon_node.ex` and
   `apps/core/lib/photon_core/operation/wire.ex`: the harness and the

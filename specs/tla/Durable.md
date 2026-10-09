@@ -3,35 +3,33 @@
 `Durable.tla` models `Photon.Durable` (Store, Tx, Runtime, Scheduler,
 Generation, ToolTask) with the tool calls a conversation makes: a machine
 call (`shell` or `view_image`, both `Photon.MachineTools.Call`), a plain
-tool that isn't safe to rerun, a thread's `ask_blip` call with Blip's
-side of it, and the routine task behind a schedule, which may repeat and
-which the owner may edit or delete. Faults are hub crashes, Scheduler
-crashes, step crashes, a tool's own code raising, and user Stops. The
-machine's result can arrive at any time, and so can Blip's or the
-owner's answer. It follows the code after build step 1, for schedules
-step 3's plan (`docs/plans/step-3-skills-and-schedules.md`, sections 3.3
-and 3.4), written before that code: `schedules/routine.ex` (`Routine`,
-moved from `assistant/routine.ex`) and `schedules.ex`
-(`Schedules.update/3`, `delete/1`), and for `ask_blip` and the settle
-hook step 4's plan (`docs/plans/step-4-blip-as-coordinator.md`, sections
-3.1, 3.3, 4 and 14), also written before the code. See "What changed in
-build step 3" and "What changed in build step 4".
+tool that isn't safe to rerun, a thread's `ask_blip` call with Blip's side
+of it, and the routine task behind a schedule, which may repeat and which
+the owner may edit or delete. Faults are hub crashes, Scheduler crashes,
+step crashes, a tool's own code raising, and user Stops. The machine's
+result can arrive at any time, and so can Blip's or the owner's answer. It
+follows the code after build step 1, for schedules step 3's build plan,
+written before that code: `schedules/routine.ex` (`Routine`, moved from
+`assistant/routine.ex`) and `schedules.ex` (`Schedules.update/3`,
+`delete/1`), and for `ask_blip` and the settle hook step 4's build plan,
+also written before the code. Both plans are in git history. See
+"What changed in build step 3" and "What changed in build step 4".
 
 The first version modeled the harness with the assistant's node work
 (`run_on_node`, `NodeWork`, `NodeWatch`) and found ten bugs (F1 to F10
 below), all fixed in the code. Modeling the first fix for F10 found a flaw
 in it (F10b), which is fixed too. Build step 1 replaced node work with
 machine calls, and PR B deleted node sessions, so the spec now models the
-machine call in its place (see "What changed in build step 1"). Build
-step 3 added repeating routines and the owner's edits and deletes (see
+machine call in its place (see "What changed in build step 1"). Build step
+3 added repeating routines and the owner's edits and deletes (see
 "What changed in build step 3"), and step 4 the `ask_blip` call and the
 settle hook (see "What changed in build step 4"); in both, TLC found no
-problem in the plan's rules. Build step 5 (ambient mode) changed nothing
-in the spec (see "What changed in build step 5"). Every config is expected to finish with no
-error, except the four `Durable-bug-*` configs, which put a defect back
-and must fail.
-`docs/verification.md` lists the ExUnit regression test for each
-finding.
+problem in the build plans' rules. Build step 5 (ambient mode) changed
+nothing in the spec (see "What changed in build step 5"). Every config is
+expected to finish with no error, except the four `Durable-bug-*` configs,
+which put a defect back and must fail. Each finding below names its fix;
+its ExUnit regression test carries the finding's ID in its name or comment
+(`apps/hub/test/boundary/durable_regression_test.exs`).
 
 Paths below are relative to `apps/hub/lib/photon/`.
 
@@ -217,43 +215,41 @@ Message loss and the node's side are `HubOps.tla`'s and `Executor.tla`'s.
   that an edit neither skips nor repeats a slot) are checked by
   `test/core/schedules/rules_test.exs`, not here. A repeating routine is
   bounded by `MaxFires`, after which it finishes like a one-off. Consent
-  and the overlap rules (`Rules.fire/2`, plan section 3.5) are decisions
-  inside the firing commit over committed state, so they only choose
-  between posting and skipping; the model always posts, which allows
-  more behaviors. The row's `last_*` columns, `Routine.on_fail/3` (which
-  records `"failed"` on the row in the commit that fails the task) and
-  the announcements write nothing the properties read. Run now
-  (`Schedules.run_now/1`) is one commit that submits with a fresh request
-  ID and doesn't touch the task, like `UserSubmit` of background input.
-  An edit that keeps a one-off's time after it fired arms nothing
-  (`arm/4` says `:finished`) and changes nothing modeled, so it is left
-  out. An edit that makes a repeating schedule a one-off at the slot it
-  just fired also arms nothing, but its old routine is still live: it is
-  marked for abort and the row names no routine. On the modeled
-  variables that is `OwnerDelete`'s step (the row's columns aren't
-  modeled), so `Durable-schedule.cfg`'s `OneCarrier` and
-  `NoFireAfterRetire` cover it through that action, and
-  `Durable-schedule-retire-live.cfg` (added with this case) checks that
-  a routine retired with no replacement ends `aborted`. The spec didn't
+  and the overlap rules (`Rules.fire/2`) are decisions inside the firing
+  commit over committed state, so they only choose between posting and
+  skipping; the model always posts, which allows more behaviors. The row's
+  `last_*` columns, `Routine.on_fail/3` (which records `"failed"` on the
+  row in the commit that fails the task) and the announcements write
+  nothing the properties read. Run now (`Schedules.run_now/1`) is one
+  commit that submits with a fresh request ID and doesn't touch the task,
+  like `UserSubmit` of background input. An edit that keeps a one-off's
+  time after it fired arms nothing (`arm/4` says `:finished`) and changes
+  nothing modeled, so it is left out. An edit that makes a repeating
+  schedule a one-off at the slot it just fired also arms nothing, but its
+  old routine is still live: it is marked for abort and the row names no
+  routine. On the modeled variables that is `OwnerDelete`'s step (the
+  row's columns aren't modeled), so `Durable-schedule.cfg`'s `OneCarrier`
+  and `NoFireAfterRetire` cover it through that action, and
+  `Durable-schedule-retire-live.cfg` (added with this case) checks that a
+  routine retired with no replacement ends `aborted`. The spec didn't
   change. Every other edit replaces the routine.
-* Questions (step 4): one conversation is modeled, so an ask call's
-  thread is the modeled conversation and Blip's conversation is reduced
-  to the question's carrier (`qsub`). Blip's run is any interleaving of
+* Questions (step 4): one conversation is modeled, so an ask call's thread
+  is the modeled conversation and Blip's conversation is reduced to the
+  question's carrier (`qsub`). Blip's run is any interleaving of
   `BlipPlace`, `BlipSettle`, `BlipAnswer` and `BlipPass`; its reasoning,
   the content of questions and answers, and the words of the notices are
   left out. Signal merging is left out too: a question merged into a
   queued carrier is one commit that edits a queued row, so as far as the
-  question is concerned it is one carrier, and a question never shares
-  one with an update (plan section 3.3). Blip's tools may name a
-  question at any time after it was asked, not only while its carrier is
-  placed (`list_threads` and `read_thread` show open questions), which
-  allows more behaviors than the plan's first sketch. Refused steps
-  (`Rules.step/2` returning an error) write nothing and are left out,
-  except under the bug switch. The refusal of `{:answer, {:blip, false}}`
-  on a question with the owner is a pure check on the run's sources, so
-  `BlipAnswer` stands for the accepted `{:blip, true}` relay there.
-  `Rules.question/1` refusing a question is the same error result as a
-  stopped ask, with no row, and is left out.
+  question is concerned it is one carrier, and a question never shares one
+  with an update. Blip's tools may name a question at any time after it
+  was asked, not only while its carrier is placed (`list_threads` and
+  `read_thread` show open questions), which allows more behaviors than the
+  plan's first sketch. Refused steps (`Rules.step/2` returning an error)
+  write nothing and are left out, except under the bug switch. The refusal
+  of `{:answer, {:blip, false}}` on a question with the owner is a pure
+  check on the run's sources, so `BlipAnswer` stands for the accepted
+  `{:blip, true}` relay there. `Rules.question/1` refusing a question is
+  the same error result as a stopped ask, with no row, and is left out.
 * An ask call's checks (`check_ms`) are time, so they are bounded by
   `MaxRechecks` like a machine call's, with one exception: once the
   carrier has settled or been withdrawn, the `until` may pass again
@@ -316,7 +312,7 @@ Safety (invariants):
 | `OneResultPerCall` | a machine call's result is recorded once, and when it is its op's result, the row was claimed in that commit and is closed |
 | `ClaimedOnce` | a finished op's result reaches at most one tool result |
 | `NoOpenRowAfterDone` | once a call has ended, however it ended, its row is not open without `cancel`, so nothing may still start its op |
-| `BackgroundNotWithdrawn` | Blip's Stop never withdraws a scheduled prompt (`RS(r, k)`); a thread's Stop does, by design (plan section 3.7) |
+| `BackgroundNotWithdrawn` | Blip's Stop never withdraws a scheduled prompt (`RS(r, k)`); a thread's Stop does, by design (`docs/decisions.md#schedules-and-time`) |
 | `OneCarrier` | at most one routine is live and not marked for abort, and it is the one the row names: an edit or delete never leaves the old timer running beside the new one |
 | `NoFireAfterRetire` | no fire step's commit lands for a routine after the commit that retired it (an edit or delete), whether it would post, start a thread, or find the row gone |
 | `FireOncePerSlot` | no two firing commits for the same routine and checkpoint, across hub crashes, Scheduler restarts and step crashes; with `Target = "thread"` there is no request ID to fall back on |
@@ -470,15 +466,14 @@ step 4 copies ran with `-workers 1`):
 
 ## What changed in build step 3
 
-Step 3 moves Blip's routines into `Photon.Schedules`: a schedule is a
-row, and its timer is a `"routine"` task that repeats, which the owner
-can edit or delete from the project page at any time
-(`docs/plans/step-3-skills-and-schedules.md`, sections 3.3 and 3.4). The
-plan's claim is that the step fence alone (`Runtime.commit`, `Ignored`)
-makes each firing happen once and never after its schedule was edited
-or deleted. A new-thread firing (`Target = "thread"`) has no request ID
-to dedupe on, so the fence is all there is. The spec was extended before
-the code, as `HubOps.tla` was in step 1:
+Step 3 moves Blip's routines into `Photon.Schedules`: a schedule is a row,
+and its timer is a `"routine"` task that repeats, which the owner can edit
+or delete from the project page at any time. The design's claim is that
+the step fence alone (`Runtime.commit`, `Ignored`) makes each firing
+happen once and never after its schedule was edited or deleted. A
+new-thread firing (`Target = "thread"`) has no request ID to dedupe on, so
+the fence is all there is. The spec was extended before the code, as
+`HubOps.tla` was in step 1:
 
 * Constants `Spares`, `MaxFires`, `MaxEdits`, `MaxDeletes`, `Target`,
   and the bug switches `BugEditKeepsOld` and `BugFireIgnoresAbort`.
@@ -504,17 +499,16 @@ the code, as `HubOps.tla` was in step 1:
   which is the old model; all 15 reach exactly the state counts recorded
   before.
 
-TLC found no problem in sections 3.3 and 3.4 of the plan, so they stand
-as written.
+TLC found no problem in step 3's schedule design, so it stands as written.
 
 The modeled conversation is Blip's: its Stop keeps scheduled prompts. A
-thread's Stop withdraws them too (plan section 3.7), which is the
-existing withdraw of a queued submission, so `BackgroundNotWithdrawn` is
-about Blip. Times are left out (see "Abstractions"): `Rules.arm/4` and
-`fired_through/3`, which decide the time an edited schedule waits for so
-that an edit made in the second a schedule is due neither skips nor
-repeats that firing, are pure and tested in
-`test/core/schedules/rules_test.exs`.
+thread's Stop withdraws them too (`docs/decisions.md#schedules-and-time`),
+which is the existing withdraw of a queued submission, so
+`BackgroundNotWithdrawn` is about Blip. Times are left out (see
+"Abstractions"): `Rules.arm/4` and `fired_through/3`, which decide the
+time an edited schedule waits for so that an edit made in the second a
+schedule is due neither skips nor repeats that firing, are pure and tested
+in `test/core/schedules/rules_test.exs`.
 
 ### The bug configs
 
@@ -525,24 +519,22 @@ repeats that firing, are pure and tested in
 
 ## What changed in build step 4
 
-Step 4 adds `ask_blip`: a thread's tool call that asks Blip a question
-and waits, durably, for Blip's answer or the owner's
-(`docs/plans/step-4-blip-as-coordinator.md`, section 4), and the
-harness's settle hook, through which every run's end reaches Blip as a
-signal (section 3.1). The plan's claims are in its section 14: the ask
-commits outside the step's fence, like `Machines.start/1`, and its own
-check (no question for a finished or abort-marked task) is what keeps a
-Stop from leaving a question open with no call waiting; the relay has
-three writers (Blip's answer, the owner's answer, the call's withdraw)
-and a poller (the escalation, also outside the fence) racing on one row
-while the call may be stopped, the hub may crash or the Scheduler may
-restart between any two of them; and the hook runs once per settle. The
-spec was extended before the code, which follows these modules:
-`questions.ex` (`ask/1`, `answer_tx/4`, `pass_tx/4`, `escalate/1`,
-`withdraw_tx/2`) with `questions/rules.ex` (`step/2`, `askable?/1`,
-`escalate?/2`), `threads/tools/ask_blip.ex`, `signals.ex` (`post_tx/2`,
-`unpost_tx/2`) and `durable/generation.ex` (`Durable.settled/3` after
-each `settle/4`).
+Step 4 adds `ask_blip`: a thread's tool call that asks Blip a question and
+waits, durably, for Blip's answer or the owner's, and the harness's settle
+hook, through which every run's end reaches Blip as a signal. The build
+plan's claims: the ask commits outside the step's fence, like
+`Machines.start/1`, and its own check (no question for a finished or
+abort-marked task) is what keeps a Stop from leaving a question open with
+no call waiting; the relay has three writers (Blip's answer, the owner's
+answer, the call's withdraw) and a poller (the escalation, also outside
+the fence) racing on one row while the call may be stopped, the hub may
+crash or the Scheduler may restart between any two of them; and the hook
+runs once per settle. The spec was extended before the code, which follows
+these modules: `questions.ex` (`ask/1`, `answer_tx/4`, `pass_tx/4`,
+`escalate/1`, `withdraw_tx/2`) with `questions/rules.ex` (`step/2`,
+`askable?/1`, `escalate?/2`), `threads/tools/ask_blip.ex`, `signals.ex`
+(`post_tx/2`, `unpost_tx/2`) and `durable/generation.ex`
+(`Durable.settled/3` after each `settle/4`).
 
 * Constants: `ToolTypes` may include `"ask"`; bug switches
   `BugAskUnfenced` and `BugAnswerAnyStatus`.
@@ -565,16 +557,15 @@ each `settle/4`).
   config sets both new switches `FALSE` and leaves `"ask"` out, and
   reaches exactly its old state count.
 
-TLC found no problem in sections 3 and 4 of the plan. Modeling them
-settled four points the plan's section 14 had left open or put
-differently, and the plan now says so: the carrier needs a `"withdrawn"`
-value (a Stop takes a queued carrier back); Blip may answer or pass a
-question at any time after it was asked, not only while the carrier is
-placed; `PlacedSettles` with an ask call needs the owner to answer
-eventually (`SpecOwnerAnswers`); and the answered branch of `resume/2`
-is a plain `{:ok, ...}` result, since an answered question never changes
-again, so reading it outside the commit is safe (section 4.3 had it
-right; section 14 said `{:commit, ...}`).
+TLC found no problem in step 4's design. Modeling it settled four points
+the build plan had left open or put differently, and the plan was
+corrected: the carrier needs a `"withdrawn"` value (a Stop takes a queued
+carrier back); Blip may answer or pass a question at any time after it was
+asked, not only while the carrier is placed; `PlacedSettles` with an ask
+call needs the owner to answer eventually (`SpecOwnerAnswers`); and the
+answered branch of `resume/2` is a plain `{:ok, ...}` result, since an
+answered question never changes again, so reading it outside the commit is
+safe (the plan had said `{:commit, ...}` in one place).
 
 ### The bug configs
 
@@ -585,13 +576,12 @@ right; section 14 said `{:commit, ...}`).
 
 ## What changed in build step 5
 
-Nothing in the spec. Step 5 adds ambient mode
-(`docs/plans/step-5-ambient-mode.md`): a setting that arms two timers,
-a digest every few hours and a daily review, each posting at most one
-message into Blip's conversation, and digest items collected while it
-is on. Section 13 of the plan asked whether the spec needed to change
-before the code, as it did for steps 3 and 4, and the answer was no. No
-config was rerun, and the counts under "Results" stand.
+Nothing in the spec. Step 5 adds ambient mode (`Photon.Ambient`): a
+setting that arms two timers, a digest every few hours and a daily review,
+each posting at most one message into Blip's conversation, and digest
+items collected while it is on. Its build plan asked whether the spec
+needed to change before the code, as it did for steps 3 and 4, and the
+answer was no. No config was rerun, and the counts under "Results" stand.
 
 * The timers are routines. An `"ambient"` task (`ambient/timer.ex`)
   waits, fires in one fenced commit (`Runtime.commit/2`), and waits

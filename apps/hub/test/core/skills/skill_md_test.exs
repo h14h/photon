@@ -1,5 +1,5 @@
 defmodule Photon.Skills.SkillMdTest do
-  @moduledoc "Reading a SKILL.md (section 2.3 of the step 3 plan)."
+  @moduledoc "Reading a SKILL.md."
 
   use Photon.Case, async: true
 

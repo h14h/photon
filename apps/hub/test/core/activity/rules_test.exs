@@ -1,8 +1,7 @@
 defmodule Photon.Activity.RulesTest do
   @moduledoc """
-  The activity log's words (sections 6.2 and 6.3 of
-  `docs/plans/step-4-blip-as-coordinator.md`): each tool's summary, the
-  endings, garbage calls, the message line, `changes?/1` and who asked.
+  The activity log's words: each tool's summary, the endings, garbage calls,
+  the message line, `changes?/1` and who asked.
   """
 
   use Photon.Case, async: true

@@ -1,10 +1,10 @@
 defmodule Photon.ActivityTest do
   @moduledoc """
-  The activity log (section 6 of `docs/plans/step-4-blip-as-coordinator.md`)
-  through Blip's hooks on the durable harness, driven by the scripted
-  Blip: each tool call's row with who asked, the message rows of runs the
-  owner didn't type into, the rows on the Stop path, and `list/1`. The
-  summaries themselves are covered in `test/core/activity/rules_test.exs`.
+  The activity log through Blip's hooks on the durable harness, driven by
+  the scripted Blip: each tool call's row with who asked, the message rows
+  of runs the owner didn't type into, the rows on the Stop path, and
+  `list/1`. The summaries themselves are covered in
+  `test/core/activity/rules_test.exs`.
   """
 
   use Photon.DataCase, async: false

@@ -1,9 +1,8 @@
 defmodule Photon.Activity.Action do
   @moduledoc """
-  One row of the activity log (section 6.1 of
-  `docs/plans/step-4-blip-as-coordinator.md`): something Blip did, and
-  who asked for it. Written once, in the commit that stored what it
-  records, and never changed.
+  One row of the activity log: something Blip did, and who asked for it.
+  Written once, in the commit that stored what it records, and never
+  changed.
 
     * `kind` - `"call"` (a tool call, `tool` its name) or `"message"`
       (Blip told the owner something in a run the owner didn't type into;

@@ -1,8 +1,7 @@
 defmodule Photon.Threads.Tools.EditContextFile do
   @moduledoc """
-  The `edit_context_file` tool: replaces one passage of one of the
-  project's context files, which must occur in it exactly once (section
-  3.3 of `docs/plans/step-2-projects-and-threads.md`).
+  The `edit_context_file` tool: replaces one passage of one of the project's
+  context files, which must occur in it exactly once.
 
   Like `write_context_file`, the edit happens inside the commit that
   records the call's result (`{:commit, fun}`), through

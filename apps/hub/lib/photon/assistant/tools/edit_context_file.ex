@@ -1,9 +1,8 @@
 defmodule Photon.Assistant.Tools.EditContextFile do
   @moduledoc """
-  Blip's `edit_context_file` tool (section 5.2 of
-  `docs/plans/step-4-blip-as-coordinator.md`): replaces one passage of
-  one of a project's context files, which must occur in it exactly once,
-  as written by Blip (`updated_by: "blip"`).
+  Blip's `edit_context_file` tool: replaces one passage of one of a
+  project's context files, which must occur in it exactly once, as written
+  by Blip (`updated_by: "blip"`).
 
   Like `write_context_file`, the edit happens inside the commit that
   records the call's result (`{:commit, fun}`), through

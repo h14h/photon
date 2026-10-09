@@ -1,21 +1,22 @@
 # HubOps: the hub-node operation protocol
 
-`HubOps.tla` models the protocol that build step 1 introduces
-(`docs/plans/step-1-machine-tools.md`, section 2): Blip's `shell` call as
-a durable tool task on the hub, its op row, the websocket between hub and
-node, and the node's executor with its journal, op processes and commands.
-It was written against the plan, before any of the code existed; "The
-code against the spec", near the end, compares it with the code as built.
+`HubOps.tla` models the protocol that build step 1 introduces, whose rules
+are now in `docs/operations.md` with the same numbers: Blip's `shell` call
+as a durable tool task on the hub, its op row, the websocket between hub
+and node, and the node's executor with its journal, op processes and
+commands. It was written against step 1's build plan (now in git history),
+before any of the code existed; "The code against the spec", near the end,
+compares it with the code as built.
 
 Checking the plan as written found five problems in its protocol (H1 to H5
 below), and a review of the plan three more (H6 to H8), which the spec
-reproduced before they were fixed. The plan's protocol section is now
-fixed, and the spec models the fixed protocol. Each problem can be put
-back with a switch in the `Bugs` constant, and each has a
-`HubOps-bug-*.cfg` that turns its switch on and shows the original
-failure. Four more bug configs put back defects the
-plan already ruled out (an early ack, a spawn before the journal, a start
-after a cancel, no `known` flag), to show the properties catch them.
+reproduced before they were fixed. The plan was fixed (its rules are now
+in `docs/operations.md`), and the spec models the fixed protocol. Each
+problem can be put back with a switch in the `Bugs` constant, and each has
+a `HubOps-bug-*.cfg` that turns its switch on and shows the original
+failure. Four more bug configs put back defects the plan already ruled out
+(an early ack, a spawn before the journal, a start after a cancel, no
+`known` flag), to show the properties catch them.
 
 So, unlike `Durable`'s configs, the bug configs here are expected to
 fail, as `Executor.tla`'s are. Every other config is expected to pass.
@@ -52,15 +53,15 @@ running it twice is harmless.
 
 ### Actions
 
-| Action | Plan |
+| Action | In the code |
 |---|---|
 | `CallStart` | the model calls `shell`; `ToolTask` commits the task |
 | `SchedStart` | the Scheduler starts `execute/2` (first run, or a rerun after a crash: `replay: :safe`) or `resume/2` |
-| `ExecIns`, `OrphIns` | 3.2 step 5: `Machines.start/1`'s commit, `on_conflict: :nothing`, and since H5 only while the task is unfinished and not marked for abort |
-| `ExecSend`, `OrphSend` | 3.2 step 5: ask the channel to push the op (`{:push_op, id}`), if the registry has a channel. As written (H1) it sent the `op.start` built in the commit |
-| `ExecPark` | 3.2 step 6: the `{:wait}` commit, with `offline_since` |
-| `Wake` | the signal fired or `until` passed (3.3) |
-| `ResumeRead`, `ResumeCommit` | 3.2 `resume/2`: read whether the machine is online, then the commit, deciding on the row as it is then: `claim_tx`, a re-park (online: after asking the channel to push the op again, hub rule 11), or `abandon_tx` (hub rule 7), which sends `op.cancel` if a channel is registered and picks the offline result from `pushed` and `confirmed` |
+| `ExecIns`, `OrphIns` | `Call.execute/3`: `Machines.start/1`'s commit, `on_conflict: :nothing`, and since H5 only while the task is unfinished and not marked for abort |
+| `ExecSend`, `OrphSend` | `Call.execute/3`: ask the channel to push the op (`{:push_op, id}`), if the registry has a channel. As written (H1) it sent the `op.start` built in the commit |
+| `ExecPark` | `Call.execute/3`'s park: the `{:wait}` commit, with `offline_since` |
+| `Wake` | the signal fired or `until` passed (`Wait`) |
+| `ResumeRead`, `ResumeCommit` | `Call.resume/2`: read whether the machine is online, then the commit, deciding on the row as it is then: `claim_tx`, a re-park (online: after asking the channel to push the op again, hub rule 11), or `abandon_tx` (hub rule 7), which sends `op.cancel` if a channel is registered and picks the offline result from `pushed` and `confirmed` |
 | `StepError` | a step that ends its call with an error before its own commit: a raise `ToolTask` rescues, or an error result `Call` returns (hub rule 10). Its commit runs `on_interrupt` -> `cancel_tx` |
 | `UserStop` | `Durable.abort` marks the task |
 | `SchedAbort1`, `CommitEnd` | `Scheduler.stop_aborted`: kill the step, then the abort commit with `on_interrupt` -> `cancel_tx` (hub rule 7). Split in two because `cancel_tx` sends `op.cancel` before the commit is visible. `CommitEnd` is the second half of every commit that may send from inside: a Stop, a `StepError` or an offline abandon |
@@ -478,19 +479,19 @@ the `stopped` marker (node rule 10) is what makes the code agree.
 ## The code against the spec
 
 Once build step 1's code was written, it was compared with this spec
-action by action (task A14 in the plan). No rule in the plan's section
-2.3 changed in a way the spec models, so the spec is unchanged apart from
-a comment, and the results above stand without a rerun. One rule's text
-grew: node rule 8 now says that a `canceled` entry for an `op.cancel` with
-no journal that can't be written is answered with nothing (see "Not
-modeled"). A review then found that a result forwarded without journaling
-over a `ready` entry left the op runnable: a restart, or the op process's
-clean exit, started it after the hub was told it hadn't run. Node rule 8
-now holds such a result in memory until `op.ack` and deletes the `ready`
-entry. That too is a journal write failure, so the spec is unchanged:
-without one, every terminal snapshot the node sends is journaled first
-or answers an op it has no entry for, and no reachable state differs.
-The function names in the tables above are the code's.
+action by action. No hub or node rule (`docs/operations.md`) changed in a
+way the spec models, so the spec is unchanged apart from a comment, and
+the results above stand without a rerun. One rule's text grew: node rule 8
+now says that a `canceled` entry for an `op.cancel` with no journal that
+can't be written is answered with nothing (see "Not modeled"). A review
+then found that a result forwarded without journaling over a `ready` entry
+left the op runnable: a restart, or the op process's clean exit, started
+it after the hub was told it hadn't run. Node rule 8 now holds such a
+result in memory until `op.ack` and deletes the `ready` entry. That too is
+a journal write failure, so the spec is unchanged: without one, every
+terminal snapshot the node sends is journaled first or answers an op it
+has no entry for, and no reachable state differs. The function names in
+the tables above are the code's.
 
 Where the code is shaped differently from the actions, and why the spec
 still covers it:

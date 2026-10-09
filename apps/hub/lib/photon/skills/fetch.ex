@@ -1,9 +1,8 @@
 defmodule Photon.Skills.Fetch do
   @moduledoc """
-  Downloads skills for `Photon.Skills.fetch/1` (section 2.4 of
-  `docs/plans/step-3-skills-and-schedules.md`), the only place Photon
-  fetches them. `Photon.Skills.Source` decides what to ask for and what
-  the answers mean; this makes the requests with `Req`.
+  Downloads skills for `Photon.Skills.fetch/1`, the only place Photon
+  fetches them. `Photon.Skills.Source` decides what to ask for and what the
+  answers mean; this makes the requests with `Req`.
 
   A GitHub link costs at most two API calls without a sign-in (the
   repository, for a root link's default branch, and the tree under the

@@ -1,5 +1,5 @@
 defmodule Photon.Ambient.TextTest do
-  @moduledoc "The words of digests and daily reviews (sections 3.4 and 4.4 of the step 5 plan)."
+  @moduledoc "The words of digests and daily reviews."
 
   use Photon.Case, async: true
 

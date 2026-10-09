@@ -1,7 +1,6 @@
 defmodule Photon.Assistant.OriginTest do
   @moduledoc """
-  Who asked for one of Blip's runs, and what it may do (section 5.4 of
-  `docs/plans/step-4-blip-as-coordinator.md`).
+  Who asked for one of Blip's runs, and what it may do.
   """
 
   use Photon.Case, async: true

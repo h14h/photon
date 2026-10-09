@@ -1,9 +1,8 @@
 defmodule PhotonWeb.HomeLive do
   @moduledoc """
-  The home page at `/` (section 10.3 of
-  `docs/plans/step-4-blip-as-coordinator.md`): what needs the owner
-  across every project, what is running, what has gone quiet, and Blip's
-  schedules. Blip floats over it, as over every page.
+  The home page at `/`: what needs the owner across every project, what is
+  running, what has gone quiet, and Blip's schedules. Blip floats over it,
+  as over every page.
 
   The threads come from `Photon.Threads.board(:all)`, grouped by
   `Photon.Threads.State.sections/1`:
@@ -37,17 +36,17 @@ defmodule PhotonWeb.HomeLive do
   project's ID, so they don't reload this list. Times are shown in the
   owner's time zone (`PhotonWeb.TimeComponents.local_time/1`).
 
-  Ambient mode (section 7.3 of `docs/plans/step-5-ambient-mode.md`) adds
-  only warnings and marks. Under the header, one line with a link to
-  Settings says when a timer stopped after an error or, failing that,
-  when digests and reviews are skipping because Blip isn't signed in to
-  ChatGPT or schedules can't use the owner's plan. A Failed, Waiting on you or Gone quiet thread row raised
-  in Blip's daily review since it was last touched says so
-  (`PhotonWeb.AmbientText.reviewed?/1`). `Photon.Ambient.brief/0`, which
-  reads no items or board, is read on mount and on `{:ambient_changed}` (`Photon.Ambient.subscribe/0`),
-  `{:chatgpt_changed, _}` and `{:settings_changed, _}`; the
-  marks come with the board, so its re-reads cover them. Everything else
-  the shell passes on is ignored.
+  Ambient mode adds only warnings and marks. Under the header, one line with
+  a link to Settings says when a timer stopped after an error or, failing
+  that, when digests and reviews are skipping because Blip isn't signed in
+  to ChatGPT or schedules can't use the owner's plan. A Failed, Waiting on
+  you or Gone quiet thread row raised in Blip's daily review since it was
+  last touched says so (`PhotonWeb.AmbientText.reviewed?/1`).
+  `Photon.Ambient.brief/0`, which reads no items or board, is read on mount
+  and on `{:ambient_changed}` (`Photon.Ambient.subscribe/0`),
+  `{:chatgpt_changed, _}` and `{:settings_changed, _}`; the marks come with
+  the board, so its re-reads cover them. Everything else the shell passes on
+  is ignored.
   """
 
   use PhotonWeb, :live_view

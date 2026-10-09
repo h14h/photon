@@ -1,8 +1,7 @@
 defmodule Photon.MachineTools.Call do
   @moduledoc """
   One `shell` or `view_image` call, which `Photon.MachineTools.Shell` and
-  `Photon.MachineTools.ViewImage` share (section 3.2 of
-  `docs/plans/step-1-machine-tools.md`).
+  `Photon.MachineTools.ViewImage` share.
 
   `execute/3` checks the arguments and puts the conversation's working
   directory (`api.workdir`, from its profile) in the op's `directory`
@@ -14,15 +13,14 @@ defmodule Photon.MachineTools.Call do
   op may be running, whatever the machine looks like now.
 
   `resume/2` runs when the signal fires or a check comes due. A finished op
-  is claimed in the commit that records the result (hub rule 8). An open
-  one waits on: while the machine is online the call asks for the op to be
+  is claimed in the commit that records the result (hub rule 8). An open one
+  waits on: while the machine is online the call asks for the op to be
   pushed again at each check (hub rule 11); while it is offline the call
-  counts how long, and gives up past the limit, canceling the op in the
-  same commit and saying what may have happened (hub rule 7). A machine
-  that is connected but `:outdated` (it came back with a photon-node
-  older than `ops:2`, which `Photon.Machines` sends no ops) ends the call
-  at its next check with `Translate.outdated_machine/1`, canceling the op
-  (section 3.4 of `docs/plans/step-2-projects-and-threads.md`). `resume/2`
+  counts how long, and gives up past the limit, canceling the op in the same
+  commit and saying what may have happened (hub rule 7). A machine that is
+  connected but `:outdated` (it came back with a photon-node older than
+  `ops:2`, which `Photon.Machines` sends no ops) ends the call at its next
+  check with `Translate.outdated_machine/1`, canceling the op. `resume/2`
   only reads before its final commit, so a rerun is harmless.
 
   Every error result from the op ID on, and every interruption

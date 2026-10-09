@@ -1,20 +1,18 @@
 defmodule Photon.Skills do
   @moduledoc """
-  Skills (section 2 of `docs/plans/step-3-skills-and-schedules.md`):
-  instructions an agent loads when a task calls for them. The owner writes
-  them in the app or installs them from a SKILL.md; either way a skill is
-  only its name, description and Markdown instructions. Nothing else from
-  a SKILL.md's folder is kept, and no skill runs anything.
+  Skills: instructions an agent loads when a task calls for them. The owner
+  writes them in the app or installs them from a SKILL.md; either way a
+  skill is only its name, description and Markdown instructions. Nothing
+  else from a SKILL.md's folder is kept, and no skill runs anything.
 
   A skill is on or off per scope. A scope is `:blip` (Blip's own set),
-  `{:project, project_id}` (that project's threads) or `{:machine,
-  machine_id}` (work on that machine, `docs/plans/machine-skills.md`); a
-  new skill is on nowhere. Turning a skill on stores one
-  `Photon.Skills.Enablement` row, and turning it off deletes it. The
-  row's `scope` column is `"blip"`, the project's ID, or `"machine:"`
-  followed by the machine's ID (node IDs can't hold a `:`, so the three
-  forms can't collide); only this module turns a scope into that string
-  and back.
+  `{:project, project_id}` (that project's threads) or
+  `{:machine, machine_id}` (work on that machine); a new skill is on
+  nowhere. Turning a skill on stores one `Photon.Skills.Enablement` row, and
+  turning it off deletes it. The row's `scope` column is `"blip"`, the
+  project's ID, or `"machine:"` followed by the machine's ID (node IDs can't
+  hold a `:`, so the three forms can't collide); only this module turns a
+  scope into that string and back.
 
   A machine's skills are offered to every agent that can use the
   machine: Blip and every thread in every project, beside their own set
@@ -25,10 +23,10 @@ defmodule Photon.Skills do
   `load_tx/3` leave them out, and turning a skill on for it is refused.
   Reinstalled under the same name, the machine has its skills back.
 
-  Each scope holds at most 30, since an agent's prompt lists every
-  enabled skill's name and description on every request. The limit is
-  per set, so one prompt carries up to 30 × (machines with skills + 1):
-  the agent's own set and every machine's (section 3.3 of the plan).
+  Each scope holds at most 30, since an agent's prompt lists every enabled
+  skill's name and description on every request. The limit is per set, so
+  one prompt carries up to 30 × (machines with skills + 1): the agent's own
+  set and every machine's.
 
   Every write is a `Photon.Durable.commit/1`, as `Photon.Projects` does it:
   it reads what it needs inside the commit, asks `Photon.Skills.Rules`
@@ -104,13 +102,12 @@ defmodule Photon.Skills do
   @type listed :: %{id: String.t(), skill: Skill.t(), scopes: [scope()]}
 
   @typedoc """
-  What install keeps from the SKILL.md it read (section 2.4): how it
-  arrived (`"pasted"` or `"fetched"`), the link for a fetched one, the
-  notes the preview showed, and the files left out that an agent might
-  look for, and what those were made from (`found`, see
-  `Photon.Skills.Source.candidate/0`). The form gives the name,
-  description and instructions; these come from the candidate the page
-  holds. Other keys are ignored.
+  What install keeps from the SKILL.md it read: how it arrived (`"pasted"`
+  or `"fetched"`), the link for a fetched one, the notes the preview showed,
+  and the files left out that an agent might look for, and what those were
+  made from (`found`, see `Photon.Skills.Source.candidate/0`). The form
+  gives the name, description and instructions; these come from the
+  candidate the page holds. Other keys are ignored.
   """
   @type candidate :: %{
           required(:origin) => String.t(),
@@ -308,10 +305,10 @@ defmodule Photon.Skills do
   ## Candidates to install
 
   @doc """
-  Reads a pasted SKILL.md into a candidate for the install preview
-  (section 2.4), with `origin: "pasted"` and notes on what install leaves
-  out. Errors are the parser's messages: no front matter, front matter
-  that never ends, or no instructions.
+  Reads a pasted SKILL.md into a candidate for the install preview, with
+  `origin: "pasted"` and notes on what install leaves out. Errors are the
+  parser's messages: no front matter, front matter that never ends, or no
+  instructions.
   """
   @spec read(String.t()) :: {:ok, Source.candidate()} | {:error, String.t()}
   def read(text) do
@@ -353,12 +350,12 @@ defmodule Photon.Skills do
   end
 
   @doc """
-  Installs a skill: the name, description and instructions from the
-  preview form's `params`, and how it arrived, its link, its notes and
-  the files left out from `candidate` (section 2.4), never from the form.
-  The notes and files left out are said again for what was saved
-  (`Photon.Skills.Source.saved/3`): a name the owner changed, and only
-  the files the saved instructions mention. On nowhere.
+  Installs a skill: the name, description and instructions from the preview
+  form's `params`, and how it arrived, its link, its notes and the files
+  left out from `candidate`, never from the form. The notes and files left
+  out are said again for what was saved (`Photon.Skills.Source.saved/3`): a
+  name the owner changed, and only the files the saved instructions mention.
+  On nowhere.
   """
   @spec install(map(), candidate()) :: {:ok, Skill.t()} | {:error, field_errors()}
   def install(params, candidate) do
