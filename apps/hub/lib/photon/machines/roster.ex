@@ -27,10 +27,12 @@ defmodule Photon.Machines.Roster do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: []
+  use Boundary, type: :strict, deps: [PhotonCore]
+
+  alias PhotonCore.Operation.Wire
 
   @local "local"
-  @ops_capability "ops:2"
+  @ops_capability Wire.capability()
 
   @typedoc "A connected node's info from the registry, with its `\"id\"`."
   @type info :: %{optional(String.t()) => term()}

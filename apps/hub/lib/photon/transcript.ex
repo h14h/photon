@@ -54,9 +54,9 @@ defmodule Photon.Transcript do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore]
+  use Boundary, type: :strict, deps: [PhotonCore, Photon.Durable.RunBoundary]
 
-  alias Photon.Durable.Entry
+  alias Photon.Durable.{Entry, RunBoundary}
   alias PhotonCore.Message
 
   @type index :: %{results: %{String.t() => map()}, calls: %{String.t() => Entry.t()}}
@@ -215,10 +215,11 @@ defmodule Photon.Transcript do
     end
   end
 
-  # The hub's notices about questions come between runs' entries; any
-  # other error ends the run.
-  defp untold_step(%{kind: "error", data: %{"notice" => true}}, state), do: {[], state}
-  defp untold_step(%{kind: "error"}, state), do: {[], %{state | ids: [], ended?: true}}
+  # A notice comes between a run's entries; any other error ends the run.
+  defp untold_step(%{kind: "error"} = entry, state) do
+    if RunBoundary.ends?(entry), do: {[], %{state | ids: [], ended?: true}}, else: {[], state}
+  end
+
   defp untold_step(_entry, state), do: {[], state}
 
   @doc "Whether an entry is shown in the conversation on its own."

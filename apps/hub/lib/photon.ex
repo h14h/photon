@@ -95,6 +95,7 @@ defmodule Photon do
       PhotonCore.LLM.Mock,
       # Pure modules other contexts' cores share, top-level so a core can
       # depend on them without being allowed to call their context.
+      Photon.Durable.RunBoundary,
       Photon.MachineTools.Guide,
       Photon.MachineTools.MockPhrases,
       Photon.Skills.MockPhrases,

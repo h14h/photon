@@ -18,6 +18,13 @@ defmodule PhotonCore.Operation do
   same operation, and the node uses the ID the hub sent.
   """
 
+  # A command is passed to the shell as one argument, and Linux refuses one
+  # over 128 KB (MAX_ARG_STRLEN), so a longer one couldn't run anyway.
+  @max_command_bytes 100_000
+
+  # The largest base64 image a node puts in a result; the hub asks for less.
+  @max_image_bytes 5_000_000
+
   @terminal ~w(completed failed canceled)
   @statuses ~w(ready awaiting canceling) ++ @terminal
 
@@ -51,6 +58,14 @@ defmodule PhotonCore.Operation do
 
   @spec terminal_statuses() :: [String.t()]
   def terminal_statuses, do: @terminal
+
+  @doc "The largest `shell` command, in bytes, that either side accepts."
+  @spec max_command_bytes() :: pos_integer()
+  def max_command_bytes, do: @max_command_bytes
+
+  @doc "The largest `max_size` a `view_image` op may ask for, in base64 bytes."
+  @spec max_image_bytes() :: pos_integer()
+  def max_image_bytes, do: @max_image_bytes
 
   @doc "Every status, terminal or not."
   @spec statuses() :: [String.t()]

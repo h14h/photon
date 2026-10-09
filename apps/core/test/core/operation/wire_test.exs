@@ -171,4 +171,8 @@ defmodule PhotonCore.Operation.WireTest do
       assert_raise FunctionClauseError, fn -> Wire.output("op_1", "log", "hi") end
     end
   end
+
+  test "capability/0 is the protocol a node lists when it joins" do
+    assert Wire.capability() == "ops:2"
+  end
 end

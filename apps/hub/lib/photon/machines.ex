@@ -79,7 +79,7 @@ defmodule Photon.Machines do
   alias Photon.Durable.Tx
   alias Photon.Machines.{Op, Roster, Rules}
   alias PhotonCore.Operation
-  alias PhotonCore.Operation.Wire
+  alias PhotonCore.Operation.{Result, Wire}
 
   @topic "nodes"
   @takeover_timeout 2_000
@@ -475,8 +475,24 @@ defmodule Photon.Machines do
     end
   end
 
+  # A result the tool call couldn't read becomes a failure it reports. It
+  # is read as the kind of op the hub asked for, whatever the node says.
+  defp readable(_machine, snapshot, nil = _row), do: snapshot
+
+  defp readable(machine, snapshot, %Op{kind: kind}) do
+    case Result.accept(snapshot, kind) do
+      {:ok, snapshot} ->
+        snapshot
+
+      {:malformed, failed, reason} ->
+        Logger.warning("#{machine} sent a malformed result for #{snapshot["id"]}: #{reason}")
+        failed
+    end
+  end
+
   defp snapshot_tx(tx, machine, %{"id" => id} = snapshot) do
     row = Repo.get(Op, id)
+    snapshot = readable(machine, snapshot, row)
 
     case Rules.on_snapshot(row, machine, snapshot) do
       :foreign ->

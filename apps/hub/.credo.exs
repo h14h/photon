@@ -46,6 +46,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                  files: lib_only,
                  core_modules: [
                    "Photon.Durable.Context",
+                   "Photon.Durable.RunBoundary",
                    "Photon.Durable.Schema",
                    "Photon.Durable.Inbox",
                    "Photon.Durable.Policy",
