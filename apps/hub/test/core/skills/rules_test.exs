@@ -1,5 +1,5 @@
 defmodule Photon.Skills.RulesTest do
-  @moduledoc "The rules for skills (section 2.2 of the step 3 plan)."
+  @moduledoc "The rules for skills."
 
   use Photon.Case, async: true
 

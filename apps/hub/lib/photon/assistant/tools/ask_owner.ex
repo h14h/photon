@@ -1,14 +1,12 @@
 defmodule Photon.Assistant.Tools.AskOwner do
   @moduledoc """
-  Blip's `ask_owner` tool (sections 4.4 and 5.3 of
-  `docs/plans/step-4-blip-as-coordinator.md`): passes a thread's
-  `ask_blip` question to the owner, in Blip's words
-  (`Photon.Questions.pass_tx/4`), inside the commit that records the
-  call's result. Its result's details name the question and the thread,
-  so Blip's panel draws it as a question card the owner answers from.
-  The details also carry Blip's wording, which the card and the bubble
-  show. The owner's answer goes straight to the thread, by code; Blip
-  sees it afterwards as a message of its own.
+  Blip's `ask_owner` tool: passes a thread's `ask_blip` question to the
+  owner, in Blip's words (`Photon.Questions.pass_tx/4`), inside the commit
+  that records the call's result. Its result's details name the question and
+  the thread, so Blip's panel draws it as a question card the owner answers
+  from. The details also carry Blip's wording, which the card and the bubble
+  show. The owner's answer goes straight to the thread, by code; Blip sees
+  it afterwards as a message of its own.
 
   A question already with the owner, or no longer open, is refused in
   Blip's words (`Photon.Assistant.question_refusal/2`); an unknown ID

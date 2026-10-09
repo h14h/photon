@@ -1,9 +1,8 @@
 defmodule PhotonWeb.AmbientText do
   @moduledoc """
-  The pages' words for ambient mode (sections 2.2, 7.2 and 7.3 of
-  `docs/plans/step-5-ambient-mode.md`): the Settings section's hint and
-  warnings, the digest intervals, the status block (when the next digest
-  and review come, what is waiting, what the last ones did, a timer that
+  The pages' words for ambient mode: the Settings section's hint and
+  warnings, the digest intervals, the status block (when the next digest and
+  review come, what is waiting, what the last ones did, a timer that
   stopped), the flashes of the scripted model's run-now buttons, and the
   home page's warnings and whether one of its rows was in Blip's review.
 

@@ -1,5 +1,5 @@
 defmodule Photon.Ambient.RulesTest do
-  @moduledoc "Ambient mode's decisions (sections 2.3, 3.3, 4.1 and 4.2 of the step 5 plan)."
+  @moduledoc "Ambient mode's decisions."
 
   use Photon.Case, async: true
 

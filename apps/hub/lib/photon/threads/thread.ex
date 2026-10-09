@@ -1,15 +1,13 @@
 defmodule Photon.Threads.Thread do
   @moduledoc """
-  A thread: one durable agent conversation in a project (section 2.4 of
-  `docs/plans/step-2-projects-and-threads.md`). Its `id` is the ID of its
-  conversation, which runs under the `"thread"` profile.
+  A thread: one durable agent conversation in a project. Its `id` is the ID
+  of its conversation, which runs under the `"thread"` profile.
 
   `title` comes from the first message. `active_at` is when the thread
   last got a message; threads are listed by it, newest first. Whether a
   thread is running isn't stored: it is derived from its durable run.
 
-  The rest are facts recorded when something happened (section 2.1 of
-  `docs/plans/step-4-blip-as-coordinator.md`), from which
+  The rest are facts recorded when something happened, from which
   `Photon.Threads.State` works out the thread's state at read time:
 
     * `started_by` - `"owner"`, `"blip"` or `"schedule"`, from the first
@@ -25,9 +23,8 @@ defmodule Photon.Threads.Thread do
       run ended
     * `resolved_at` - when the owner marked it resolved; a new message
       clears it
-    * `reviewed_at` - when ambient mode's daily review last listed it
-      (section 4.2 of `docs/plans/step-5-ambient-mode.md`); a fact the
-      review reads, never part of the thread's state
+    * `reviewed_at` - when ambient mode's daily review last listed it; a
+      fact the review reads, never part of the thread's state
   """
 
   # Data: an Ecto schema, no behaviour of its own.

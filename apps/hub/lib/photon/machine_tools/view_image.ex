@@ -1,7 +1,6 @@
 defmodule Photon.MachineTools.ViewImage do
   @moduledoc """
-  The `view_image` tool: shows the model an image file on a machine
-  (section 3.1 of `docs/plans/step-1-machine-tools.md`).
+  The `view_image` tool: shows the model an image file on a machine.
   `Photon.MachineTools.Call` does the work.
   """
   @behaviour Photon.Durable.Tool

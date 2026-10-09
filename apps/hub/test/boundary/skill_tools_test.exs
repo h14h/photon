@@ -1,12 +1,11 @@
 defmodule Photon.SkillToolsTest do
   @moduledoc """
-  How agents see and load skills (section 2.6 of the step 3 plan), through
-  the scripted models: `skills` says what the profile's prompt listed, and
-  `load skill <name>` calls `load_skill`. The prompt's and the loaded
-  text's exact words are covered in `test/core/skills/prompt_test.exs`.
+  How agents see and load skills, through the scripted models: `skills` says
+  what the profile's prompt listed, and `load skill <name>` calls
+  `load_skill`. The prompt's and the loaded text's exact words are covered
+  in `test/core/skills/prompt_test.exs`.
 
-  A skill turned on for a machine (section 3 of
-  `docs/plans/machine-skills.md`) reaches Blip and every thread whatever
+  A skill turned on for a machine reaches Blip and every thread whatever
   their own sets hold: the `machine skills` cases.
   """
 

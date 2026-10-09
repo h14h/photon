@@ -1,24 +1,22 @@
 defmodule PhotonWeb.SkillsLive do
   @moduledoc """
-  The Skills page at `/skills` (section 6.3 of
-  `docs/plans/step-3-skills-and-schedules.md`): every skill on this hub,
-  where each is on, how it arrived, and a switch per skill for Blip, with
-  the two ways to add one, writing it here (`/skills/new`) or installing
-  it from a SKILL.md or a link (`/skills/install`). A new skill is off
-  everywhere until the owner turns it on for Blip, a project or a machine.
+  The Skills page at `/skills`: every skill on this hub, where each is on,
+  how it arrived, and a switch per skill for Blip, with the two ways to add
+  one, writing it here (`/skills/new`) or installing it from a SKILL.md or a
+  link (`/skills/install`). A new skill is off everywhere until the owner
+  turns it on for Blip, a project or a machine.
 
   The skills are a stream (`#skills`, rows `#skill-<id>`) read from
   `Photon.Skills.list/0` together with the projects' names for the scopes
-  line. The page follows `Skills.subscribe/0` and re-reads the list on
-  every `{:skills_changed, _}`: a skill written, installed, saved or
-  deleted anywhere, or turned on or off here, on its own page or on a
-  project's. `{:projects_changed, id}` (through `PhotonWeb.Shell`)
-  re-reads it only when a listed skill is on in that project, so a
-  rename shows and a busy project's thread messages don't (rule 73).
-  `{:node_keys_changed, _}` (also through the shell) re-reads it on every
-  machine installed or removed, so a removed machine drops out of the
-  scopes lines (section 6.2 of `docs/plans/machine-skills.md`); removals
-  are rare, so it doesn't check which skills name the machine.
+  line. The page follows `Skills.subscribe/0` and re-reads the list on every
+  `{:skills_changed, _}`: a skill written, installed, saved or deleted
+  anywhere, or turned on or off here, on its own page or on a project's.
+  `{:projects_changed, id}` (through `PhotonWeb.Shell`) re-reads it only
+  when a listed skill is on in that project, so a rename shows and a busy
+  project's thread messages don't (rule 73). `{:node_keys_changed, _}` (also
+  through the shell) re-reads it on every machine installed or removed, so a
+  removed machine drops out of the scopes lines; removals are rare, so it
+  doesn't check which skills name the machine.
 
   The Blip switch sends the state it should end in, so a double click or
   a stale page can't flip it the wrong way; a refused enable (30 on

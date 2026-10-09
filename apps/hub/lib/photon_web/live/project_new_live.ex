@@ -1,10 +1,9 @@
 defmodule PhotonWeb.ProjectNewLive do
   @moduledoc """
-  Starting a project, at `/projects/new` (section 5.3 of
-  `docs/plans/step-2-projects-and-threads.md`): a purpose, the only
-  required field, and an optional name. `Photon.Projects.create/1` checks
-  both and makes the slug; its errors show under their fields, and a new
-  project opens on its own page.
+  Starting a project, at `/projects/new`: a purpose, the only required
+  field, and an optional name. `Photon.Projects.create/1` checks both and
+  makes the slug; its errors show under their fields, and a new project
+  opens on its own page.
 
   The form is a plain map (`to_form/2` with `as: :project`), since no
   changeset leaves the context. Typing clears the errors of the last try.

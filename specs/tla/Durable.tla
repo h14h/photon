@@ -296,11 +296,11 @@ HandOff(id, tk, sb) ==
 
 \* The settle hook (Durable.settled/3 -> the profile's on_settled/3), run by
 \* Generation right after each settle/4, inside the same commit, with the
-\* submissions that settle closed (the placed ones among ss, as sb has
-\* them before the settle).  Its signal key is "settle:<submission id>"
-\* for the first of them, or "settle:<generation id>:end" when it closed
-\* none (Signals, plan section 3.3), so a key seen twice is a hook run
-\* twice for one settle, or a signal posted twice.
+\* submissions that settle closed (the placed ones among ss, as sb has them
+\* before the settle). Its signal key is "settle:<submission id>" for the
+\* first of them, or "settle:<generation id>:end" when it closed none
+\* (Signals), so a key seen twice is a hook run twice for one settle, or a
+\* signal posted twice.
 HookKeys(g, ss, sb) ==
     LET closed == {x \in ss : sb[x].status = "placed"}
     IN  IF closed = {} THEN {g \o ":end"} ELSE closed
@@ -1114,9 +1114,10 @@ Spec     == Init /\ [][Next]_vars /\ Fairness
 SpecFine == Init /\ [][Next]_vars /\ FairnessFine
 
 \* A question with the owner waits for them with no time limit, by design
-\* (plan section 4.7), and so does the thread's run around it.  Liveness
-\* of that run (PlacedSettles with an ask call) holds only if the owner
-\* eventually answers a question passed to them, or stops the thread.
+\* (docs/decisions.md#signals-and-questions), and so does the thread's run
+\* around it. Liveness of that run (PlacedSettles with an ask call) holds
+\* only if the owner eventually answers a question passed to them, or stops
+\* the thread.
 OwnerAnswers      == \A t \in ToolIds : WF_vars(OwnerAnswer(t))
 SpecOwnerAnswers  == Spec /\ OwnerAnswers
 

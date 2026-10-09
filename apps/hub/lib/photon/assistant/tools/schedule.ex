@@ -1,14 +1,11 @@
 defmodule Photon.Assistant.Tools.Schedule do
   @moduledoc """
-  Blip's `schedule` tool (section 3.6 of
-  `docs/plans/step-3-skills-and-schedules.md`, and 5.5 of
-  `docs/plans/step-4-blip-as-coordinator.md`): a prompt that fires once or
-  repeatedly. Without `project` it is one of Blip's own schedules, which
-  posts into Blip's conversation. With `project` it is that project's
-  schedule, like one the owner adds on the project's page: it starts a
-  new thread each time, or wakes the thread `thread` names. Threads a
-  project schedule Blip made starts or wakes are Blip's work, so Blip
-  hears how they end.
+  Blip's `schedule` tool: a prompt that fires once or repeatedly. Without
+  `project` it is one of Blip's own schedules, which posts into Blip's
+  conversation. With `project` it is that project's schedule, like one the
+  owner adds on the project's page: it starts a new thread each time, or
+  wakes the thread `thread` names. Threads a project schedule Blip made
+  starts or wakes are Blip's work, so Blip hears how they end.
 
   The schedule is made inside the commit that records the call's result
   (`Photon.Schedules.tool_schedule_tx/4`), with the call's task ID as its

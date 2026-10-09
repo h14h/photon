@@ -1,11 +1,10 @@
 defmodule Photon.QuestionsTest do
   @moduledoc """
-  `ask_blip` questions through `Photon.Questions` (section 4 of
-  `docs/plans/step-4-blip-as-coordinator.md`), on the durable harness.
+  `ask_blip` questions through `Photon.Questions`, on the durable harness.
   The step table itself is covered in `test/core/questions/rules_test.exs`;
   here, that the API applies it to the row and does what goes with each
-  step: the signal to Blip, the answer's wake-up signal and its message
-  in Blip's conversation, the notices, and the announcements.
+  step: the signal to Blip, the answer's wake-up signal and its message in
+  Blip's conversation, the notices, and the announcements.
 
   A question belongs to a tool call. The API's tests stand one in with a
   waiting task in the thread's conversation that nothing wakes, and most
@@ -18,10 +17,10 @@ defmodule Photon.QuestionsTest do
   the call never escalates; Blip's side is driven with
   `Photon.Questions.answer_tx/4` and `pass_tx/4`.
 
-  The Blip-driven tests let the scripted Blip handle the question
-  (section 8.2): it answers from its memory with `answer_question`, asks
-  the owner with `ask_owner`, or replies in prose to a question ending in
-  `(prose)`, which the hub then passes on itself.
+  The Blip-driven tests let the scripted Blip handle the question: it
+  answers from its memory with `answer_question`, asks the owner with
+  `ask_owner`, or replies in prose to a question ending in `(prose)`, which
+  the hub then passes on itself.
   """
 
   use Photon.DataCase, async: false

@@ -2,14 +2,12 @@ defmodule Photon.Skills.MockPhrases do
   @moduledoc """
   The skill phrasings that Blip's scripted model
   (`Photon.Assistant.MockScript`) and a thread's
-  (`Photon.Threads.MockScript`) share (section 4 of
-  `docs/plans/step-3-skills-and-schedules.md`):
+  (`Photon.Threads.MockScript`) share:
 
     * `skills` (or `list skills`) says which skills the request's system
-      prompt lists, with their versions, without a tool call, so tests and
-      a hub on the scripted model can see what the prompt listed: the
-      agent's own, then, when the prompt lists any, each machine's
-      (section 7.1 of `docs/plans/machine-skills.md`)
+      prompt lists, with their versions, without a tool call, so tests and a
+      hub on the scripted model can see what the prompt listed: the agent's
+      own, then, when the prompt lists any, each machine's
     * `load skill <name>` calls `load_skill` with `name`
 
   After a `load_skill` result, the scripts' usual relay prints it.

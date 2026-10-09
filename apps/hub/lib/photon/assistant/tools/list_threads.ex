@@ -1,11 +1,10 @@
 defmodule Photon.Assistant.Tools.ListThreads do
   @moduledoc """
-  Blip's `list_threads` tool (section 5.2 of
-  `docs/plans/step-4-blip-as-coordinator.md`): the threads of every
-  project, or of one, optionally only those in one state, most recent
-  activity first, each with its state and its open questions or last
-  run's note (`Photon.Assistant.Readout.threads/2`). It changes nothing,
-  so a rerun after a restart is safe.
+  Blip's `list_threads` tool: the threads of every project, or of one,
+  optionally only those in one state, most recent activity first, each with
+  its state and its open questions or last run's note
+  (`Photon.Assistant.Readout.threads/2`). It changes nothing, so a rerun
+  after a restart is safe.
   """
   @behaviour Photon.Durable.Tool
 

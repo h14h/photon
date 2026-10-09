@@ -1,9 +1,9 @@
 defmodule PhotonNode.Executor.Rules do
   @moduledoc """
-  The executor's decisions about starting, resuming and restarting the
-  hub's operations (`docs/plans/step-1-machine-tools.md`, section 2.3, node
-  rules 1 to 3 and 7). The executor reads its journal and the operation
-  registry, calls one of these, and does what it says.
+  The executor's decisions about starting, resuming and restarting the hub's
+  operations (`docs/operations.md`, node rules 1 to 3 and 7). The executor
+  reads its journal and the operation registry, calls one of these, and does
+  what it says.
 
   A journal entry is `%{"op" => snapshot, "cancel" => boolean}`: the
   operation's latest snapshot and whether the hub has canceled it.

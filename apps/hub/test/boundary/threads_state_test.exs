@@ -1,8 +1,7 @@
 defmodule Photon.ThreadsStateTest do
   @moduledoc """
-  A thread's recorded run facts and its state through `Photon.Threads`
-  (section 2 of `docs/plans/step-4-blip-as-coordinator.md`), on the
-  durable harness with the scripted thread (`ask me:` and `fail:`). The
+  A thread's recorded run facts and its state through `Photon.Threads`, on
+  the durable harness with the scripted thread (`ask me:` and `fail:`). The
   state rules themselves are covered in `test/core/threads/state_test.exs`.
   """
 

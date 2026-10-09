@@ -1,5 +1,5 @@
 defmodule Photon.Threads.StateTest do
-  @moduledoc "A thread's state from its facts, and the run-end facts (section 2.2)."
+  @moduledoc "A thread's state from its facts, and the run-end facts."
 
   use Photon.Case, async: true
 

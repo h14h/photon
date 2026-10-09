@@ -4,7 +4,7 @@ defmodule PhotonWeb.ThreadLiveTest do
   new-thread page, and its conversation (a command on a machine with its
   output streaming in, an image, the composer while it runs, Stop), next to
   Blip's panel on the same page; its state, Resolve, and its `ask_blip`
-  questions (section 10.4 of `docs/plans/step-4-blip-as-coordinator.md`).
+  questions.
 
   Threads run on the scripted model (`Photon.Threads.MockScript`). The test
   process connects as the machine `box` (`Photon.MachineOps.connect/2`), so

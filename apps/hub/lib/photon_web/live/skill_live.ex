@@ -1,8 +1,7 @@
 defmodule PhotonWeb.SkillLive do
   @moduledoc """
-  One skill (section 6.4 of `docs/plans/step-3-skills-and-schedules.md`):
-  `:new` at `/skills/new` writes one, `:edit` at `/skills/:name` shows,
-  edits and turns one on.
+  One skill: `:new` at `/skills/new` writes one, `:edit` at `/skills/:name`
+  shows, edits and turns one on.
 
   The editor is a form over a plain map (`name`, `description`,
   `instructions` and, when editing, the hidden `version` it loaded), with
@@ -13,16 +12,15 @@ defmodule PhotonWeb.SkillLive do
   (`PhotonWeb.EditorComponents.guarded_form/1`, shared with the context
   file editor).
 
-  "Turned on for" has a switch for Blip, one per project and one per
-  machine the hub knows (section 6.1 of `docs/plans/machine-skills.md`:
-  `Photon.Machines.known/0`, connected or offline but not removed), the
-  projects and machines each a stream. Each switch calls `Skills.enable/2`
-  or `disable/2` with the state it should end in, so a double click or a
-  stale page can't flip it the wrong way; a refused enable (30 on already,
-  or a machine removed since the page loaded) is a flash. A skill on for a
-  machine is offered to Blip and every thread when they work there. The
-  MACHINES group has a row of its own below `xl:`, so the projects' grid
-  keeps its width, and sits beside the other two from `xl:`.
+  "Turned on for" has a switch for Blip, one per project and one per machine
+  the hub knows (`Photon.Machines.known/0`: connected or offline but not
+  removed), the projects and machines each a stream. Each switch calls
+  `Skills.enable/2` or `disable/2` with the state it should end in, so a
+  double click or a stale page can't flip it the wrong way; a refused enable
+  (30 on already, or a machine removed since the page loaded) is a flash. A
+  skill on for a machine is offered to Blip and every thread when they work
+  there. The MACHINES group has a row of its own below `xl:`, so the
+  projects' grid keeps its width, and sits beside the other two from `xl:`.
 
   The page follows `Skills.subscribe/0`. A toggle and a save announce the
   same `{:skills_changed, id}`, so for the open skill the handler does two

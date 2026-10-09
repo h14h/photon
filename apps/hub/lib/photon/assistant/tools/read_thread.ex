@@ -1,12 +1,11 @@
 defmodule Photon.Assistant.Tools.ReadThread do
   @moduledoc """
-  Blip's `read_thread` tool (section 5.2 of
-  `docs/plans/step-4-blip-as-coordinator.md`): a thread's state, who
-  started it, its open questions, and its latest messages, answers and a
-  line per tool call (`Photon.Assistant.Readout.thread/3`), never a
-  tool's output. The details name the thread, for the line in Blip's
-  panel. Reading a thread doesn't mark it seen: seen is the owner's. It
-  changes nothing, so a rerun after a restart is safe.
+  Blip's `read_thread` tool: a thread's state, who started it, its open
+  questions, and its latest messages, answers and a line per tool call
+  (`Photon.Assistant.Readout.thread/3`), never a tool's output. The details
+  name the thread, for the line in Blip's panel. Reading a thread doesn't
+  mark it seen: seen is the owner's. It changes nothing, so a rerun after a
+  restart is safe.
   """
   @behaviour Photon.Durable.Tool
 

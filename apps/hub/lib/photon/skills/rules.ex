@@ -1,10 +1,8 @@
 defmodule Photon.Skills.Rules do
   @moduledoc """
-  The rules for skills (section 2.2 of
-  `docs/plans/step-3-skills-and-schedules.md`), as pure functions.
-  `Photon.Skills` checks input with these once, before or inside the
-  commit that applies it (rule 64), and mints IDs and reads the clock
-  itself.
+  The rules for skills, as pure functions. `Photon.Skills` checks input with
+  these once, before or inside the commit that applies it (rule 64), and
+  mints IDs and reads the clock itself.
 
   Errors are messages that say what to do: a map of field to message for
   a skill's form (`skill/2`), a plain message elsewhere.
@@ -214,12 +212,11 @@ defmodule Photon.Skills.Rules do
   ## Machine skills
 
   @doc """
-  Machine skills grouped by machine (section 2.3 of
-  `docs/plans/machine-skills.md`). `pairs` are `{machine_id, skill}` in
-  the order to list the skills; `known` are the machines the hub knows,
-  in the order to list them. Returns `{machine_id, skills}` for each
-  known machine with at least one skill, in `known`'s order, so a
-  removed machine's skills are left out.
+  Machine skills grouped by machine. `pairs` are `{machine_id, skill}` in
+  the order to list the skills; `known` are the machines the hub knows, in
+  the order to list them. Returns `{machine_id, skills}` for each known
+  machine with at least one skill, in `known`'s order, so a removed
+  machine's skills are left out.
   """
   @spec by_machine([{String.t(), skill}], [String.t()]) :: [{String.t(), [skill, ...]}]
         when skill: term()
@@ -233,8 +230,7 @@ defmodule Photon.Skills.Rules do
 
   @doc """
   Where a `load_skill` call finds the skill called `name` (as listed:
-  trimmed and downcased) among what the agent is `offered` (section 4 of
-  `docs/plans/machine-skills.md`):
+  trimmed and downcased) among what the agent is `offered`:
 
   - `{:own, skill}` when the agent's own set has it. The own set wins
     over the machines', since a skill on for the agent applies to all its

@@ -1,7 +1,6 @@
 defmodule Photon.Questions.Rules do
   @moduledoc """
-  The rules of an `ask_blip` question (section 4.2 of
-  `docs/plans/step-4-blip-as-coordinator.md`), as pure functions.
+  The rules of an `ask_blip` question, as pure functions.
 
     * `question/1` and `answer/1` check what a thread asks and what an
       answer says

@@ -1,9 +1,8 @@
 defmodule Photon.Threads.MockScript do
   @moduledoc """
-  A thread's scripted model, for tests and for working on the hub without
-  a ChatGPT sign-in (`PHOTON_MOCK_MODEL=1` in development; section 3.5 of
-  `docs/plans/step-2-projects-and-threads.md`). It understands a few fixed
-  phrasings:
+  A thread's scripted model, for tests and for working on the hub without a
+  ChatGPT sign-in (`PHOTON_MOCK_MODEL=1` in development). It understands a
+  few fixed phrasings:
 
     * `machines`, `on <machine>: $ <command>` and
       `on <machine>: look at <path>`, the same as Blip's

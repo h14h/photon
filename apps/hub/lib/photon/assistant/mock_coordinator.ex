@@ -1,8 +1,7 @@
 defmodule Photon.Assistant.MockCoordinator do
   @moduledoc """
-  The scripted Blip's phrasings for its tools over projects and threads
-  (section 8.2 of `docs/plans/step-4-blip-as-coordinator.md`), which
-  `Photon.Assistant.MockScript` tries after the machine and skill
+  The scripted Blip's phrasings for its tools over projects and threads,
+  which `Photon.Assistant.MockScript` tries after the machine and skill
   phrasings and before its own:
 
     * `projects` lists the projects (`list_projects`)

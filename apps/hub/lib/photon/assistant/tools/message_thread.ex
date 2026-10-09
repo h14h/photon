@@ -1,13 +1,12 @@
 defmodule Photon.Assistant.Tools.MessageThread do
   @moduledoc """
-  Blip's `message_thread` tool (section 5.2 of
-  `docs/plans/step-4-blip-as-coordinator.md`): sends a message to any
-  thread (`Photon.Threads.send_tx/4`, source `%{"kind" => "blip"}`, so
-  Blip hears how the run it starts ends). A busy thread gets it after
-  its current run (`follow_up`, the default) or after its current step
-  (`steer`); any other `when_busy` is a follow-up. The message is sent inside the commit that records the
-  call's result, with the call's task ID in its request ID, so a rerun
-  after a restart sends it once.
+  Blip's `message_thread` tool: sends a message to any thread
+  (`Photon.Threads.send_tx/4`, source `%{"kind" => "blip"}`, so Blip hears
+  how the run it starts ends). A busy thread gets it after its current run
+  (`follow_up`, the default) or after its current step (`steer`); any other
+  `when_busy` is a follow-up. The message is sent inside the commit that
+  records the call's result, with the call's task ID in its request ID, so a
+  rerun after a restart sends it once.
 
   It refuses in a run that carries a thread's question the owner hasn't
   written into, and past the unattended limit

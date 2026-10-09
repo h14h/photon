@@ -1,8 +1,7 @@
 defmodule Photon.Threads.Tools.AskBlip do
   @moduledoc """
-  A thread's `ask_blip` tool (section 4.3 of
-  `docs/plans/step-4-blip-as-coordinator.md`): the thread asks Blip one
-  specific question and its call waits, durably, for the answer.
+  A thread's `ask_blip` tool: the thread asks Blip one specific question and
+  its call waits, durably, for the answer.
 
   `execute/2` checks the question, stores it and posts it to Blip
   (`Photon.Questions.ask/1`, one commit that checks the call's task is

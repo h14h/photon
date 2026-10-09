@@ -1,8 +1,6 @@
 defmodule PhotonWeb.SkillInstallLive do
   @moduledoc """
-  Installing a skill at `/skills/install` (section 6.5 of
-  `docs/plans/step-3-skills-and-schedules.md`), from a link or a pasted
-  SKILL.md.
+  Installing a skill at `/skills/install`, from a link or a pasted SKILL.md.
 
   Two ways in, as tabs over one card:
 

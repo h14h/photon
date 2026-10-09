@@ -5,23 +5,23 @@ defmodule PhotonWeb.SettingsLive do
   `Photon.ChatGPT`'s (the page shows its steps); the rest is a form that
   changes nothing until it is saved (`Photon.Settings.save/1`).
 
-  Ambient mode (`docs/plans/step-5-ambient-mode.md`, sections 2.2 and 7.2)
-  is part of the same form but saved by `Photon.Ambient.configure/1`,
-  after the settings file: its setting is a durable doc, written in the
-  commit that arms or retires its timers. The section shows whenever Blip
-  can think, and while ambient mode is on even when it can't (signed out
-  of ChatGPT, or plan use not allowed), so it can always be turned off:
-  then it shows only the switch, its status and a warning that digests
-  and reviews skip. When it doesn't show, the form carries none of its
-  fields and a Save leaves it as it was. The form starts from the saved settings merged
-  with the setting's values (`PhotonWeb.AmbientText.form_values/1`), on
-  mount and after every Save, so a Save sends the switch back as it is. A
-  colocated hook fills in the browser's UTC offset, which the review's
-  09:00 follows. While it is on, a status block says when the next digest
-  and review come, what is waiting and what the last ones did, re-read on
-  `{:ambient_changed}` and `{:projects_changed, _}`. With the scripted
-  model only, two buttons send a digest or run the review now, for trying
-  it; with a real sign-in nothing here spends the plan.
+  Ambient mode is part of the same form but saved by
+  `Photon.Ambient.configure/1`, after the settings file: its setting is a
+  durable doc, written in the commit that arms or retires its timers. The
+  section shows whenever Blip can think, and while ambient mode is on even
+  when it can't (signed out of ChatGPT, or plan use not allowed), so it can
+  always be turned off: then it shows only the switch, its status and a
+  warning that digests and reviews skip. When it doesn't show, the form
+  carries none of its fields and a Save leaves it as it was. The form starts
+  from the saved settings merged with the setting's values
+  (`PhotonWeb.AmbientText.form_values/1`), on mount and after every Save, so
+  a Save sends the switch back as it is. A colocated hook fills in the
+  browser's UTC offset, which the review's 09:00 follows. While it is on, a
+  status block says when the next digest and review come, what is waiting
+  and what the last ones did, re-read on `{:ambient_changed}` and
+  `{:projects_changed, _}`. With the scripted model only, two buttons send a
+  digest or run the review now, for trying it; with a real sign-in nothing
+  here spends the plan.
 
   Below the form, what Blip remembers (`Photon.Assistant.memory/0`), which
   Blip keeps up itself and the user can edit, and a fresh start for the

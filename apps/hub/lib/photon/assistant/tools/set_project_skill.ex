@@ -1,15 +1,13 @@
 defmodule Photon.Assistant.Tools.SetProjectSkill do
   @moduledoc """
-  Blip's `set_project_skill` tool (section 5.5 of
-  `docs/plans/step-4-blip-as-coordinator.md`): turns a skill on or off
-  for a project's threads, inside the commit that records the call's
-  result (`Photon.Skills.enable_tx/3`, `disable_tx/3`), so a rerun after
-  a restart changes nothing twice. The skill is found by name in that
-  commit; a project holds at most 30. Blip's own set and each machine's
-  stay the owner's to change, on the skills pages. The description says a
-  machine's skills already reach every thread for work on that machine,
-  so Blip doesn't turn one on for a project to get it there
-  (`docs/plans/machine-skills.md`).
+  Blip's `set_project_skill` tool: turns a skill on or off for a project's
+  threads, inside the commit that records the call's result
+  (`Photon.Skills.enable_tx/3`, `disable_tx/3`), so a rerun after a restart
+  changes nothing twice. The skill is found by name in that commit; a
+  project holds at most 30. Blip's own set and each machine's stay the
+  owner's to change, on the skills pages. The description says a machine's
+  skills already reach every thread for work on that machine, so Blip
+  doesn't turn one on for a project to get it there.
 
   A run that carries a thread's question, and that the owner hasn't
   written into, can't change a project (`Photon.Assistant.may_act_tx/3`).

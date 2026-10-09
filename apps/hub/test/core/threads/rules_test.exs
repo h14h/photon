@@ -1,5 +1,5 @@
 defmodule Photon.Threads.RulesTest do
-  @moduledoc "Thread titles and how the context-file tools describe files (sections 2.4 and 3.3)."
+  @moduledoc "Thread titles and how the context-file tools describe files."
 
   use Photon.Case, async: true
 

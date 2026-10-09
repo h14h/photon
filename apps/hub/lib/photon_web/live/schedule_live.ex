@@ -1,9 +1,7 @@
 defmodule PhotonWeb.ScheduleLive do
   @moduledoc """
-  A project's schedule (section 6.7 of
-  `docs/plans/step-3-skills-and-schedules.md`): `:new` at
-  `/projects/:slug/schedules/new` makes one, `:edit` at
-  `/projects/:slug/schedules/:id` shows and edits one.
+  A project's schedule: `:new` at `/projects/:slug/schedules/new` makes one,
+  `:edit` at `/projects/:slug/schedules/:id` shows and edits one.
 
   The form (`#schedule-form`) is a plain map with string keys, as
   `Photon.Schedules.new_params/1` and `edit_params/1` give it: the

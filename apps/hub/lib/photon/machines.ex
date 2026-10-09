@@ -1,9 +1,9 @@
 defmodule Photon.Machines do
   @moduledoc """
-  Machines and the operations the hub runs on them: which machines exist
-  and what state each is in, starting and cancelling an operation, and the
-  reports a machine's channel hands over. Section 2 of
-  `docs/plans/step-1-machine-tools.md` has the protocol and its rules.
+  Machines and the operations the hub runs on them: which machines exist and
+  what state each is in, starting and cancelling an operation, and the
+  reports a machine's channel hands over. `docs/operations.md` has the
+  protocol's guarantees and rules.
 
   A machine is online exactly as long as its node's connection lives. Each
   connection is a `PhotonWeb.NodeChannel` process, which registers itself

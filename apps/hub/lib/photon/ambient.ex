@@ -1,23 +1,23 @@
 defmodule Photon.Ambient do
   @moduledoc """
-  Ambient mode (`docs/plans/step-5-ambient-mode.md`): a setting, off by
-  default, that lets Blip follow along with the owner's projects and speak
-  up on its own. While it is on, Blip also gets a digest of what changed
-  every hour, 3 hours or 6 hours, and a daily review, around 09:00 at the
-  owner's UTC offset, of threads left stopped, failed or waiting on the
-  owner for days. Off, what reaches Blip is exactly quiet mode's.
+  Ambient mode: a setting, off by default, that lets Blip follow along with
+  the owner's projects and speak up on its own. While it is on, Blip also
+  gets a digest of what changed every hour, 3 hours or 6 hours, and a daily
+  review, around 09:00 at the owner's UTC offset, of threads left stopped,
+  failed or waiting on the owner for days. Off, what reaches Blip is exactly
+  quiet mode's.
 
   ## The setting
 
-  Its settings are the durable doc `global/ambient` (section 2.1), which
-  `Photon.Signals` reads and writes for everyone, since the threads'
-  settle hook reads the mode in its own commit. `configure/1` reads the
-  Settings form over the doc (`Photon.Ambient.Rules.config/2`: a missing
-  or unexpected value keeps what was there) and, in one commit, writes the
-  doc and arms or retires the two timers by `Photon.Ambient.Rules.changes/3`.
-  A file write and a database commit can't be one step, so the setting
-  lives here and not in the settings file: no timer ever runs against a
-  doc that says off. `status/0` is what the Settings and home pages show.
+  Its settings are the durable doc `global/ambient`, which `Photon.Signals`
+  reads and writes for everyone, since the threads' settle hook reads the
+  mode in its own commit. `configure/1` reads the Settings form over the doc
+  (`Photon.Ambient.Rules.config/2`: a missing or unexpected value keeps what
+  was there) and, in one commit, writes the doc and arms or retires the two
+  timers by `Photon.Ambient.Rules.changes/3`. A file write and a database
+  commit can't be one step, so the setting lives here and not in the settings
+  file: no timer ever runs against a doc that says off. `status/0` is what
+  the Settings and home pages show.
 
   ## The timers
 
@@ -78,12 +78,12 @@ defmodule Photon.Ambient do
 
   ## Cost
 
-  Every digest and review is a run on the owner's ChatGPT plan, so they
-  are bounded (rule 73): at most one digest per interval, and only when
-  something in it is new to the owner; one review a day, only when
-  threads qualify; neither stacks behind one Blip hasn't read; the texts
-  are cut (`Photon.Ambient.Text`); and the runs they start only report
-  (section 5.2), so they can't cause the changes a later digest carries.
+  Every digest and review is a run on the owner's ChatGPT plan, so they are
+  bounded (rule 73): at most one digest per interval, and only when
+  something in it is new to the owner; one review a day, only when threads
+  qualify; neither stacks behind one Blip hasn't read; the texts are cut
+  (`Photon.Ambient.Text`); and the runs they start only report, so they
+  can't cause the changes a later digest carries.
 
   There is no process here (rules 3, 31, 89): the timers are durable
   tasks the Scheduler already runs, and the doc and the items are rows.
@@ -141,11 +141,11 @@ defmodule Photon.Ambient do
   @type stopped :: %{job: job(), reason: String.t()}
 
   @typedoc """
-  What the Settings page shows (section 7.2): the setting, the timers'
-  next times (nil when not running), the pending items counted by the
-  digest's own rule, the last firing of each, a timer that stopped,
-  whether Settings lets schedules use the owner's plan, whether Blip can
-  reach its model, and whether the hub runs the scripted model.
+  What the Settings page shows: the setting, the timers' next times (nil
+  when not running), the pending items counted by the digest's own rule, the
+  last firing of each, a timer that stopped, whether Settings lets schedules
+  use the owner's plan, whether Blip can reach its model, and whether the
+  hub runs the scripted model.
   """
   @type status :: %{
           on?: boolean(),
@@ -283,14 +283,13 @@ defmodule Photon.Ambient do
 
   @doc """
   Saves ambient mode's part of the Settings form (`"ambient"`,
-  `"ambient_every"`, `"utc_offset"`; any other key is ignored, and a
-  missing one keeps what was saved) in one commit, with the timers
-  section 2.3's table asks for: armed when it is turned on, replaced when
-  the interval or the offset changed or a timer isn't running, and
-  retired when it is turned off. Turning it off also deletes every
-  pending item, withdraws a digest or review still queued in Blip's
-  inbox, and clears the marks of the threads a withdrawn review named.
-  Announces `{:ambient_changed}`. Never an error.
+  `"ambient_every"`, `"utc_offset"`; any other key is ignored, and a missing
+  one keeps what was saved) in one commit, with the timers the setting calls
+  for: armed when it is turned on, replaced when the interval or the offset
+  changed or a timer isn't running, and retired when it is turned off.
+  Turning it off also deletes every pending item, withdraws a digest or
+  review still queued in Blip's inbox, and clears the marks of the threads a
+  withdrawn review named. Announces `{:ambient_changed}`. Never an error.
   """
   @spec configure(map()) :: :ok
   def configure(params) do
@@ -505,10 +504,10 @@ defmodule Photon.Ambient do
   end
 
   @doc false
-  # One firing of `job` inside the caller's commit (section 3.3 for the
-  # digest, 4.2 for the review), for the timer and `digest_now/0` and
-  # `review_now/0`. Records the outcome on the doc and announces it,
-  # except while ambient mode is off, when it does nothing at all.
+  # One firing of `job` inside the caller's commit, for the timer and
+  # `digest_now/0` and `review_now/0`. Records the outcome on the doc and
+  # announces it, except while ambient mode is off, when it does nothing at
+  # all.
   @spec fire_tx(Tx.t(), job(), firing()) :: result()
   def fire_tx(tx, job, firing) when job in @jobs do
     doc = Signals.ambient_doc_tx(tx)

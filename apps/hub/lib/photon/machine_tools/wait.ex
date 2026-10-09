@@ -1,7 +1,7 @@
 defmodule Photon.MachineTools.Wait do
   @moduledoc """
-  How a machine tool call waits for its op, as pure functions (sections
-  3.2 and 3.3 of `docs/plans/step-1-machine-tools.md`).
+  How a machine tool call waits for its op, as pure functions
+  (`docs/operations.md#waiting-and-offline-machines`).
 
   A call parks until its op's signal fires or its next check comes due.
   While the machine is online, it checks once per `check_ms` and asks for
@@ -18,9 +18,9 @@ defmodule Photon.MachineTools.Wait do
   are arguments; nothing here reads the clock or the config.
 
   `offline_message/3` picks what the model is told when a call gives up,
-  from what `Photon.Machines.abandon_tx/2` found inside the commit that
-  ends it: only an op that was never pushed and never confirmed certainly
-  didn't run (hub rule 7, section 2.4).
+  from what `Photon.Machines.abandon_tx/2` found inside the commit that ends
+  it: only an op that was never pushed and never confirmed certainly didn't
+  run (hub rule 7 in `docs/operations.md`).
   """
 
   # Functional core: no processes, no I/O.

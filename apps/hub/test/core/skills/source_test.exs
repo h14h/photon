@@ -1,5 +1,5 @@
 defmodule Photon.Skills.SourceTest do
-  @moduledoc "Where skills come from (section 2.4 of the step 3 plan), with plain inputs."
+  @moduledoc "Where skills come from, with plain inputs."
 
   use Photon.Case, async: true
 

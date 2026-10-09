@@ -1,7 +1,6 @@
 defmodule Photon.Assistant.Origin do
   @moduledoc """
-  Who asked for one of Blip's runs, and what that lets the run do
-  (section 5.4 of `docs/plans/step-4-blip-as-coordinator.md`), as pure
+  Who asked for one of Blip's runs, and what that lets the run do, as pure
   functions over the `source` maps of the submissions the run answers.
 
   `of/1` names who asked (`by`, and the schedule or thread it was for),
@@ -19,27 +18,27 @@ defmodule Photon.Assistant.Origin do
   Only a question is a thread asking, and `for_call/3` credits each call
   that handles one to the thread whose question it is.
 
-  `unattended_ok?/3` bounds what Blip starts on its own: between two of
-  the owner's messages, Blip can start or message threads at most the
-  limit's number of times in runs the owner didn't type into, so a loop
-  between Blip and a thread stops in code (section 3.7). Only those
-  calls count: `unattended_details/1` marks them in their results.
-  `schedule_work_ok?/1` keeps project schedules, whose firings start
-  threads with no limit, to runs the owner typed into.
+  `unattended_ok?/3` bounds what Blip starts on its own: between two of the
+  owner's messages, Blip can start or message threads at most the limit's
+  number of times in runs the owner didn't type into, so a loop between Blip
+  and a thread stops in code
+  (`docs/decisions.md#what-blip-may-do-on-its-own`). Only those calls count:
+  `unattended_details/1` marks them in their results. `schedule_work_ok?/1`
+  keeps project schedules, whose firings start threads with no limit, to
+  runs the owner typed into.
 
   A run that only handles threads' questions (`quiet?`: signals carrying
   questions and no updates, nothing the owner or a schedule sent) answers
   to the threads, not the owner: Blip's reply in it makes no bubble and
   no "Told you" row. Its `ask_owner` question still reaches the owner.
 
-  In ambient mode a digest or a daily review reaches Blip as a signal
-  too (section 5 of `docs/plans/step-5-ambient-mode.md`). A run it starts
-  is Blip's follow-up on it (`by: "follow_up"`, `id: "digest"` or
-  `"review"`), and it only reports (`report_only?`) until the owner
-  types into it: every tool that starts, messages or stops threads, or
-  changes a project or a schedule, refuses with
-  `report_only_message/0`. Such a run starts nothing, so it can't cause
-  the work that would make the next digest.
+  In ambient mode a digest or a daily review reaches Blip as a signal too. A
+  run it starts is Blip's follow-up on it (`by: "follow_up"`, `id: "digest"`
+  or `"review"`), and it only reports (`report_only?`) until the owner types
+  into it: every tool that starts, messages or stops threads, or changes a
+  project or a schedule, refuses with `report_only_message/0`. Such a run
+  starts nothing, so it can't cause the work that would make the next
+  digest.
 
   These run on the harness's hook paths too (the activity log, C12), so
   they are total: any term in, a value out.

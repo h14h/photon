@@ -1,8 +1,7 @@
 defmodule Photon.Threads.State do
   @moduledoc """
-  A thread's state, worked out by code from facts the hub stores (section
-  2.2 of `docs/plans/step-4-blip-as-coordinator.md`): never by a model,
-  and never stored itself (rule 15).
+  A thread's state, worked out by code from facts the hub stores: never by a
+  model, and never stored itself (rule 15).
 
   `of/3` takes the facts (whether a run is in progress, the thread's open
   `ask_blip` question, how its last run ended, when the owner last looked
@@ -24,17 +23,16 @@ defmodule Photon.Threads.State do
   done, however old. `label/2` gives the words the pages and Blip's tools
   show for a state, so they read the same everywhere.
 
-  When a run ends, `asks?/1` says whether its answer ended with a
-  question to the user, and `note/2` makes the short note stored with it.
-  Both are total: they take any term and return a value, since they run
-  inside the harness's settle hook (section 3.1).
+  When a run ends, `asks?/1` says whether its answer ended with a question
+  to the user, and `note/2` makes the short note stored with it. Both are
+  total: they take any term and return a value, since they run inside the
+  harness's settle hook.
 
   `sections/1` groups the board (`Photon.Threads.board/1`) into the home
-  page's sections (section 10.3): what waits on the owner (questions
-  passed to them, and threads whose last answer asked), failed and
-  finished threads, what is running (threads waiting on Blip after the
-  ones at work), and threads gone quiet, each in its order and cut to its
-  limit with a count of the rest.
+  page's sections: what waits on the owner (questions passed to them, and
+  threads whose last answer asked), failed and finished threads, what is
+  running (threads waiting on Blip after the ones at work), and threads gone
+  quiet, each in its order and cut to its limit with a count of the rest.
   """
 
   # Functional core: no processes, no I/O. The time comes in as an argument.
@@ -67,9 +65,9 @@ defmodule Photon.Threads.State do
 
   @typedoc """
   A thread on the board as `sections/1` reads it: its state, its row
-  (`thread`, with the facts of section 2.1 and `active_at`) and its open
-  questions (maps with `id`, `status`, `inserted_at` and `passed_at`).
-  Any other keys go along with it.
+  (`thread`, with the facts `Photon.Threads.Thread` records and `active_at`)
+  and its open questions (maps with `id`, `status`, `inserted_at` and
+  `passed_at`). Any other keys go along with it.
   """
   @type entry :: %{
           required(:state) => t(),
@@ -106,7 +104,7 @@ defmodule Photon.Threads.State do
   # The longest note stored with a run's end.
   @note_limit 280
 
-  # How many rows the home page's cut sections show (section 10.3).
+  # How many rows the home page's cut sections show.
   @failed_limit 20
   @unread_limit 20
   @quiet_limit 10
@@ -173,8 +171,7 @@ defmodule Photon.Threads.State do
   end
 
   @doc """
-  The board's entries grouped into the home page's sections (section
-  10.3 of `docs/plans/step-4-blip-as-coordinator.md`):
+  The board's entries grouped into the home page's sections:
 
     * `waiting`: every open question that is with the owner, and every
       thread waiting on the owner without one (its last answer asked),

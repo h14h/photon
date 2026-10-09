@@ -1,11 +1,9 @@
 defmodule Photon.Assistant.Tools.AnswerQuestion do
   @moduledoc """
-  Blip's `answer_question` tool (sections 4.4 and 5.3 of
-  `docs/plans/step-4-blip-as-coordinator.md`): answers a thread's
-  `ask_blip` question (`Photon.Questions.answer_tx/4`), which wakes the
-  thread's waiting call with the answer. It answers inside the commit
-  that records the call's result, so a rerun after a restart answers
-  once.
+  Blip's `answer_question` tool: answers a thread's `ask_blip` question
+  (`Photon.Questions.answer_tx/4`), which wakes the thread's waiting call
+  with the answer. It answers inside the commit that records the call's
+  result, so a rerun after a restart answers once.
 
   Who answers depends on the run making the call
   (`Photon.Assistant.origin_tx/2`, read in the same commit): a question

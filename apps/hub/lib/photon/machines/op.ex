@@ -17,7 +17,7 @@ defmodule Photon.Machines.Op do
     * `cancel`: the call ended another way, and the op must not run
 
   `Photon.Machines.Rules` decides every change; `Photon.Machines` applies
-  them. `docs/plans/step-1-machine-tools.md` (section 2.3) has the rules.
+  them. `docs/operations.md#hub-rules` has the rules.
   """
 
   # Data: an Ecto schema, no behaviour of its own.

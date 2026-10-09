@@ -1,8 +1,7 @@
 defmodule Photon.Assistant.MockCoordinatorTest do
   @moduledoc """
-  The scripted Blip's phrasings for its tools over projects and threads
-  (section 8.2 of `docs/plans/step-4-blip-as-coordinator.md`), on their
-  own and through `Photon.Assistant.MockScript`, which tries them.
+  The scripted Blip's phrasings for its tools over projects and threads, on
+  their own and through `Photon.Assistant.MockScript`, which tries them.
   """
 
   use Photon.Case, async: true

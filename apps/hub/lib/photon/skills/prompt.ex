@@ -1,10 +1,9 @@
 defmodule Photon.Skills.Prompt do
   @moduledoc """
-  What agents see of skills (section 2.6 of
-  `docs/plans/step-3-skills-and-schedules.md`), as pure functions: the
-  Skills section of a prompt, the text a `load_skill` call returns, its
-  error, and the tool's name, description and parameters, which Blip's
-  `load_skill` and a thread's share.
+  What agents see of skills, as pure functions: the Skills section of a
+  prompt, the text a `load_skill` call returns, its error, and the tool's
+  name, description and parameters, which Blip's `load_skill` and a thread's
+  share.
 
   `section/1` lists the enabled skills' names, IDs, versions and
   descriptions, and says what to do when a skill loaded earlier is no
@@ -22,20 +21,19 @@ defmodule Photon.Skills.Prompt do
   no machine, and a file of the same name in a project's folder is
   something else.
 
-  A skill turned on for a machine is offered to every agent, beside its
-  own set (`t:offered/0`; sections 3 and 4 of
-  `docs/plans/machine-skills.md`). `section/1` lists those after the
-  agent's own, each under its machine in a `<machine_skills>` block, and
-  says to load them before starting work on that machine and to follow
-  them only there, including a skill loaded earlier from the agent's own
-  set that is now listed only under a machine (turned off for the
-  agent's own set, left on for the machine). That part changes only when a machine's skills change
-  or a machine with skills is installed or removed, never as machines
-  connect. `loaded/2` names the machines a skill is on for and says to
-  follow it when working there, and `not_loaded/3` lists the machines'
-  skills too. With no machines, `section/1`, `loaded/2` and
-  `not_loaded/3` give exactly the text they gave before machines had
-  skills, so a hub with none sends agents the same prompts and results.
+  A skill turned on for a machine is offered to every agent, beside its own
+  set (`t:offered/0`). `section/1` lists those after the agent's own, each
+  under its machine in a `<machine_skills>` block, and says to load them
+  before starting work on that machine and to follow them only there,
+  including a skill loaded earlier from the agent's own set that is now
+  listed only under a machine (turned off for the agent's own set, left on
+  for the machine). That part changes only when a machine's skills change or
+  a machine with skills is installed or removed, never as machines connect.
+  `loaded/2` names the machines a skill is on for and says to follow it when
+  working there, and `not_loaded/3` lists the machines' skills too. With no
+  machines, `section/1`, `loaded/2` and `not_loaded/3` give exactly the text
+  they gave before machines had skills, so a hub with none sends agents the
+  same prompts and results.
   """
 
   # Functional core: no processes, no I/O.

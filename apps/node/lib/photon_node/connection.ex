@@ -11,9 +11,9 @@ defmodule PhotonNode.Connection do
   (`PhotonNode.Executor.snapshots/0`).
 
   It doesn't catch failures from the executor (node rule 8 in
-  `docs/plans/step-1-machine-tools.md`): a call that fails crashes this
-  process, the socket closes, and the rejoin resends everything. A hub
-  message that doesn't parse is logged and ignored, as are unknown events.
+  `docs/operations.md`): a call that fails crashes this process, the socket
+  closes, and the rejoin resends everything. A hub message that doesn't
+  parse is logged and ignored, as are unknown events.
 
   The link callbacks are plain sends to this process, and what arrives
   while the channel isn't joined is dropped, on purpose. A lost snapshot is

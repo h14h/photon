@@ -1,9 +1,9 @@
 defmodule PhotonNode.Executor do
   @moduledoc """
-  Runs the hub's operations on this node (`docs/plans/step-1-machine-tools.md`,
-  section 2.3, node rules 1 to 9), and is the node's API for them:
-  `start/1` (a parsed `op.start`), `cancel/1`, `ack/1` and `snapshots/0`
-  (every journaled snapshot, for the hub link to send after each join).
+  Runs the hub's operations on this node (`docs/operations.md`, node rules 1
+  to 9), and is the node's API for them: `start/1` (a parsed `op.start`),
+  `cancel/1`, `ack/1` and `snapshots/0` (every journaled snapshot, for the
+  hub link to send after each join).
 
   One process for all of the hub's operations. It owns the journal
   (`PhotonNode.Executor.Journal`): every write goes through it, so a cancel

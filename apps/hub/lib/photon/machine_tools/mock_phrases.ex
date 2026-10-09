@@ -2,8 +2,7 @@ defmodule Photon.MachineTools.MockPhrases do
   @moduledoc """
   The machine tool phrasings that Blip's scripted model
   (`Photon.Assistant.MockScript`) and a thread's share, so both answer the
-  same words the same way (section 3.6 of
-  `docs/plans/step-2-projects-and-threads.md`):
+  same words the same way:
 
     * `machines` (or `list machines`) lists machines (`list_machines`)
     * `on <machine>: $ <command>` runs a command (`shell`)

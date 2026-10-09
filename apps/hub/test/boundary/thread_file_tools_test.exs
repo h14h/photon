@@ -1,11 +1,10 @@
 defmodule Photon.ThreadFileToolsTest do
   @moduledoc """
-  A thread's context-file tools (section 3.3), driven through the scripted
-  model: each message is one tool call, and the test reads the tool's
-  result and the file it left. That a stopped call keeps none of its
-  commit's writes is the harness's `{:commit, fun}` contract
-  (`Photon.Durable.Tool`); `test/boundary/projects_test.exs` covers a
-  rolled-back `write_file_tx/5`.
+  A thread's context-file tools, driven through the scripted model: each
+  message is one tool call, and the test reads the tool's result and the
+  file it left. That a stopped call keeps none of its commit's writes is the
+  harness's `{:commit, fun}` contract (`Photon.Durable.Tool`);
+  `test/boundary/projects_test.exs` covers a rolled-back `write_file_tx/5`.
   """
 
   use Photon.DataCase, async: false

@@ -1,10 +1,9 @@
 defmodule Photon.Repo.Migrations.CreateActivity do
   use Ecto.Migration
 
-  # The activity log (section 6.1 of
-  # `docs/plans/step-4-blip-as-coordinator.md`): one row per tool call Blip
-  # made, and per message it told the owner unasked, written once in the
-  # commit that stored it. No foreign keys: the log outlives what it names.
+  # The activity log: one row per tool call Blip made, and per message it
+  # told the owner unasked, written once in the commit that stored it. No
+  # foreign keys: the log outlives what it names.
   def change do
     create table(:activity, primary_key: false) do
       add :id, :string, primary_key: true

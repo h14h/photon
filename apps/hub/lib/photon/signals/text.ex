@@ -1,7 +1,6 @@
 defmodule Photon.Signals.Text do
   @moduledoc """
-  The words of what reaches Blip unasked (sections 3.4, 4.5, 4.6 and 4.7
-  of `docs/plans/step-4-blip-as-coordinator.md`).
+  The words of what reaches Blip unasked.
 
   A signal is one text part of a message to Blip, which the model reads:
   a thread update (`update/2`) or a question (`question/2`). They name

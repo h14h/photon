@@ -1,11 +1,10 @@
 defmodule Photon.Assistant.Tools.StartProject do
   @moduledoc """
-  Blip's `start_project` tool (section 5.2 of
-  `docs/plans/step-4-blip-as-coordinator.md`): a new project from a
-  purpose and, optionally, a name (`Photon.Projects.create_tx/2`), made
-  inside the commit that records the call's result, so a call stopped
-  before it leaves nothing and a rerun after a restart makes one. A
-  purpose or name the project rules refuse comes back as their messages.
+  Blip's `start_project` tool: a new project from a purpose and, optionally,
+  a name (`Photon.Projects.create_tx/2`), made inside the commit that
+  records the call's result, so a call stopped before it leaves nothing and
+  a rerun after a restart makes one. A purpose or name the project rules
+  refuse comes back as their messages.
 
   A run that carries a thread's question, and that the owner hasn't
   written into, can't start a project (`Photon.Assistant.may_act_tx/3`).

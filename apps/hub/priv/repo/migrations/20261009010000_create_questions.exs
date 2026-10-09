@@ -1,9 +1,8 @@
 defmodule Photon.Repo.Migrations.CreateQuestions do
   use Ecto.Migration
 
-  # A thread's `ask_blip` questions (section 4.1 of
-  # `docs/plans/step-4-blip-as-coordinator.md`): one row per tool call,
-  # from asked to answered or withdrawn.
+  # A thread's `ask_blip` questions: one row per tool call, from asked to
+  # answered or withdrawn.
   def change do
     create table(:questions, primary_key: false) do
       add :id, :string, primary_key: true

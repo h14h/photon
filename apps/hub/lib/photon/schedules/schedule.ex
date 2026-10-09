@@ -1,7 +1,6 @@
 defmodule Photon.Schedules.Schedule do
   @moduledoc """
-  A schedule: a prompt that fires at set times (section 3.1 of
-  `docs/plans/step-3-skills-and-schedules.md`).
+  A schedule: a prompt that fires at set times.
 
   Where it fires follows from two columns (`Photon.Schedules.Rules.target/1`):
   with no `project_id` it is Blip's, and posts into Blip's conversation
@@ -32,7 +31,7 @@ defmodule Photon.Schedules.Schedule do
 
   use Ecto.Schema
 
-  @typedoc "What the last firing did; section 3.5 of the plan lists them."
+  @typedoc "What the last firing did, as `Photon.Schedules.Rules.fire/2` names it."
   @type outcome :: String.t()
 
   @type t :: %__MODULE__{

@@ -1,10 +1,9 @@
 defmodule Photon.Ambient.Timer do
   @moduledoc """
   The `"ambient"` task kind: ambient mode's two timers, the digest and the
-  daily review (section 6 of `docs/plans/step-5-ambient-mode.md`). It is
-  a schedule's routine (`Photon.Schedules.Routine`) reused for both jobs:
-  a background task with no conversation sleeps durably until its time,
-  fires, and waits again.
+  daily review. It is a schedule's routine (`Photon.Schedules.Routine`)
+  reused for both jobs: a background task with no conversation sleeps
+  durably until its time, fires, and waits again.
 
   The task's input is `"job"` (`"digest"` or `"review"`), `"first_at"`
   (Unix milliseconds) and `"every_ms"` (the digest's interval, or a day);

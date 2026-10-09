@@ -17,8 +17,7 @@ defmodule PhotonNode do
   ## The operation protocol
 
   `PhotonCore.Operation.Wire` builds and parses its messages;
-  `docs/plans/step-1-machine-tools.md`, section 2, has its rules. As seen
-  from the node:
+  `docs/operations.md` has its rules. As seen from the node:
 
     * hub → node: `op.start` (`id`, `kind`, `args`, `known`): run this
       operation, or send its latest snapshot if the node has it; `op.cancel`
