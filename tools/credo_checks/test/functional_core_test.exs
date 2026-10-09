@@ -138,6 +138,23 @@ defmodule PhotonCredo.Check.FunctionalCoreTest do
     end)
   end
 
+  test "an import of a boundary module is reported, an import of a core module isn't" do
+    ~S"""
+    defmodule App.Core.Text do
+      import App.Threads, only: [start: 2]
+      import App.Core.Price
+
+      def go(project, text), do: start(project, text)
+    end
+    """
+    |> to_source_file()
+    |> run_check(FunctionalCore, core_modules: ["App.Core.*"], namespaces: ["App"])
+    |> assert_issue(fn issue ->
+      assert issue.trigger == "import"
+      assert issue.message =~ "imports App.Threads, a boundary module"
+    end)
+  end
+
   test "an allowed call into a boundary module passes" do
     ~S"""
     defmodule App.Core.Turn do
