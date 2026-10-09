@@ -41,8 +41,9 @@ defmodule PhotonNode.Executor.Request do
 
   alias PhotonCore.{Operation, Output}
 
-  @max_command_bytes 100_000
-  @max_image_bytes 5_000_000
+  @max_command_bytes Operation.max_command_bytes()
+  @max_output Output.max_limit()
+  @max_image_bytes Operation.max_image_bytes()
   @snapshot_budget 6_000_000
   @version 1
 
@@ -195,7 +196,7 @@ defmodule PhotonNode.Executor.Request do
   defp directory(_directory, kind),
     do: {:error, ~s(#{kind} argument "directory" must be a string or null)}
 
-  defp output_limit(limit) when is_integer(limit) and limit in 1..1_000_000//1,
+  defp output_limit(limit) when is_integer(limit) and limit in 1..@max_output//1,
     do: {:ok, limit}
 
   defp output_limit(_limit),

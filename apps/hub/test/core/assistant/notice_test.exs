@@ -198,6 +198,32 @@ defmodule Photon.Assistant.NoticeTest do
       })
     end
 
+    test "a notice between a digest run's tool rounds doesn't end the run, so it stays report-only" do
+      digest =
+        entry("user", %{
+          "message" => Message.user("[Digest] Since the last digest ..."),
+          "source" => %{"kind" => "signal", "signals" => [%{"kind" => "digest"}]}
+        })
+
+      # The owner's answer to a question reaches the run as a steer; it isn't
+      # the owner typing into the run, so the run still only reports.
+      answer =
+        entry("user", %{
+          "message" => Message.user("The second one."),
+          "source" => %{"kind" => "answer"}
+        })
+
+      entries = [
+        digest,
+        assistant_entry("Let me check the pump thread.", [call("read_thread", %{}, "c1")]),
+        entry("error", %{"message" => "Skipped the schedule \"Water\".", "notice" => true}),
+        answer,
+        assistant_entry("Checking the garden too.", [call("read_thread", %{}, "c2")])
+      ]
+
+      assert Notice.from_entries(entries) == []
+    end
+
     test "Blip's replies in a run that only handles questions say nothing; its question does" do
       details = %{"question_id" => "q_1", "title" => "Deploy", "wording" => "Which branch?"}
 

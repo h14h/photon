@@ -63,6 +63,7 @@ defmodule Photon.Durable do
   # the built-in task kinds and the functional core stay inside.
   use Boundary,
     deps: [
+      Photon.Durable.RunBoundary,
       Photon.Events,
       Photon.Repo,
       PhotonCore,

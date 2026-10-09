@@ -36,5 +36,5 @@ defmodule PhotonCore do
   use Boundary,
     type: :strict,
     deps: [Jason],
-    exports: [ID, Message, Operation, Operation.Wire, Output]
+    exports: [ID, Message, Operation, Operation.Result, Operation.Wire, Output]
 end

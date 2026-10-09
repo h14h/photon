@@ -56,6 +56,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "PhotonCore.LLM.Responses.Response",
                    "PhotonCore.Output",
                    "PhotonCore.Operation",
+                   "PhotonCore.Operation.Result",
                    "PhotonCore.Operation.Wire"
                  ],
                  # A core module calls only core modules, never the model client.

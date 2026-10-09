@@ -46,11 +46,22 @@ defmodule PhotonCore.Operation.Wire do
 
   @streams ~w(out err)
 
+  # The protocol a node speaks: `ops:1`, plus a `shell` op creating its
+  # missing working directory.
+  @capability "ops:2"
+
   @typedoc "A message of the protocol."
   @type message :: :start | :cancel | :ack | :snapshot | :output
 
   @typedoc "An event name and its payload, ready to push."
   @type push :: {String.t(), map()}
+
+  @doc """
+  The capability a node lists when it joins, and the hub requires before
+  it sends operations (`docs/operations.md#messages-and-versions`).
+  """
+  @spec capability() :: String.t()
+  def capability, do: @capability
 
   @doc "The event name of `message`."
   @spec event(message()) :: String.t()

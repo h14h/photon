@@ -29,10 +29,12 @@ defmodule Photon.Assistant.Notice do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, Photon.Transcript, Photon.Assistant.Origin]
+  use Boundary,
+    type: :strict,
+    deps: [PhotonCore, Photon.Durable.RunBoundary, Photon.Transcript, Photon.Assistant.Origin]
 
   alias Photon.Assistant.Origin
-  alias Photon.Durable.Entry
+  alias Photon.Durable.{Entry, RunBoundary}
   alias Photon.Transcript
   alias PhotonCore.Message
 
@@ -53,9 +55,9 @@ defmodule Photon.Assistant.Notice do
 
   @typedoc """
   What `scan/2` carries from one batch to the next: the sources of the
-  user entries of the run in progress (newest first), and whether the last run ended (a
-  model turn with no calls, or an error), so the next user entry starts
-  a new one.
+  user entries of the run in progress (newest first), and whether the last
+  run ended (`Photon.Durable.RunBoundary`), so the next user entry starts a
+  new one.
   """
   @type state :: %{sources: [term()], ended?: boolean()}
 
@@ -96,7 +98,10 @@ defmodule Photon.Assistant.Notice do
   defp ended(state, %{kind: "assistant", data: data}),
     do: %{state | ended?: Message.tool_calls(data["message"]) == []}
 
-  defp ended(state, %{kind: "error"}), do: %{state | ended?: true}
+  # A notice comes between a run's entries without ending it.
+  defp ended(state, %{kind: "error"} = entry),
+    do: if(RunBoundary.ends?(entry), do: %{state | ended?: true}, else: state)
+
   defp ended(state, _entry), do: state
 
   defp origin(%{sources: sources}), do: Origin.of(sources)

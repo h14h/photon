@@ -17,6 +17,10 @@ for app in core node hub; do
   (
     cd "apps/$app"
     mix precommit
+    # Dialyxir rechecks its PLT only when the deps' hash changes, which a
+    # change to a path dependency (core, the node) doesn't. Dropping the
+    # hash makes it recheck, so the PLT holds the code being checked.
+    rm -f _build/plts/*.plt.hash
     mix dialyzer
     mix test --cover
   )
