@@ -7,8 +7,7 @@ defmodule Photon.Durable.Changes do
     * `:scopes` - per conversation ID (or `"global"` for global docs), the
       new `:entries` and the changed `:docs`, `:submissions` and `:tasks`,
       each in the order they were written
-    * `:tasks` - every task the commit changed, for the task panel and the
-      scheduler
+    * `:tasks` - every task the commit changed
     * `:signals` - the keys of signals the commit recorded
     * `:announcements` - `{topic, message}` for each `Tx.announce/3`, in
       commit order; they belong to no conversation's scope

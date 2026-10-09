@@ -1,39 +1,25 @@
 defmodule PhotonNode.Executor.Rules do
   @moduledoc """
   The executor's decisions about starting, resuming and restarting the hub's
-  operations (`docs/operations.md`, node rules 1 to 3 and 7). The executor
-  reads its journal and the operation registry, calls one of these, and does
-  what it says.
-
-  A journal entry is `%{"op" => snapshot, "cancel" => boolean}`: the
-  operation's latest snapshot and whether the hub has canceled it.
-
-  The decisions:
+  operations (`docs/operations.md`, node rules 1 to 3, 7 and 8). Pure: the
+  executor reads its journal and the operation registry, calls one of
+  these, and does what it says. A `decision`:
 
     * `:run`: a new operation. Journal its `ready` snapshot, then start it.
     * `{:resend, cancel?}`: the operation has finished, or a process is
-      running it. Start nothing; send its latest snapshot again (the
-      journal has it, and `Ops.add/2` asks a running process to resend).
-    * `{:resume, cancel?}`: the operation is unfinished and nothing runs
-      it. Start it again from its journaled snapshot with `Ops.add/2`,
-      which never reruns a shell command (`Ops.Shell` recovers it from its
-      files).
+      running it. Start nothing; send its latest snapshot again.
+    * `{:resume, cancel?}`: unfinished, and nothing runs it. Start it again
+      from its journaled snapshot with `Ops.add/2`, which never reruns a
+      shell command (`Ops.Shell` recovers it from its files).
     * `:lost`: the hub has seen the operation but there is no journal for
       it. Run nothing and answer with `Request.lost/2`.
 
-  `on_unjournaled/1` says what happens to an entry when a result for its
-  operation couldn't be journaled and was forwarded anyway (node rule 8).
-
   `cancel?` is true when the entry says canceled and the operation is
-  unfinished: the executor follows `Ops.add/2` with `Ops.cancel/1`. A
-  resume never starts in `canceling` instead, because `Ops.Shell` started
-  that way kills only the snapshot's `pgid` and would miss a command whose
-  group is only in its `pid` file.
-
-  Pure: no processes, files or clock.
+  unfinished: the executor follows `Ops.add/2` with `Ops.cancel/1`, and
+  never resumes in `canceling` (node rule 2).
   """
 
-  # Functional core (see PhotonNode.Executor): no processes, no I/O.
+  # Functional core: no processes, no I/O.
   use Boundary, type: :strict, deps: [PhotonCore]
 
   alias PhotonCore.Operation
@@ -68,15 +54,13 @@ defmodule PhotonNode.Executor.Rules do
   end
 
   @doc """
-  What an operation process's exit means, given its journal entry (or nil
-  if it has none), the exit reason and whether it was restarted once
-  already.
-
-  A finished operation's exit is ignored. A clean exit (`:normal`,
-  `:shutdown` or `:noproc`) before the terminal snapshot is restarted once
-  from the journal, since an operation process stops without a result when
-  its owner didn't take a checkpoint. A crash, or a second clean exit,
-  fails the operation.
+  What an operation process's exit means, given its journal entry (or nil),
+  the exit reason and whether it was restarted once already. A finished
+  operation's exit is ignored. A clean exit (`:normal`, `:shutdown` or
+  `:noproc`) before the terminal snapshot is restarted once from the
+  journal, since an operation process stops without a result when its
+  owner didn't take a checkpoint. A crash, or a second clean exit, fails
+  the operation.
   """
   @spec down(entry() | nil, term(), boolean()) ::
           :ignore | {:restart, boolean()} | {:fail, String.t()}

@@ -1,42 +1,25 @@
 defmodule PhotonWeb.SkillInstallLive do
   @moduledoc """
-  Installing a skill at `/skills/install`, from a link or a pasted SKILL.md.
+  Installing a skill at `/skills/install`, from a link or a pasted
+  SKILL.md, as two tabs over one card.
 
-  Two ways in, as tabs over one card:
+  From a link, `Skills.fetch/1` runs in a `start_async/3` task, since it
+  makes HTTP requests. Paste reads the text with `Skills.read/1` in the
+  callback (no I/O) and cancels a fetch still running, so its answer
+  can't replace the pasted one. Both forms stay in the page while hidden,
+  so switching tabs keeps what was typed, and each shows its own error
+  (`#install-error`) only on its own tab.
 
-    * From a link: `Skills.fetch/1` runs in a `start_async/3` task (it
-      makes HTTP requests, so never in a callback), with `Fetching...`
-      shown until it answers. A refused link shows its message under the
-      link's field.
-    * Paste: `Skills.read/1` reads the text in the callback (no I/O),
-      and cancels a fetch still running, so its answer can't replace the
-      pasted one. A text that can't be read shows why under the paste
-      field.
-
-  Both forms stay in the page while hidden, so switching tabs keeps what
-  was typed, and each keeps its own error, shown (as `#install-error`)
-  only on its own tab. A new fetch or read replaces
-  the last answer.
-
-  What comes back are candidates (`assigns.candidates`), which install
-  takes `origin`, `source_url`, the notes and the left-out files from;
-  the forms give only names, descriptions and instructions.
-
-    * One candidate opens the preview form, prefilled and editable, with
-      its notes and where it came from. A name or description the
-      SKILL.md lacks, and a name another skill has, are flagged under
-      their fields as soon as it shows (`Skills.preview_errors/1`).
-      `Install` goes to the skill's page.
-    * Several (a folder of skills) are a list to pick from, under
-      `fetch/1`'s notice when the folder had more than 30. One that
-      can't be picked says why: its download failed, its SKILL.md has no
-      name or description, or its name is taken. `Install selected`
-      installs each pick under its own name and goes to `/skills`; a pick
-      that fails stays listed with its message, and the ones that went in
-      are marked installed. A row that can't be picked but was read can
-      be installed on its own: it opens in the preview form, to fix there,
-      with a way back to the list. Installing it there comes back to the
-      list, with that row marked installed and the picks kept.
+  What comes back are candidates, which install takes `origin`,
+  `source_url`, the notes and the left-out files from; the forms give
+  only names, descriptions and instructions. One candidate opens the
+  preview form, with its problems flagged at once
+  (`Skills.preview_errors/1`). Several (a folder of skills, at most 30)
+  are a list to pick from; `Install selected` installs each pick under
+  its own name, keeps a failed pick listed with its message, and marks
+  the ones that went in. A row that can't be picked but was read can be
+  fixed and installed on its own through the preview form, which then
+  comes back to the list with the picks kept.
 
   While a list is open the page follows `Skills.subscribe/0`, so a name
   taken elsewhere becomes unpickable. Everything else the shell passes on

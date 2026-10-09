@@ -1,19 +1,16 @@
 defmodule PhotonWeb.NodesLive do
   @moduledoc """
-  The user's machines: connected nodes, known ones that aren't connected
-  (a node key that isn't revoked, from the shell's `Photon.Machines.roster/0`,
-  which the sidebar links here), one-click installs and updates over
-  SSH for machines on the hub's tailnet (one machine at a time, or every
-  outdated node at once), and a one-line installer for anywhere else, made
-  per node since each node has its own key (`Photon.NodeKeys`). That key
-  goes straight to the browser (a pushed event the page's hook shows) and
-  is never kept in the page's state, which crash reports would print.
+  The owner's machines: connected nodes, known ones that aren't connected
+  (`Photon.Machines.roster/0`), one-click installs and updates over SSH
+  for machines on the hub's tailnet (one at a time, or every outdated
+  node at once), and a one-line installer for anywhere else, made per
+  node since each node has its own key (`Photon.NodeKeys`). That key goes
+  straight to the browser (a pushed event the page's hook shows) and is
+  never kept in the page's state, which crash reports would print.
 
-  What the page shows is read into assigns when it mounts and when it hears
-  a change (`:nodes_changed`, `{:provision, jobs}`; `PhotonWeb.Shell`
-  keeps `@shell.nodes` current);
+  The page re-reads on `:nodes_changed` and `{:provision, jobs}`.
   `tailscale status` runs in a task (`start_async/3`), so a slow tailnet
-  doesn't hold up the page. `render/1` only derives from assigns.
+  doesn't hold up the page.
   """
 
   use PhotonWeb, :live_view

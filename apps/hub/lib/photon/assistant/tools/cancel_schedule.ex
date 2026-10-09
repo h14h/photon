@@ -3,10 +3,8 @@ defmodule Photon.Assistant.Tools.CancelSchedule do
   Blip's `cancel_schedule` tool: deletes any schedule by its `sc_` ID,
   Blip's own or a project's, inside the commit that records the result
   (`Photon.Schedules.delete_tx/3` with `:any`). Threads a project
-  schedule started stay.
-
-  A run that carries a thread's question, and that the owner hasn't
-  written into, can't cancel a schedule (`Photon.Assistant.may_act_tx/3`).
+  schedule started stay. `Photon.Assistant.may_act_tx/3` (`:change`) may
+  refuse it.
   """
   @behaviour Photon.Durable.Tool
 

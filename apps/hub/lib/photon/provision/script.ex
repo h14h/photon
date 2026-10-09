@@ -1,9 +1,7 @@
 defmodule Photon.Provision.Script do
   @moduledoc """
   What `Photon.Provision` sends over SSH and how it reads the answers, as
-  pure functions: the probe, the upload command, the installer's input
-  (environment exports, then the install script), the `ssh` arguments, and
-  explanations of SSH failures.
+  pure functions.
   """
 
   # Functional core: no processes, no I/O.

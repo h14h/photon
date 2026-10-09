@@ -13,17 +13,14 @@ defmodule Photon.Durable.Generation do
   after the current tool round.
 
   Every settle (an answer, a model error, the round limit, a Stop, a
-  failed task) tells the conversation's profile in the same commit,
-  through `Photon.Durable.settled/3`, with the submissions it closed and
-  whether the task ends there (`Photon.Durable.Profile`'s `on_settled/3`).
+  failed task) calls the profile's `on_settled/3` in the same commit.
 
   A request that crashes the hub is simply made again, since nothing was
   committed. Partial output streams to watchers as `{:live, ...}` events and
   is never stored; the finished response is.
 
-  This module is the task kind's boundary: it reads the conversation, makes
-  the model request and commits. What the answer leads to, and what gets
-  written, is `Photon.Durable.Turn`.
+  What the answer leads to, and what gets written, is
+  `Photon.Durable.Turn`.
   """
 
   @behaviour Photon.Durable.TaskKind
@@ -99,9 +96,7 @@ defmodule Photon.Durable.Generation do
     continue_with_inbox(tx, task, facts("done", nil, entry.id, closed), {:done, %{}})
   end
 
-  # After the run's submissions are settled, tells the profile (with
-  # whether the run ends here), then takes the next input from the inbox,
-  # or ends with `last` when there is none.
+  # Tells the profile, then takes the next input, or ends with `last`.
   defp continue_with_inbox(tx, task, facts, last) do
     next = Durable.next_input(Tx.queued(tx, task.conversation_id))
     :ok = Durable.settled(tx, task, Map.put(facts, :ended?, next == []))
@@ -112,8 +107,7 @@ defmodule Photon.Durable.Generation do
     end
   end
 
-  # Settles the submissions this run placed that are still placed, and
-  # returns them as stored: exactly what this settle closed.
+  # Returns exactly what this settle closed, as stored.
   defp settle(tx, %TaskRecord{} = task, status, detail) do
     task.checkpoint
     |> Map.get("submissions", [])

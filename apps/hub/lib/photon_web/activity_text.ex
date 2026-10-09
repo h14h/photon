@@ -1,18 +1,13 @@
 defmodule PhotonWeb.ActivityText do
   @moduledoc """
-  The activity page's words and what each row shows: the filter's options
-  and how its form reads, whether a new row passes the filter, the empty
-  state, which threads and schedules a page of rows names, and a row as the
-  page draws it: its summary, its status, who asked
-  (`Photon.Activity.Rules.origin_label/2`, with the thread to link when the
-  asker is a thread the page found) and where it acted.
+  The activity page's words, its filter, and each row as the page draws
+  it: its summary, status, who asked
+  (`Photon.Activity.Rules.origin_label/2`) and where it acted.
 
-  Threads are named by their titles as the page reads them, not as they
-  were when the row was written: a thread is named after its first run
-  ends, and the owner may rename it. A call on one thread has its summary
-  worded again with the thread's title now
-  (`Photon.Activity.Rules.thread_summary/4`). A row whose asker is the
-  thread it acted on names that thread once, as the asker.
+  Threads are named by their titles now, not as they were when the row
+  was written: a call on one thread has its summary worded again with the
+  current title (`Photon.Activity.Rules.thread_summary/4`), and a row
+  whose asker is the thread it acted on names that thread once.
 
   Pure: the page reads the titles, prompts and projects (the `lookup`)
   and passes them in, and renders times with
@@ -155,12 +150,9 @@ defmodule PhotonWeb.ActivityText do
 
   @doc """
   A row as the page draws it, with the names and links `lookup` gives
-  (see `t:row/0`). A thread who asked is linked when the page found it
-  and its project; a follow-up names and links the thread it was about
-  the same way. Where it acted is the row's project and thread, each
-  only when the page found it, and the thread only when it isn't the
-  one who asked. A call on one thread the page found says the thread's
-  title now in its summary.
+  (see `t:row/0`). A thread or project is named and linked only when the
+  page found it, and where it acted names the thread only when it isn't
+  the one who asked.
   """
   @spec row(Action.t(), lookup()) :: row()
   def row(%Action{} = action, lookup) do

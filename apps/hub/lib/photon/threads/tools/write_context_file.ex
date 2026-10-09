@@ -6,10 +6,9 @@ defmodule Photon.Threads.Tools.WriteContextFile do
 
   The write happens inside the commit that records the call's result
   (`{:commit, fun}`), through `Photon.Projects.write_file_tx/5`, which
-  checks the name and content and announces the change. So the tool checks
-  nothing itself, a refused write changes nothing, a call stopped before
-  its commit keeps none of it, and a rerun after a restart either finds
-  nothing done or never runs.
+  checks the name and content. So a refused write changes nothing, a call
+  stopped before its commit keeps none of it, and a rerun after a restart
+  either finds nothing done or never runs.
   """
   @behaviour Photon.Durable.Tool
 

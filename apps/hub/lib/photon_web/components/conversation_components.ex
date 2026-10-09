@@ -1,67 +1,40 @@
 defmodule PhotonWeb.ConversationComponents do
   @moduledoc """
   The pieces of a durable conversation on screen, shared by Blip's panel
-  (`PhotonWeb.BlipLive`) and a project's thread page: the entries, each tool
-  call as a line inside the answer that made it, web searches, the
-  in-flight answer, the composer and what shows in its place until there's
-  a model to talk to.
+  (`PhotonWeb.BlipLive`) and a project's thread page: the entries, tool
+  calls as lines inside the answer that made them, web searches, the
+  in-flight answer, and the composer or what replaces it until there's a
+  model to talk to.
 
-  Blip's panel and a thread page can be on one document, so every
-  component that renders an ID takes an `id_prefix` (default `""`, which
-  keeps Blip's IDs: `#composer`, `#stop`, `#action-<call id>`,
-  `#live-output`). A thread page passes `"thread-"`. An image a call
-  returned is loaded from the page's own image route, through the
-  `image_path` function (`fn entry_id, index -> path end`), since the
+  Both can be on one document, so every component that renders an ID
+  takes an `id_prefix` (default `""`, which keeps Blip's IDs: `#composer`,
+  `#stop`, `#action-<call id>`, `#live-output`); a thread page passes
+  `"thread-"`. An image a call returned loads from the page's own image
+  route through `image_path` (`fn entry_id, index -> path end`), since the
   results a page keeps carry no image data.
 
-  A call on a machine names the machine, `local` included, and says what
-  it is doing until it ends: "Running `uptime` on mm1", then "Ran `uptime`
-  on mm1", or "Stopped `uptime` on mm1" if the user stopped it
-  (`Photon.Transcript.machine_action/4`). A long command is cut short on
-  screen; the verb and the machine never are. A stopped call keeps the
-  output it printed before the stop in view under its line, since its
-  result only says it was stopped, after a reload too (the page mounts
-  with what the machine sent of it when it stopped). The context-file calls
-  read "Checked the context files", "Read notes.md", "Wrote notes.md" and
-  "Edited notes.md", in the present while they run. Blip's read tools
-  read "Looked over projects", "Looked over garden", "Checked threads"
-  and `Read "Fix the pump"`, naming the project or thread from the
-  result's details, or the arguments until there is a result.
+  A call on a machine always shows its verb and machine, `local` included
+  (`Photon.Transcript.machine_action/4`); only a long command is cut
+  short. A stopped call keeps the output it printed before the stop in
+  view, after a reload too, since its result only says it was stopped.
 
-  A message the user sent to Blip from a page inside a project shows only
-  what they typed, with a small "About Garden / Fix the pump" line under
-  it (`source["page"]`, see `Photon.Assistant.Page`); the note the model
-  saw in front of it isn't shown.
-
-  In Blip's conversation, what reached Blip from the threads (a signal
-  message) shows as a compact block, a line per thread update or question
-  linking the thread; the owner's answer to a thread's question shows as
-  their bubble with an "Answer to Fix the pump" line under it. An
-  `ask_owner` call that passed a question to the owner shows as the
-  question's card, and so does the hub's notice that it passed on one
-  Blip didn't get to; a refused `ask_owner` call stays a one-line action,
-  so each question has one card. A withdrawn question's notice is a quiet
-  line. A queued signal message's chip names the threads it is from.
-
-  In ambient mode a digest or a daily review is a signal message too. It
-  shows as one collapsed line, "Digest: 3 new, 6 you've seen" or "Daily
-  review: 2 threads", which opens to a line per item it carried
-  (`ambient_message/1`): the owner reads Blip's reply, not the raw
-  digest, unless they open it. Waiting in Blip's inbox, its chip says the
-  same without naming a thread. Blip's `[nothing to tell]` answer to one
-  draws nothing in Blip's panel (`hide_untold`): an empty, hidden element
-  keeps the stream at one element per entry.
+  A message sent to Blip from a page inside a project shows only what the
+  user typed, with an "About Garden / Fix the pump" line (`source["page"]`,
+  see `Photon.Assistant.Page`); the note the model saw isn't shown. Each
+  question to the owner gets one card: from the `ask_owner` call that
+  passed it on, or from the hub's notice for one Blip didn't get to; a
+  refused `ask_owner` call stays a one-line action. In ambient mode a
+  digest or daily review is one collapsed line (`ambient_message/1`), and
+  Blip's `[nothing to tell]` answer draws nothing (`hide_untold`): an
+  empty, hidden element keeps the stream at one element per entry.
 
   A thread is named by its current title wherever it appears (`titles`,
-  thread ID to title, which the page reads and keeps up to date; see
-  `Photon.Transcript.title/3`), else by the title the entry recorded: a
-  thread's first title is the start of its first message until its first
-  run ends and it gets a name.
+  thread ID to title, kept up to date by the page; see
+  `Photon.Transcript.title/3`), else by the title the entry recorded.
 
   The events these components send (`send`, `toggle_mode`, `stop`,
   `withdraw`, and the card's `reply`) go to the LiveView that renders
-  them; the socket side of the conversation is
-  `PhotonWeb.ConversationView`.
+  them; the socket side is `PhotonWeb.ConversationView`.
   """
 
   use PhotonWeb, :html
@@ -309,9 +282,8 @@ defmodule PhotonWeb.ConversationComponents do
 
   @doc """
   A signal message in Blip's conversation: what reached Blip from the
-  threads, a line each (`#<id>-signal-<n>`): a bell for an update, a
-  question mark for a question, the project and thread (linked) and what
-  happened, or the question on one line.
+  threads, a line per update or question (`#<id>-signal-<n>`), linking
+  the thread.
   """
   attr :id, :string, required: true
   attr :data, :map, required: true, doc: "the user entry's data"
@@ -383,13 +355,10 @@ defmodule PhotonWeb.ConversationComponents do
   defp signal_words(_line), do: "changed"
 
   @doc """
-  A digest or a daily review in Blip's conversation (ambient mode), as one
-  muted line that opens: its heading (`#<id>-heading`), "Digest: 3 new, 6
-  you've seen" or "Daily review: 2 threads", and opened, a line per item it
-  lists (`#<id>-item-<n>`, `Photon.Transcript.ambient_lines/3`): the
-  project and the thread (linked, under its current title), the context
-  file, schedule or project, and what happened. A digest's changes the
-  owner has already seen come after the new ones, apart and fainter.
+  A digest or a daily review in Blip's conversation (ambient mode): one
+  muted line (`#<id>-heading`) that opens to a line per item it lists
+  (`#<id>-item-<n>`, `Photon.Transcript.ambient_lines/3`). A digest's
+  changes the owner has already seen come after the new ones, fainter.
   """
   attr :id, :string, required: true
   attr :ref, :map, required: true, doc: "the message's digest or review ref"
@@ -530,11 +499,9 @@ defmodule PhotonWeb.ConversationComponents do
 
   @doc """
   A thread's question with the owner, as a card in Blip's panel
-  (`#question-card-<id>`): the thread that asks (linked), the question
-  (Blip's wording, or the thread's own words when the hub passed it on),
-  and where it stands: while it is open, `Answer`, which puts the reply
-  chip on the composer (`"reply"` with the question's ID); answered, the
-  answer's first line; withdrawn, that the thread was stopped.
+  (`#question-card-<id>`). While it is open, `Answer` puts the reply chip
+  on the composer (`"reply"` with the question's ID); answered, it shows
+  the answer's first line; withdrawn, that the thread was stopped.
   """
   attr :id, :string, required: true, doc: "the question's ID"
   attr :card, :map, required: true, doc: "title, slug, thread_id, text and hub?"
@@ -674,9 +641,9 @@ defmodule PhotonWeb.ConversationComponents do
   defp first_line(_text), do: nil
 
   @doc """
-  One tool call: a line saying what it did, which opens to show the result.
-  Under the line, while it runs (and after the user stopped it), the end
-  of what it has printed; once it's done, any image it returned.
+  One tool call: a line saying what it did, which opens to the result.
+  Under it, the end of its output while it runs (and after a stop), or
+  any image it returned once done.
   """
   attr :call, :map, required: true
   attr :result, :map, default: nil
@@ -808,11 +775,8 @@ defmodule PhotonWeb.ConversationComponents do
   end
 
   @doc """
-  What a call did, in a line. A machine call names its command or path,
-  and the machine; a context-file call names the file (and Blip's its
-  project), `load_skill` the
-  skill, and `ask_blip` its question. They are in the present while they
-  run.
+  What a call did, in a line, in the present while it runs: the command
+  or path and the machine, or the file, skill or question it acted on.
   """
   attr :name, :string, required: true
   attr :args, :map, required: true
@@ -1373,12 +1337,10 @@ defmodule PhotonWeb.ConversationComponents do
   end
 
   @doc """
-  The owner's answer form for a thread's question (the home page's
-  question rows and the thread page's banners): the question's ID,
-  hidden, `answer_box/1`, the refusal of the last answer if there was
-  one, and Send. It sends `draft` as the owner types and `answer` on
-  Send. Its parts' IDs are the question's DOM ID (`id`) plus `-form`,
-  `-answer`, `-error` and `-send`.
+  The owner's answer form for a thread's question (the home page's rows,
+  the thread page's banners). It sends `draft` as the owner types and
+  `answer` on Send. Its parts' IDs are `id` plus `-form`, `-answer`,
+  `-error` and `-send`.
   """
   attr :id, :string, required: true, doc: "the question's DOM ID"
   attr :form, Phoenix.HTML.Form, required: true, doc: "the draft, as `answer[text]`"
@@ -1405,9 +1367,8 @@ defmodule PhotonWeb.ConversationComponents do
   end
 
   @doc """
-  The answer box of a thread's question with the owner, inside
-  `answer_form/1`: Enter sends, Shift+Enter starts a new line, as in the
-  composer.
+  The answer box inside `answer_form/1`: Enter sends, Shift+Enter starts
+  a new line.
   """
   attr :field, Phoenix.HTML.FormField, required: true
   attr :id, :string, required: true
@@ -1442,12 +1403,10 @@ defmodule PhotonWeb.ConversationComponents do
   end
 
   @doc """
-  The messages waiting in a conversation's inbox, each with whether it
-  steers the current work or comes next, and a button to withdraw it
-  (`"withdraw"` with its ID). The owner's answer to a thread's question
-  has no such button: it has already gone to the thread, so its chip
-  says so instead. Shown above the composer, or above whatever takes the
-  composer's place.
+  The messages waiting in a conversation's inbox, each marked as steering
+  or coming next, with a button to withdraw it (`"withdraw"` with its
+  ID). The owner's answer to a thread's question has none: it has already
+  gone to the thread.
   """
   attr :queued, :list, required: true
   attr :titles, :map, default: %{}, doc: "threads' current titles, by ID"

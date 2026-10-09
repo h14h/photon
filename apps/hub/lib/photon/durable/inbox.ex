@@ -1,15 +1,8 @@
 defmodule Photon.Durable.Inbox do
   @moduledoc """
-  The rules for input to a conversation, as pure functions:
-
-    * a submission with a request ID that was seen before returns the
-      earlier one
-    * on an idle conversation, input is placed in the transcript and starts
-      a run (a generation task)
-    * on a busy one it waits `queued`, unless it asked to be rejected
-    * when a run moves on, the inbox's next input is every queued steer, or
-      else the oldest follow-up
-
+  The rules for input to a conversation: a repeated request ID returns the
+  earlier submission; on an idle conversation input starts a run; on a
+  busy one it waits `queued`, unless it asked to be rejected.
   `Photon.Durable` and the generation apply these inside commits.
   """
 

@@ -5,8 +5,7 @@ defmodule PhotonWeb.NodeChannel do
   (`Photon.Machines.register/2`), so a node is online exactly as long as this
   process lives.
 
-  It is the server layer for a node (Phoenix starts one per connection), so
-  it holds no logic of its own. Operations (`docs/operations.md`) go to
+  It holds no logic of its own. Operations (`docs/operations.md`) go to
   `Photon.Machines`, and the channel pushes what it returns: `op.snapshot`
   answers with `op.ack` or `op.cancel` once the snapshot is recorded,
   `op.output` is broadcast to the tool call's conversation, and a join pushes
@@ -24,8 +23,7 @@ defmodule PhotonWeb.NodeChannel do
   resends everything.
 
   The channel caches where each op's live output goes (`routes`, see
-  `Photon.Machines.output/3`), and drops an op from it with the op's
-  terminal snapshot.
+  `Photon.Machines.output/3`) until the op's terminal snapshot.
 
   A node that reconnects before its old connection timed out takes over in
   `join/3`: registering waits up to two seconds for the old process to go
@@ -43,12 +41,12 @@ defmodule PhotonWeb.NodeChannel do
   @op_snapshot Wire.event(:snapshot)
   @op_output Wire.event(:output)
 
-  # Today's node ignores the join reply. A node built before step 1's PR B
-  # requires "sync" in it and crashes without it, so it couldn't stay
-  # joined; with an empty one it stays connected and is shown as outdated
-  # (rule 75). Only a node that speaks ops:2 runs ops: one with ops:1
-  # alone is outdated too, and `Machines.joined/1` and `push_for/2` send
-  # it nothing, since it wouldn't create a project's working directory.
+  # Today's node ignores the join reply. An older node requires "sync" in
+  # it and crashes without it; with an empty one it stays connected and is
+  # shown as outdated (rule 75). Only a node that speaks ops:2 runs ops:
+  # one with ops:1 alone is outdated too, and `Machines.joined/1` and
+  # `push_for/2` send it nothing, since it wouldn't create a project's
+  # working directory.
   @join_reply %{"sync" => %{}}
 
   # A node joins as the node its key belongs to (`PhotonWeb.NodeSocket`),

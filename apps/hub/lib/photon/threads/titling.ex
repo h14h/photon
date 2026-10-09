@@ -2,25 +2,18 @@ defmodule Photon.Threads.Titling do
   @moduledoc """
   The `"thread_title"` task: names a thread once its first run has ended.
 
-  `Photon.Threads.start/2` creates it in the commit that starts the
-  thread, as background work waiting on the thread's first run, so it
-  never holds the thread up or counts as the thread running. Its input
-  holds the thread's first title (`"fallback"`) and the start of its first
-  message (`"message"`).
+  It is created in the commit that starts the thread, as background work
+  waiting on the thread's first run, so it never holds the thread up or
+  counts as the thread running.
 
   When the run ends (answered, failed or stopped), its one step asks the
-  model in Settings for a short title, through the client every
-  conversation uses (`Photon.ChatGPT`; the scripted `Photon.Threads.MockTitle`
-  with `PHOTON_MOCK_MODEL=1`), with the start of the first message and the
-  first answer (`Photon.Threads.Rules.title_request/2`). It is one small
-  request: low reasoning, no tools and no retries. A step that runs again
-  after a hub restart doesn't ask again. If the request fails, or what
-  comes back doesn't read as a title (`Rules.model_title/1`), the thread
-  keeps its first title.
-
-  The title is stored with `Photon.Threads.titled_tx/4`, which leaves a
-  title the owner gave the thread meanwhile alone, and announces the
-  change so the pages update.
+  model in Settings for a short title (`Photon.ChatGPT`; the scripted
+  `Photon.Threads.MockTitle` with `PHOTON_MOCK_MODEL=1`): one small
+  request, low reasoning, no tools and no retries. A step that runs again
+  after a hub restart doesn't ask again. If the request fails or what
+  comes back doesn't read as a title, the thread keeps its first title.
+  `Photon.Threads.titled_tx/4` stores it, leaving alone a title the owner
+  gave the thread meanwhile.
   """
 
   @behaviour Photon.Durable.TaskKind
@@ -70,7 +63,6 @@ defmodule Photon.Threads.Titling do
     {:done, %{"title" => title}}
   end
 
-  # The model's title, or nil when there's none to use.
   defp ask(task) do
     settings = Settings.load()
 

@@ -1,19 +1,10 @@
 defmodule PhotonWeb.ScheduleComponents do
   @moduledoc """
-  The lines a schedule shows wherever it is listed: the home page (Blip's
-  schedules, `PhotonWeb.HomeLive`) and a project's page
-  (`PhotonWeb.ProjectLive`).
-
-    * `schedule_when/1`: when it runs next, or that it is done or stopped
-      ("Every day · next <local time>", "Once · <local time>", "Done",
-      "Stopped after an error: ...", the last in the error colour)
-    * `last_run/1`: what its last firing did ("Last ran <local time>:
-      started "Check the backups"", with the thread linked, or a skip
-      because scheduled work is off, linked to Settings)
-
-  The words come from `PhotonWeb.ScheduleText` and the times from
-  `PhotonWeb.TimeComponents.local_time/1`, so they read in the owner's
-  time zone. Each line's DOM ID is the row's plus `-when` or `-last`.
+  The lines a schedule shows wherever it is listed: Blip's on the home
+  page (`PhotonWeb.HomeLive`) and a project's on its page
+  (`PhotonWeb.ProjectLive`). The words come from `PhotonWeb.ScheduleText`
+  and the times from `PhotonWeb.TimeComponents.local_time/1`, so they
+  read in the owner's time zone.
   """
 
   use PhotonWeb, :html
@@ -52,12 +43,11 @@ defmodule PhotonWeb.ScheduleComponents do
 
   @doc """
   What the schedule's last firing did, once it has fired: "Last ran <local
-  time>: <`PhotonWeb.ScheduleText.outcome/1`>". After "started", the
-  thread it started follows, linked (`<id>-last-thread`) when the page
-  passes its title and path; a skip because scheduled work is off links
-  to Settings (`<id>-last-settings`). A failed task isn't a run: the when
-  line says that (`schedule_when/1`), so nothing shows until the next
-  firing.
+  time>: <`PhotonWeb.ScheduleText.outcome/1`>", linking the thread it
+  started (`<id>-last-thread`) when the page passes its title and path,
+  or Settings for a skip because scheduled work is off
+  (`<id>-last-settings`). A failed task isn't a run: `schedule_when/1`
+  says it stopped, and nothing shows here until the next firing.
   """
   attr :id, :string, required: true, doc: "the row's DOM ID"
   attr :schedule, Photon.Schedules.Schedule, required: true

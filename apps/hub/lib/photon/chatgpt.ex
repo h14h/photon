@@ -9,20 +9,14 @@ defmodule Photon.ChatGPT do
   (`chatgpt.json`, mode 0600, replaced whole by `Photon.PrivateFile`),
   refreshes the access token one request at a time (OpenAI asks that
   refreshes for a session be serialized), and announces changes on
-  `topic/0` as `{:chatgpt_changed, status}`. It hands out a token only
-  while the user lets Photon use their plan, and its state (tokens,
-  sign-in secrets) never appears in crash reports (`format_status/1`).
+  `topic/0`. It hands out a token only while the user lets Photon use
+  their plan, and its state (tokens, sign-in secrets) never appears in
+  crash reports (`format_status/1`).
 
-  Model requests go through `stream/3`, which tells this process when the
-  API refuses a token, so the next request gets a fresh one. The rules
-  (the sign-in link, the pasted address, the tokens) are
-  `Photon.ChatGPT.OAuth`'s; this module does the HTTP and the file.
-
-  Signing in, see `Photon.ChatGPT.OAuth`: `begin_sign_in/0` returns the
-  link, and `finish_sign_in/1` takes the address the browser landed on.
-
-  Tests and local development can use a scripted model instead
-  (`config :photon, :mock_model, true`); `llm_config/1` then returns it.
+  The rules (the sign-in link, the pasted address, the tokens) are
+  `Photon.ChatGPT.OAuth`'s; this module does the HTTP and the file. Tests
+  and local development can use a scripted model instead
+  (`config :photon, :mock_model, true`).
   """
 
   use Boundary,
@@ -52,10 +46,8 @@ defmodule Photon.ChatGPT do
   @no_plan_use "Photon isn't allowed to use your ChatGPT plan. Sign in again and allow it."
 
   @typedoc """
-  Where the account stands: `:signed_out`, `:signed_in`, or
-  `:sign_in_again` (the sign-in lapsed or was revoked); who it is; whether
-  the user let Photon use their plan; and whether a sign-in is waiting for
-  its pasted address.
+  Where the account stands (`:sign_in_again`: the sign-in lapsed or was
+  revoked), who it is, and whether a sign-in waits for its pasted address.
   """
   @type status :: %{
           state: :signed_out | :signed_in | :sign_in_again,
@@ -136,11 +128,10 @@ defmodule Photon.ChatGPT do
   end
 
   @doc """
-  The model config for a request now: ChatGPT with a current token, or,
-  when the hub is set to the scripted model, `script` (see the moduledoc).
-  Without a token (signed out, plan use not allowed, a refresh that
-  failed) the token is nil and `:problem` says why, which is what the
-  request fails with.
+  The model config for a request now: ChatGPT with a current token, or
+  `script` when the hub is set to the scripted model. Without a token
+  (signed out, plan use not allowed, a refresh that failed) the token is
+  nil and `:problem` says why, which is what the request fails with.
   """
   @spec llm_config(module()) :: LLM.config()
   def llm_config(script) do
@@ -161,7 +152,7 @@ defmodule Photon.ChatGPT do
   Runs a model request with `config` (from `llm_config/1`), as
   `PhotonCore.LLM.stream/3` does, in the caller. If the API refuses the
   token (a 401), says so with `token_rejected/1`, so the next request gets
-  a fresh one. Blip's turns go through here.
+  a fresh one.
   """
   @spec stream(LLM.request(), LLM.config(), LLM.on_event()) ::
           {:ok, LLM.response()} | {:error, PhotonCore.LLM.Error.t()}
@@ -245,7 +236,6 @@ defmodule Photon.ChatGPT do
     end)
   end
 
-  # The state with its secrets replaced by `:redacted`.
   defp redact(%{account: account, pending: pending} = state) do
     secret = fn
       {key, value} when key in ["credentials", "id_token"] and value != nil -> {key, :redacted}

@@ -1,9 +1,7 @@
 defmodule Photon.Skills.Rules do
   @moduledoc """
   The rules for skills, as pure functions. `Photon.Skills` checks input with
-  these once, before or inside the commit that applies it (rule 64), and
-  mints IDs and reads the clock itself.
-
+  these once, before or inside the commit that applies it (rule 64).
   Errors are messages that say what to do: a map of field to message for
   a skill's form (`skill/2`), a plain message elsewhere.
   """
@@ -22,8 +20,7 @@ defmodule Photon.Skills.Rules do
 
   @name_message ~s(A skill's name uses lowercase letters, digits and hyphens, like "pdf-forms".)
 
-  # What `mentions/2` takes for a file an agent might look for, when there
-  # is no folder listing to compare against.
+  # What `mentions/2` takes for a file, with no folder listing.
   @path_like ~r{\A(?:(?:scripts|references|assets)/\S+|\S+\.(?:py|sh|js|ts))\z}
   @under_folder ~r{\A(?:scripts|references|assets)/\S+\z}
 
@@ -101,9 +98,8 @@ defmodule Photon.Skills.Rules do
 
   @doc """
   A name that follows the rule, made from `text` (a SKILL.md's name that
-  doesn't): accents dropped, downcased, every run of other characters one
-  hyphen, cut to 64. `skill` when nothing is left; a reserved name gets
-  `-skill` after it. "PDF Forms" becomes `pdf-forms`.
+  doesn't): "PDF Forms" becomes `pdf-forms`, `skill` when nothing is
+  left, and a reserved name gets `-skill` after it.
   """
   @spec suggest_name(String.t()) :: String.t()
   def suggest_name(text) do
@@ -189,9 +185,8 @@ defmodule Photon.Skills.Rules do
 
   @doc """
   Whether a skill may be turned on in a scope that has `enabled_count`
-  skills on already: at most 30 per scope (Blip, each project and each
-  machine), since every enabled skill's description is in every prompt
-  there.
+  skills on already: at most 30 per scope, since every enabled skill's
+  description is in every prompt there.
   """
   @spec enable_check(non_neg_integer()) :: :ok | {:error, String.t()}
   def enable_check(enabled_count) when enabled_count < @scope_limit, do: :ok
@@ -205,11 +200,10 @@ defmodule Photon.Skills.Rules do
   ## Machine skills
 
   @doc """
-  Machine skills grouped by machine. `pairs` are `{machine_id, skill}` in
-  the order to list the skills; `known` are the machines the hub knows, in
-  the order to list them. Returns `{machine_id, skills}` for each known
-  machine with at least one skill, in `known`'s order, so a removed
-  machine's skills are left out.
+  Machine skills grouped by machine: `pairs` are `{machine_id, skill}` in
+  the order to list the skills, `known` the machines the hub knows in the
+  order to list them. Only known machines with a skill are kept, so a
+  removed machine's skills are left out.
   """
   @spec by_machine([{String.t(), skill}], [String.t()]) :: [{String.t(), [skill, ...]}]
         when skill: term()
@@ -262,18 +256,17 @@ defmodule Photon.Skills.Rules do
   ## What install left out
 
   @doc """
-  The files the instructions mention that install didn't bring, so
-  install can say so.
+  The files the instructions mention that install didn't bring.
 
   With a folder listing, these are the paths in `left_out` the
   instructions name, as written or as a Markdown link's target (also
   with a leading `./`), in `left_out`'s order.
 
-  With no listing (a paste, `left_out` empty), they are the relative
-  Markdown link targets, and the paths in backticks under `scripts/`,
-  `references/` or `assets/`, or (in a code span, not a fenced block,
-  where examples name the user's own files) ending in `.py`, `.sh`, `.js`
-  or `.ts`, in the order they first appear.
+  With no listing (a paste, `left_out` empty), they are guesses in the
+  order they first appear: relative Markdown link targets, and paths in
+  backticks under `scripts/`, `references/` or `assets/`, or (in a code
+  span, not a fenced block, where examples name the user's own files)
+  ending in `.py`, `.sh`, `.js` or `.ts`.
   """
   @spec mentions(String.t(), [String.t()]) :: [String.t()]
   def mentions(instructions, []) do
@@ -289,7 +282,6 @@ defmodule Photon.Skills.Rules do
     end)
   end
 
-  # Relative Markdown link targets, with where each starts.
   defp link_targets(text) do
     ~r{\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)}
     |> Regex.scan(text, return: :index, capture: :all_but_first)
@@ -312,9 +304,7 @@ defmodule Photon.Skills.Rules do
     end
   end
 
-  # Paths in code spans (any path-like word) and fenced code blocks (only
-  # under the skill folders, since examples there name the user's own
-  # files too), with where each starts.
+  # With where each starts.
   defp backticked_paths(text) do
     fenced = Regex.scan(~r/^[ \t]*```[^\n]*\n(.*?)(?:^[ \t]*```|\z)/ms, text, return: :index)
     fenced_ranges = Enum.map(fenced, fn [whole, _body] -> whole end)

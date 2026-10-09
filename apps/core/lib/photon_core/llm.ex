@@ -24,8 +24,7 @@ defmodule PhotonCore.LLM do
       error says so instead of "not signed in")
     * `:headers` - extra request headers
     * `:script` - for `"mock"`, the module that answers (see `PhotonCore.LLM.Mock`)
-    * `:max_attempts` - attempts for retryable failures (default 6)
-    * `:retry_base_ms` - the first retry's backoff (default 1000)
+    * `:max_attempts`, `:retry_base_ms` - see `PhotonCore.LLM.Retry`
     * `:receive_timeout` - milliseconds to wait for data (default 180000)
     * `:extra_body` - fields merged into the request body
     * `:hosted_tools` - tools the API runs itself, e.g.
@@ -38,9 +37,8 @@ defmodule PhotonCore.LLM do
   `{:tool_call, index, name, args_delta}` and `{:web_search, id, action}`
   (a search a hosted tool ran: `action` is nil when it starts, then what it
   did, e.g. `%{"type" => "search", "query" => ...}`) while the answer
-  streams, and
-  `{:retry, attempt, delay_ms, error}` before a retry, after which deltas
-  start over.
+  streams, and `{:retry, attempt, delay_ms, error}` before a retry, after
+  which deltas start over.
 
   Returns `{:ok, response}` with `"message"` (an assistant message), `"stop"`
   (`"end_turn"`, `"tool_use"`, `"max_tokens"`, ...), `"usage"` (`"input"`,
@@ -50,8 +48,7 @@ defmodule PhotonCore.LLM do
 
   `stream/3` runs in the calling process and blocks it for the whole
   request, sleeping between retries (see `PhotonCore.LLM.Retry`). Call it
-  from a task, not from a GenServer callback. The library starts no
-  processes of its own.
+  from a task, not from a GenServer callback.
   """
 
   # The model client: this API in front of the HTTP adapters and the mock.

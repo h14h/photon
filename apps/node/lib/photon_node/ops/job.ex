@@ -1,17 +1,15 @@
 defmodule PhotonNode.Ops.Job do
   @moduledoc """
   The worker for operations that do one piece of work and finish
-  (`view_image`). It runs the job off its owner (`PhotonNode.Ops.Owner`),
+  (`view_image`): it runs the job off its owner (`PhotonNode.Ops.Owner`),
   since a job can read a large file, reports the terminal snapshot the job
-  returns to the owner, and stops.
+  returns, and stops. It is registered by operation ID, so
+  `PhotonNode.Ops.add/2` finds it while it runs; it has nothing to resend
+  or cancel, so it ignores those requests.
 
-  It is registered by operation ID like every operation process, so
-  `PhotonNode.Ops.add/2` finds it while it runs. It has nothing to
-  resend or cancel, so it ignores those requests.
-
-  A job is a module with `run/1`: it takes the operation and returns its
-  terminal snapshot. Jobs read files, so they are boundary code, but they
-  run as plain functions and are tested without a process.
+  A job is a module with `run/1`, which takes the operation and returns
+  its terminal snapshot: boundary code, since it reads files, but a plain
+  function, tested without a process.
   """
 
   use GenServer, restart: :temporary

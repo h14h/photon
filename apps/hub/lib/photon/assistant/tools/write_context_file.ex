@@ -1,19 +1,15 @@
 defmodule Photon.Assistant.Tools.WriteContextFile do
   @moduledoc """
-  Blip's `write_context_file` tool: creates one of a project's context files
-  or replaces all of it, as written by Blip (`updated_by: "blip"`). There is
-  no version check: the last write wins.
+  Blip's `write_context_file` tool: creates one of a project's context
+  files or replaces all of it, as written by Blip (`updated_by: "blip"`).
+  There is no version check: the last write wins.
 
   The write happens inside the commit that records the call's result
-  (`{:commit, fun}`), through `Photon.Projects.write_file_tx/5`, which
-  checks the name and content and announces the change. So a refused
-  write changes nothing, a call stopped before its commit keeps none of
-  it, and a rerun after a restart either finds nothing done or never
-  runs. The project is looked up first (`Photon.Assistant.find_project/1`);
-  one that goes before the commit gets `That project no longer exists.`
-
-  A run that carries a thread's question, and that the owner hasn't
-  written into, can't change a project (`Photon.Assistant.may_act_tx/3`).
+  (`Photon.Projects.write_file_tx/5`), so a refused write changes nothing,
+  a call stopped before its commit keeps none of it, and a rerun after a
+  restart either finds nothing done or never runs. A project that goes
+  between lookup and commit gets `That project no longer exists.`
+  `Photon.Assistant.may_act_tx/3` (`:change`) may refuse it.
   """
   @behaviour Photon.Durable.Tool
 

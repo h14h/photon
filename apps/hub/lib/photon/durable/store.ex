@@ -2,29 +2,20 @@ defmodule Photon.Durable.Store do
   @moduledoc """
   The one line of atomic commits every durable change goes through.
 
-  `commit/1` runs a function in this process inside a database transaction,
-  using the `Photon.Durable.Tx` operations: append entries, change documents,
-  create and move tasks, settle submissions. Either all of it is stored or
-  none of it. Only after the transaction commits are its changes announced
-  (`Photon.Durable.Changes` says what):
-
-    * on `Photon.PubSub` topic `"durable:" <> conversation_id`, as
-      `{:durable, conversation_id, changes}` with the new `:entries`, changed
-      `:docs`, `:submissions` and `:tasks`
-    * on topic `"durable:global"` for global docs and every task change
-    * each `Tx.announce/3` of the commit, on its own topic, in commit order
-      (how `Photon.Projects` and `Photon.Threads` announce writes made inside
-      a commit)
-    * to `Photon.Durable.Scheduler`, so it can start or wake tasks
-
-  So nothing is shown before it is stored. Commit functions run serially and
-  must not do slow work: do that first, then commit the result.
+  `commit/1` runs a function of `Photon.Durable.Tx` writes in this process
+  inside a database transaction: all of it is stored or none of it. Only
+  after the transaction commits are its changes announced
+  (`Photon.Durable.Changes` says what): on `"durable:" <> conversation_id`
+  as `{:durable, conversation_id, changes}`, on `"durable:global"` for
+  global docs and every task change, each `Tx.announce/3` on its own topic
+  in commit order, and to `Photon.Durable.Scheduler`. So nothing is shown
+  before it is stored. Commit functions run serially and must not do slow
+  work: do that first, then commit the result.
 
   Why a process: it holds no state. It is the lock that makes the commits
   one line, which SQLite needs (one writer at a time) and the harness relies
   on (a commit reads what the previous one wrote). `commit/1` is a call, so
-  a caller waits for its turn and writers get back pressure from the
-  database. `Photon.Machines` commits its op rows through it too.
+  writers get back pressure from the database.
   """
 
   use GenServer

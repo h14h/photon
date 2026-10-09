@@ -91,7 +91,6 @@ defmodule Photon.Skills.SkillMd do
     end
   end
 
-  # The last value of `key`, or nil.
   defp value(fields, key) do
     case fields |> Enum.filter(&(elem(&1, 0) == key)) |> List.last() do
       {_key, value} when is_binary(value) and value != "" -> value

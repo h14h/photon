@@ -3,8 +3,7 @@ defmodule Photon.Skills.Skill do
   A skill: instructions an agent loads when a task calls for them.
 
   `name` is unique; agents load the skill by it and its page's URL uses
-  it. `description` says when to use it, and is what agents see before
-  loading. `instructions` is the Markdown an agent loads. `version` is 1
+  it. `description` is what agents see before loading. `version` is 1
   when the skill is created and goes up by one on every save.
 
   `origin` is how it arrived: `"written"` in the app, `"pasted"` as a

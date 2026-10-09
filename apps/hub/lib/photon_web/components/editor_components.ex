@@ -4,15 +4,8 @@ defmodule PhotonWeb.EditorComponents do
   (`PhotonWeb.ContextFileLive`), the skill editor (`PhotonWeb.SkillLive`)
   and the install page's preview (`PhotonWeb.SkillInstallLive`).
 
-    * `guarded_form/1` is a form that asks before the owner leaves it with
-      unsaved text, through the colocated `.UnsavedGuard` hook. The hook
-      lives here so both editors use the same one: a colocated hook's name
-      belongs to the module whose template names it.
-    * `markdown_editor/1` is a Markdown text field with `Write` and
-      `Preview` tabs and a footer.
-    * `editor_tab/1` is a `Write` or `Preview` tab in an editor's header.
-    * `banner/1` is the notice above an editor when what it holds changed
-      or went away elsewhere.
+  The `.UnsavedGuard` hook lives here so every editor uses the same one:
+  a colocated hook's name belongs to the module whose template names it.
   """
 
   use Phoenix.Component
@@ -98,15 +91,11 @@ defmodule PhotonWeb.EditorComponents do
   end
 
   @doc """
-  A Markdown text field with `Write` and `Preview` tabs, and a footer.
-  The tabs send `tab` (see `editor_tab/1`); `tab` is the open one. On
-  `Preview` the text field stays in the form, hidden, so the text is
-  still sent and kept, and the field's text shows rendered (or "Nothing
-  to preview yet.").
-
-  The footer slot is the card's last row: what the editor holds, and the
-  submit button. Every other attribute (`placeholder`, `aria-label`) goes
-  to the text field.
+  A Markdown text field with `Write` and `Preview` tabs (see
+  `editor_tab/1`; `tab` is the open one), and a footer slot for the
+  card's last row. On `Preview` the text field stays in the form, hidden,
+  so the text is still sent and kept. Every other attribute
+  (`placeholder`, `aria-label`) goes to the text field.
   """
   attr :id, :string,
     required: true,

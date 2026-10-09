@@ -1,10 +1,7 @@
 defmodule PhotonWeb.FormParams do
   @moduledoc """
-  What the pages' forms over plain maps share: the form with a context's
-  `%{field => message}` errors under their fields, the params with a
-  browser's line breaks made plain, and the version a form loaded.
-
-  Pure: each takes the params a form sent and returns what the page uses.
+  What the pages' forms over plain maps share. Pure: each takes the
+  params a form sent and returns what the page uses.
   """
 
   @doc """

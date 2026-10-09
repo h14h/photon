@@ -3,47 +3,27 @@ defmodule PhotonWeb.ConversationView do
   The socket side of a durable conversation on screen, shared by Blip's
   panel (`PhotonWeb.BlipLive`) and a project's thread page: plain functions
   over a LiveView socket, not a process. The page reads the conversation
-  through its context and hands what it read here; these functions only
-  fold it into assigns and the `:entries` stream, through
-  `Photon.Transcript`, so the fold lives in one place and the pages'
-  callbacks stay short (rule 30).
+  through its context and hands it here; these functions only fold it
+  into the assigns `PhotonWeb.ConversationComponents` render from and the
+  `:entries` stream, through `Photon.Transcript`, so the fold lives in one
+  place and the pages' callbacks stay short (rule 30).
 
-  `mount_conversation/3` sets up the assigns `PhotonWeb.ConversationComponents`
-  render from:
+  Of the assigns:
 
-  - `results` and `calls`: each tool call's result, and the assistant entry
-    that made each call, so a result can re-render its answer
-    (`Photon.Transcript.index/1`);
   - `outputs`: the end of each running `shell` call's output, by call ID,
-    from the `tool_output` live events (the hub stores none of it, so a page
-    opened mid-command shows output from then on), dropped when the result
-    comes, unless the call was stopped (then it stays, as all there is to
-    show of what it did). A page opened later starts from what the
-    machine sent of a stopped call's output when it stopped
-    (`Photon.Machines.stopped_outputs/1`, the `outputs:` option);
-  - `live` and `shown`: the in-flight answer, and its finished blocks;
-  - `empty?`, `busy`, `queued`, and the composer's `mode` and `form`;
-  - `questions`: where each question the conversation put to the owner
-    stands (`Photon.Transcript.questions/3`), folded from the entries and
-    the answers still queued, and `cards`, the entry that shows each
-    one's card (the answer whose `ask_owner` call passed it on, or the
-    hub's escalation notice), so a card re-renders when its question
-    changes, as an answer re-renders when a call's result lands. Only
-    Blip's conversation has any;
-  - `titles`: the current title of each thread the conversation names
-    (`Photon.Transcript.thread_ids/1`), by ID, which the components show
-    in place of the title an entry recorded, and `mentions`, the entries
-    that show each thread (a tool result's thread shows in the answer
-    that made the call), so they re-render when its title changes. The
-    page reads the titles: for the entries it mounts with (`titles:`),
-    for threads new entries name (`untitled/2`) and for all of them when
-    threads change (`thread_ids/1`), and hands them to `put_titles/2`;
-  - the `:entries` stream of what the conversation shows.
-
-  `apply_changes/4` folds a commit's `{:durable, ...}` changes in,
-  `put_titles/2` threads' titles,
-  `apply_live/2` a `{:live, ...}` event, and `reset_form/1` empties the
-  composer after a send.
+    from the `tool_output` live events. The hub stores none of it, so a
+    page opened mid-command shows output from then on. It is dropped when
+    the result comes unless the call was stopped; a page opened later
+    starts from what the machine sent of it when it stopped
+    (`Photon.Machines.stopped_outputs/1`, the `outputs:` option).
+  - `questions` (`Photon.Transcript.questions/3`) and `cards`, the entry
+    that shows each question's card, so a card re-renders when its
+    question changes, as an answer does when a call's result lands. Only
+    Blip's conversation has any.
+  - `titles`, the current title of each thread the conversation names,
+    and `mentions`, the entries that show each thread, so they re-render
+    when its title changes. The page reads the titles (`thread_ids/1`,
+    `untitled/2`) and hands them to `put_titles/2`.
   """
 
   import Phoenix.Component, only: [assign: 2, update: 3, to_form: 2]
@@ -54,12 +34,10 @@ defmodule PhotonWeb.ConversationView do
 
   @doc """
   Sets up a conversation's assigns and its `:entries` stream from its
-  entries. Options: `busy:` and `queued:` (both required), `outputs:`,
-  the output stopped calls printed, by call ID (none without it), `titles:`, the
-  current titles of the threads the entries and the queued messages
-  name (`Photon.Transcript.thread_ids/1`; none without it), and
-  `dom_id:`, a function from an entry to its DOM ID (the stream's
-  default, `entries-<id>`, without it).
+  entries. Options: `busy:` and `queued:` (both required); `outputs:`,
+  what stopped calls printed, by call ID; `titles:`, the current titles
+  of the threads the entries and queued messages name; and `dom_id:`, a
+  function from an entry to its DOM ID (default `entries-<id>`).
   """
   @spec mount_conversation(Socket.t(), [map()], keyword()) :: Socket.t()
   def mount_conversation(socket, entries, opts) do

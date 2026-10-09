@@ -3,27 +3,20 @@ defmodule Photon.Questions do
   `ask_blip` questions: a thread asks Blip one specific question and its
   tool call waits, durably, for the answer.
 
-  A question is a row (`Photon.Questions.Question`), one per tool call.
-  Its states and transitions are `Photon.Questions.Rules`:
-
-    * `"asked"`: Blip has it. `ask/1` stores it and posts it into Blip's
-      conversation as a signal (`Photon.Signals.post_tx/2`), in one
-      commit. Blip answers it from what it knows (`answer_tx/4`), or asks
-      the owner in its own words (`pass_tx/4`)
-    * `"with_owner"`: the owner answers (`answer/2`, from Blip's panel,
-      the home page or the thread page), and the answer goes straight to
-      the thread, by code; Blip also gets it as a message of its own
-      (`Photon.Signals.answer_tx/3`) so it can remember what it learned
-    * `"answered"` and `"withdrawn"` never change again
+  A question is a row (`Photon.Questions.Question`), one per tool call,
+  posted to Blip as a signal. Blip answers it from what it knows, or
+  passes it to the owner in its own words. The owner's answer goes
+  straight to the thread, by code; Blip also gets it as a message of its
+  own (`Photon.Signals.answer_tx/3`) so it can remember what it learned.
 
   ## The fenced ask
 
   `ask/1` commits outside the tool step's own fenced commit, so it checks
   the fence's facts itself (hub rule 9, as `Photon.Machines.start/1`
-  does): it makes a question only while the tool task is unfinished and
-  not marked for abort. Otherwise a Stop landing between the step's start
-  and the ask would leave a question open with no call waiting for it. A
-  rerun of the step finds the question by its task and makes nothing new.
+  does; `Photon.Questions.Rules.askable?/1`). Otherwise a Stop landing
+  between the step's start and the ask would leave a question open with
+  no call waiting for it. A rerun of the step finds the question by its
+  task and makes nothing new.
 
   ## The relay
 
@@ -37,17 +30,13 @@ defmodule Photon.Questions do
   ## Escalation
 
   If Blip's run goes past the question without answering or passing it,
-  the question is still `"asked"` and the message that carried it has
-  settled. The waiting call checks every `check_ms/0` and calls
-  `escalate/1`, which re-checks both in its commit
-  (`Photon.Questions.Rules.escalate?/2`), passes the question to the
-  owner as the hub, and leaves a notice in Blip's conversation. When the
-  call ends first (a Stop, a failed task), `withdraw_tx/2` runs in the
-  commit that ends it: the question is withdrawn, its signal taken back
-  if Blip hasn't seen it, and a notice left if the owner had it.
+  the waiting call, checking every `check_ms/0`, has the hub pass it to
+  the owner (`escalate/1`). When the call ends first (a Stop, a failed
+  task), the question is withdrawn in the commit that ends it
+  (`withdraw_tx/2`).
 
-  Every change announces `{:questions_changed, thread_id}` on
-  `"questions"` (`subscribe/0`) after its commit.
+  Every change announces `{:questions_changed, thread_id}` after its
+  commit (`subscribe/0`).
 
   There is no process here: the question is a row, the wait is the
   thread's tool task, and the answer is a durable signal, so a hub
@@ -68,8 +57,6 @@ defmodule Photon.Questions do
 
   @topic "questions"
 
-  # How often a waiting call checks whether Blip got to its question, when
-  # the config doesn't say.
   @check_ms 60_000
 
   @typedoc """
@@ -158,8 +145,8 @@ defmodule Photon.Questions do
 
   @doc """
   Stores a thread's question and posts it to Blip, in one commit (see
-  "The fenced ask" above). A question already stored for the tool task is
-  returned as it is. `{:error, :stopped}`, with nothing stored or posted,
+  "The fenced ask"). A question already stored for the tool task is
+  returned as it is; `{:error, :stopped}`, with nothing stored or posted,
   when the tool task has ended or is being stopped.
   """
   @spec ask(new()) :: {:ok, Question.t()} | {:error, :stopped}
@@ -215,10 +202,9 @@ defmodule Photon.Questions do
 
   @doc """
   The owner's answer to question `id`, in one commit: the thread gets it
-  unchanged (`answer_tx/4`), and Blip gets it as a message of its own
-  (`Photon.Signals.answer_tx/3`). A refusal is the owner's words for it
-  (`Photon.Questions.Rules.message/3`), which the pages show as it is;
-  so is an empty or overlong answer.
+  unchanged, and Blip gets it as a message of its own. A refusal, or an
+  empty or overlong answer, is returned in the owner's words, which the
+  pages show as they are.
   """
   @spec answer(String.t(), String.t()) :: {:ok, Question.t()} | {:error, String.t()}
   def answer(id, text) do
@@ -239,12 +225,11 @@ defmodule Photon.Questions do
   end
 
   @doc """
-  Answers question `id` inside the caller's commit: `by` is `:owner`, or
-  `{:blip, owner_wrote?}` for Blip's `answer_question` (whether the owner
-  wrote to Blip in the run making the call). Applies
-  `Photon.Questions.Rules.step/2`, stores the answer and who gave it,
-  records the signal that wakes the thread's call, and announces. `text`
-  is already checked with `Photon.Questions.Rules.answer/1`.
+  Answers question `id` inside the caller's commit and records the signal
+  that wakes the thread's call. `by` is `:owner`, or `{:blip,
+  owner_wrote?}` for Blip's `answer_question` (whether the owner wrote to
+  Blip in the run making the call). `text` is already checked with
+  `Photon.Questions.Rules.answer/1`.
   """
   @spec answer_tx(Tx.t(), String.t(), String.t(), :owner | {:blip, boolean()}) ::
           {:ok, Question.t()} | {:error, reason()}
@@ -270,8 +255,8 @@ defmodule Photon.Questions do
   @doc """
   Passes question `id` to the owner inside the caller's commit: `by` is
   `:blip` (`ask_owner`, with Blip's `wording`, already checked with
-  `Photon.Questions.Rules.question/1`) or `:hub` (escalation, with no
-  wording, so the owner sees the thread's own question). Announces.
+  `Photon.Questions.Rules.question/1`) or `:hub` (no wording, so the owner
+  sees the thread's own question).
   """
   @spec pass_tx(Tx.t(), String.t(), String.t() | nil, :blip | :hub) ::
           {:ok, Question.t()} | {:error, reason()}
@@ -292,12 +277,10 @@ defmodule Photon.Questions do
   end
 
   @doc """
-  Passes question `id` to the owner when Blip didn't get to it, in one
-  commit: only if it is still `"asked"` and the message that carried it
-  has settled or is gone (`Photon.Questions.Rules.escalate?/2`, checked
-  against both rows as they are in this commit). Leaves a notice in
-  Blip's conversation. Returns the question as it is afterwards, passed
-  on or not.
+  Passes question `id` to the owner when Blip didn't get to it, and leaves
+  a notice in Blip's conversation, in one commit; only if
+  `Photon.Questions.Rules.escalate?/2` holds for both rows as they are in
+  this commit. Returns the question as it is afterwards, passed on or not.
   """
   @spec escalate(String.t()) :: {:ok, Question.t()} | {:error, :not_found}
   def escalate(id), do: Durable.commit(&escalate_tx(&1, id))
@@ -321,11 +304,9 @@ defmodule Photon.Questions do
 
   @doc """
   Withdraws the open question tool task `task_id` asked, inside the
-  commit that ends the call (its `on_interrupt/2`): takes its signal back
-  if Blip hasn't seen it, leaves a notice in Blip's conversation if the
-  owner had it, and announces. A question already answered or withdrawn,
-  or none, is left alone. It runs inside the harness's abort and fail
-  commits, so it never raises.
+  commit that ends the call: takes its signal back if Blip hasn't seen
+  it, and leaves a notice in Blip's conversation if the owner had it. It
+  runs inside the harness's abort and fail commits, so it never raises.
   """
   @spec withdraw_tx(Tx.t(), String.t()) :: :ok
   def withdraw_tx(tx, task_id) do
@@ -342,13 +323,11 @@ defmodule Photon.Questions do
     end
   end
 
-  # The owner had the question: they hear it was withdrawn.
   defp withdrawn_notice_tx(tx, %Question{status: "with_owner"} = question),
     do: Signals.notice_tx(tx, question, :withdrawn)
 
   defp withdrawn_notice_tx(_tx, _question), do: :ok
 
-  # Every change to a question is stored and announced the same way.
   defp update_tx(tx, question, changes) do
     updated = Repo.update!(Ecto.Changeset.change(question, changes))
     :ok = Tx.announce(tx, @topic, {:questions_changed, question.thread_id})

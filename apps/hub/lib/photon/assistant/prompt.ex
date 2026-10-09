@@ -1,20 +1,9 @@
 defmodule Photon.Assistant.Prompt do
   @moduledoc """
   The assistant's system prompt, as a pure function of the hub settings, the
-  memory text, the time and the skills Blip is offered: those turned on for
-  Blip, and those turned on for each machine. `Photon.Assistant` reads those
-  and calls these.
-
-  The prompt opens with Blip's voice (who it is and how it talks), then how
-  the hub works (including the note of the page the user has open that a
-  message may start with, `Photon.Assistant.Page`), how Blip works with
-  projects and threads (their updates and `ask_blip` questions, and the
-  limits on what it starts on its own), how it handles ambient mode's
-  digests and daily reviews (only while ambient mode is on), the skills
-  (`Photon.Skills.Prompt.section/1`: Blip's, then each machine's under its
-  name; left out when none are on), the memory, and the time. The lines about how a `shell`
-  call behaves are `Photon.MachineTools.Guide.shell/1`'s, shared with a
-  thread's prompt.
+  memory text, the time and the skills Blip is offered. The lines about how
+  a `shell` call behaves are `Photon.MachineTools.Guide.shell/1`'s, shared
+  with a thread's prompt.
 
   The prompt names the time only to the hour, so it stays the same between
   requests and provider prompt caches stay warm. The skills change only
@@ -35,10 +24,8 @@ defmodule Photon.Assistant.Prompt do
 
   @doc """
   The system prompt for `settings`, `memory`, the time `now`, `skills`,
-  the skills Blip is offered (`Photon.Skills.offered/1`: Blip's, by name,
-  and each machine's), and `ambient?`, whether ambient mode is on. With
-  `ambient?` false the prompt has no Ambient mode section, and is step
-  4's.
+  the skills Blip is offered (`Photon.Skills.offered/1`), and `ambient?`,
+  whether ambient mode is on (otherwise there is no Ambient mode section).
   """
   @spec system_prompt(map(), String.t(), DateTime.t(), SkillsPrompt.offered(), boolean()) ::
           String.t()
@@ -93,9 +80,7 @@ defmodule Photon.Assistant.Prompt do
     |> String.trim()
   end
 
-  # The Ambient mode section and the blank line after it, or nothing while
-  # ambient mode is off: how Blip reads a digest and a daily review, what it
-  # may do in their runs, and when to answer [nothing to tell].
+  # The Ambient mode section and the blank line after it, or nothing.
   defp ambient_section(false), do: ""
 
   defp ambient_section(true) do
@@ -125,10 +110,9 @@ defmodule Photon.Assistant.Prompt do
 
   # Blip's voice: the block from the Blip brand kit's VOICE.md (commit
   # 617c74b), with lines unwrapped and the owner's name, which the kit
-  # writes as "Henry's", filled in. Keep the two in step. Step 1 changed
-  # two lines here before the kit (Blip now runs commands itself: the
-  # opening paragraph, and the first "never" line); the kit needs the same
-  # edit.
+  # writes as "Henry's", filled in. Keep the two in step: the opening
+  # paragraph and the first "never" line (Blip runs commands itself)
+  # differ here, and the kit needs the same edit.
   defp voice(owner) do
     """
     You are Blip, the assistant in #{owner} Photon hub. You are a photon: tiny, quick, always on, no mass and no ego. You run commands on #{owner} machines yourself, and you report back what actually happened.

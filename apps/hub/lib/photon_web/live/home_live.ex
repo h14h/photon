@@ -1,52 +1,37 @@
 defmodule PhotonWeb.HomeLive do
   @moduledoc """
   The home page at `/`: what needs the owner across every project, what is
-  running, what has gone quiet, and Blip's schedules. Blip floats over it,
-  as over every page.
+  running, what has gone quiet, and Blip's schedules.
 
   The threads come from `Photon.Threads.board(:all)`, grouped by
-  `Photon.Threads.State.sections/1`:
+  `Photon.Threads.State.sections/1` into Needs you (waiting on you,
+  failed, finished unread), Running, and Gone quiet. Each section is a
+  stream, reset on every read; the counts that decide which sections and
+  empty states show are assigns, since streams can't be counted. The
+  board is read again on `{:projects_changed, _}` and
+  `{:questions_changed, _}` (through the shell) and once a minute, so a
+  thread passes into Gone quiet without an event.
 
-    * Needs you: Waiting on you (questions Blip or the hub passed to the
-      owner, each with its own answer form, and threads whose last answer
-      asked something), Failed, and Finished (unread, with Mark all read)
-    * Running: threads at work, then threads waiting on Blip's answer
-    * Gone quiet: stopped threads left alone for a few days
+  An answer form's text is kept in `drafts` by question ID, so a re-read
+  draws the rows with what was typed; a draft and any refusal under its
+  form go when the question is answered or closes. Answers go through
+  `Photon.Questions.answer/2`, whose refusals are already in the owner's
+  words.
 
-  Each section is a stream, reset on every read; the counts that decide
-  which sections and empty states show, and the summary, are assigns,
-  since streams can't be counted. The board is read again on
-  `{:projects_changed, _}` and `{:questions_changed, _}` (the shell
-  subscribes to both, and passes them on) and once a minute, so a thread
-  passes into Gone quiet without an event.
+  Blip's schedules (`Photon.Assistant.schedules/0`) are a stream, read
+  again on `{:schedules_changed, nil}` (`Photon.Schedules.subscribe/0`);
+  one that stopped after an error stays in sight until the owner cancels
+  it. A project's schedules announce the project's ID, so they don't
+  reload this list.
 
-  An answer form's text is kept in `drafts` as it is typed, by question
-  ID, so a re-read draws the rows with what was typed; a draft and any
-  refusal shown under its form go when the question is answered or
-  closes. Answers go through `Photon.Questions.answer/2`, whose refusals
-  are already in the owner's words. Resolve and Mark all read go through
-  `Photon.Threads`.
-
-  Blip's schedules that are waiting for their next time, and those that
-  stopped after an error (`Photon.Assistant.schedules/0`), which stay in
-  sight with why and their cancel button showing until the owner cancels
-  them, are a stream (`#schedule-list`), read here and again on
-  `{:schedules_changed, nil}` (`Photon.Schedules.subscribe/0`). A
-  project's schedules are on its page, and their announcements carry the
-  project's ID, so they don't reload this list. Times are shown in the
-  owner's time zone (`PhotonWeb.TimeComponents.local_time/1`).
-
-  Ambient mode adds only warnings and marks. Under the header, one line with
-  a link to Settings says when a timer stopped after an error or, failing
-  that, when digests and reviews are skipping because Blip isn't signed in
-  to ChatGPT or schedules can't use the owner's plan. A Failed, Waiting on
-  you or Gone quiet thread row raised in Blip's daily review since it was
-  last touched says so (`PhotonWeb.AmbientText.reviewed?/1`).
-  `Photon.Ambient.brief/0`, which reads no items or board, is read on mount
-  and on `{:ambient_changed}` (`Photon.Ambient.subscribe/0`),
-  `{:chatgpt_changed, _}` and `{:settings_changed, _}`; the marks come with
-  the board, so its re-reads cover them. Everything else the shell passes on
-  is ignored.
+  Ambient mode adds only warnings and marks: one line under the header
+  when a timer stopped after an error or, failing that, when digests and
+  reviews are skipping, and a mark on a thread row raised in Blip's daily
+  review since it was last touched (`PhotonWeb.AmbientText.reviewed?/1`).
+  `Photon.Ambient.brief/0`, which reads no items or board, is read on
+  mount and on `{:ambient_changed}` (`Photon.Ambient.subscribe/0`),
+  `{:chatgpt_changed, _}` and `{:settings_changed, _}`; the marks come
+  with the board. Everything else the shell passes on is ignored.
   """
 
   use PhotonWeb, :live_view

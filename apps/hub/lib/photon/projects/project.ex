@@ -1,11 +1,8 @@
 defmodule Photon.Projects.Project do
   @moduledoc """
-  A project: a purpose and a name, for any body of work. Nothing else is
-  stored about how the project is run.
-
-  `slug` names the project's folder on every machine
-  (`<workspace>/<slug>`) and appears in its URLs. It is made once, from the
-  name, and never changes (`Photon.Projects.Rules.slug/1`).
+  A project: a purpose and a name, for any body of work. `slug` names its
+  folder on every machine and appears in its URLs; it never changes (see
+  `Photon.Projects`).
   """
 
   # Data: an Ecto schema, no behaviour of its own.

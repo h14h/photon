@@ -1,17 +1,6 @@
 defmodule Photon.Activity.Rules do
   @moduledoc """
-  The activity log's words and facts, as pure functions:
-
-    * `summary/3` - the line a tool call shows, in the past tense, naming
-      the machine, project or thread it acted on
-    * `thread_summary/4` - the line of a call on one thread, under the
-      title the page reads now: a thread is named after its first run, so
-      the title a stored summary has may be the start of its first message
-    * `message_summary/1` - the line for something Blip told the owner
-      without a tool
-    * `changes?/1` - whether a tool changes something, for the page's
-      "Changes only" filter
-    * `origin_label/2` - who asked, as the page says it
+  The activity log's words and facts, as pure functions.
 
   `summary/3` and `changes?/1` run on the harness's hook paths (the
   activity row is written in the commit that records a call's result,
@@ -21,8 +10,7 @@ defmodule Photon.Activity.Rules do
   does a tool these rules don't know (rule 75).
   """
 
-  # Functional core: no processes, no I/O. `summary/3` decodes the raw
-  # arguments with `PhotonCore.Message.arguments/1`.
+  # Functional core: no processes, no I/O.
   use Boundary, type: :strict, deps: [PhotonCore]
 
   alias PhotonCore.Message
@@ -47,12 +35,11 @@ defmodule Photon.Activity.Rules do
   def origins, do: @origins
 
   @doc """
-  The line a tool call shows: `call` is the call as the model sent it
-  (`"name"`, and `"arguments"` as a map or a JSON string), `status` its
-  result's status and `details` its result's details (where names and
-  titles come from when there are some; the arguments otherwise). A
-  failed call ends `: failed`, a stopped one `: stopped` and one a
-  restart cut short `: interrupted`. At most 200 characters.
+  The line a tool call shows, in the past tense, naming what it acted on:
+  `call` is the call as the model sent it (`"arguments"` a map or a JSON
+  string), `status` and `details` its result's. Names and titles come
+  from the details when there are some, the arguments otherwise. A failed,
+  stopped or interrupted call says so at the end. At most 200 characters.
   """
   @spec summary(term(), term(), term()) :: String.t()
   def summary(call, status, details) do
@@ -79,7 +66,6 @@ defmodule Photon.Activity.Rules do
   defp ending("interrupted"), do: ": interrupted"
   defp ending(_status), do: ""
 
-  # A result's details, with string keys. Anything else is no details.
   defp fields(details) when is_map(details) do
     for {key, value} <- details, is_binary(key) or is_atom(key), into: %{} do
       {to_string(key), value}
@@ -203,8 +189,6 @@ defmodule Photon.Activity.Rules do
 
   defp line(_name, _args, _d), do: nil
 
-  # A call on one thread, the thread named as `named` (its title in
-  # quotes); `start_thread` also names the project it started in.
   defp thread_line("read_thread", named, _slug), do: "Read " <> named
   defp thread_line("start_thread", named, nil), do: "Started " <> named
   defp thread_line("start_thread", named, slug), do: "Started #{named} in #{slug}"
@@ -214,10 +198,11 @@ defmodule Photon.Activity.Rules do
 
   @doc """
   The line of a call on one thread (`read_thread`, `start_thread`,
-  `message_thread`, `stop_thread`) as `summary/3` words it, with the
-  thread under `title` and, for `start_thread`, in the project `slug`:
-  the activity page names a row's thread by its title now, which may
-  have changed since the row was written. Nil for any other tool.
+  `message_thread`, `stop_thread`) as `summary/3` words it, under
+  `title` and, for `start_thread`, in the project `slug`. The page names
+  a row's thread by its title now: a thread is named after its first
+  run, so a stored summary may carry the start of its first message.
+  Nil for any other tool.
   """
   @spec thread_summary(term(), term(), String.t(), String.t() | nil) :: String.t() | nil
   def thread_summary(tool, status, title, slug) when is_binary(title) do
@@ -270,7 +255,6 @@ defmodule Photon.Activity.Rules do
   defp minutes(1), do: "1 minute"
   defp minutes(n), do: "#{n} minutes"
 
-  # A project's slug from the details, else the argument as given.
   defp slug(d, project) do
     case d["slug"] do
       slug when is_binary(slug) -> one_line(slug)
@@ -278,7 +262,6 @@ defmodule Photon.Activity.Rules do
     end
   end
 
-  # A thread's title in quotes from the details, else its ID as given.
   defp thread(d, id) do
     case d["title"] do
       title when is_binary(title) -> quoted(title)
@@ -288,7 +271,6 @@ defmodule Photon.Activity.Rules do
 
   defp quoted(title), do: ~s("#{one_line(title)}")
 
-  # A file's name as stored, from the details, else as given.
   defp file(d, name) do
     case d["file"] do
       file when is_binary(file) -> one_line(file)
@@ -329,17 +311,7 @@ defmodule Photon.Activity.Rules do
   Who asked, as the activity page says it, for a row's `origin` and
   `origin_id` (an `Photon.Activity.Action` or a map with those keys).
   `names` are the thread titles and schedule prompts the page read for
-  the IDs on screen:
-
-    * `"owner"`: "You"
-    * `"thread"` (a thread's question): its title, or "A thread"
-    * `"schedule"`: "Schedule: <prompt>", or "A schedule"
-    * `"follow_up"`: "Blip's follow-up", with "on <title>" when
-      `origin_id` names a thread (a `c_` ID) whose title is known, "on
-      the digest" for `"digest"` and "on the daily review" for
-      `"review"` (ambient mode); a follow-up from a schedule Blip made
-      for itself names no thread
-    * anything else: "Blip"
+  the IDs on screen; a name it lacks reads generically ("A thread").
   """
   @spec origin_label(term(), names()) :: String.t()
   def origin_label(%{origin: origin} = row, names) do
@@ -365,7 +337,6 @@ defmodule Photon.Activity.Rules do
   defp label("follow_up", _id, _name), do: "Blip's follow-up"
   defp label(_origin, _id, _name), do: "Blip"
 
-  # Text on one line, its whitespace collapsed, cut to `limit` characters.
   defp one_line(text, limit \\ 60) do
     text |> String.split() |> Enum.join(" ") |> cut(limit)
   end

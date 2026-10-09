@@ -7,11 +7,8 @@ defmodule Photon.Durable.Tx do
   A `%Tx{}` names one open commit. Only `run/1`, which `Photon.Durable.Store`
   calls, makes one; a write through a `Tx` that isn't the open commit of the
   calling process raises instead of writing a change nobody would announce.
-  Reads only need the transaction, and work with any `Tx`.
-
-  The change list lives in the calling process's dictionary for the length
-  of the commit. That is this module's detail: `run/1` sets it up and hands
-  the changes back, in the order they were made.
+  Reads only need the transaction, and work with any `Tx`. The change list
+  lives in the calling process's dictionary for the length of the commit.
   """
 
   alias Photon.Durable.{Conversation, Doc, Queries, Signal, Submission, TaskRecord}
@@ -372,12 +369,7 @@ defmodule Photon.Durable.Tx do
   def queued(%__MODULE__{}, conversation_id, mode \\ nil),
     do: Repo.all(Queries.queued(conversation_id, mode))
 
-  @doc """
-  How many `"ok"` results of the tools in `names`, with `flag` true in
-  their details, the conversation has after its last user entry whose
-  source kind is one of `source_kinds`
-  (`Photon.Durable.Queries.count_tool_results_since/4`).
-  """
+  @doc "`Photon.Durable.Queries.count_tool_results_since/4`, inside a commit."
   @spec count_tool_results_since(t(), String.t(), [String.t()], [String.t()], String.t()) ::
           non_neg_integer()
   def count_tool_results_since(%__MODULE__{}, conversation_id, names, source_kinds, flag),
@@ -407,9 +399,8 @@ defmodule Photon.Durable.Tx do
   @doc """
   Announces `message` on `topic` (through `Photon.Events`) once the commit is
   stored, after its `durable:*` announcements. A commit that rolls back or
-  raises announces nothing. For contexts whose writes go through this
-  commit line (a thread's file write lands in its tool call's commit), so
-  pages hear of a change only when it is stored.
+  raises announces nothing, so pages hear of a change only when it is
+  stored.
   """
   @spec announce(t(), String.t(), term()) :: :ok
   def announce(%__MODULE__{} = tx, topic, message) when is_binary(topic) do
@@ -428,8 +419,6 @@ defmodule Photon.Durable.Tx do
 
   def stringify(other), do: other
 
-  # A write checks before it touches the database, so a stray Tx can't
-  # write at all, rather than write a change nobody announces.
   defp open!(%__MODULE__{commit: commit}) do
     case Process.get(@changes) do
       {^commit, _} ->

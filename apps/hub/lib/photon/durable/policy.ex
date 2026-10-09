@@ -6,22 +6,11 @@ defmodule Photon.Durable.Policy do
   re-reads the task and asks again (the `*?/1` predicates on a fresh task),
   since other commits can land in between.
 
-  The rules:
-
-    * stopping: a task marked for abort has its step killed if this
-      scheduler runs one; it is aborted once no unfinished foreground task
-      it owns is left, so trees stop bottom-up
-    * waking: a waiting task wakes when any of its conditions holds (`"on"`
-      tasks all finished, or one failed under `"fail_fast"`; its `"signal"`
-      recorded; its `"until"` passed), or when it waits on nothing. Under
-      `"fail_fast"`, waking aborts the unfinished rest
-    * starting: a pending task that isn't marked for abort starts unless a
-      step for it is already running here or its kind isn't registered
-    * failing: a step that ended without a transition, or crashed, fails its
-      running task unless it is marked for abort (then it ends aborted), or
-      the kind's `on_fail/3` asks for a retry
-    * the timer: one, for the earliest `"until"` among waiting tasks,
-      capped at an hour
+  Trees stop bottom-up: a task marked for abort is aborted once no
+  unfinished foreground task it owns is left. A waiting task wakes when any
+  of its conditions holds (`"on"` tasks all finished, or one failed under
+  `"fail_fast"`, which then aborts the unfinished rest; its `"signal"`
+  recorded; its `"until"` passed), or when it waits on nothing.
   """
 
   # Functional core: no processes, no I/O.
@@ -34,9 +23,8 @@ defmodule Photon.Durable.Policy do
   @timer_slack_ms 5
 
   @typedoc """
-  What `wake?/3` needs to know beyond the task: the statuses of the tasks it
-  waits on (`nil` when it waits on none) and whether its signal is recorded
-  (`nil` when it waits on none).
+  What `wake?/3` needs beyond the task: the statuses of the tasks it waits
+  on and whether its signal is recorded, each `nil` when it waits on none.
   """
   @type facts :: %{statuses: %{String.t() => String.t()} | nil, signal?: boolean() | nil}
 

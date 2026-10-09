@@ -14,24 +14,22 @@ defmodule Photon.Provision do
        command line,
     4. waits for the node to connect.
 
-  So every install and update gives the node a fresh key and revokes its
-  old one; an update that fails after that leaves the node offline until
-  it's run again. Removing a node revokes its key.
+  The new key replaces the old one, so an update that fails after step 3
+  leaves the node offline until it's run again. Removing a node revokes
+  its key.
 
-  One job runs per machine at a time. Job state is broadcast on `topic/0` as
-  `{:provision, jobs}`, so every open tab sees progress.
+  One job runs per machine at a time. Job state is broadcast on `topic/0`,
+  so every open tab sees progress.
 
   ## Processes
 
-  This module's server (one, named after it) keeps the job table
-  (`Photon.Provision.Jobs`); its API is `run/2` and `jobs/0`, both calls.
-  Each job runs as a task under `Photon.ProvisionTasks`, started with
+  This module's server keeps the job table (`Photon.Provision.Jobs`). Each
+  job runs as a task under `Photon.ProvisionTasks`, started with
   `async_nolink` and monitored: a job reports progress to the server as it
   goes (plain sends, a line at a time), and a job that dies without
   reporting its end is marked failed, so its machine doesn't stay busy.
   A server restart loses the table; jobs still running then report to
-  nobody and finish on their own. The SSH steps and the scripts they send
-  are `Photon.Provision.Script`.
+  nobody and finish on their own.
   """
 
   use Boundary,

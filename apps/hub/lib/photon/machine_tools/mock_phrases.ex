@@ -55,9 +55,8 @@ defmodule Photon.MachineTools.MockPhrases do
 
   @doc """
   What a script says after a tool result: the result's text (in a code
-  block when it runs over several lines), with "Error: ..." turned into
-  "That didn't work: ...", or for an image "Here it is." and its line of
-  size and path.
+  block when it runs over several lines), or for an image "Here it is."
+  and its line of size and path.
   """
   @spec relay_result(Message.t()) :: String.t()
   def relay_result(result) do

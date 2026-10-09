@@ -281,10 +281,10 @@ defmodule PhotonWeb.CoreComponents do
   end
 
   @doc """
-  An on/off switch: a button with `role="switch"` and its label, for a
-  setting that applies the moment it is clicked (no form to save). The
-  page handles the click (`phx-click`, `phx-value-*` in `rest`) and
-  renders the stored state back as `on`.
+  An on/off switch (`role="switch"`) for a setting that applies the
+  moment it is clicked, with no form to save. The page handles the click
+  (`phx-click`, `phx-value-*` in `rest`) and renders the stored state
+  back as `on`.
 
       <.switch id="skill-blip" on={@on?} label="Blip" phx-click="blip" phx-value-on="false" />
   """
@@ -349,11 +349,9 @@ defmodule PhotonWeb.CoreComponents do
   end
 
   @doc """
-  A thread's state as a small mark: the breathing dot while it runs, a
-  speech bubble while it waits on Blip (so it doesn't look like work), an
-  amber dot with a halo when it waits on the owner, a red dot when it
-  failed, a still accent dot when it finished unread, and nothing when it is
-  quiet or idle. Its tooltip and label are the state's words
+  A thread's state as a small mark, or nothing when it is quiet or idle.
+  Waiting on Blip shows a speech bubble rather than the breathing dot, so
+  it doesn't look like work. Its tooltip and label are the state's words
   (`PhotonWeb.ThreadText.state/1`).
   """
   attr :state, :atom, required: true, doc: "a `Photon.Threads.State.t()`"

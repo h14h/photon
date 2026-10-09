@@ -5,11 +5,8 @@ defmodule PhotonCore.LLM.Responses.Response do
 
   Start with `new/0`, `feed/2` it each chunk of the body as it comes, then
   `finish/2` it for the result `PhotonCore.LLM.stream/3` returns. `feed/2`
-  returns the events to report (text, reasoning summary and tool-call
-  deltas) rather than reporting them, and its result doesn't depend on how
-  the body was cut into chunks.
-
-  The events it reads:
+  returns the events to report rather than reporting them, and its result
+  doesn't depend on how the body was cut into chunks. The events it reads:
 
     * `response.output_text.delta`: answer text
     * `response.reasoning_summary_text.delta` (and `reasoning_text.delta`):

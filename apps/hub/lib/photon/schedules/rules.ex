@@ -1,27 +1,12 @@
 defmodule Photon.Schedules.Rules do
   @moduledoc """
-  The rules for schedules, as pure functions. `Photon.Schedules` and its
-  routine read the clock and the committed facts, ask these what to do, and
-  apply the answer in the same commit.
+  The rules for schedules, as pure functions. Times are Unix milliseconds
+  where the routine's task keeps them (and every `now`), and `DateTime`s
+  where a schedule's row keeps them.
 
-  Times are Unix milliseconds where the routine's task keeps them
-  (`arm/4`, `fired_through/3`, `next_after/3`, and the `now` every
-  function takes), and `DateTime`s where a schedule's row keeps them
-  (`first_at` in what `schedule/2` and `from_tool/2` return, and
-  `when_text/2`).
-
-  - Reading input: `schedule/2` checks the owner's form, `from_tool/2`
-    Blip's `schedule` tool's arguments, and `tool_thread/3` the thread
-    that tool names in a project. Both accept a time up to a
-    minute ago, since the form's time input only goes down to the minute
-    and Blip's "now" is a few milliseconds old by the time it is stored.
-  - Arming: `arm/4` is the first time a new or edited schedule's task
-    waits for, given what the task it replaces already fired
-    (`fired_through/3`), so an edit neither skips nor repeats a firing.
-    `next_after/3` is the next time after a firing.
-  - Firing: `target/1` says where a schedule fires, and `fire/2` what a
-    firing does there, from the consent and overlap facts; `text/1`,
-    `skipped_note/2` and `request_id/3` are what it writes.
+  `schedule/2` and `from_tool/2` both accept a time up to a minute ago,
+  since the form's time input only goes down to the minute and Blip's
+  "now" is a few milliseconds old by the time it is stored.
   """
 
   # Functional core: no processes, no I/O.
@@ -94,11 +79,9 @@ defmodule Photon.Schedules.Rules do
   @doc """
   Checks the owner's form: `params` with string (or atom) keys `prompt`,
   `at` (ISO 8601 with an offset), `repeat` (`"once"` or `"every"`), `every`
-  and `unit` (with `"every"`), and `target` (`"new_thread"` or a thread's
-  ID). `now` is Unix milliseconds; `thread_ids` are the project's threads.
-
-  Returns the row's fields, `conversation_id` nil for a new thread each
-  time, or every field's error.
+  and `unit` (with `"every"`), and `target` (`"new_thread"` or one of
+  `thread_ids`). Returns the row's fields, `conversation_id` nil for a new
+  thread each time, or every field's error.
   """
   @spec schedule(map(), %{now: ms(), thread_ids: [String.t()]}) ::
           {:ok, attrs()} | {:error, field_errors()}
@@ -116,7 +99,6 @@ defmodule Photon.Schedules.Rules do
     collect(results)
   end
 
-  # Every field's error, or the row's fields once all of them are ok.
   defp collect(results) do
     case for({field, {:error, message}} <- results, into: %{}, do: {field, message}) do
       errors when errors == %{} -> {:ok, attrs(Map.new(results, fn {k, {:ok, v}} -> {k, v} end))}
@@ -222,11 +204,10 @@ defmodule Photon.Schedules.Rules do
 
   @doc """
   Reads Blip's `schedule` tool's arguments (`prompt`, `in_minutes` or
-  `at`, `every_minutes`) with the tool's messages, at `now` (Unix
-  milliseconds). An `at` more than a minute ago is refused, the same
-  grace as the form's; without a time, a repeating schedule first fires
-  one interval from now. The form's bounds apply: a first time at most
-  10 years ahead, and an interval from 5 minutes to 52 weeks.
+  `at`, `every_minutes`), with errors worded for the model. Without a
+  time, a repeating schedule first fires one interval from now. The
+  form's bounds apply: a first time at most 10 years ahead, and an
+  interval from 5 minutes to 52 weeks.
   """
   @spec from_tool(map(), ms()) :: {:ok, tool_attrs()} | {:error, String.t()}
   def from_tool(args, now) do
@@ -240,8 +221,7 @@ defmodule Photon.Schedules.Rules do
   @doc """
   The thread a project schedule from Blip's `schedule` tool wakes, from
   its `thread` argument: nil (none, or only spaces) for a new thread each
-  time, or a thread among `thread_ids`, the project's (slug `slug`).
-  Otherwise `c_123 isn't a thread in garden.`
+  time, or one of the project's `thread_ids`.
   """
   @spec tool_thread(term(), [String.t()], String.t()) ::
           {:ok, String.t() | nil} | {:error, String.t()}
@@ -300,13 +280,11 @@ defmodule Photon.Schedules.Rules do
   ## Arming
 
   @doc """
-  The first time a new or edited schedule's task waits for (Unix
-  milliseconds), or `:finished` when there is none.
-
-  `first_at` and `every` (nil for a one-off) are the schedule's times,
-  `now` the clock the input was checked against, and `fired_through` the
-  latest of those times the replaced task already fired or skipped as
-  missed (`fired_through/3`), nil for a new schedule. A time up to a
+  The first time a new or edited schedule's task waits for, or
+  `:finished` when there is none, so an edit neither skips nor repeats a
+  firing. `every` is nil for a one-off, `now` the clock the input was
+  checked against, and `fired_through` what the replaced task already
+  fired (`fired_through/3`), nil for a new schedule. A time up to a
   minute before `now` still fires, but never one at or before
   `fired_through`.
   """
@@ -329,13 +307,9 @@ defmodule Photon.Schedules.Rules do
   @doc """
   The latest time on a schedule's times that its routine task has fired
   (or skipped as missed), from the task's `input`, `checkpoint` and
-  `status` as plain maps, or nil when it hasn't fired.
-
-  A one-off that finished `"done"` fired at its `first_at`. A repeating
-  task that has fired waits for `next_at`, and every slot before it
-  counts as fired: the ones between its last firing and `next_at` were
-  missed while the hub was down and skipped. A firing still in flight
-  hasn't committed, so it doesn't count.
+  `status`, or nil when it hasn't fired. Every slot before a repeating
+  task's `next_at` counts as fired, since missed ones are skipped. A
+  firing still in flight hasn't committed, so it doesn't count.
   """
   @spec fired_through(map(), map(), String.t()) :: ms() | nil
   def fired_through(input, checkpoint, status) do
@@ -351,9 +325,8 @@ defmodule Photon.Schedules.Rules do
 
   @doc """
   An interval in minutes as the form's `every` and `unit`, in the largest
-  of weeks, days, hours and minutes that divides it: 1440 is `{1,
-  "days"}`, 90 is `{90, "minutes"}`. The edit form starts from it, and
-  `schedule/2` reads it back to the same minutes.
+  unit that divides it: 1440 is `{1, "days"}`. `schedule/2` reads it back
+  to the same minutes.
   """
   @spec every_unit(pos_integer()) :: {pos_integer(), String.t()}
   def every_unit(minutes) when is_integer(minutes) and minutes > 0 do
@@ -361,10 +334,7 @@ defmodule Photon.Schedules.Rules do
     {div(minutes, @units[unit]), unit}
   end
 
-  @doc """
-  The first whole hour (UTC) after `now`: the schedule form's starting
-  time.
-  """
+  @doc "The first whole hour (UTC) after `now`."
   @spec next_hour(ms()) :: ms()
   def next_hour(now), do: (div(now, 3_600_000) + 1) * 3_600_000
 
@@ -396,12 +366,11 @@ defmodule Photon.Schedules.Rules do
   def target(%{}), do: :thread
 
   @doc """
-  What a firing at `target` does, given the `facts` read in its commit: skip
-  it when the thread it would wake is gone, when scheduled work isn't
+  What a firing at `target` does, given the `facts` read in its commit:
+  skip it when the thread it would wake is gone, when scheduled work isn't
   allowed (leaving a notice where there is a conversation to put one in),
   when its last new thread is still running, or when its last prompt is
-  still queued; otherwise start a thread, or submit the prompt, which starts
-  a run in an idle conversation or queues behind a busy one.
+  still queued (rule 73); otherwise start a thread, or submit the prompt.
   """
   @spec fire(target(), facts()) :: decision()
   def fire(target, facts) do
@@ -464,8 +433,7 @@ defmodule Photon.Schedules.Rules do
 
   @doc """
   When a schedule fires, in Blip's tool's words: "first at 2026-10-08
-  09:00 UTC, then every 1440 minutes", or only the first part for a
-  one-off.
+  09:00 UTC, then every 1440 minutes".
   """
   @spec when_text(DateTime.t(), pos_integer() | nil) :: String.t()
   def when_text(first_at, every_minutes) do

@@ -6,15 +6,9 @@ defmodule Photon.Durable.Scheduler do
   it reconciles: tasks marked for abort are stopped, deepest first; waiting
   tasks whose condition holds become pending; pending tasks start, each step
   in its own process under `Photon.Durable.TaskSupervisor`. The rules are
-  `Photon.Durable.Policy`; this process reads the facts they need, applies
-  each decision in its own commit (re-checking the task there), and tracks
-  the steps it started.
-
-  On boot, tasks that were `running` when the last process died go back to
-  `pending` and run their phase again, with `runs` telling the step it is a
-  retry. A step still running from before a restart of this process alone
-  can't commit any more (see `Photon.Durable.Tx.transition/4`). A task whose
-  kind isn't registered stays pending until it is.
+  `Photon.Durable.Policy`; each decision is applied in its own commit,
+  re-checking the task there. A task whose kind isn't registered stays
+  pending until it is.
 
   A step that ends without a transition (or crashes) fails its task, unless
   the task was marked for abort, which then ends it as aborted; a kind's
@@ -24,12 +18,12 @@ defmodule Photon.Durable.Scheduler do
 
   ## Process
 
-  One per hub, named after this module, under `Photon.Durable.Supervisor`.
-  What a crash loses is the in-memory view of the steps it started, its
-  timer, and which unregistered kinds it already warned about. `init/1`
-  rebuilds the rest from the database: running tasks go back to pending,
-  and a reconcile follows. Steps keep running across a restart (they aren't
-  linked to this process) and are fenced out of committing.
+  One per hub, under `Photon.Durable.Supervisor`. A crash loses only its
+  view of the steps it started, its timer and its unknown-kind warnings.
+  `init/1` puts `running` tasks back to `pending` (their phase runs again,
+  with `runs` telling the step it is a retry) and reconciles. Steps keep
+  running across a restart of this process alone (they aren't linked to
+  it) and are fenced out of committing (`Photon.Durable.Tx.transition/4`).
 
   `notify/2`, which `Photon.Durable.Store` calls after a commit, is a plain
   send on purpose: the Store must never wait on the scheduler. It can't
@@ -165,8 +159,7 @@ defmodule Photon.Durable.Scheduler do
     |> arm_timer()
   end
 
-  # Kill the steps of tasks marked for abort, then settle them bottom-up: a
-  # task is aborted once no foreground work it owns is still live.
+  # Kill the steps of tasks marked for abort, then settle them bottom-up.
   defp stop_aborted(state, tasks) do
     state =
       tasks
@@ -210,8 +203,7 @@ defmodule Photon.Durable.Scheduler do
     state
   end
 
-  # Reads what all of `waiting` names at once; returns the facts for one
-  # task's conditions.
+  # Returns a function giving the facts for one task's conditions.
   defp read_facts(waiting) do
     {ids, keys} = Policy.wanted(waiting)
     statuses = statuses(ids)
@@ -230,7 +222,6 @@ defmodule Photon.Durable.Scheduler do
     end
   end
 
-  # With fail_fast, a failed task among those waited on aborts the rest.
   defp fail_fast(tx, %TaskRecord{waiting: waiting}) do
     case Policy.fail_fast_ids(waiting) do
       nil ->
@@ -320,7 +311,7 @@ defmodule Photon.Durable.Scheduler do
     Durable.continue_inbox(tx, failed)
   end
 
-  # Calls an optional task-kind callback; nil when the kind or callback is missing.
+  # nil when the kind or callback is missing.
   defp run_callback(%TaskRecord{kind: kind}, callback, args) do
     module = Durable.kind(kind)
 
@@ -336,7 +327,6 @@ defmodule Photon.Durable.Scheduler do
     :ok
   end
 
-  # One timer, for the earliest waiting deadline.
   defp arm_timer(state) do
     :ok = cancel_timer(state.timer)
 

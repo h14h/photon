@@ -1,91 +1,71 @@
 defmodule PhotonNode.Ops.Shell do
   @moduledoc """
-  The `shell` operation: runs one command, in its `directory` (the
-  workspace, or a folder in it such as a project's), in its own process
-  group, with stdout and stderr going straight to files in
-  `<operations dir>/<op id>/` and stdin from `/dev/null`.
+  The `shell` operation: runs one command in its `directory` (the
+  workspace, or a folder in it), in its own process group, with stdin from
+  `/dev/null` and stdout and stderr going straight to files in
+  `<operations dir>/<op id>/`. There is no timeout.
 
-  The command's directory is created first if it is missing
-  (`File.mkdir_p/1`, the `ops:2` capability), before the `process`
-  checkpoint, so a resumed or rerun start just finds it. If it can't be
-  created (a file is in the way, no permission), the operation fails
-  before anything runs: "couldn't create the working directory
-  <path>: not a directory. The command didn't run."
+  The directory is created first if missing (the `ops:2` capability),
+  before the `process` checkpoint, so a resumed or rerun start just finds
+  it. If it can't be created, the operation fails before anything runs.
 
-  A small wrapper starts the command as a job-control background job (so it
-  leads a new process group), writes its PID to `pid` and reports it, waits
-  for it, and writes the exit status to `exit` in the same directory. When
-  the command exits, the whole group gets SIGTERM, then SIGKILL after five
-  seconds, so background children don't outlive it. There is no timeout.
+  A small wrapper starts the command as a job-control background job (so
+  it leads a new process group), writes its PID to `pid` and reports it,
+  waits for it, and writes the exit status to `exit`. When the command
+  exits, the whole group gets SIGTERM, then SIGKILL after five seconds, so
+  background children don't outlive it.
 
-  Snapshots go to the operation's owner (`PhotonNode.Ops.Owner`).
-  Checkpoints: `awaiting` in phase `process` (files ready), then with the
-  process group ID once started, phase `read` with the exit code, and
-  finally `completed` with the bounded output. The command starts only once
-  the owner has stored the `process` checkpoint (`Owner.checkpoint/2`
-  returns `:ok`), so a crash before that point leaves a `ready` operation
-  that never ran, and a command is started at most once. An owner that
-  couldn't store it (`{:error, reason}`) fails the operation, and the
-  command never runs. An owner that didn't answer (`:ignored`: the
+  Checkpoints, reported to the owner (`PhotonNode.Ops.Owner`): `awaiting`
+  in phase `process` (files ready), then with the process group ID once
+  started, phase `read` with the exit code, and finally `completed` with
+  the bounded output.
+
+  The command spawns only once `Owner.checkpoint/2` returns `:ok` for the
+  `process` checkpoint, so it starts at most once (node rule 4).
+  `{:error, reason}` fails the operation unspawned. `:ignored` (the
   executor died during the call, maybe after storing it) stops this
-  process without running the command, and first writes an `unstarted`
-  file next to the output. A resume that finds the `process` checkpoint
-  with no process group, no `pid` file and that marker knows the command
-  never started, so it starts it as a `ready` operation would, through the
-  checkpoint again. Every start removes the marker before its checkpoint
-  is stored, and the owner syncs this directory when it stores it, so the
-  marker can't outlive a start that may have spawned the command.
+  process unspawned, leaving an `unstarted` marker; a resume that finds
+  the `process` checkpoint with no process group, no `pid` file and that
+  marker starts the command, through the checkpoint again. Every start
+  removes the marker before its checkpoint is stored, and the owner syncs
+  this directory when it stores it, so the marker can't outlive a start
+  that may have spawned the command.
 
-  On recovery after a node restart, a command that was killed by a cancel
-  (a `canceled` file in its directory, see below) is canceled, and one
-  killed because this process stopped (a `stopped` file) failed, whatever
-  its `exit` file says. Otherwise a command whose `exit` file exists is
-  finished normally; one still running is waited for (polled,
-  since this process has no port to it); one the `unstarted` marker proves
-  never started is started; and any other failed with its outcome unknown.
-  A process group not yet checkpointed is read from the `pid` file, so a
-  command started just before a crash is still waited for (or killed by a
-  stop).
+  Recovery after a node restart reads the markers before the `exit` file,
+  since the wrapper, outside the killed group, records exit 143 for a
+  command killed on purpose: a `canceled` file means canceled, a `stopped`
+  file failed ("photon-node stopped while the command was running"). Else
+  a command with an `exit` file finished; one still running is reattached
+  and polled (there is no port to it); one the `unstarted` marker proves
+  never started is started; any other fails with its outcome unknown. A
+  process group not yet checkpointed is read from the `pid` file, so a
+  command started just before a crash is still waited for (or killed).
 
-  A shell that stops while its command may run (its supervisor shuts it
-  down when the node stops, or it crashes) kills the command's process
-  group in `terminate/2`: whenever the port is open, and whenever its
-  snapshot is still `awaiting` in phase `process` with a process group on
-  record (in the snapshot or the `pid` file), so a shell that resumed
-  after an abrupt crash kills the command whether it has reattached yet or
-  crashed in recovery first. It first writes a `stopped` file next to the
-  output, unless the command has already exited (its `exit` file is
-  there, and the kill is only for children it left), so a resumed
-  operation reports that photon-node stopped and killed the command.
-  Without it, the wrapper, which is outside the killed group, records exit
-  143 and recovery would report the command `completed` with partial
-  output.
+  A cancel writes `canceled` before it kills the group; one that arrives
+  before the wrapper reports the PID kills the group as soon as it does.
+  A canceled snapshot carries what the command printed, bounded as a
+  finished command's output is (`"result"` with `"out"` and `"err"`, no
+  exit code), or nothing if it never started or its files can't be read.
 
-  A canceled snapshot carries what the command printed before the kill,
-  bounded as a finished command's output is (`"result"` with `"out"` and
-  `"err"`, and no exit code), so the hub can still show it once the call
-  that ran it has been stopped. A command that never started, or whose
-  files can't be read, has none.
+  A shell that stops while its command may run (the node stops, or it
+  crashes) kills the command's group in `terminate/2` (node rule 10):
+  whenever the port is open, and whenever its snapshot is `awaiting` in
+  phase `process` with a group on record (in the snapshot or the `pid`
+  file), so a shell resumed after an abrupt crash kills the command even
+  before it reattaches. It writes `stopped` first, unless the command has
+  already exited and the kill is only for children it left.
 
-  A cancel writes a `canceled` file before it kills the group, for the
-  same reason: if the executor or the node dies before the `canceled`
-  snapshot is stored, the resumed operation finds the marker and reports
-  the cancel instead of the exit 143. A cancel that arrives before the
-  wrapper reports the PID kills the group as soon as it does.
+  Killing a group doesn't block. After SIGTERM it polls the group with
+  `Process.send_after/3`, backing off from 1 ms to 50 ms, and sends SIGKILL
+  after five seconds. Messages that arrive meanwhile are postponed, as
+  `gen_statem` postpones events, and handled in order once the step that
+  waited has run, so each sees the state it would after a blocking wait;
+  if that step stops the process, they are dropped. Only `terminate/2`
+  waits in place, since shutdown can't take messages, and it doesn't run
+  the waiting step: the owner may be shut down first.
 
-  Killing a group doesn't block the process. After SIGTERM it polls the
-  group with `Process.send_after/3`, backing off from 1 ms to 50 ms, and
-  sends SIGKILL after five seconds. Messages that arrive meanwhile are
-  postponed, the way `gen_statem` postpones events. Once the group is gone
-  and the step that waited for it has run, they are handled in the order
-  they arrived, so each sees the state it would have seen after a blocking
-  wait. If that step stops the process, they are dropped, as they were
-  before. Only `terminate/2` still waits in place for a kill under way,
-  since shutdown can't take messages. It doesn't run the waiting step: the
-  owner may be shut down first and couldn't take its report.
-
-  While it runs, new output streams to the hub as live events (not stored),
-  sampled once a second in chunks of at most 64 KB per stream.
+  New output streams to the owner as live events (never stored), sampled
+  once a second in chunks of at most 64 KB per stream.
   """
 
   use GenServer, restart: :temporary
@@ -189,8 +169,6 @@ defmodule PhotonNode.Ops.Shell do
       "#{:file.format_error(reason)}. The command didn't run."
   end
 
-  # Empty output files only this user can read, and no exit, pid, stopped,
-  # canceled or unstarted file left from an earlier start.
   defp prepare_files(op) do
     dir = dir(op)
 
@@ -349,11 +327,9 @@ defmodule PhotonNode.Ops.Shell do
   def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
   def handle_info(_message, state), do: {:noreply, state}
 
-  # A command that may be running is killed, after the stopped marker: one
-  # this process started (the port is open), or one on record for a
-  # snapshot still awaiting its process, which a shell resumed after an
-  # abrupt crash may be waiting for or may not have reattached to yet
-  # (node rule 10, and no command left running after its op fails).
+  # A command that may be running is killed, after the stopped marker (see
+  # the moduledoc): node rule 10, and no command left running after its op
+  # fails.
   @impl true
   def terminate(_reason, %{port: port} = state) when port != nil,
     do: stop_command(state, recorded_pgid(state.op))
@@ -434,9 +410,8 @@ defmodule PhotonNode.Ops.Shell do
         do: checkpoint(state, "awaiting", %{"pgid" => pgid}),
         else: state
 
-    # The markers come before the exit file: the wrapper records exit 143
-    # for a command this process killed for a cancel or as it stopped. A
-    # cancel's kill comes first if both happened.
+    # The markers come before the exit file (see the moduledoc); a cancel's
+    # kill comes first if both happened.
     cond do
       File.exists?(canceled_path(state.op)) -> cancel(state)
       File.exists?(stopped_path(state.op)) -> stopped(state, pgid)
@@ -485,12 +460,11 @@ defmodule PhotonNode.Ops.Shell do
     pgid = state.op["state"]["pgid"]
 
     # The exit file comes first, as in recover/1: a command that exited can
-    # leave background children in its group, which are killed, not waited for.
+    # leave children in its group, which are killed, not waited for.
     cond do
       state.canceled or state.op["status"] != "awaiting" ->
         {:noreply, state}
 
-      # The command has exited; a kill now is only for its leftover children.
       code = read_exit(state.op) ->
         kill_group(state, pgid, &finish_read(&1, code))
 
@@ -558,7 +532,6 @@ defmodule PhotonNode.Ops.Shell do
     end
   end
 
-  # A command that may have started is killed after the canceled marker.
   defp cancel(state) do
     if awaiting_process?(state.op), do: mark_canceled(state.op)
 

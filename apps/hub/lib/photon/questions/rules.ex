@@ -2,26 +2,6 @@ defmodule Photon.Questions.Rules do
   @moduledoc """
   The rules of an `ask_blip` question, as pure functions.
 
-    * `question/1` and `answer/1` check what a thread asks and what an
-      answer says
-    * `step/2` is the question's transitions: Blip answers it or passes
-      it to the owner, the hub passes on one Blip didn't get to, the owner
-      answers one that is with them, and a stopped call withdraws it.
-      Blip's answer to a question that is with the owner counts only when
-      the owner wrote to Blip in the run making it (`{:blip, true}`), and
-      is then recorded as the owner's: otherwise a guess of Blip's could
-      pass as the owner's decision
-    * `message/3` says why a step was refused, in one set of words for
-      Blip (naming the question by ID, as its tools do) and one for the
-      owner (naming the thread by title, with no ID)
-    * `askable?/1` is the fence the ask commit checks itself: a question
-      is only made for a tool call that is still running and not being
-      stopped
-    * `escalate?/2` says when the hub passes a question to the owner:
-      Blip's run has been through the message carrying it and the
-      question is still Blip's
-    * `result/1` is what the thread's call gets back once it is answered
-
   Everything here is total: `Photon.Questions.withdraw_tx/2` runs inside
   the harness's abort and fail commits.
   """
@@ -44,9 +24,8 @@ defmodule Photon.Questions.Rules do
   @type status :: String.t()
 
   @typedoc """
-  Something that happens to a question: an answer (by the owner, or by
-  Blip, with whether the owner wrote to Blip in that run), a pass to the
-  owner (by Blip's `ask_owner`, or by the hub), or a withdraw.
+  Something that happens to a question; Blip's answer says whether the
+  owner wrote to Blip in that run.
   """
   @type event ::
           {:answer, :owner | {:blip, boolean()}}
@@ -101,6 +80,11 @@ defmodule Photon.Questions.Rules do
   A question's transition on `event` from `status`: `{:ok, new_status,
   answered_by}` (`answered_by` is nil unless the event answers it), or
   `{:error, reason}`. A withdraw leaves an answered question as it is.
+
+  Blip's answer to a question that is with the owner counts only when the
+  owner wrote to Blip in the run making it (`{:blip, true}`), and is then
+  recorded as the owner's: otherwise a guess of Blip's could pass as the
+  owner's decision.
   """
   @spec step(term(), term()) :: {:ok, status(), String.t() | nil} | {:error, reason()}
   def step("asked", {:answer, {:blip, _owner_wrote?}}), do: {:ok, "answered", "blip"}
@@ -117,10 +101,9 @@ defmodule Photon.Questions.Rules do
   def step(_status, _event), do: {:error, :invalid}
 
   @doc """
-  Why a step was refused, for `audience`, about `question` (with its `id`
-  and `thread_title`). Blip's words name the question by ID; the owner's
-  name the thread by title and never show an ID. `:not_found` is for a
-  question that doesn't exist.
+  Why a step was refused, for `audience`, about `question`. Blip's words
+  name the question by ID, as its tools do; the owner's name the thread
+  by title and never show an ID.
   """
   @spec message(reason() | :not_found, audience(), map() | nil) :: String.t()
   def message(reason, :owner, question), do: owner(reason, title(question))
@@ -158,9 +141,8 @@ defmodule Photon.Questions.Rules do
 
   @doc """
   Whether the ask commit may make a question for this tool task (nil when
-  there is none): only while it is unfinished and not marked for abort.
-  The ask commits outside the step's fence, so it checks the fence's facts
-  itself, as `Photon.Machines.start/1` does for an op.
+  there is none): only while it is unfinished and not marked for abort
+  (see `Photon.Questions`).
   """
   @spec askable?(term()) :: boolean()
   def askable?(%{status: status, abort_requested: abort?}),
@@ -180,9 +162,8 @@ defmodule Photon.Questions.Rules do
 
   @doc """
   What the thread's `ask_blip` call returns once its question is
-  answered. An owner's answer comes with how Blip put the question to
-  them, when Blip did, so a short answer reads against the question the
-  owner actually saw.
+  answered. An owner's answer comes with Blip's wording, when Blip gave
+  one, so a short answer reads against the question the owner saw.
   """
   @spec result(map()) :: String.t()
   def result(%{answered_by: "blip"} = question), do: "Blip answered: " <> answer_text(question)

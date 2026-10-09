@@ -1,27 +1,15 @@
 defmodule Photon.Assistant.Readout do
   @moduledoc """
-  The texts Blip's read tools return: `list_projects` (`projects/3`),
-  `read_project` (`project/2`), `list_threads` (`threads/2`) and
-  `read_thread` (`thread/3`), what its file tools say after a write or an
-  edit (`file_written/4`, `file_edited/2`), what its schedule and skill
-  tools say (`scheduled/3`, `schedules/4` for a project's, `skills/1`,
-  `skill_set/3`), and the words for a project, thread, question or skill
-  that isn't there (`unknown_project/2`, `unknown_thread/1`,
-  `unknown_question/2`, `unknown_skill/2`). Its file tools' listing and read
-  text are the threads' (`Photon.Threads.describe_files/2`,
-  `read_file_text/3`), seen from Blip's side.
+  The texts Blip's tools return, from the rows, the board entries
+  (`Photon.Threads.board/1`) and the time, all passed in. Its file tools'
+  listing and read text are the threads' (`Photon.Threads.describe_files/2`),
+  not these.
 
-  It takes the rows, the board entries (`Photon.Threads.board/1`) and the
-  time, all passed in. A thread's state reads as `Photon.Threads.State.label/2`
-  words it, turned to Blip's side: the page's "Waiting on you" is
-  "waiting on the user" here, and "Asking Blip" is "asking you". A thread's
-  open `ask_blip` questions show with their IDs wherever the thread is
-  listed, so Blip can name one in any run.
-
-  `read_thread` shows a thread's messages, its answers and a line per tool
-  call, never a tool's output or images: an item over 1,500 characters is
-  cut in the middle, and the items are cut to 12,000 characters from the
-  end.
+  A thread's state reads as `Photon.Threads.State.label/2` words it,
+  turned to Blip's side: the page's "Waiting on you" is "waiting on the
+  user" here, and "Asking Blip" is "asking you". A thread's open
+  `ask_blip` questions show with their IDs wherever the thread is listed,
+  so Blip can name one in any run.
   """
 
   # Functional core: no processes, no I/O. The time comes in as an argument.
@@ -205,8 +193,6 @@ defmodule Photon.Assistant.Readout do
   defp files_count(1), do: "1 context file."
   defp files_count(n), do: "#{n} context files."
 
-  # A name or a description as a sentence: with a full stop unless it ends
-  # in one already.
   defp sentence(text) do
     if String.ends_with?(text, [".", "!", "?"]), do: text, else: text <> "."
   end
@@ -398,11 +384,10 @@ defmodule Photon.Assistant.Readout do
   The `read_thread` result: a header (the thread's title and ID, its
   project, state, who started it, its last activity at `now`, how its
   last run ended, its open questions), then its last `last` items from
-  `entries` (oldest first, as `Photon.Threads.recent_entries/2` gives
-  them): `[user]`, `[Blip]` and `[scheduled]` messages, `[thread]`
-  answers, and a `[tool]` line per call. An item over #{@item_limit}
-  characters is cut in the middle; the items are cut to #{@items_limit}
-  characters from the end, with how many earlier ones were left out.
+  `entries`, oldest first: messages, answers, and a `[tool]` line per call,
+  never a tool's output or images. An item over #{@item_limit} characters
+  is cut in the middle; the items are cut to #{@items_limit} characters
+  from the end, with how many earlier ones were left out.
   """
   @spec thread(board_entry(), [entry()], %{last: pos_integer(), now: DateTime.t()}) :: String.t()
   def thread(entry, entries, %{last: last, now: now}) do
@@ -447,9 +432,8 @@ defmodule Photon.Assistant.Readout do
   defp run_words("stopped"), do: "was stopped"
   defp run_words(other), do: "ended (#{other})"
 
-  # The entries as items, oldest first: messages, answers with text, and
-  # a line per tool result (the call's arguments from the assistant entry
-  # that made it, when it is among the entries).
+  # A tool result's arguments come from the assistant entry that made the
+  # call, when it is among the entries.
   defp items(entries) do
     calls =
       for %{kind: "assistant", data: data} <- entries,
@@ -553,8 +537,6 @@ defmodule Photon.Assistant.Readout do
     if reason == "", do: ": error", else: ": error: " <> reason
   end
 
-  # The newest items that fit in @items_limit characters, each cut to
-  # @item_limit first, with how many earlier ones were left out.
   defp fit(items) do
     {kept, _room} =
       items
@@ -625,9 +607,8 @@ defmodule Photon.Assistant.Readout do
 
   @doc """
   What `list_schedules` says for project `slug`: the time now, then each
-  schedule as `read_project` lists it (its ID, when, next time or why it
-  stopped, its target and prompt), or `No schedules in garden.` `titles`
-  are the project's thread titles by ID, for the threads schedules wake.
+  schedule as `read_project` lists it. `titles` are the project's thread
+  titles by ID, for the threads schedules wake.
   """
   @spec schedules(String.t(), [schedule()], %{optional(String.t()) => String.t()}, DateTime.t()) ::
           String.t()
@@ -696,11 +677,8 @@ defmodule Photon.Assistant.Readout do
   def unknown_thread(id), do: "There's no thread #{id}. list_threads shows them."
 
   @doc """
-  The error for a `question_id` that names no question, with the
-  questions that are open (`Photon.Questions.open/0`), so Blip can pick
-  the one it meant: `There's no open question q_999. Open: q_456 from
-  "Fix the pump" (with the user), q_457 from "Plant list" (yours to
-  answer).`
+  The error for a `question_id` that names no question, listing the open
+  ones (`Photon.Questions.open/0`) so Blip can pick the one it meant.
   """
   @spec unknown_question(String.t(), [map()]) :: String.t()
   def unknown_question(id, []), do: "There's no open question #{id}. No questions are open."
@@ -760,7 +738,6 @@ defmodule Photon.Assistant.Readout do
   defp plural(1, word), do: "1 #{word}"
   defp plural(n, word), do: "#{n} #{word}s"
 
-  # The size of `content` in characters, as "1,234 characters".
   defp characters(content) do
     case String.length(content || "") do
       1 -> "1 character"

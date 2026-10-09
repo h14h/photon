@@ -4,17 +4,11 @@ defmodule Photon.Assistant.Page do
   every page, so a message like "what's left here?" means the project,
   context file or thread on screen.
 
-  The web UI reports each path it shows. `at/1` says what the path is
-  about; `Photon.Assistant.page_at/1` reads that project (and its file or
-  thread) and makes the page with `of_project/1`, `of_file/2` or
-  `of_thread/2`. The page is a string-keyed map, stored with the message it
-  came with (`source["page"]`), and its `"label"` is what the message box's
-  chip and the conversation show ("Garden / Fix the pump").
-
-  At send time `Photon.Assistant` reads the page's facts fresh, and
-  `note/2` writes them as a note the model sees in front of the message.
-  Every part of the note is bounded (rule 73): the purpose, the number of
-  files and threads, the file's content and the latest answer.
+  The page is stored with the message it came with (`source["page"]`), and
+  its `"label"` is what the message box's chip and the conversation show
+  ("Garden / Fix the pump"). `note/2` writes the page's facts, read fresh
+  at send time, as a note the model sees in front of the message. Every
+  part of the note is bounded (rule 73).
   """
 
   # Functional core: no processes, no I/O.

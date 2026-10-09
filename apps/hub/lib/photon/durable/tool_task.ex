@@ -2,15 +2,9 @@ defmodule Photon.Durable.ToolTask do
   @moduledoc """
   The built-in task for one tool call, owned by the generation that made it.
 
-  `"run"` validates the arguments and calls the tool's `execute/2`; a tool may
-  park itself durably (`{:wait, ...}`) and continue in `"resume"`. The result
-  is committed as a `"tool_result"` entry together with the task finishing.
-  A call interrupted by a hub restart reruns only if the tool says it's safe;
-  otherwise the model is told it was interrupted. A call that ends without a
-  result from its tool (it is aborted, its task fails, or the tool raises in
-  `execute/2` or `resume/2`) gives the tool's `on_interrupt/2` a chance to
-  hand off or cancel what it started, in the same commit that records the
-  call's result. A raise is rescued here and recorded as an error result.
+  Phases `"run"` and `"resume"`; the result is committed as a
+  `"tool_result"` entry together with the task finishing. Replay, parking
+  and `on_interrupt/2` follow the contract in `Photon.Durable.Tool`.
 
   Every call the tool gets (`execute/2`, `resume/2`, `on_interrupt/2`) comes
   with a `Photon.Durable.ToolAPI` whose `workdir` is the conversation
@@ -19,8 +13,7 @@ defmodule Photon.Durable.ToolTask do
   before the tool runs; `on_interrupt/2` still runs, with no `workdir`,
   since cleaning up what a call started matters more than where it ran.
 
-  This module is the task kind's boundary: it finds the tool, runs it, and
-  commits. Whether a call runs and how its result is recorded is
+  Whether a call runs and how its result is recorded is
   `Photon.Durable.ToolCall`.
   """
 
@@ -92,9 +85,8 @@ defmodule Photon.Durable.ToolTask do
       {:raised, Exception.message(e)}
   end
 
-  # The raise may have come after the tool started something (an operation
-  # on a machine), so its `on_interrupt/2` runs in the commit that records
-  # the error, as it does for an abort or a failed task.
+  # The tool may have started something before it raised, so its
+  # `on_interrupt/2` runs, as for an abort or a failed task.
   defp raised(runtime, task, message) do
     Runtime.commit(runtime, fn tx ->
       interrupted(task, tx)
@@ -139,8 +131,8 @@ defmodule Photon.Durable.ToolTask do
     end
   end
 
-  # on_interrupt/2 cancels what the call started, so a profile that can't
-  # name the working directory any more doesn't stop it: it gets none.
+  # A profile that can't name the working directory any more doesn't stop
+  # on_interrupt/2: it gets none.
   defp interrupt_api(task) do
     api(task)
   rescue

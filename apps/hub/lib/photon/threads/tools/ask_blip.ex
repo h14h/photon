@@ -3,30 +3,23 @@ defmodule Photon.Threads.Tools.AskBlip do
   A thread's `ask_blip` tool: the thread asks Blip one specific question and
   its call waits, durably, for the answer.
 
-  `execute/2` checks the question, stores it and posts it to Blip
-  (`Photon.Questions.ask/1`, one commit that checks the call's task is
-  still running and not being stopped), and parks on the question's
-  signal, which every answer records. A rerun after a hub restart finds
-  the question by its task and parks on it again.
+  `execute/2` posts the question to Blip (`Photon.Questions.ask/1`, in a
+  commit that checks the call's task is still running and not being
+  stopped) and parks on the question's signal.
+  A rerun after a hub restart finds the question by its task and parks on
+  it again.
 
-  `resume/2` runs when the answer's signal fires or a check comes due
-  (`Photon.Questions.check_ms/0`):
-
-    * answered: the call returns `Photon.Questions.Rules.result/1`
-    * with the owner: it parks on the signal alone, since only an answer
-      or a Stop moves it now
-    * still Blip's: `Photon.Questions.escalate/1` passes it to the owner
-      if Blip's run went past it (the commit re-checks the question and
-      the message that carried it), and the call parks again, on the
-      signal and a new check while Blip still has it
+  While Blip has the question the call also wakes every
+  `Photon.Questions.check_ms/0`, and `Photon.Questions.escalate/1` passes
+  it to the owner if Blip's run went past it. Once it is with the owner
+  only an answer or a Stop moves it.
 
   A call that ends without an answer (a Stop, a failed task, or a raise
   here) withdraws its question in the commit that ends it
   (`on_interrupt/2`), so no question is left open with no call waiting
   for it.
 
-  There is no process here: the wait is the tool task, the question a
-  row and the answer a durable signal.
+  There is no process here: the wait is the tool task.
   """
   @behaviour Photon.Durable.Tool
 
@@ -77,8 +70,7 @@ defmodule Photon.Threads.Tools.AskBlip do
     end
   end
 
-  # The question as the signal names it: the thread and its project as they
-  # are now.
+  # The thread and its project as they are now.
   defp new(api, text) do
     with %Thread{} = thread <- Threads.get(api.conversation_id),
          %Project{} = project <- Projects.get(thread.project_id) do
@@ -118,7 +110,6 @@ defmodule Photon.Threads.Tools.AskBlip do
 
   defp next(_missing, _id), do: {:error, "The hub has no record of this question."}
 
-  # Blip still has it: wake on the answer, or at the next check.
   defp check_later(id),
     do: wait(id, %{"until" => System.system_time(:millisecond) + Questions.check_ms()})
 

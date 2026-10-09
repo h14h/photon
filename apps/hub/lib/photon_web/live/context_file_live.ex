@@ -4,35 +4,25 @@ defmodule PhotonWeb.ContextFileLive do
   `:edit` at `/projects/:slug/files/:name` shows and edits one.
 
   The editor is a form over a plain map (`name`, `content` and, when
-  editing, the hidden `version` it loaded), with `Write` and `Preview`
-  tabs. Saving hands the text to `Photon.Projects`, which checks it and the
-  version; its errors show under their fields. Saving keeps the tab the
-  owner is on, a new file's too (its page opens with `?tab=preview`).
+  editing, the hidden `version` it loaded). `Photon.Projects` checks it
+  and the version on save. Saving keeps the tab the owner is on, a new
+  file's too (its page opens with `?tab=preview`).
 
   Threads in the project write the same files, so the page listens on
-  `Projects.subscribe_files/1` for the open file:
-
-    * a clean editor loads the new version
-    * a dirty one keeps the user's text and shows `#file-changed`, with
-      `Load the new version` (discards the text) and `Keep my text` (takes
-      the new version's number, so the next save writes over it)
-    * a deleted file shows `#file-deleted`; saving creates it again
-
-  A save with an old version (`:stale`) shows the same banner and keeps the
-  text in the box. When the text is replaced from the server, the editor
+  `Projects.subscribe_files/1` for the open file: a clean editor loads the
+  new version; a dirty one keeps the owner's text and shows
+  `#file-changed`, where `Keep my text` takes the new version's number so
+  the next save writes over it; a deleted file shows `#file-deleted`, and
+  saving creates it again. A save with an old version (`:stale`) shows
+  the same banner. When the text is replaced from the server, the editor
   gets a new DOM ID (`@revision`), because LiveView leaves a focused
-  textarea's value alone and the user would otherwise see, and save over,
-  the old text.
+  textarea's value alone and the owner would otherwise see, and save
+  over, the old text.
 
-  The form asks before the owner leaves it with unsaved text
-  (`PhotonWeb.EditorComponents.guarded_form/1`, shared with the skill
-  editor).
-
-  `{:projects_changed, id}` comes through `PhotonWeb.Shell` and keeps the
-  project's name, and the title of the thread that last wrote the file,
-  current. A `:tick` once a minute redraws `#file-meta`, so
-  "changed just now" ages on a page left open. An unknown project or file goes back to `/`
-  with a flash.
+  `{:projects_changed, id}` (through `PhotonWeb.Shell`) keeps the
+  project's name and the title of the thread that last wrote the file
+  current, and a `:tick` once a minute redraws `#file-meta`. An unknown
+  project or file goes back to `/` with a flash.
   """
 
   use PhotonWeb, :live_view

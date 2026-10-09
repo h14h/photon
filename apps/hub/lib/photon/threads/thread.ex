@@ -3,11 +3,9 @@ defmodule Photon.Threads.Thread do
   A thread: one durable agent conversation in a project. Its `id` is the ID
   of its conversation, which runs under the `"thread"` profile.
 
-  `title` comes from the first message. `active_at` is when the thread
-  last got a message; threads are listed by it, newest first. Whether a
-  thread is running isn't stored: it is derived from its durable run.
-
-  The rest are facts recorded when something happened, from which
+  `active_at` is when the thread last got a message; threads are listed
+  by it, newest first. Whether a thread is running isn't stored. The rest
+  are facts recorded when something happened, from which
   `Photon.Threads.State` works out the thread's state at read time:
 
     * `started_by` - `"owner"`, `"blip"` or `"schedule"`, from the first
@@ -23,8 +21,8 @@ defmodule Photon.Threads.Thread do
       run ended
     * `resolved_at` - when the owner marked it resolved; a new message
       clears it
-    * `reviewed_at` - when ambient mode's daily review last listed it; a
-      fact the review reads, never part of the thread's state
+    * `reviewed_at` - when ambient mode's daily review last listed it;
+      never part of the thread's state
   """
 
   # Data: an Ecto schema, no behaviour of its own.

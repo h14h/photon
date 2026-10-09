@@ -1,58 +1,35 @@
 defmodule Photon.Signals do
   @moduledoc """
-  What reaches Blip unasked: thread updates and `ask_blip` questions, posted
-  into Blip's conversation as messages with source kind `"signal"`; the
-  owner's answers to questions, which have already gone to the thread
-  (`answer_tx/3`, source kind `"answer"`); and notices for the owner when a
-  question is passed on or withdrawn (`notice_tx/3`). It also owns finding
-  Blip's conversation (`blip_conversation_id/0`), since `Photon.Threads` and
+  What reaches Blip unasked: thread updates and `ask_blip` questions,
+  posted into Blip's conversation as `"signal"` messages; the owner's
+  answers to questions, which have already gone to the thread; and
+  notices for the owner when a question is passed on or withdrawn. It
+  owns finding Blip's conversation because `Photon.Threads` and
   `Photon.Questions` post into it and can't depend on `Photon.Assistant`,
   which depends on them.
 
-  Which settles become signals is decided in code, never by a model:
-  `Photon.Threads`' settle hook asks `Photon.Signals.Rules.thread_update/2`
-  in the mode `mode/0` gives, and writes the text with
-  `Photon.Signals.Text`. In quiet mode, the default, Blip hears about
-  work it started, and about failures and questions in the owner's
-  threads.
-
-  ## The merge
-
-  `post_tx/2` runs inside the commit that stores what the signal is
-  about. When Blip is idle the signal starts a run, as any message does.
-  While Blip is busy, signals of one kind collect in one queued message,
-  a part and a ref each (`Photon.Signals.Rules.merges?/2`): updates in
-  one, questions in another, never both in one, so a burst wakes the
-  model once per kind and a run that answers a question carries no update.
-  A signal's key makes it once, whether it started a message or joined
-  one. `unpost_tx/2` takes one back while it is still queued.
+  Which settles become signals is decided in code, never by a model
+  (`Photon.Signals.Rules.thread_update/2`). While Blip is busy, signals
+  of one kind collect in one queued message (`Photon.Signals.Rules`), so
+  a burst wakes the model once per kind. A signal's key makes it once,
+  whether it started a message or joined one.
 
   ## Ambient mode
 
-  Ambient mode is a setting, off by default. Its settings are the durable
-  doc `global/ambient`, which this module reads and writes (`ambient_doc/0`,
-  `ambient_doc_tx/1`, `put_ambient_doc_tx/2`) because the threads' settle
-  hook reads it inside its commit and can't depend on `Photon.Ambient`,
-  which depends on `Photon.Threads`. What the doc holds is
-  `Photon.Ambient`'s, which writes it in the commit that arms or retires its
-  timers; here only `"on"` is read: `mode/0` and `mode_tx/1` are `:ambient`
-  when it is true, else `:quiet`.
+  Ambient mode, off by default, is the durable doc `global/ambient`. It is
+  read and written here because the threads' settle hook reads it inside
+  its commit and can't depend on `Photon.Ambient`, which depends on
+  `Photon.Threads`. What the doc holds is `Photon.Ambient`'s; here only
+  `"on"` is read.
 
-  While it is on, the changes Blip doesn't hear about at once are collected
-  as digest items (`Photon.Signals.DigestItem`): `collect_tx/2` runs inside
-  the commit that makes each change, reads the mode there, and writes
-  nothing in quiet mode, so turning ambient mode off in one commit stops
-  collection from the next. An item's key is its subject
-  (`Photon.Signals.Rules.item_key/1`), and a newer change to the same
-  subject replaces the row, so the table holds at most one row per thread,
+  While it is on, changes Blip doesn't hear about at once are collected
+  as digest items, one row per subject
+  (`Photon.Signals.Rules.item_key/1`): a newer change to the same subject
+  replaces the row, so the table holds at most one row per thread,
   schedule, project or file however long digests skip (rule 73). A digest
-  reads the items waiting (`pending_tx/1`) and marks those it carries with
-  its key (`carry_items_tx/3`) in the commit that posts it; when Blip's run
-  on it settles they are deleted (`drop_carried_tx/2`), or wait again if the
-  run failed (`release_items_tx/2`). `queued_ambient?/2` says whether a
-  digest or review still waits in Blip's inbox, and `withdraw_ambient_tx/1`
-  takes them back when ambient mode is turned off. Every write announces
-  `{:ambient_changed}` on `ambient_topic/0`.
+  marks the items it carries in the commit that posts it; when Blip's run
+  on it settles they are deleted, or wait again if the run failed. Every
+  write announces `{:ambient_changed}` on `ambient_topic/0`.
 
   There is no process here: signals are submissions in Blip's
   conversation, the items are rows, and the harness runs them.
@@ -94,9 +71,8 @@ defmodule Photon.Signals do
 
   @typedoc """
   A signal: its `key` (`Photon.Signals.Rules.key/1`), the `text` the model
-  reads (`Photon.Signals.Text`), and the `ref` the panel draws it from.
-  A digest or review also carries `older`, what Blip's later requests send
-  in its place (`Photon.Durable.Context`).
+  reads, and the `ref` the panel draws it from. A digest or review also
+  carries `older` (`Photon.Durable.Context`).
   """
   @type t :: %{
           required(:key) => String.t(),
@@ -111,10 +87,7 @@ defmodule Photon.Signals do
   """
   @type older :: %{optional(String.t()) => String.t()}
 
-  @typedoc """
-  An `ask_blip` question, as `Photon.Questions.Question` holds it: its ID,
-  and where its thread was when it asked.
-  """
+  @typedoc "An `ask_blip` question, as `Photon.Questions.Question` holds it."
   @type question :: %{
           required(:id) => String.t(),
           required(:thread_id) => String.t(),
@@ -125,11 +98,7 @@ defmodule Photon.Signals do
           optional(atom()) => term()
         }
 
-  @typedoc """
-  A digest item to collect: its `kind`, and what it names; missing fields
-  are nil. Its key is worked out from them
-  (`Photon.Signals.Rules.item_key/1`).
-  """
+  @typedoc "A digest item to collect: its `kind`, and what it names; missing fields are nil."
   @type item :: %{
           required(:kind) => String.t(),
           optional(:thread_id) => String.t() | nil,
@@ -176,17 +145,16 @@ defmodule Photon.Signals do
   ## Digest items
 
   @doc """
-  Collects `item` for the next digest, inside the caller's commit, while
-  ambient mode is on (read in this commit), and then announces
-  `{:ambient_changed}`; does nothing otherwise. Its key is its subject
-  (`Photon.Signals.Rules.item_key/1`): a row already there for the same
-  subject, waiting or carried by a digest Blip is still reading, is
-  replaced by this one, which waits for the next digest. It runs on the
-  harness's hook paths (the settle hook in the Scheduler's abort and
-  fail commits, a routine's `on_fail/3`), so it is total: a missing or
-  non-text field is nil, a note longer than 600 characters is cut, an
-  item with an unknown kind or without its subject collects nothing, and
-  it never raises.
+  Collects `item` for the next digest, inside the caller's commit, and
+  announces `{:ambient_changed}`, while ambient mode is on (read in this
+  commit, so turning it off stops collection from the next); does nothing
+  otherwise. A row already there for the same subject, waiting or carried
+  by a digest Blip is still reading, is replaced and waits for the next
+  digest. It runs on the harness's hook paths (the settle hook in the
+  Scheduler's abort and fail commits, a routine's `on_fail/3`), so it is
+  total: a missing or non-text field is nil, a note over 600 characters
+  is cut, an unknown kind or a missing subject collects nothing, and it
+  never raises.
   """
   @spec collect_tx(Tx.t(), item() | term()) :: :ok
   def collect_tx(tx, item) do
@@ -230,14 +198,11 @@ defmodule Photon.Signals do
   defp note(value) when is_binary(value) and value != "", do: String.slice(value, 0, @note_limit)
   defp note(_value), do: nil
 
-  @doc """
-  The digest items waiting, oldest first, inside the caller's commit: not
-  those a posted digest carries.
-  """
+  @doc "`pending/0` inside the caller's commit."
   @spec pending_tx(Tx.t()) :: [DigestItem.t()]
   def pending_tx(%Tx{}), do: pending()
 
-  @doc "The digest items waiting, oldest first."
+  @doc "The digest items waiting (not those a posted digest carries), oldest first."
   @spec pending() :: [DigestItem.t()]
   def pending do
     DigestItem
@@ -277,10 +242,7 @@ defmodule Photon.Signals do
     :ok
   end
 
-  @doc """
-  Deletes the items the digest with key `digest_key` carries, inside the
-  commit that settles Blip's run on it: Blip read them.
-  """
+  @doc "Deletes the items the digest `digest_key` carries, inside the caller's commit."
   @spec drop_carried_tx(Tx.t(), String.t()) :: :ok
   def drop_carried_tx(%Tx{}, digest_key) when is_binary(digest_key) do
     {_count, _rows} = DigestItem |> where([i], i.digest_key == ^digest_key) |> Repo.delete_all()
@@ -288,10 +250,10 @@ defmodule Photon.Signals do
   end
 
   @doc """
-  Puts the items the digest with key `digest_key` carries back to wait
-  for the next digest, inside the commit that settles Blip's run on it
-  without an answer, and announces `{:ambient_changed}` when there were
-  any: Blip never told the owner about them.
+  Puts the items the digest with key `digest_key` carries back to wait,
+  inside the commit that settles Blip's run on it without an answer (Blip
+  never told the owner), and announces `{:ambient_changed}` if there were
+  any.
   """
   @spec release_items_tx(Tx.t(), String.t()) :: :ok
   def release_items_tx(tx, digest_key) when is_binary(digest_key) do
@@ -303,10 +265,7 @@ defmodule Photon.Signals do
     end
   end
 
-  @doc """
-  Whether a digest or review message (`kind`, `"digest"` or `"review"`)
-  still waits, queued, in Blip's inbox.
-  """
+  @doc ~s{Whether a `"digest"` or `"review"` message (`kind`) still waits in Blip's inbox.}
   @spec queued_ambient?(Tx.t(), String.t()) :: boolean()
   def queued_ambient?(tx, kind),
     do: tx |> queued_ambient() |> Enum.any?(&(Rules.ambient_kind(source(&1)) == kind))
@@ -325,8 +284,6 @@ defmodule Photon.Signals do
     end)
   end
 
-  # Blip's queued digest and review messages; none before Blip's
-  # conversation exists.
   defp queued_ambient(tx) do
     case Tx.get_doc(tx, "global", "assistant") do
       %{"conversation_id" => blip} ->
@@ -348,10 +305,7 @@ defmodule Photon.Signals do
     end
   end
 
-  @doc """
-  `blip_conversation_id/0` inside the caller's commit, so two first uses
-  still make one conversation.
-  """
+  @doc "`blip_conversation_id/0` in the caller's commit: two first uses make one conversation."
   @spec blip_conversation_tx(Tx.t()) :: String.t()
   def blip_conversation_tx(tx) do
     case Tx.get_doc(tx, "global", "assistant") do
@@ -376,10 +330,9 @@ defmodule Photon.Signals do
     3. otherwise it is a message of its own, which starts a run when Blip
        is idle and waits as a follow-up when Blip is busy
 
-  A signal's `older` stub goes in the source of the message it starts,
-  next to `"signals"`; a signal that joins a queued message adds none.
-  Only digests and reviews carry one, and `Photon.Signals.Rules.merges?/2`
-  keeps them out of messages of other kinds.
+  A signal's `older` stub goes in the source of the message it starts; a
+  signal that joins a queued message adds none. Only digests and reviews
+  carry one, and they never join messages of other kinds.
   """
   @spec post_tx(Tx.t(), t()) :: Submission.t()
   def post_tx(tx, %{key: key, text: text, ref: ref} = signal) do
@@ -443,11 +396,9 @@ defmodule Photon.Signals do
   @doc """
   The owner's answer to `question`, as a message in Blip's conversation,
   inside the caller's commit: a note that the answer has already gone
-  straight to the thread, then the answer as the owner wrote it. Its source
-  (`"answer"`) names the question and the thread, so the panel can show what
-  it answered. Like any message it starts a run when Blip is idle and waits
-  as a follow-up when Blip is busy; Blip's Stop keeps it. One per question
-  (its request ID).
+  straight to the thread, then the answer as the owner wrote it. Its
+  source (`"answer"`) names the question and the thread for the panel.
+  Blip's Stop keeps it. One per question (its request ID).
   """
   @spec answer_tx(Tx.t(), question(), String.t()) :: Submission.t()
   def answer_tx(tx, question, text) do
@@ -475,13 +426,8 @@ defmodule Photon.Signals do
   on to the owner, `:withdrawn` when the thread was stopped while its
   question was with the owner. A notice is for the owner to read; the
   model never sees it. It runs on the harness's abort path, so it never
-  raises.
-
-  Its data says which notice it is (`"question_notice"`: `"escalated"` or
-  `"withdrawn"`) and where the thread is (`"thread_id"`, `"title"`,
-  `"slug"`, `"project"`), and an escalation carries the thread's own
-  question (`"question"`): Blip's panel draws an escalation as the
-  question's card, which the owner answers from.
+  raises. An escalation carries the thread's own question, since the
+  panel draws it as the card the owner answers from.
   """
   @spec notice_tx(Tx.t(), question(), :escalated | :withdrawn) :: :ok
   def notice_tx(tx, question, kind) do
@@ -492,9 +438,6 @@ defmodule Photon.Signals do
     :ok
   end
 
-  # What the panel draws the notice from: which notice it is and where its
-  # thread is, and for an escalation the thread's own question, since the
-  # owner answers that one from the panel's card.
   defp notice_data(question, kind, text) do
     data = %{
       "message" => text,

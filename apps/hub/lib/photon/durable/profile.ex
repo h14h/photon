@@ -34,16 +34,14 @@ defmodule Photon.Durable.Profile do
   `:ok`; whatever else they return is ignored.
 
   **Hooks must be total.** On a Stop or a failed task they run inside the
-  Scheduler's own abort and fail commits, in the
-  `Photon.Durable.Scheduler` process, and `Photon.Durable.Store` re-raises
-  a commit's exception in its caller. A hook that raises there crashes the
-  Scheduler; on restart it runs the same abort again and crashes again,
-  until the supervisor gives up: a harness outage, not a failed task. So a
-  hook takes what it is given as it is (a tool call's arguments are raw
-  model output that may not decode), reads rows with lookups that return
-  nil, and records less when something is missing. It doesn't rescue
-  around a database call either: a failed statement leaves the
-  transaction unusable. The rule is to not raise.
+  `Photon.Durable.Scheduler`'s own abort and fail commits, and
+  `Photon.Durable.Store` re-raises in its caller. A hook that raises there
+  crashes the Scheduler, which on restart runs the same abort and crashes
+  again until the supervisor gives up: a harness outage. So a hook takes
+  what it is given as it is (tool arguments are raw model output that may
+  not decode), reads rows with lookups that return nil, and records less
+  when something is missing. It doesn't rescue around a database call
+  either: a failed statement leaves the transaction unusable.
   """
 
   alias Photon.Durable.{Conversation, Entry, Submission, TaskRecord, Tx}

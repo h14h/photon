@@ -1,10 +1,10 @@
 defmodule Photon.Assistant.Tools.LoadSkill do
   @moduledoc """
-  Blip's `load_skill` tool: loads one of the skills turned on for Blip,
-  whose instructions become the call's result. A thread's is
-  `Photon.Threads.Tools.LoadSkill`; both take their name, description and
-  parameters from `Photon.Skills.Prompt`. A skill turned on for any machine
-  the hub knows loads too, with that machine named.
+  Blip's `load_skill` tool: loads one of the skills turned on for Blip, or
+  for any machine the hub knows (with that machine named), whose
+  instructions become the call's result. It shares its name, description
+  and parameters with `Photon.Threads.Tools.LoadSkill` through
+  `Photon.Skills.Prompt`.
 
   The skill is read inside the commit that records the result
   (`Photon.Skills.load_tx/3`), so a load racing a toggle returns either

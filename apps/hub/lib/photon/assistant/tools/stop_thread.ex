@@ -4,9 +4,7 @@ defmodule Photon.Assistant.Tools.StopThread do
   queued for it, as the Stop button on its page does
   (`Photon.Threads.stop_tx/2`), inside the commit that records the call's
   result. A stop is never a signal, so Blip doesn't hear about it again.
-
-  A run that carries a thread's question, and that the owner hasn't
-  written into, can't stop a thread (`Photon.Assistant.may_act_tx/3`).
+  `Photon.Assistant.may_act_tx/3` (`:change`) may refuse it.
   """
   @behaviour Photon.Durable.Tool
 

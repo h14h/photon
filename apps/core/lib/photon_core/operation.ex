@@ -9,13 +9,10 @@ defmodule PhotonCore.Operation do
   the terminal `completed`, `failed`, `canceled`. A terminal snapshot is the
   operation's result.
 
-  The node and the hub share this shape: the node journals and reports
-  snapshots, and the hub reads results from them. The messages that carry
-  them are in `PhotonCore.Operation.Wire`.
-
-  Data and pure functions over it. `new/5` takes the ID as an argument:
-  the hub derives an op ID from its tool call's ID, so a restart finds the
-  same operation, and the node uses the ID the hub sent.
+  The node journals and reports snapshots and the hub reads results from
+  them; `PhotonCore.Operation.Wire` carries them. `new/5` takes the ID as
+  an argument: the hub derives an op ID from its tool call's ID, so a
+  restart finds the same operation, and the node uses the ID the hub sent.
   """
 
   # A command is passed to the shell as one argument, and Linux refuses one

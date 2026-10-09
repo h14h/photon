@@ -1,26 +1,18 @@
 defmodule Photon.MachineTools.Translate do
   @moduledoc """
   Translates between the machine tools and operations, as pure functions
-  (`docs/operations.md#results-and-output-caps`). Ported from the node's
-  `Tools.Bash` and `Tools.ViewImage`.
+  (`docs/operations.md#results-and-output-caps`).
 
-  Arguments one way: `shell_args/2` and `view_image_args/2` check a tool
-  call's arguments and return the op's `args` for `op.start`, with the
-  conversation's working directory as `directory`: relative to the machine's
-  workspace (a project's slug, for a thread), or nil for the workspace
-  itself (Blip). The node resolves it and makes it on first use.
+  An op's `directory` is the conversation's working directory, relative to
+  the machine's workspace (a project's slug, for a thread), or nil for the
+  workspace itself (Blip); the node resolves it and makes it on first use.
 
-  Snapshots the other way: `result/3` turns a terminal snapshot into the
-  content the model sees, and `details/3` into what the UI keeps with it.
   The node already bounds each output field to the call's
   `max_output_length`; the hub bounds it again, so a misbehaving node
   can't flood the model. The second bound leaves room for the node's own
   truncation marker, so a well-behaved node's output passes through
   unchanged. An image is passed on only if its type is one the model takes
   and its base64 is within `max_size/0`.
-
-  Also the error texts for a machine the hub doesn't know or that runs a
-  photon-node too old to take commands.
   """
 
   # Functional core: no processes, no I/O.
@@ -64,10 +56,8 @@ defmodule Photon.MachineTools.Translate do
   def max_size, do: @max_size
 
   @doc """
-  The `args` of a `shell` op for a `shell` call's arguments: `command`,
-  `directory` (`workdir`, relative to the machine's workspace, or nil for
-  the workspace) and `max_output_length` (40,000 if not given), or the
-  reason the call can't run.
+  The `args` of a `shell` op for a `shell` call's arguments, with
+  `workdir` as its `directory`, or the reason the call can't run.
   """
   @spec shell_args(tool_args(), String.t() | nil) :: {:ok, op_args()} | {:error, String.t()}
   def shell_args(args, workdir) do
@@ -115,10 +105,8 @@ defmodule Photon.MachineTools.Translate do
     do: {:error, ~s(shell argument "command" contains a NUL byte at offset #{offset})}
 
   @doc """
-  The `args` of a `view_image` op for a `view_image` call's arguments:
-  `path` (absolute, or relative to the working directory), `directory`
-  (`workdir`, as for `shell_args/2`) and `max_size`, or the reason the
-  call can't run.
+  The `args` of a `view_image` op for a `view_image` call's arguments,
+  with `workdir` as its `directory`, or the reason the call can't run.
   """
   @spec view_image_args(tool_args(), String.t() | nil) :: {:ok, op_args()} | {:error, String.t()}
   def view_image_args(%{"path" => path}, workdir) when is_binary(path) do
@@ -260,11 +248,10 @@ defmodule Photon.MachineTools.Translate do
   defp output_limit(_snapshot), do: Output.default_limit()
 
   @doc """
-  What the UI keeps with a result: `machine`, `op_id`, `kind`, `status`,
-  and `command` or `path`; for `shell` also `exit_code`, `out_truncated`
-  and `err_truncated`, and `full_output`, where the machine keeps the
-  complete `out` and `err` (the hint `Photon.Durable.Context` shows when it
-  shortens an older result). No image data.
+  What the UI keeps with a result, without image data. A `shell` result's
+  `full_output` says where the machine keeps the complete `out` and `err`
+  (the hint `Photon.Durable.Context` shows when it shortens an older
+  result).
   """
   @spec details(String.t(), Operation.t(), String.t()) :: details()
   def details("shell", snapshot, machine) do
@@ -301,7 +288,6 @@ defmodule Photon.MachineTools.Translate do
       "status" => snapshot["status"]
     }
 
-  # Truncated by the node, or by the hub's second bound.
   defp truncated?(true, _text, _snapshot), do: true
 
   defp truncated?(_flag, text, snapshot) when is_binary(text),
