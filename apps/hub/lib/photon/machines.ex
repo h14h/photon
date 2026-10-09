@@ -466,7 +466,6 @@ defmodule Photon.Machines do
   def snapshot(machine, payload, routes) do
     case Wire.parse_snapshot(payload) do
       {:ok, %{"id" => id} = snapshot} ->
-        snapshot = readable(machine, snapshot)
         pushes = Durable.commit(&snapshot_tx(&1, machine, snapshot))
         {pushes, if(Operation.terminal?(snapshot), do: Map.delete(routes, id), else: routes)}
 
@@ -476,9 +475,12 @@ defmodule Photon.Machines do
     end
   end
 
-  # A result the tool call couldn't read becomes a failure it reports.
-  defp readable(machine, snapshot) do
-    case Result.accept(snapshot) do
+  # A result the tool call couldn't read becomes a failure it reports. It
+  # is read as the kind of op the hub asked for, whatever the node says.
+  defp readable(_machine, snapshot, nil = _row), do: snapshot
+
+  defp readable(machine, snapshot, %Op{kind: kind}) do
+    case Result.accept(snapshot, kind) do
       {:ok, snapshot} ->
         snapshot
 
@@ -490,6 +492,7 @@ defmodule Photon.Machines do
 
   defp snapshot_tx(tx, machine, %{"id" => id} = snapshot) do
     row = Repo.get(Op, id)
+    snapshot = readable(machine, snapshot, row)
 
     case Rules.on_snapshot(row, machine, snapshot) do
       :foreign ->

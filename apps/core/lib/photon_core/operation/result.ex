@@ -3,16 +3,18 @@ defmodule PhotonCore.Operation.Result do
   What a terminal snapshot's state may hold, so a reader can take each
   field as a string, an integer, an object or nil without guarding it.
   `PhotonCore.Operation.Wire` checks only the envelope; this checks the
-  result. The hub runs `accept/1` on every terminal snapshot a node sends,
-  so a malformed result becomes a failure the tool call reports, instead of
-  a crash when the call reads it.
+  state. The hub runs `accept/2` on every terminal snapshot a node sends,
+  against the kind of op it asked for (not the snapshot's own `type`, which
+  is the node's word), so a malformed result becomes a failure the tool
+  call reports, instead of a crash when the call reads it.
 
   Each field may be missing or null. When set:
 
-    * every kind: `terminal_error` is a string, `result` an object, and its
-      `error` a string
-    * `shell`: `out_path` and `err_path` are strings; `result`'s `out` and
-      `err` strings, and `exit_code`, `out_size` and `err_size` integers
+    * every kind: `terminal_error` is a string, `input` and `result`
+      objects, and `result`'s `error` a string
+    * `shell`: `out_path` and `err_path` are strings; `input`'s `command`,
+      `shell` and `directory` strings; `result`'s `out` and `err` strings,
+      and `exit_code`, `out_size` and `err_size` integers
     * `view_image`: `result`'s `content`, `mime` and `path` are strings, and
       `width` and `height` integers
 
@@ -24,6 +26,11 @@ defmodule PhotonCore.Operation.Result do
   @state_fields %{
     "shell" => [terminal_error: :string, out_path: :string, err_path: :string],
     "view_image" => [terminal_error: :string]
+  }
+
+  @input_fields %{
+    "shell" => [command: :string, shell: :string, directory: :string],
+    "view_image" => []
   }
 
   @result_fields %{
@@ -46,26 +53,27 @@ defmodule PhotonCore.Operation.Result do
   }
 
   @doc """
-  `:ok` when `op`'s state holds what its kind promises (see the moduledoc),
-  or the first field that doesn't. A snapshot that isn't terminal, or of a
-  kind not listed, is `:ok`.
+  `:ok` when `op`'s state holds what an op of `kind` promises (see the
+  moduledoc), or the first field that doesn't. A snapshot that isn't
+  terminal, or a kind not listed, is `:ok`.
   """
-  @spec check(Operation.t()) :: :ok | {:error, String.t()}
-  def check(%{"type" => type, "state" => state} = op)
-      when is_map_key(@state_fields, type) and is_map(state) do
-    if Operation.terminal?(op), do: check_state(type, state), else: :ok
+  @spec check(Operation.t(), String.t()) :: :ok | {:error, String.t()}
+  def check(%{"state" => state} = op, kind)
+      when is_map_key(@state_fields, kind) and is_map(state) do
+    if Operation.terminal?(op), do: check_state(kind, state), else: :ok
   end
 
-  def check(_op), do: :ok
+  def check(_op, _kind), do: :ok
 
   @doc """
-  `{:ok, op}` when `check/1` passes; otherwise `{:malformed, failed, reason}`,
-  where `failed` is the same op `failed`, its result dropped and its
-  `terminal_error` saying the machine sent a result the hub can't read.
+  `{:ok, op}` when `check/2` passes; otherwise `{:malformed, failed, reason}`,
+  where `failed` is the same op `failed`, its input and result dropped and
+  its `terminal_error` saying the machine sent a result the hub can't read.
   """
-  @spec accept(Operation.t()) :: {:ok, Operation.t()} | {:malformed, Operation.t(), String.t()}
-  def accept(op) do
-    case check(op) do
+  @spec accept(Operation.t(), String.t()) ::
+          {:ok, Operation.t()} | {:malformed, Operation.t(), String.t()}
+  def accept(op, kind) do
+    case check(op, kind) do
       :ok ->
         {:ok, op}
 
@@ -73,17 +81,26 @@ defmodule PhotonCore.Operation.Result do
         message = "The machine sent a result the hub can't read (#{reason})."
 
         {:malformed,
-         Operation.advance(op, "failed", %{"result" => nil, "terminal_error" => message}), reason}
+         Operation.advance(op, "failed", %{
+           "input" => nil,
+           "result" => nil,
+           "terminal_error" => message
+         }), reason}
     end
   end
 
-  defp check_state(type, state) do
-    with :ok <- check_fields(state, @state_fields[type], "state") do
-      case state["result"] do
-        nil -> :ok
-        %{} = result -> check_fields(result, @result_fields[type], "state.result")
-        _other -> {:error, "state.result must be an object"}
-      end
+  defp check_state(kind, state) do
+    with :ok <- check_fields(state, @state_fields[kind], "state"),
+         :ok <- check_object(state, "input", @input_fields[kind]) do
+      check_object(state, "result", @result_fields[kind])
+    end
+  end
+
+  defp check_object(state, key, fields) do
+    case state[key] do
+      nil -> :ok
+      %{} = object -> check_fields(object, fields, "state." <> key)
+      _other -> {:error, "state.#{key} must be an object"}
     end
   end
 

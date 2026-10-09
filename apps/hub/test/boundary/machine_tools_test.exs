@@ -175,29 +175,42 @@ defmodule Photon.MachineToolsTest do
       assert %Op{status: "closed", result: nil} = row(id)
     end
 
-    test "a result the hub can't read ends the call with an error, and the node gets op.ack", %{
-      conversation: c
-    } do
-      socket = join_node("mm1")
-      {:ok, s} = Assistant.send("on mm1: $ echo hello")
-      assert_push "op.start", %{"id" => id}, @wait
+    test "a result the hub can't read ends the call with an error, and the node gets op.ack" do
+      for {label, op, reason} <- [
+            {"a result that isn't an object", &snapshot(&1, "completed", %{"result" => 7}),
+             "state.result must be an object"},
+            {"an input that isn't an object",
+             &snapshot(&1, "completed", %{"input" => 7, "result" => %{"out" => "ok"}}),
+             "state.input must be an object"},
+            {"a shell op the node calls something else",
+             &put_in(snapshot(&1, "completed", %{"result" => 7}), ["op", "type"], "unknown"),
+             "state.result must be an object"}
+          ] do
+        socket = join_node("mm1")
+        c = Assistant.conversation_id()
+        {:ok, s} = Assistant.send("on mm1: $ echo hello")
+        assert_push "op.start", %{"id" => id}, @wait
 
-      malformed = snapshot(id, "completed", %{"result" => 7})
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            push(socket, "op.snapshot", op.(id))
+            assert_push "op.ack", %{"id" => ^id}, @wait
+            assert %{status: "done"} = await_settled(c, s.id, @wait)
+          end)
 
-      log =
-        ExUnit.CaptureLog.capture_log(fn ->
-          push(socket, "op.snapshot", malformed)
-          assert_push "op.ack", %{"id" => ^id}, @wait
-          assert %{status: "done"} = await_settled(c, s.id, @wait)
-        end)
+        assert log =~ "mm1 sent a malformed result for #{id}: #{reason}", label
 
-      assert log =~ "mm1 sent a malformed result for #{id}: state.result must be an object"
-      assert [%{"status" => "ok", "message" => message}] = results(c)
+        assert %{"status" => "ok", "message" => message} =
+                 Enum.find(results(c), &(&1["details"]["op_id"] == id))
 
-      assert Message.text_of(message) ==
-               "Error: The machine sent a result the hub can't read (state.result must be an object)."
+        assert Message.text_of(message) ==
+                 "Error: The machine sent a result the hub can't read (#{reason}).",
+               label
 
-      assert %Op{status: "closed"} = row(id)
+        assert %Op{status: "closed"} = row(id)
+        Process.unlink(socket.channel_pid)
+        close(socket)
+      end
     end
 
     test "view_image passes the image on", %{conversation: c} do
