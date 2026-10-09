@@ -109,9 +109,10 @@ defmodule PhotonCredo.Check.FunctionalCore do
         * calls whose result isn't repeatable: the clock, randomness and ID
           generators. Take the value as an argument, or allow-list the call
           for the module when the impurity is chosen on purpose.
-        * calls into the app's own boundary modules: any module under
-          `namespaces` that isn't itself a core module (a context API such
-          as `Photon.Threads.start/2`). Pass in the data it would read.
+        * calls into, or imports of, the app's own boundary modules: any
+          module under `namespaces` that isn't itself a core module (a
+          context API such as `Photon.Threads.start/2`). Pass in the data
+          it would read.
 
       Code outside functions (module attributes, read at compile time) is
       not checked.
@@ -169,8 +170,38 @@ defmodule PhotonCredo.Check.FunctionalCore do
         namespaces: namespaces
       }
 
-      module_issues(info, rules, issue_meta)
+      module_issues(info, rules, issue_meta) ++ import_issues(info, rules, issue_meta)
     end)
+  end
+
+  # An import of a boundary module would let its functions be called
+  # without a module name, out of `remote_issue/4`'s sight.
+  defp import_issues(info, rules, issue_meta) do
+    {_ast, issues} =
+      Macro.prewalk(info.body, [], fn
+        {:import, meta, [target | _opts]} = node, acc ->
+          module = Ast.resolve(target, info)
+
+          if (module && boundary?(module, rules)) and
+               not listed?(%{module: module, function: nil}, rules.allowed),
+             do: {node, [import_issue(issue_meta, info, module, meta[:line]) | acc]},
+             else: {node, acc}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    Enum.reverse(issues)
+  end
+
+  defp import_issue(issue_meta, info, module, line) do
+    format_issue(issue_meta,
+      message:
+        "Functional core module #{info.name} imports #{module}, a boundary module. " <>
+          "Have the boundary read what it needs and pass it in, or depend on a core module.",
+      trigger: "import",
+      line_no: line
+    )
   end
 
   defp module_issues(info, rules, issue_meta) do
