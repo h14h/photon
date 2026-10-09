@@ -12,6 +12,7 @@ defmodule Photon.ActivityTest do
   @moduletag :durable
 
   import Ecto.Query, only: [from: 2]
+  import Photon.ConversationHelpers
 
   alias Photon.{Activity, Ambient, Assistant, Projects, Questions, Schedules, Signals, Threads}
   alias Photon.Activity.Action
@@ -29,23 +30,15 @@ defmodule Photon.ActivityTest do
     %{garden: garden, blip: blip}
   end
 
-  defp idle!(conversation_id) do
-    :ok = Durable.subscribe(conversation_id)
-
-    if Durable.busy?(conversation_id),
-      do: await_change(conversation_id, fn _changes -> not Durable.busy?(conversation_id) end)
-
-    :ok
-  end
-
-  # The first row `fun` holds for, already recorded or still to come.
-  defp await_row!(fun) do
-    {rows, _more?} = Activity.list(limit: 500)
-
-    case Enum.find(rows, fun) do
+  # The first row `fun` holds for, already recorded or still to come
+  # within 5 s, however many other rows come first.
+  defp await_row!(fun, deadline \\ System.monotonic_time(:millisecond) + 5_000) do
+    case Enum.find(rows(), fun) do
       nil ->
-        assert_receive {:activity_added, _id}, 5_000
-        await_row!(fun)
+        assert_receive {:activity_added, _id},
+                       max(deadline - System.monotonic_time(:millisecond), 0)
+
+        await_row!(fun, deadline)
 
       row ->
         row
@@ -95,26 +88,6 @@ defmodule Photon.ActivityTest do
     Durable.commit(&Signals.post_tx(&1, %{key: key, text: text, ref: ref}))
   end
 
-  defp fake_machine(name) do
-    {:ok, _owner} =
-      Registry.register(Photon.MachineRegistry, name, %{
-        "platform" => "test",
-        "workspace" => "/w",
-        "version" => "0",
-        "capabilities" => ["ops:2"]
-      })
-  end
-
-  # Parks Blip on a command that never finishes, on `box`, a machine the
-  # test process plays: its shell call is under way once this returns.
-  defp park_blip!(blip) do
-    fake_machine("box")
-    {:ok, _parked} = Assistant.send("on box: $ sleep 1000")
-    _call = await_entry(blip, &(&1.kind == "assistant"))
-    assert Durable.busy?(blip)
-    :ok
-  end
-
   describe "a tool call's row" do
     test "a call for the owner says what Blip did, where, and that the owner asked", %{
       garden: garden,
@@ -144,9 +117,9 @@ defmodule Photon.ActivityTest do
 
       # The thread Blip started finishes, Blip hears of it and tells the
       # owner without a tool: a message row, on Blip's follow-up.
-      :ok = idle!(thread.id)
+      idle!(thread.id)
       message = await_row!(&(&1.kind == "message"))
-      :ok = idle!(blip)
+      idle!(blip)
 
       assert %Action{
                tool: nil,
@@ -168,7 +141,7 @@ defmodule Photon.ActivityTest do
     test "a call in a run a thread update started is Blip's follow-up, never the thread's", %{
       blip: blip
     } do
-      :ok = idle!(blip)
+      idle!(blip)
       signal = post_update!("projects", "c_watched")
       await_settled(blip, signal.id)
 
@@ -199,7 +172,7 @@ defmodule Photon.ActivityTest do
         {:ok, schedule} =
           Durable.commit(&Schedules.tool_schedule_tx(&1, {:blip, blip}, args, made))
 
-        :ok = idle!(blip)
+        idle!(blip)
         assert Schedules.run_now(schedule.id) == {:ok, "sent"}
 
         call = await_row!(&(&1.tool == "list_projects" and &1.origin_id == schedule.id))
@@ -208,14 +181,14 @@ defmodule Photon.ActivityTest do
         # Blip's reply in a run a schedule started is a message row too.
         message = await_row!(&(&1.kind == "message" and &1.origin_id == schedule.id))
         assert message.origin == origin
-        :ok = idle!(blip)
+        idle!(blip)
       end
     end
 
     test "a digest's run is Blip's follow-up on the digest, its reply a message row", %{
       blip: blip
     } do
-      :ok = idle!(blip)
+      idle!(blip)
       digest = post_ambient!("digest", "projects")
       await_settled(blip, digest.id)
 
@@ -232,8 +205,8 @@ defmodule Photon.ActivityTest do
       blip: blip
     } do
       {:ok, thread} = Threads.start(garden.id, "files")
-      :ok = idle!(thread.id)
-      :ok = idle!(blip)
+      idle!(thread.id)
+      idle!(blip)
 
       review = post_ambient!("review", "read thread #{thread.id}")
       await_settled(blip, review.id)
@@ -254,7 +227,7 @@ defmodule Photon.ActivityTest do
 
       # A thread finishes, and the digest's reply tells the owner.
       {:ok, thread} = Threads.start(garden.id, "files")
-      :ok = idle!(thread.id)
+      idle!(thread.id)
       assert %{outcome: "sent"} = Ambient.digest_now()
       told = await_settled(blip, last_submission(blip).id)
 
@@ -267,7 +240,7 @@ defmodule Photon.ActivityTest do
       # With the word in memory, the next one has nothing to tell.
       :ok = Assistant.put_memory("- ignore: files")
       {:ok, again} = Threads.start(garden.id, "files")
-      :ok = idle!(again.id)
+      idle!(again.id)
       assert %{outcome: "sent"} = Ambient.digest_now()
       quiet = await_settled(blip, last_submission(blip).id)
 
@@ -277,11 +250,11 @@ defmodule Photon.ActivityTest do
     end
 
     test "a call stopped while it runs records aborted", %{blip: blip} do
-      :ok = park_blip!(blip)
+      _parked = park_blip!(await_call: true)
       :ok = Assistant.stop()
 
       row = await_row!(&(&1.tool == "shell"))
-      :ok = idle!(blip)
+      idle!(blip)
 
       assert %Action{status: "aborted", origin: "owner", changes: true} = row
       assert row.summary == "Ran `sleep 1000` on box: stopped"
@@ -329,7 +302,7 @@ defmodule Photon.ActivityTest do
 
       # Both questions arrive while Blip is busy, so one message carries
       # them, and Blip's run on it answers one and asks the owner the other.
-      :ok = park_blip!(blip)
+      _parked = park_blip!(await_call: true)
       {:ok, first} = Threads.start(garden.id, "ask blip: which deploy branch should I use?")
       {:ok, second} = Threads.start(garden.id, "ask blip: is the gate locked?")
       asked!(first)
@@ -352,9 +325,9 @@ defmodule Photon.ActivityTest do
       # its reply makes no message row.
       [%Question{} = open] = Questions.open()
       assert {:ok, _answered} = Questions.answer(open.id, "yes")
-      :ok = idle!(first.id)
-      :ok = idle!(second.id)
-      :ok = idle!(blip)
+      idle!(first.id)
+      idle!(second.id)
+      idle!(blip)
 
       refute Enum.any?(rows(), &(&1.kind == "message" and &1.origin == "owner"))
 

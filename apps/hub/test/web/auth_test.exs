@@ -9,17 +9,10 @@ defmodule PhotonWeb.AuthTest do
 
   alias Photon.{FakeTailscale, NodeKeys}
 
-  setup do
-    on_exit(fn ->
-      for key <- [:auth_mode, :password, :tailscale_users],
-          do: Application.delete_env(:photon, key)
-    end)
-  end
-
   describe "with a password" do
     setup do
-      Application.put_env(:photon, :auth_mode, :password)
-      Application.put_env(:photon, :password, "s3cret")
+      Photon.TestConfig.put_env(:photon, :auth_mode, :password)
+      Photon.TestConfig.put_env(:photon, :password, "s3cret")
     end
 
     defp basic(conn, password),
@@ -104,8 +97,8 @@ defmodule PhotonWeb.AuthTest do
     end
 
     setup %{tmp_dir: dir} do
-      Application.put_env(:photon, :auth_mode, :tailscale)
-      Application.put_env(:photon, :tailscale_users, ["me@github"])
+      Photon.TestConfig.put_env(:photon, :auth_mode, :tailscale)
+      Photon.TestConfig.put_env(:photon, :tailscale_users, ["me@github"])
 
       FakeTailscale.install!(dir, %{
         "100.64.0.10" => {"nLaptop", "laptop", "me@github"},
@@ -182,8 +175,8 @@ defmodule PhotonWeb.AuthTest do
     test "with a password too, your device skips it and anyone else is asked for it", %{
       conn: conn
     } do
-      Application.put_env(:photon, :auth_mode, :tailscale_or_password)
-      Application.put_env(:photon, :password, "s3cret")
+      Photon.TestConfig.put_env(:photon, :auth_mode, :tailscale_or_password)
+      Photon.TestConfig.put_env(:photon, :password, "s3cret")
 
       assert get(from(conn, "100.64.0.10"), ~p"/").status == 200
       assert {:ok, _view, _html} = live_blip(from(conn, "100.64.0.10"))
@@ -196,8 +189,8 @@ defmodule PhotonWeb.AuthTest do
 
     test "with a password too, won't take the password from a tailnet address it can't name",
          %{conn: conn} do
-      Application.put_env(:photon, :auth_mode, :tailscale_or_password)
-      Application.put_env(:photon, :password, "s3cret")
+      Photon.TestConfig.put_env(:photon, :auth_mode, :tailscale_or_password)
+      Photon.TestConfig.put_env(:photon, :password, "s3cret")
 
       # 100.64.0.99 is a tailnet address the stand-in tailscale can't name.
       denied = conn |> from("100.64.0.99") |> basic("s3cret") |> get(~p"/")
@@ -206,8 +199,8 @@ defmodule PhotonWeb.AuthTest do
     end
 
     test "with a password too, still keeps out a machine that runs a node", %{conn: conn} do
-      Application.put_env(:photon, :auth_mode, :tailscale_or_password)
-      Application.put_env(:photon, :password, "s3cret")
+      Photon.TestConfig.put_env(:photon, :auth_mode, :tailscale_or_password)
+      Photon.TestConfig.put_env(:photon, :password, "s3cret")
       {:ok, _key} = make_box_a_node()
 
       denied = conn |> from("100.64.0.11") |> basic("s3cret") |> get(~p"/")
@@ -219,7 +212,7 @@ defmodule PhotonWeb.AuthTest do
       conn: conn,
       tmp_dir: dir
     } do
-      Application.delete_env(:photon, :tailscale_users)
+      Photon.TestConfig.delete_env(:photon, :tailscale_users)
 
       status = %{
         "Self" => %{"UserID" => 7, "DNSName" => "hub.example.ts.net."},

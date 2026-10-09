@@ -30,13 +30,9 @@ defmodule Photon.FakeTailscale do
     File.write!(path, ~s(#!/bin/sh\ncase "$*" in\n#{Enum.join(whois ++ status)}esac\nexit 1\n))
     File.chmod!(path, 0o755)
 
-    System.put_env("PHOTON_TAILSCALE", path)
+    Photon.TestConfig.put_system_env("PHOTON_TAILSCALE", path)
     clear_cache()
-
-    on_exit(fn ->
-      System.delete_env("PHOTON_TAILSCALE")
-      clear_cache()
-    end)
+    on_exit(fn -> clear_cache() end)
 
     path
   end

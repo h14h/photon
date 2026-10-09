@@ -2,6 +2,7 @@ defmodule PhotonWeb.PagesTest do
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Photon.ProjectHelpers
 
   @moduletag :durable
 
@@ -78,8 +79,7 @@ defmodule PhotonWeb.PagesTest do
 
   describe "the skills and schedule pages" do
     setup do
-      {:ok, garden} =
-        Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+      garden = garden!()
 
       {:ok, house} =
         Projects.create(%{"purpose" => "Keep the house in order.", "name" => "House"})

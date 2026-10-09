@@ -15,6 +15,7 @@ The design rules in `docs/otp-design-guide.md` are enforced by tools; each rule 
 - `mix precommit`: the gate to pass before you finish, in the test env. It runs `compile --warnings-as-errors` (compiler warnings, Elixir 1.20's type checker, and Boundary), `deps.unlock --check-unused`, `format --check-formatted`, `credo --strict`, an `xref` check that fails on a new compile-time dependency cycle, and `test --warnings-as-errors`. In `apps/hub` it also runs `tools/check_docs.exs`, which fails when a doc or code comment names a module, function, type, repo file or Markdown anchor that doesn't exist. Fix formatting with `mix format`.
 - `mix dialyzer`: the first run builds the PLTs (about three minutes per app; the OTP/Elixir one is shared in the repo root's `_build/plts`); later runs take seconds to a minute. Findings that aren't bugs go in the app's `.dialyzer_ignore.exs`, each with its reason.
 - `mix test --cover`: fails below the app's coverage threshold (`test_coverage` in `mix.exs`; modules under `test/support` don't count).
+- `scripts/test-partitioned hub` runs the hub's tests with coverage across four VMs at once (each with its own database), in about half the time of `mix test --cover`.
 - `scripts/verify` runs all three in every app, in dependency order. It needs Elixir 1.20 on OTP 28 on the PATH, e.g. `mise exec elixir@1.20.4-otp-28 erlang@28.5.0.7 -- scripts/verify`.
 
 Where the rules live:

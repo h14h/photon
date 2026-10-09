@@ -17,6 +17,8 @@ defmodule Photon.SchedulesTest do
 
   import Ecto.Query, only: [from: 2]
   import Photon.Eventually
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
 
   alias Photon.{Assistant, MachineOps, Projects, Schedules, Settings, Signals, Threads}
   alias Photon.Durable.{Runtime, Scheduler, Submission, TaskRecord, Tx}
@@ -26,33 +28,15 @@ defmodule Photon.SchedulesTest do
   @hour 3_600_000
 
   setup do
-    {:ok, project} =
-      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+    project = garden!()
 
     :ok = Schedules.subscribe()
     %{project: project}
   end
 
-  # An ISO 8601 time `ms` from now, as the form's hook sends it.
-  defp at(ms), do: DateTime.utc_now() |> DateTime.add(ms, :millisecond) |> DateTime.to_iso8601()
-
-  defp params(overrides) do
-    Map.merge(
-      %{
-        "prompt" => "Check the backups",
-        "at" => at(@hour),
-        "repeat" => "once",
-        "target" => "new_thread"
-      },
-      overrides
-    )
-  end
-
   # Creates a schedule and takes its own announcement.
   defp create!(project, overrides \\ %{}) do
-    assert {:ok, %Schedule{} = schedule} =
-             Schedules.create({:project, project.id}, params(overrides))
-
+    schedule = schedule!(project, overrides)
     project_id = project.id
     assert_receive {:schedules_changed, ^project_id}
     schedule
@@ -69,16 +53,6 @@ defmodule Photon.SchedulesTest do
   defp start!(project, text) do
     {:ok, thread} = Threads.start(project.id, text)
     thread.id
-  end
-
-  # Waits until the thread has no run in progress.
-  defp idle!(thread_id) do
-    :ok = Threads.subscribe(thread_id)
-
-    if Threads.busy?(thread_id),
-      do: await_change(thread_id, fn _changes -> not Threads.busy?(thread_id) end)
-
-    thread_id
   end
 
   # Gives the thread a run that waits on a shell call on `box`.
@@ -164,12 +138,12 @@ defmodule Photon.SchedulesTest do
       {:ok, shed} = Projects.create(%{"name" => "Shed", "purpose" => "Fix the shed roof."})
       other = idle!(start!(shed, "Patch the roof"))
 
-      assert Schedules.create({:project, "p_missing"}, params(%{})) == {:error, :not_found}
+      assert Schedules.create({:project, "p_missing"}, schedule_params()) == {:error, :not_found}
 
       assert {:error, %{prompt: _, target: _}} =
                Schedules.create(
                  {:project, project.id},
-                 params(%{"prompt" => " ", "target" => other})
+                 schedule_params(%{"prompt" => " ", "target" => other})
                )
 
       assert Repo.aggregate(Schedule, :count) == 0
@@ -292,7 +266,7 @@ defmodule Photon.SchedulesTest do
                await_firing!(schedule)
 
       assert {:ok, %Schedule{version: 2, task_id: task_id}} =
-               Schedules.update(schedule.id, params(form), 1)
+               Schedules.update(schedule.id, schedule_params(form), 1)
 
       assert task_id == schedule.task_id
       assert %{state: :done} = Schedules.get(schedule.id)
@@ -373,8 +347,7 @@ defmodule Photon.SchedulesTest do
   describe "consent" do
     setup %{project: project} do
       thread_id = idle!(start!(project, "Fix the pump"))
-      Application.put_env(:photon, :mock_model, false)
-      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+      Photon.TestConfig.put_env(:photon, :mock_model, false)
       refute Settings.scheduled_work?(Settings.load())
       refute Schedules.consent?()
       %{thread_id: thread_id}
@@ -423,7 +396,7 @@ defmodule Photon.SchedulesTest do
       project_id = project.id
 
       assert {:ok, %Schedule{version: 2, prompt: "Check the pumps", task_id: new_id}} =
-               Schedules.update(schedule.id, params(%{"prompt" => "Check the pumps"}), 1)
+               Schedules.update(schedule.id, schedule_params(%{"prompt" => "Check the pumps"}), 1)
 
       assert_receive {:schedules_changed, ^project_id}
       refute new_id == schedule.task_id
@@ -434,11 +407,14 @@ defmodule Photon.SchedulesTest do
       :ok = Scheduler.sync()
       assert [%TaskRecord{id: ^new_id}] = Durable.live_tasks("routine")
 
-      assert Schedules.update(schedule.id, params(%{"prompt" => "Again"}), 1) ==
+      assert Schedules.update(schedule.id, schedule_params(%{"prompt" => "Again"}), 1) ==
                {:error, :stale}
 
-      assert Schedules.update("sc_missing", params(%{}), 1) == {:error, :not_found}
-      assert {:error, %{at: _}} = Schedules.update(schedule.id, params(%{"at" => "soon"}), 2)
+      assert Schedules.update("sc_missing", schedule_params(), 1) == {:error, :not_found}
+
+      assert {:error, %{at: _}} =
+               Schedules.update(schedule.id, schedule_params(%{"at" => "soon"}), 2)
+
       assert %Schedule{version: 2, prompt: "Check the pumps"} = Repo.get!(Schedule, schedule.id)
     end
 
@@ -454,7 +430,7 @@ defmodule Photon.SchedulesTest do
       assert %TaskRecord{status: "waiting"} = Durable.task(schedule.task_id)
 
       assert {:ok, %Schedule{version: 2, every_minutes: nil, task_id: nil}} =
-               Schedules.update(schedule.id, params(Map.put(form, "repeat", "once")), 1)
+               Schedules.update(schedule.id, schedule_params(Map.put(form, "repeat", "once")), 1)
 
       assert %TaskRecord{abort_requested: true} = Durable.task(schedule.task_id)
       :ok = Scheduler.sync()
@@ -474,7 +450,7 @@ defmodule Photon.SchedulesTest do
       busy!(idle!(thread_id))
 
       assert {:ok, %Schedule{conversation_id: nil, last_thread_id: nil}} =
-               Schedules.update(schedule.id, params(%{}), 1)
+               Schedules.update(schedule.id, schedule_params(), 1)
 
       assert Schedules.run_now(schedule.id) == {:ok, "started"}
       assert %Schedule{last_thread_id: started_id} = Repo.get!(Schedule, schedule.id)
@@ -503,7 +479,7 @@ defmodule Photon.SchedulesTest do
         )
 
       assert {:ok, %Schedule{task_id: new_id}} =
-               Schedules.update(schedule.id, params(%{"target" => thread_id}), 1)
+               Schedules.update(schedule.id, schedule_params(%{"target" => thread_id}), 1)
 
       assert Routine.step("fire", started, %Runtime{task: started}) == :ignored
       assert scheduled(thread_id) == []
@@ -533,7 +509,10 @@ defmodule Photon.SchedulesTest do
       assert [%{state: {:stopped, "boom"}, next_at: nil}] = Schedules.list({:project, project.id})
 
       form = %{"repeat" => "every", "every" => "1", "unit" => "days"}
-      assert {:ok, %Schedule{task_id: new_id}} = Schedules.update(schedule.id, params(form), 1)
+
+      assert {:ok, %Schedule{task_id: new_id}} =
+               Schedules.update(schedule.id, schedule_params(form), 1)
+
       refute new_id == schedule.task_id
       assert %{state: :waiting, next_at: %DateTime{}} = Schedules.get(schedule.id)
     end
@@ -548,7 +527,7 @@ defmodule Photon.SchedulesTest do
       _doc = Durable.commit(&Signals.put_ambient_doc_tx(&1, %{"on" => true}))
       :ok = Photon.Events.subscribe(Signals.ambient_topic())
       form = %{"repeat" => "every", "every" => "1", "unit" => "days"}
-      {:ok, saved} = Schedules.update(schedule.id, params(form), 1)
+      {:ok, saved} = Schedules.update(schedule.id, schedule_params(form), 1)
       assert fail!(Durable.task(saved.task_id), "the project no longer exists") == :ok
       assert_receive {:ambient_changed}
 
@@ -570,7 +549,7 @@ defmodule Photon.SchedulesTest do
     test "changes nothing for a task the row no longer names", %{project: project} do
       schedule = create!(project)
       project_id = project.id
-      {:ok, _saved} = Schedules.update(schedule.id, params(%{}), 1)
+      {:ok, _saved} = Schedules.update(schedule.id, schedule_params(), 1)
       assert_receive {:schedules_changed, ^project_id}
 
       assert fail!(Durable.task(schedule.task_id), "boom") == :ok
@@ -620,16 +599,6 @@ defmodule Photon.SchedulesTest do
       Durable.commit(&Schedules.tool_schedule_tx(&1, target, args, made))
     end
 
-    defp blip_idle! do
-      blip = Assistant.conversation_id()
-      :ok = Durable.subscribe(blip)
-
-      if Durable.busy?(blip),
-        do: await_change(blip, fn _changes -> not Durable.busy?(blip) end)
-
-      :ok
-    end
-
     test "makes a project schedule like the form's, as Blip's, and its firings say who and why",
          %{project: project} do
       assert {:ok, %Schedule{} = schedule} =
@@ -667,7 +636,7 @@ defmodule Photon.SchedulesTest do
              }
 
       idle!(thread.id)
-      :ok = blip_idle!()
+      idle!(Assistant.conversation_id())
     end
 
     test "wakes one of the project's threads, and refuses one that isn't", %{project: project} do

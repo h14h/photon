@@ -15,6 +15,8 @@ defmodule PhotonWeb.ScheduleLiveTest do
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
 
   alias Photon.{Durable, Projects, Schedules, Threads}
   alias Photon.Durable.{Scheduler, TaskRecord}
@@ -23,44 +25,7 @@ defmodule PhotonWeb.ScheduleLiveTest do
   @moduletag :durable
 
   setup do
-    {:ok, garden} =
-      Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
-
-    %{project: garden}
-  end
-
-  # An ISO 8601 time `ms` from now, as the form's hook sends it.
-  defp at(ms), do: DateTime.utc_now() |> DateTime.add(ms, :millisecond) |> DateTime.to_iso8601()
-
-  defp schedule!(project, overrides \\ %{}) do
-    params =
-      Map.merge(
-        %{
-          "prompt" => "Check the backups",
-          "at" => at(:timer.hours(1)),
-          "repeat" => "once",
-          "target" => "new_thread"
-        },
-        overrides
-      )
-
-    {:ok, %Schedule{} = schedule} = Schedules.create({:project, project.id}, params)
-    schedule
-  end
-
-  # Starts a thread and waits until it has answered; returns its ID.
-  defp idle_thread!(project, text) do
-    {:ok, thread} = Threads.start(project.id, text)
-    idle!(thread.id)
-  end
-
-  defp idle!(thread_id) do
-    :ok = Threads.subscribe(thread_id)
-
-    if Threads.busy?(thread_id),
-      do: await_change(thread_id, fn _changes -> not Threads.busy?(thread_id) end)
-
-    thread_id
+    %{project: garden!()}
   end
 
   defp new_page(conn, query \\ ""), do: live(conn, "/projects/garden/schedules/new" <> query)
@@ -134,7 +99,7 @@ defmodule PhotonWeb.ScheduleLiveTest do
     end
 
     test "a thread, every 2 hours, saves on that thread", %{conn: conn, project: project} do
-      thread = idle_thread!(project, "Fix the pump")
+      thread = idle_thread!(project, "Fix the pump").id
       {:ok, view, _html} = new_page(conn)
       assert has_element?(view, ~s(#schedule-target option[value="#{thread}"]), "Fix the pump")
 
@@ -158,7 +123,7 @@ defmodule PhotonWeb.ScheduleLiveTest do
       project: project
     } do
       {:ok, house} = Projects.create(%{"name" => "House", "purpose" => "Fix the roof."})
-      elsewhere = idle_thread!(house, "Fix the roof")
+      elsewhere = idle_thread!(house, "Fix the roof").id
       {:ok, view, _html} = new_page(conn)
 
       submit(
@@ -189,7 +154,7 @@ defmodule PhotonWeb.ScheduleLiveTest do
     end
 
     test "?thread= picks that thread", %{conn: conn, project: project} do
-      thread = idle_thread!(project, "Fix the pump")
+      thread = idle_thread!(project, "Fix the pump").id
 
       {:ok, view, _html} = new_page(conn, "?thread=#{thread}")
       assert has_element?(view, ~s(#schedule-target option[value="#{thread}"][selected]))
@@ -236,7 +201,7 @@ defmodule PhotonWeb.ScheduleLiveTest do
       conn: conn,
       project: project
     } do
-      thread = idle_thread!(project, "Fix the pump")
+      thread = idle_thread!(project, "Fix the pump").id
 
       schedule =
         schedule!(project, %{

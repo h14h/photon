@@ -17,42 +17,17 @@ defmodule Photon.ThreadsTest do
   alias Photon.Threads.Thread
 
   import Ecto.Query, only: [from: 2]
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
+  import Photon.MachineOps, only: [fake_machine: 1]
 
   setup do
-    {:ok, project} =
-      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
-
-    %{project: project}
-  end
-
-  # Stands in for a connected machine that takes commands and never
-  # answers, so a shell call on it keeps its thread running.
-  defp fake_machine(name) do
-    {:ok, _owner} =
-      Registry.register(Photon.MachineRegistry, name, %{
-        "platform" => "test",
-        "workspace" => "/w",
-        "version" => "0",
-        "capabilities" => ["ops:2"]
-      })
+    %{project: garden!()}
   end
 
   defp start!(project, text) do
     {:ok, thread} = Threads.start(project.id, text)
     thread
-  end
-
-  # Starts a thread and waits until it has answered; returns its ID.
-  defp idle_thread!(project, text), do: idle!(start!(project, text).id)
-
-  # Waits until the thread has no run in progress.
-  defp idle!(thread_id) do
-    :ok = Threads.subscribe(thread_id)
-
-    if Threads.busy?(thread_id),
-      do: await_change(thread_id, fn _changes -> not Threads.busy?(thread_id) end)
-
-    thread_id
   end
 
   # Starts a thread whose run waits on a shell call on `box`.
@@ -105,8 +80,8 @@ defmodule Photon.ThreadsTest do
 
   describe "send/3" do
     test "submits, moves active_at and announces the project", %{project: project} do
-      older = idle_thread!(project, "first")
-      newer = idle_thread!(project, "second")
+      older = idle_thread!(project, "first").id
+      newer = idle_thread!(project, "second").id
       assert Enum.map(Threads.list(project.id), & &1.id) == [newer, older]
 
       before = Threads.get(older).active_at
@@ -188,7 +163,7 @@ defmodule Photon.ThreadsTest do
     test "send_tx/4 sends with the schedule as source, and a repeated request ID sends once", %{
       project: project
     } do
-      thread_id = idle_thread!(project, "first")
+      thread_id = idle_thread!(project, "first").id
       opts = [source: @source, request_id: "schedule:sc_backups:t_1:1"]
       send = &Threads.send_tx(&1, thread_id, "[Scheduled] machines", opts)
 
@@ -227,8 +202,8 @@ defmodule Photon.ThreadsTest do
          %{project: garden} do
       {:ok, shed} = Projects.create(%{"purpose" => "Tidy the shed."})
 
-      threads = for n <- 1..7, do: idle_thread!(garden, "thread #{n}")
-      shed_thread = idle_thread!(shed, "sort the tools")
+      threads = for n <- 1..7, do: idle_thread!(garden, "thread #{n}").id
+      shed_thread = idle_thread!(shed, "sort the tools").id
 
       assert [
                %{project: %{slug: "garden", name: "Garden"}, threads: listed, more: 2},
@@ -262,7 +237,7 @@ defmodule Photon.ThreadsTest do
       {:ok, _empty} = Projects.create(%{"purpose" => "Plan the trip.", "name" => "Trip"})
 
       running = running!(garden, "oldest")
-      newer = for n <- 1..6, do: idle_thread!(garden, "thread #{n}")
+      newer = for n <- 1..6, do: idle_thread!(garden, "thread #{n}").id
 
       assert [%{threads: listed, more: 1}, %{project: %{name: "Trip"}, threads: [], more: 0}] =
                Threads.sidebar(5)
@@ -284,7 +259,7 @@ defmodule Photon.ThreadsTest do
     } do
       fake_machine("box")
       thread = running!(project, "stop me")
-      idle = idle_thread!(project, "hello")
+      idle = idle_thread!(project, "hello").id
 
       assert Threads.running([thread.id, idle]) == MapSet.new([thread.id])
 
@@ -383,8 +358,7 @@ defmodule Photon.ThreadsTest do
 
   describe "titles" do
     setup do
-      Application.put_env(:photon, Threads, auto_title: true)
-      on_exit(fn -> Application.put_env(:photon, Threads, auto_title: false) end)
+      Photon.TestConfig.put_env(:photon, Threads, auto_title: true)
     end
 
     # The thread's title task, as stored now.
@@ -439,15 +413,14 @@ defmodule Photon.ThreadsTest do
 
     test "without a model the thread keeps its first title", %{project: project} do
       Photon.ChatGPTStub.reset!()
-      Application.put_env(:photon, :mock_model, false)
-      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+      Photon.TestConfig.put_env(:photon, :mock_model, false)
 
       thread = start!(project, "Check the valves")
       assert %Thread{title: "Check the valves"} = titled!(thread.id)
     end
 
     test "rename/2 refuses a blank title and a missing thread", %{project: project} do
-      id = idle_thread!(project, "Check the valves")
+      id = idle_thread!(project, "Check the valves").id
       assert Threads.rename(id, "  ") == {:error, :blank}
       assert Threads.rename("c_missing", "Valves") == {:error, :not_found}
       assert Threads.get(id).title == "Check the valves"
@@ -456,7 +429,7 @@ defmodule Photon.ThreadsTest do
 
   describe "latest_answer/1" do
     test "skips newer messages that only call tools", %{project: project} do
-      id = idle_thread!(project, "Check the valves")
+      id = idle_thread!(project, "Check the valves").id
       call = %{"id" => "c9", "name" => "shell", "arguments" => ~s({"machine":"box"})}
 
       Durable.commit(
@@ -508,7 +481,7 @@ defmodule Photon.ThreadsTest do
       project: project
     } do
       ambient!(true)
-      id = idle_thread!(project, "hello")
+      id = idle_thread!(project, "hello").id
       assert [{"thread_started", id, project.id}] == items(["thread_started", "resolved"])
 
       assert Threads.resolve(id) == :ok
@@ -521,7 +494,7 @@ defmodule Photon.ThreadsTest do
                {"resolved", id, project.id}
              ] == items(["thread_started", "resolved"])
 
-      other = idle_thread!(project, "hello again")
+      other = idle_thread!(project, "hello again").id
       assert Threads.resolve(other) == :ok
       assert length(items(["thread_started", "resolved"])) == 4
     end
@@ -545,7 +518,7 @@ defmodule Photon.ThreadsTest do
 
     test "with ambient mode off, nothing is collected", %{project: project} do
       ambient!(false)
-      id = idle_thread!(project, "hello")
+      id = idle_thread!(project, "hello").id
       assert Threads.resolve(id) == :ok
       assert Repo.all(DigestItem) == []
     end
@@ -555,10 +528,10 @@ defmodule Photon.ThreadsTest do
     test "mark_reviewed_tx/3 and unmark_reviewed_tx/2 set and clear the column, and announce once per project",
          %{project: project} do
       {:ok, other} = Projects.create(%{"purpose" => "Paint the house.", "name" => "House"})
-      one = idle_thread!(project, "hello")
-      two = idle_thread!(project, "files")
-      three = idle_thread!(other, "hello")
-      untouched = idle_thread!(project, "hello again")
+      one = idle_thread!(project, "hello").id
+      two = idle_thread!(project, "files").id
+      three = idle_thread!(other, "hello").id
+      untouched = idle_thread!(project, "hello again").id
       # The Store announces a commit before the next one runs, so after
       # this one the runs' own announcements are out of the way.
       :ok = Durable.commit(fn _tx -> :ok end)

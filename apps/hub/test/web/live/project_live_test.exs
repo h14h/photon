@@ -13,18 +13,12 @@ defmodule PhotonWeb.ProjectLiveTest do
 
   import Ecto.Query, only: [where: 2]
   import Phoenix.LiveViewTest
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
+  import PhotonWeb.LiveHelpers
+  import Photon.MachineOps, only: [fake_machine: 1]
 
-  alias Photon.{
-    Assistant,
-    Durable,
-    Machines,
-    Projects,
-    Questions,
-    Schedules,
-    Settings,
-    Skills,
-    Threads
-  }
+  alias Photon.{Assistant, Durable, Projects, Questions, Schedules, Settings, Skills, Threads}
 
   alias Photon.Durable.Tx
   alias Photon.Schedules.{Routine, Schedule}
@@ -41,51 +35,8 @@ defmodule PhotonWeb.ProjectLiveTest do
     %{project: project}
   end
 
-  # Stands in for a connected machine that takes commands and never answers.
-  defp fake_machine(name) do
-    :ok =
-      Machines.register(name, %{
-        "platform" => "test",
-        "workspace" => "/w",
-        "version" => "0",
-        "capabilities" => ["ops:2"]
-      })
-  end
-
-  # Starts a thread and waits until it has answered; returns its ID.
-  defp idle_thread!(project, text) do
-    {:ok, thread} = Threads.start(project.id, text)
-    idle!(thread.id)
-  end
-
-  defp idle!(thread_id) do
-    until(thread_id, fn -> not Threads.busy?(thread_id) end)
-    thread_id
-  end
-
-  # Waits until `fun` holds after one of the thread's commits.
-  defp until(thread_id, fun) do
-    :ok = Threads.subscribe(thread_id)
-    if not fun.(), do: await_change(thread_id, fn _changes -> fun.() end)
-    :ok
-  end
-
-  # The commit that made the state the test waited for has broadcast once
-  # the store has handled it; then the page has its messages queued before
-  # this render.
-  defp settled(view) do
-    _ = :sys.get_state(Photon.Durable.Store)
-    render(view)
-  end
-
   # The DOM IDs of the rows in a stream container, in page order.
-  defp row_ids(view, container, prefix) do
-    view
-    |> render()
-    |> LazyHTML.from_fragment()
-    |> LazyHTML.query("#{container} > [id^=#{prefix}]")
-    |> Enum.map(&(&1 |> LazyHTML.attribute("id") |> hd()))
-  end
+  defp row_ids(view, container, prefix), do: dom_ids(view, "#{container} > [id^=#{prefix}]")
 
   # The element's text with its whitespace collapsed.
   defp text(view, selector) do
@@ -165,8 +116,8 @@ defmodule PhotonWeb.ProjectLiveTest do
   test "lists threads newest first, marks a running one, and a message moves an old one up",
        %{conn: conn, project: project} do
     fake_machine("box")
-    older = idle_thread!(project, "Fix the pump")
-    newer = idle_thread!(project, "Plant the beds")
+    older = idle_thread!(project, "Fix the pump").id
+    newer = idle_thread!(project, "Plant the beds").id
 
     {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}")
 
@@ -180,7 +131,7 @@ defmodule PhotonWeb.ProjectLiveTest do
     refute has_element?(view, "#project-thread-#{older}-state[data-state=running]")
 
     {:ok, _submission} = Threads.send(older, "on box: $ sleep 1000")
-    until(older, fn -> Threads.busy?(older) end)
+    await_until(older, fn -> Threads.busy?(older) end)
     _ = settled(view)
 
     assert row_ids(view, "#project-threads", "project-thread-") == [
@@ -199,10 +150,10 @@ defmodule PhotonWeb.ProjectLiveTest do
   end
 
   test "each thread row shows its state", %{conn: conn, project: project} do
-    unread = idle_thread!(project, "files")
-    waiting = idle_thread!(project, "ask me: which zone should I water first")
-    failed = idle_thread!(project, "fail: the pump is unplugged")
-    read = idle_thread!(project, "files")
+    unread = idle_thread!(project, "files").id
+    waiting = idle_thread!(project, "ask me: which zone should I water first").id
+    failed = idle_thread!(project, "fail: the pump is unplugged").id
+    read = idle_thread!(project, "files").id
     :ok = Threads.mark_seen(read)
 
     {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}")
@@ -262,14 +213,14 @@ defmodule PhotonWeb.ProjectLiveTest do
   test "a thread started elsewhere appears", %{conn: conn, project: project} do
     {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}")
 
-    thread = idle_thread!(project, "Fix the pump")
+    thread = idle_thread!(project, "Fix the pump").id
     _ = settled(view)
 
     assert has_element?(view, "#project-thread-#{thread}", "Fix the pump")
   end
 
   test "lists context files, and one a thread writes appears", %{conn: conn, project: project} do
-    thread = idle_thread!(project, "Fix the pump")
+    thread = idle_thread!(project, "Fix the pump").id
     {:ok, plan} = Projects.create_file(project.id, %{name: "plan.md", content: "Water daily."})
 
     {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}")
@@ -297,7 +248,7 @@ defmodule PhotonWeb.ProjectLiveTest do
   end
 
   test "redraws how long ago things happened once a minute", %{conn: conn, project: project} do
-    thread = idle_thread!(project, "Fix the pump")
+    thread = idle_thread!(project, "Fix the pump").id
     {:ok, plan} = Projects.create_file(project.id, %{name: "plan.md", content: "Water daily."})
     {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}")
 
@@ -414,25 +365,6 @@ defmodule PhotonWeb.ProjectLiveTest do
   end
 
   describe "schedules" do
-    # An ISO 8601 time `ms` from now, as the form's hook sends it.
-    defp at(ms), do: DateTime.utc_now() |> DateTime.add(ms, :millisecond) |> DateTime.to_iso8601()
-
-    defp schedule!(project, overrides \\ %{}) do
-      params =
-        Map.merge(
-          %{
-            "prompt" => "Check the backups",
-            "at" => at(:timer.hours(1)),
-            "repeat" => "once",
-            "target" => "new_thread"
-          },
-          overrides
-        )
-
-      {:ok, %Schedule{} = schedule} = Schedules.create({:project, project.id}, params)
-      schedule
-    end
-
     test "an empty project says so, and links to a new schedule", %{conn: conn, project: project} do
       {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}")
 
@@ -442,7 +374,7 @@ defmodule PhotonWeb.ProjectLiveTest do
     end
 
     test "each row says when it runs and where it goes", %{conn: conn, project: project} do
-      thread = idle_thread!(project, "Fix the pump")
+      thread = idle_thread!(project, "Fix the pump").id
       once = schedule!(project)
 
       daily =
@@ -547,7 +479,7 @@ defmodule PhotonWeb.ProjectLiveTest do
     end
 
     test "Run now into a thread names it", %{conn: conn, project: project} do
-      thread = idle_thread!(project, "Fix the pump")
+      thread = idle_thread!(project, "Fix the pump").id
       schedule = schedule!(project, %{"target" => thread})
       {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}")
 
@@ -613,8 +545,7 @@ defmodule PhotonWeb.ProjectLiveTest do
   describe "schedules while scheduled work is off" do
     setup do
       # Off the scripted model, consent is the setting, which starts off.
-      Application.put_env(:photon, :mock_model, false)
-      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+      Photon.TestConfig.put_env(:photon, :mock_model, false)
       refute Schedules.consent?()
       :ok
     end

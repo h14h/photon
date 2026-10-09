@@ -1,7 +1,17 @@
 import Config
 
+# `mix test --partitions N` runs each partition in its own VM; each gets
+# its own data dir and database (MIX_TEST_PARTITION is 1..N).
+test_data = Path.expand("../_build/test-data#{System.get_env("MIX_TEST_PARTITION")}", __DIR__)
+
+# A partition keeps its own record of failed tests too, which
+# scripts/test-partitioned merges into the usual one.
+if System.get_env("MIX_TEST_PARTITION") do
+  config :ex_unit, failures_manifest_path: Path.join(test_data, ".mix_test_failures")
+end
+
 config :photon,
-  data_dir: Path.expand("../_build/test-data", __DIR__),
+  data_dir: test_data,
   local_node: false,
   # Tests start the harness themselves, inside the database sandbox.
   start_durable: false
@@ -9,7 +19,7 @@ config :photon,
 # Tests run serially against a real database file, cleared before each test:
 # the harness's own processes then use ordinary pooled connections.
 config :photon, Photon.Repo,
-  database: Path.expand("../_build/test-data/photon-test.db", __DIR__),
+  database: Path.join(test_data, "photon-test.db"),
   pool_size: 5
 
 # Blip answers with the scripted model, not ChatGPT; the account's requests

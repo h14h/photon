@@ -12,8 +12,7 @@ defmodule Photon.SkillsFetchDeadlineTest do
 
   setup do
     config = Application.get_env(:photon, Skills)
-    Application.put_env(:photon, Skills, Keyword.put(config, :deadline, 100))
-    on_exit(fn -> Application.put_env(:photon, Skills, config) end)
+    Photon.TestConfig.put_env(:photon, Skills, Keyword.put(config, :deadline, 100))
 
     test = self()
 

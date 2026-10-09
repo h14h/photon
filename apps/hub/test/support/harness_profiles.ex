@@ -15,29 +15,13 @@ defmodule Photon.HarnessProfiles do
   # Test support sits outside the layering (compiled only for tests).
   use Boundary, top_level?: true, check: [in: false, out: false]
 
+  alias Photon.HarnessProfiles.{Block, Loop}
+
   @doc "Registers the profiles and makes the calling test the listener."
   def use_profiles do
     config = Application.get_env(:photon, Photon.Durable)
-    profiles = config[:profiles]
-
-    Application.put_env(
-      :photon,
-      Photon.Durable,
-      Keyword.put(
-        config,
-        :profiles,
-        Map.merge(profiles, %{
-          "block" => Photon.HarnessProfiles.Block,
-          "loop" => Photon.HarnessProfiles.Loop
-        })
-      )
-    )
-
-    Application.put_env(:photon, :test_listener, self())
-
-    ExUnit.Callbacks.on_exit(fn ->
-      Application.put_env(:photon, Photon.Durable, config)
-      Application.delete_env(:photon, :test_listener)
-    end)
+    profiles = Map.merge(config[:profiles], %{"block" => Block, "loop" => Loop})
+    Photon.TestConfig.put_env(:photon, Photon.Durable, Keyword.put(config, :profiles, profiles))
+    Photon.TestConfig.put_env(:photon, :test_listener, self())
   end
 end

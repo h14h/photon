@@ -7,6 +7,8 @@ defmodule Photon.DurableTest do
 
   use Photon.DataCase, async: false
 
+  import Photon.ConversationHelpers
+
   alias Photon.Durable.Tx
 
   @moduletag :durable
@@ -23,10 +25,6 @@ defmodule Photon.DurableTest do
     {:ok, first} = Durable.submit(c, "wait")
     await_tool_waiting(c)
     %{first: first}
-  end
-
-  defp await_tool_waiting(c) do
-    await_change(c, &Enum.any?(&1.tasks, fn t -> t.kind == "tool" and t.status == "waiting" end))
   end
 
   describe "an idle conversation" do
