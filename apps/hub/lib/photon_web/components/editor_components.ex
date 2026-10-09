@@ -1,13 +1,15 @@
 defmodule PhotonWeb.EditorComponents do
   @moduledoc """
   The pieces the app's text editors share: the context file editor
-  (`PhotonWeb.ContextFileLive`) and the skill editor
-  (`PhotonWeb.SkillLive`).
+  (`PhotonWeb.ContextFileLive`), the skill editor (`PhotonWeb.SkillLive`)
+  and the install page's preview (`PhotonWeb.SkillInstallLive`).
 
     * `guarded_form/1` is a form that asks before the owner leaves it with
       unsaved text, through the colocated `.UnsavedGuard` hook. The hook
       lives here so both editors use the same one: a colocated hook's name
       belongs to the module whose template names it.
+    * `markdown_editor/1` is a Markdown text field with `Write` and
+      `Preview` tabs and a footer.
     * `editor_tab/1` is a `Write` or `Preview` tab in an editor's header.
     * `banner/1` is the notice above an editor when what it holds changed
       or went away elsewhere.
@@ -15,7 +17,9 @@ defmodule PhotonWeb.EditorComponents do
 
   use Phoenix.Component
 
-  import PhotonWeb.CoreComponents, only: [icon: 1]
+  import PhotonWeb.CoreComponents, only: [icon: 1, input: 1]
+
+  alias Photon.Markdown
 
   @doc """
   A form that asks before the owner leaves with unsaved text: on closing
@@ -90,6 +94,85 @@ defmodule PhotonWeb.EditorComponents do
         dirty() { return this.typed || this.el.dataset.dirty === "true" }
       }
     </script>
+    """
+  end
+
+  @doc """
+  A Markdown text field with `Write` and `Preview` tabs, and a footer.
+  The tabs send `tab` (see `editor_tab/1`); `tab` is the open one. On
+  `Preview` the text field stays in the form, hidden, so the text is
+  still sent and kept, and the field's text shows rendered (or "Nothing
+  to preview yet.").
+
+  The footer slot is the card's last row: what the editor holds, and the
+  submit button. Every other attribute (`placeholder`, `aria-label`) goes
+  to the text field.
+  """
+  attr :id, :string,
+    required: true,
+    doc: "the tabs' IDs are `<id>-tab-write` and `<id>-tab-preview`"
+
+  attr :field, Phoenix.HTML.FormField, required: true
+  attr :tab, :string, required: true
+  attr :input_id, :string, required: true
+  attr :editor_id, :string, default: nil, doc: "the text field's wrapper's ID, if any"
+  attr :preview_id, :string, required: true
+  attr :rows, :string, required: true
+  attr :min_height, :string, required: true, doc: "the text's and the preview's `min-h-*` class"
+  attr :rest, :global, include: ~w(placeholder)
+  slot :footer, required: true
+
+  @spec markdown_editor(map()) :: Phoenix.LiveView.Rendered.t()
+  def markdown_editor(assigns) do
+    assigns = assign(assigns, :text, assigns.field.value || "")
+
+    ~H"""
+    <div class="overflow-hidden rounded-2xl border border-line bg-surface shadow-xs transition focus-within:border-accent/60 focus-within:shadow-md focus-within:shadow-accent/10">
+      <div class="flex items-center justify-between gap-3 border-b border-line bg-sunken/50 px-3 py-2">
+        <div role="tablist" class="flex items-center rounded-full border border-line bg-sunken p-0.5">
+          <.editor_tab id={"#{@id}-tab-write"} tab="write" current={@tab}>Write</.editor_tab>
+          <.editor_tab id={"#{@id}-tab-preview"} tab="preview" current={@tab}>
+            Preview
+          </.editor_tab>
+        </div>
+        <span class="flex items-center gap-1.5 text-[11.5px] text-ink-faint">
+          <.icon name="hero-document-text-micro" class="size-4" /> Markdown
+        </span>
+      </div>
+
+      <div id={@editor_id} class={["px-4 pt-3 pb-3", @tab == "preview" && "hidden"]}>
+        <.input
+          field={@field}
+          id={@input_id}
+          type="textarea"
+          rows={@rows}
+          phx-debounce="400"
+          spellcheck="false"
+          class={[
+            "block",
+            @min_height,
+            "w-full resize-y bg-transparent font-mono text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
+          ]}
+          {@rest}
+        />
+      </div>
+
+      <div
+        :if={@tab == "preview"}
+        id={@preview_id}
+        class={["markdown-body", @min_height, "px-5 py-4 text-ink-soft"]}
+      >
+        <%= if String.trim(@text) == "" do %>
+          <p class="text-[14px] text-ink-faint">Nothing to preview yet.</p>
+        <% else %>
+          {Phoenix.HTML.raw(Markdown.to_html(@text))}
+        <% end %>
+      </div>
+
+      <div class="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
+        {render_slot(@footer)}
+      </div>
+    </div>
     """
   end
 

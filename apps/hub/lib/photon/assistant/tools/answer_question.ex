@@ -22,6 +22,8 @@ defmodule Photon.Assistant.Tools.AnswerQuestion do
   @behaviour Photon.Durable.Tool
 
   alias Photon.{Assistant, Questions}
+  alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
   alias Photon.Questions.Rules
 
   @impl true
@@ -36,17 +38,14 @@ defmodule Photon.Assistant.Tools.AnswerQuestion do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "question_id" => %{"type" => "string", "description" => "The question's ID, like q_456."},
-        "answer" => %{
-          "type" => "string",
-          "description" => "The answer, with what the thread needs to act on it."
-        }
-      },
-      "required" => ["question_id", "answer"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          question_id: Readout.field(:question),
+          answer: {:string, "The answer, with what the thread needs to act on it."}
+        ],
+        [:question_id, :answer]
+      )
 
   @impl true
   def replay, do: :safe

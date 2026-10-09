@@ -11,7 +11,11 @@ defmodule Photon.Projects.Rules do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [Photon.Projects.Project, Photon.Projects.ContextFile]
+  use Boundary,
+    type: :strict,
+    deps: [Photon.Projects.Project, Photon.Projects.ContextFile, Photon.Text]
+
+  alias Photon.Text
 
   alias Photon.Projects.{ContextFile, Project}
 
@@ -31,6 +35,28 @@ defmodule Photon.Projects.Rules do
   @type field_errors :: %{optional(:name | :purpose) => String.t()}
 
   ## Projects
+
+  @doc """
+  A context-file tool parameter both agents' tools share, for
+  `Photon.Durable.ToolSchema`: `:name` (a file to read), `:new_name` (a file
+  to write, with the naming rules), `:content`, `:old_text` or `:new_text`.
+  """
+  @spec file_field(:name | :new_name | :content | :old_text | :new_text) :: {:string, String.t()}
+  def file_field(:name), do: {:string, "The file's name, like notes.md."}
+
+  def file_field(:new_name),
+    do:
+      {:string,
+       ~s(The file's name: letters, digits, ".", "_" and "-", like notes.md. ) <>
+         "Files are flat, with no folders."}
+
+  def file_field(:content),
+    do: {:string, "The whole file, in Markdown; at most 100,000 characters."}
+
+  def file_field(:old_text),
+    do: {:string, "The passage to replace, exactly as it is in the file."}
+
+  def file_field(:new_text), do: {:string, "What replaces it; empty to delete the passage."}
 
   @doc """
   Checks a project's `params` (atom or string keys `name` and `purpose`)
@@ -217,7 +243,7 @@ defmodule Photon.Projects.Rules do
 
       n ->
         {:error,
-         "#{name} would be #{count(n)} characters; the limit is #{count(@content_limit)}. " <>
+         "#{name} would be #{Text.count(n)} characters; the limit is #{Text.count(@content_limit)}. " <>
            "Split it into more than one file."}
     end
   end
@@ -270,15 +296,5 @@ defmodule Photon.Projects.Rules do
       {at, _length} -> occurrences(content, old_text, at + 1, [at | found])
       :nomatch -> Enum.reverse(found)
     end
-  end
-
-  @doc "A count with thousands separators: `123456` to `\"123,456\"`."
-  @spec count(non_neg_integer()) :: String.t()
-  def count(n) when is_integer(n) and n >= 0 do
-    n
-    |> Integer.to_string()
-    |> String.reverse()
-    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
-    |> String.reverse()
   end
 end

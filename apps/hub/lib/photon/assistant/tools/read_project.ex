@@ -14,6 +14,7 @@ defmodule Photon.Assistant.Tools.ReadProject do
 
   alias Photon.{Assistant, Projects, Skills, Threads}
   alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
 
   @impl true
   def name, do: "read_project"
@@ -27,17 +28,13 @@ defmodule Photon.Assistant.Tools.ReadProject do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "project" => %{
-          "type" => "string",
-          "description" =>
-            "The project's slug, like garden (list_projects shows them), or its ID."
-        }
-      },
-      "required" => ["project"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          project: Readout.field(:project)
+        ],
+        [:project]
+      )
 
   @impl true
   def replay, do: :safe

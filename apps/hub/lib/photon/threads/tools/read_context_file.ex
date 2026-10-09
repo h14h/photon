@@ -8,6 +8,8 @@ defmodule Photon.Threads.Tools.ReadContextFile do
   """
   @behaviour Photon.Durable.Tool
 
+  alias Photon.Durable.ToolSchema
+  alias Photon.Projects.Rules
   alias Photon.Threads
 
   @impl true
@@ -18,15 +20,14 @@ defmodule Photon.Threads.Tools.ReadContextFile do
     do: "Read one of the project's context files, like notes.md."
 
   @impl true
-  def parameters do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "name" => %{"type" => "string", "description" => "The file's name, like notes.md."}
-      },
-      "required" => ["name"]
-    }
-  end
+  def parameters,
+    do:
+      ToolSchema.object(
+        [
+          name: Rules.file_field(:name)
+        ],
+        [:name]
+      )
 
   @impl true
   def replay, do: :safe

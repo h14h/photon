@@ -4,6 +4,7 @@ defmodule Photon.Assistant.Tools.UpdateMemory do
 
   alias Photon.Assistant.Memory
   alias Photon.Durable
+  alias Photon.Durable.ToolSchema
 
   @impl true
   def name, do: "update_memory"
@@ -15,19 +16,15 @@ defmodule Photon.Assistant.Tools.UpdateMemory do
   end
 
   @impl true
-  def parameters do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "action" => %{"type" => "string", "enum" => ["add", "remove", "rewrite"]},
-        "text" => %{
-          "type" => "string",
-          "description" => "The line to add, text to match for removal, or the whole new memory."
-        }
-      },
-      "required" => ["action", "text"]
-    }
-  end
+  def parameters,
+    do:
+      ToolSchema.object(
+        [
+          action: {:string, enum: ["add", "remove", "rewrite"]},
+          text: {:string, "The line to add, text to match for removal, or the whole new memory."}
+        ],
+        [:action, :text]
+      )
 
   @impl true
   def execute(%{"action" => action, "text" => text}, _api) do

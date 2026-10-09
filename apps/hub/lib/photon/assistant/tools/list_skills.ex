@@ -9,6 +9,7 @@ defmodule Photon.Assistant.Tools.ListSkills do
   @behaviour Photon.Durable.Tool
 
   alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
   alias Photon.{Projects, Skills}
 
   @impl true
@@ -23,7 +24,7 @@ defmodule Photon.Assistant.Tools.ListSkills do
         "every project, for work on that machine."
 
   @impl true
-  def parameters, do: %{"type" => "object", "properties" => %{}}
+  def parameters, do: ToolSchema.object([])
 
   @impl true
   def replay, do: :safe

@@ -15,6 +15,8 @@ defmodule Photon.Assistant.Tools.AskOwner do
   @behaviour Photon.Durable.Tool
 
   alias Photon.{Assistant, Questions}
+  alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
   alias Photon.Questions.Rules
 
   @impl true
@@ -29,19 +31,17 @@ defmodule Photon.Assistant.Tools.AskOwner do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "question_id" => %{"type" => "string", "description" => "The question's ID, like q_456."},
-        "question" => %{
-          "type" => "string",
-          "description" =>
-            "What to ask the user: one clear question, in your words. Say which thread is " <>
-              "asking and why it matters if that helps them answer."
-        }
-      },
-      "required" => ["question_id", "question"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          question_id: Readout.field(:question),
+          question:
+            {:string,
+             "What to ask the user: one clear question, in your words. Say which thread is " <>
+               "asking and why it matters if that helps them answer."}
+        ],
+        [:question_id, :question]
+      )
 
   @impl true
   def replay, do: :safe

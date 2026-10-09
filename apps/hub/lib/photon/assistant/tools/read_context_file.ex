@@ -11,6 +11,9 @@ defmodule Photon.Assistant.Tools.ReadContextFile do
   @behaviour Photon.Durable.Tool
 
   alias Photon.{Assistant, Threads}
+  alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
+  alias Photon.Projects.Rules
 
   @impl true
   def name, do: "read_context_file"
@@ -21,18 +24,14 @@ defmodule Photon.Assistant.Tools.ReadContextFile do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "project" => %{
-          "type" => "string",
-          "description" =>
-            "The project's slug, like garden (list_projects shows them), or its ID."
-        },
-        "name" => %{"type" => "string", "description" => "The file's name, like notes.md."}
-      },
-      "required" => ["project", "name"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          project: Readout.field(:project),
+          name: Rules.file_field(:name)
+        ],
+        [:project, :name]
+      )
 
   @impl true
   def replay, do: :safe

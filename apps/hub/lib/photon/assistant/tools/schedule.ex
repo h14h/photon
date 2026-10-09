@@ -23,7 +23,7 @@ defmodule Photon.Assistant.Tools.Schedule do
 
   alias Photon.{Assistant, Schedules, Threads}
   alias Photon.Assistant.{Origin, Readout}
-  alias Photon.Durable.ToolAPI
+  alias Photon.Durable.{ToolAPI, ToolSchema}
 
   @impl true
   def name, do: "schedule"
@@ -36,39 +36,27 @@ defmodule Photon.Assistant.Tools.Schedule do
   end
 
   @impl true
-  def parameters do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "prompt" => %{
-          "type" => "string",
-          "description" =>
-            "What to do when it fires: an instruction to yourself, or the message a project's thread gets."
-        },
-        "in_minutes" => %{
-          "type" => "integer",
-          "description" => "Minutes from now for the first run."
-        },
-        "at" => %{"type" => "string", "description" => "When to run first, ISO 8601 with offset."},
-        "every_minutes" => %{
-          "type" => "integer",
-          "description" =>
-            "Repeat this often (from 5 to 524160, which is 52 weeks). Omit for a one-off."
-        },
-        "project" => %{
-          "type" => "string",
-          "description" =>
-            "To schedule work in a project, its slug. Leave it out for a reminder to yourself, which posts here."
-        },
-        "thread" => %{
-          "type" => "string",
-          "description" =>
-            "With project, the ID of one of its threads to wake each time, instead of starting a new thread."
-        }
-      },
-      "required" => ["prompt"]
-    }
-  end
+  def parameters,
+    do:
+      ToolSchema.object(
+        [
+          prompt:
+            {:string,
+             "What to do when it fires: an instruction to yourself, or the message a project's thread gets."},
+          in_minutes: {:integer, "Minutes from now for the first run."},
+          at: {:string, "When to run first, ISO 8601 with offset."},
+          every_minutes:
+            {:integer,
+             "Repeat this often (from 5 to 524160, which is 52 weeks). Omit for a one-off."},
+          project:
+            {:string,
+             "To schedule work in a project, its slug. Leave it out for a reminder to yourself, which posts here."},
+          thread:
+            {:string,
+             "With project, the ID of one of its threads to wake each time, instead of starting a new thread."}
+        ],
+        [:prompt]
+      )
 
   @impl true
   def replay, do: :safe

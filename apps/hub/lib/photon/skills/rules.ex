@@ -9,7 +9,9 @@ defmodule Photon.Skills.Rules do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: []
+  use Boundary, type: :strict, deps: [Photon.Text]
+
+  alias Photon.Text
 
   @name_limit 64
   @description_limit 1_024
@@ -161,7 +163,7 @@ defmodule Photon.Skills.Rules do
         whose = if name, do: "#{name}'s instructions are", else: "The instructions are"
 
         {:error,
-         "#{whose} #{count(n)} characters; the limit is #{count(@instructions_limit)}, " <>
+         "#{whose} #{Text.count(n)} characters; the limit is #{Text.count(@instructions_limit)}, " <>
            "since a skill is loaded whole into the conversation."}
 
       _fits ->
@@ -174,15 +176,6 @@ defmodule Photon.Skills.Rules do
   # Text no longer in bytes than the limit is within it in code points too.
   defp code_points(text) when byte_size(text) <= @instructions_limit, do: byte_size(text)
   defp code_points(text), do: text |> String.to_charlist() |> length()
-
-  # A count with thousands separators: 61234 to "61,234".
-  defp count(n) do
-    n
-    |> Integer.to_string()
-    |> String.reverse()
-    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
-    |> String.reverse()
-  end
 
   ## Saving and enabling
 

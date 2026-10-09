@@ -10,6 +10,7 @@ defmodule Photon.Assistant.Tools.ListThreads do
 
   alias Photon.{Assistant, Threads}
   alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
 
   @impl true
   def name, do: "list_threads"
@@ -23,25 +24,18 @@ defmodule Photon.Assistant.Tools.ListThreads do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "project" => %{
-          "type" => "string",
-          "description" =>
-            "Only this project's threads: its slug, like garden (list_projects shows them), " <>
-              "or its ID."
-        },
-        "state" => %{
-          "type" => "string",
-          "enum" => Readout.state_names(),
-          "description" =>
-            "Only threads in this state: running, asking (asking you a question), waiting " <>
-              "(on the user), failed, unread (finished, not yet seen by the user), quiet " <>
-              "(stopped and left alone for days) or idle."
-        }
-      }
-    }
+    do:
+      ToolSchema.object(
+        project:
+          {:string,
+           "Only this project's threads: its slug, like garden (list_projects shows them), " <>
+             "or its ID."},
+        state:
+          {:string,
+           "Only threads in this state: running, asking (asking you a question), waiting " <>
+             "(on the user), failed, unread (finished, not yet seen by the user), quiet " <>
+             "(stopped and left alone for days) or idle.", enum: Readout.state_names()}
+      )
 
   @impl true
   def replay, do: :safe

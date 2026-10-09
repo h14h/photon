@@ -1373,9 +1373,41 @@ defmodule PhotonWeb.ConversationComponents do
   end
 
   @doc """
-  The answer box of a thread's question with the owner, inside its form
-  (the home page's question rows and the thread page's banners): Enter
-  sends, Shift+Enter starts a new line, as in the composer.
+  The owner's answer form for a thread's question (the home page's
+  question rows and the thread page's banners): the question's ID,
+  hidden, `answer_box/1`, the refusal of the last answer if there was
+  one, and Send. It sends `draft` as the owner types and `answer` on
+  Send. Its parts' IDs are the question's DOM ID (`id`) plus `-form`,
+  `-answer`, `-error` and `-send`.
+  """
+  attr :id, :string, required: true, doc: "the question's DOM ID"
+  attr :form, Phoenix.HTML.Form, required: true, doc: "the draft, as `answer[text]`"
+  attr :question_id, :string, required: true
+  attr :error, :string, default: nil
+
+  @spec answer_form(map()) :: Phoenix.LiveView.Rendered.t()
+  def answer_form(assigns) do
+    ~H"""
+    <.form for={@form} id={"#{@id}-form"} phx-change="draft" phx-submit="answer" class="mt-3">
+      <input type="hidden" name="question_id" value={@question_id} />
+      <.answer_box field={@form[:text]} id={"#{@id}-answer"} />
+      <div class="mt-2 flex items-center gap-3">
+        <p :if={@error} id={"#{@id}-error"} class="flex items-center gap-1.5 text-[12.5px] text-bad">
+          <.icon name="hero-exclamation-circle-micro" class="size-4 shrink-0" />
+          {@error}
+        </p>
+        <.button id={"#{@id}-send"} type="submit" size="sm" variant="primary" class="ml-auto">
+          Send <.icon name="hero-paper-airplane-micro" class="size-4" />
+        </.button>
+      </div>
+    </.form>
+    """
+  end
+
+  @doc """
+  The answer box of a thread's question with the owner, inside
+  `answer_form/1`: Enter sends, Shift+Enter starts a new line, as in the
+  composer.
   """
   attr :field, Phoenix.HTML.FormField, required: true
   attr :id, :string, required: true

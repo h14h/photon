@@ -10,6 +10,8 @@ defmodule Photon.Assistant.Tools.ListContextFiles do
   @behaviour Photon.Durable.Tool
 
   alias Photon.{Assistant, Threads}
+  alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
 
   @impl true
   def name, do: "list_context_files"
@@ -22,17 +24,13 @@ defmodule Photon.Assistant.Tools.ListContextFiles do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "project" => %{
-          "type" => "string",
-          "description" =>
-            "The project's slug, like garden (list_projects shows them), or its ID."
-        }
-      },
-      "required" => ["project"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          project: Readout.field(:project)
+        ],
+        [:project]
+      )
 
   @impl true
   def replay, do: :safe

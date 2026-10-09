@@ -15,8 +15,8 @@ defmodule Photon.Assistant.Tools.MessageThread do
   @behaviour Photon.Durable.Tool
 
   alias Photon.{Assistant, Threads}
-  alias Photon.Assistant.Origin
-  alias Photon.Durable.{Submission, ToolAPI}
+  alias Photon.Assistant.{Origin, Readout}
+  alias Photon.Durable.{Submission, ToolAPI, ToolSchema}
 
   @impl true
   def name, do: "message_thread"
@@ -29,24 +29,18 @@ defmodule Photon.Assistant.Tools.MessageThread do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "thread" => %{
-          "type" => "string",
-          "description" => "The thread's ID, like c_123 (list_threads shows them)."
-        },
-        "message" => %{"type" => "string", "description" => "What to tell the thread."},
-        "when_busy" => %{
-          "type" => "string",
-          "enum" => ["follow_up", "steer"],
-          "description" =>
-            "If the thread is busy: follow_up (the default) waits for its current run to " <>
-              "end; steer reaches it after its current step."
-        }
-      },
-      "required" => ["thread", "message"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          thread: Readout.field(:thread),
+          message: {:string, "What to tell the thread."},
+          when_busy:
+            {:string,
+             "If the thread is busy: follow_up (the default) waits for its current run to " <>
+               "end; steer reaches it after its current step.", enum: ["follow_up", "steer"]}
+        ],
+        [:thread, :message]
+      )
 
   @impl true
   def replay, do: :safe

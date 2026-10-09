@@ -5,6 +5,7 @@ defmodule Photon.MachineTools.ViewImage do
   """
   @behaviour Photon.Durable.Tool
 
+  alias Photon.Durable.ToolSchema
   alias Photon.MachineTools.Call
 
   @impl true
@@ -18,23 +19,17 @@ defmodule Photon.MachineTools.ViewImage do
   end
 
   @impl true
-  def parameters do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "machine" => %{
-          "type" => "string",
-          "description" => "The machine's ID, from list_machines."
-        },
-        "path" => %{
-          "type" => "string",
-          "description" =>
-            "The image's path: absolute, or relative to your working directory on that machine."
-        }
-      },
-      "required" => ["machine", "path"]
-    }
-  end
+  def parameters,
+    do:
+      ToolSchema.object(
+        [
+          machine: {:string, "The machine's ID, from list_machines."},
+          path:
+            {:string,
+             "The image's path: absolute, or relative to your working directory on that machine."}
+        ],
+        [:machine, :path]
+      )
 
   # The op ID comes from the call's task, so a rerun finds the same op.
   @impl true

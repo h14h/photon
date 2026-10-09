@@ -5,6 +5,7 @@ defmodule Photon.MachineTools.Shell do
   """
   @behaviour Photon.Durable.Tool
 
+  alias Photon.Durable.ToolSchema
   alias Photon.MachineTools.{Call, Translate}
 
   @impl true
@@ -21,29 +22,21 @@ defmodule Photon.MachineTools.Shell do
   end
 
   @impl true
-  def parameters do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "machine" => %{
-          "type" => "string",
-          "description" => "The machine's ID, from list_machines."
-        },
-        "command" => %{
-          "type" => "string",
-          "description" =>
-            "The command to run, at most #{Translate.max_command_bytes()} bytes. Write a longer script to a file in pieces and run the file."
-        },
-        "max_output_length" => %{
-          "type" => "integer",
-          "description" =>
-            "Keep at most this many characters of stdout and of stderr each (1 to 1000000, default 40000). " <>
-              "Longer output keeps its start and end, and says where the full output is on the machine."
-        }
-      },
-      "required" => ["machine", "command"]
-    }
-  end
+  def parameters,
+    do:
+      ToolSchema.object(
+        [
+          machine: {:string, "The machine's ID, from list_machines."},
+          command:
+            {:string,
+             "The command to run, at most #{Translate.max_command_bytes()} bytes. Write a longer script to a file in pieces and run the file."},
+          max_output_length:
+            {:integer,
+             "Keep at most this many characters of stdout and of stderr each (1 to 1000000, default 40000). " <>
+               "Longer output keeps its start and end, and says where the full output is on the machine."}
+        ],
+        [:machine, :command]
+      )
 
   # The op ID comes from the call's task, so a rerun finds the same op.
   @impl true

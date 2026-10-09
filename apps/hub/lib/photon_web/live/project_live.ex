@@ -66,7 +66,7 @@ defmodule PhotonWeb.ProjectLive do
 
   alias Photon.{Markdown, Projects, Schedules, Skills, Threads}
   alias Photon.Projects.Project
-  alias PhotonWeb.{ProjectText, ScheduleText, ThreadText}
+  alias PhotonWeb.{FormParams, ProjectText, ScheduleText, ThreadText}
 
   @tick_ms :timer.minutes(1)
 
@@ -273,8 +273,7 @@ defmodule PhotonWeb.ProjectLive do
   end
 
   # The edit form over `params`, with the context's `%{field => message}` errors.
-  defp project_form(params, errors \\ %{}),
-    do: to_form(params, as: :project, errors: Enum.map(errors, fn {k, v} -> {k, {v, []}} end))
+  defp project_form(params, errors \\ %{}), do: FormParams.form(params, :project, errors)
 
   ## What changed elsewhere
 
