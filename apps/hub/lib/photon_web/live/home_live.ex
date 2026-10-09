@@ -51,7 +51,7 @@ defmodule PhotonWeb.HomeLive do
 
   use PhotonWeb, :live_view
 
-  import PhotonWeb.ConversationComponents, only: [answer_box: 1]
+  import PhotonWeb.ConversationComponents, only: [answer_form: 1]
   import PhotonWeb.ScheduleComponents
 
   alias Photon.{Ambient, Assistant, Questions, Schedules, Threads}
@@ -712,35 +712,7 @@ defmodule PhotonWeb.HomeLive do
           <p :if={@hub?} id={"#{@id}-note"} class="mt-1 text-[12.5px] text-ink-faint">
             In the thread's own words. Your answer goes straight to it.
           </p>
-          <.form
-            for={@row.form}
-            id={"#{@id}-form"}
-            phx-change="draft"
-            phx-submit="answer"
-            class="mt-3"
-          >
-            <input type="hidden" name="question_id" value={@row.id} />
-            <.answer_box field={@row.form[:text]} id={"#{@id}-answer"} />
-            <div class="mt-2 flex items-center gap-3">
-              <p
-                :if={@row.error}
-                id={"#{@id}-error"}
-                class="flex items-center gap-1.5 text-[12.5px] text-bad"
-              >
-                <.icon name="hero-exclamation-circle-micro" class="size-4 shrink-0" />
-                {@row.error}
-              </p>
-              <.button
-                id={"#{@id}-send"}
-                type="submit"
-                size="sm"
-                variant="primary"
-                class="ml-auto"
-              >
-                Send <.icon name="hero-paper-airplane-micro" class="size-4" />
-              </.button>
-            </div>
-          </.form>
+          <.answer_form id={@id} form={@row.form} question_id={@row.id} error={@row.error} />
         </div>
       </div>
     </div>

@@ -11,6 +11,7 @@ defmodule Photon.Assistant.Tools.CancelSchedule do
   @behaviour Photon.Durable.Tool
 
   alias Photon.{Assistant, Projects, Schedules}
+  alias Photon.Durable.ToolSchema
 
   @impl true
   def name, do: "cancel_schedule"
@@ -20,13 +21,7 @@ defmodule Photon.Assistant.Tools.CancelSchedule do
     do: "Cancel a scheduled prompt by its ID, yours or a project's (list_schedules shows them)."
 
   @impl true
-  def parameters do
-    %{
-      "type" => "object",
-      "properties" => %{"schedule_id" => %{"type" => "string"}},
-      "required" => ["schedule_id"]
-    }
-  end
+  def parameters, do: ToolSchema.object([schedule_id: :string], [:schedule_id])
 
   @impl true
   def replay, do: :safe

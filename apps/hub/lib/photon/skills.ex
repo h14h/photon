@@ -66,6 +66,7 @@ defmodule Photon.Skills do
 
   use Boundary,
     deps: [
+      Photon.Text,
       Photon.Durable,
       Photon.Events,
       Photon.Machines,

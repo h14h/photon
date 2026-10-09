@@ -11,6 +11,8 @@ defmodule Photon.Assistant.Tools.StopThread do
   @behaviour Photon.Durable.Tool
 
   alias Photon.{Assistant, Threads}
+  alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
 
   @impl true
   def name, do: "stop_thread"
@@ -21,16 +23,13 @@ defmodule Photon.Assistant.Tools.StopThread do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "thread" => %{
-          "type" => "string",
-          "description" => "The thread's ID, like c_123 (list_threads shows them)."
-        }
-      },
-      "required" => ["thread"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          thread: Readout.field(:thread)
+        ],
+        [:thread]
+      )
 
   @impl true
   def replay, do: :safe

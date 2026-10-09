@@ -11,6 +11,7 @@ defmodule Photon.Threads.Tools.EditContextFile do
   """
   @behaviour Photon.Durable.Tool
 
+  alias Photon.Durable.ToolSchema
   alias Photon.{Projects, Threads}
   alias Photon.Threads.Rules
 
@@ -25,23 +26,16 @@ defmodule Photon.Threads.Tools.EditContextFile do
         "pick out one place."
 
   @impl true
-  def parameters do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "name" => %{"type" => "string", "description" => "The file's name, like notes.md."},
-        "old_text" => %{
-          "type" => "string",
-          "description" => "The passage to replace, exactly as it is in the file."
-        },
-        "new_text" => %{
-          "type" => "string",
-          "description" => "What replaces it; empty to delete the passage."
-        }
-      },
-      "required" => ["name", "old_text", "new_text"]
-    }
-  end
+  def parameters,
+    do:
+      ToolSchema.object(
+        [
+          name: Projects.Rules.file_field(:name),
+          old_text: Projects.Rules.file_field(:old_text),
+          new_text: Projects.Rules.file_field(:new_text)
+        ],
+        [:name, :old_text, :new_text]
+      )
 
   @impl true
   def replay, do: :safe

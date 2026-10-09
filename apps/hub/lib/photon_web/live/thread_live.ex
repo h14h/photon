@@ -667,19 +667,7 @@ defmodule PhotonWeb.ThreadLive do
           </p>
         </div>
       </div>
-      <.form for={@form} id={"#{@id}-form"} phx-change="draft" phx-submit="answer" class="mt-3">
-        <input type="hidden" name="question_id" value={@question.id} />
-        <.answer_box field={@form[:text]} id={"#{@id}-answer"} />
-        <div class="mt-2 flex items-center gap-3">
-          <p :if={@error} id={"#{@id}-error"} class="flex items-center gap-1.5 text-[12.5px] text-bad">
-            <.icon name="hero-exclamation-circle-micro" class="size-4 shrink-0" />
-            {@error}
-          </p>
-          <.button id={"#{@id}-send"} type="submit" size="sm" variant="primary" class="ml-auto">
-            Send <.icon name="hero-paper-airplane-micro" class="size-4" />
-          </.button>
-        </div>
-      </.form>
+      <.answer_form id={@id} form={@form} question_id={@question.id} error={@error} />
     </div>
     """
   end

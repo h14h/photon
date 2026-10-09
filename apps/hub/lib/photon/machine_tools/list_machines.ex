@@ -18,6 +18,7 @@ defmodule Photon.MachineTools.ListMachines do
   """
   @behaviour Photon.Durable.Tool
 
+  alias Photon.Durable.ToolSchema
   alias Photon.{Machines, Skills}
 
   @impl true
@@ -30,7 +31,7 @@ defmodule Photon.MachineTools.ListMachines do
         "whether each is online, and what it is."
 
   @impl true
-  def parameters, do: %{"type" => "object", "properties" => %{}}
+  def parameters, do: ToolSchema.object([])
 
   @impl true
   def replay, do: :safe

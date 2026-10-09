@@ -7,6 +7,7 @@ defmodule Photon.Threads.Tools.ListContextFiles do
   """
   @behaviour Photon.Durable.Tool
 
+  alias Photon.Durable.ToolSchema
   alias Photon.Threads
 
   @impl true
@@ -19,7 +20,7 @@ defmodule Photon.Threads.Tools.ListContextFiles do
         "project's other threads), newest change first, with their size and who changed them last."
 
   @impl true
-  def parameters, do: %{"type" => "object", "properties" => %{}}
+  def parameters, do: ToolSchema.object([])
 
   @impl true
   def replay, do: :safe

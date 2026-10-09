@@ -16,6 +16,7 @@ defmodule Photon.Assistant.Tools.SetProjectSkill do
 
   alias Photon.{Assistant, Skills}
   alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
   alias Photon.Skills.Skill
 
   @impl true
@@ -31,22 +32,15 @@ defmodule Photon.Assistant.Tools.SetProjectSkill do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "project" => %{
-          "type" => "string",
-          "description" =>
-            "The project's slug, like garden (list_projects shows them), or its ID."
-        },
-        "skill" => %{"type" => "string", "description" => "The skill's name, like pdf-forms."},
-        "on" => %{
-          "type" => "boolean",
-          "description" => "true to turn it on, false to turn it off."
-        }
-      },
-      "required" => ["project", "skill", "on"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          project: Readout.field(:project),
+          skill: {:string, "The skill's name, like pdf-forms."},
+          on: {:boolean, "true to turn it on, false to turn it off."}
+        ],
+        [:project, :skill, :on]
+      )
 
   @impl true
   def replay, do: :safe

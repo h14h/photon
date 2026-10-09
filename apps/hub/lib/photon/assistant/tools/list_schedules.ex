@@ -12,6 +12,7 @@ defmodule Photon.Assistant.Tools.ListSchedules do
 
   alias Photon.{Assistant, Threads}
   alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
 
   @impl true
   def name, do: "list_schedules"
@@ -23,16 +24,12 @@ defmodule Photon.Assistant.Tools.ListSchedules do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "project" => %{
-          "type" => "string",
-          "description" =>
-            "To list a project's schedules, its slug (list_projects shows them). Leave it out for your own."
-        }
-      }
-    }
+    do:
+      ToolSchema.object(
+        project:
+          {:string,
+           "To list a project's schedules, its slug (list_projects shows them). Leave it out for your own."}
+      )
 
   @impl true
   def replay, do: :safe

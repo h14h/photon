@@ -8,9 +8,8 @@ defmodule PhotonWeb.Shell do
 
   The sidebar's data is `Photon.Threads.sidebar/1`: each project (by name)
   with its five most recently active threads, any other of its threads
-  that is running, and how many more it has. `@shell.running` is the
-  `MapSet` of the listed threads that are running. It is a plain assign,
-  not a stream: it is bounded (five threads a project plus the running
+  that is running, and how many more it has. It is a plain assign, not a
+  stream: it is bounded (five threads a project plus the running
   ones), and `@shell` is rendered by `Layouts.app`, outside each page's
   own template.
 
@@ -118,16 +117,5 @@ defmodule PhotonWeb.Shell do
   # The sidebar and the count of threads that need the owner.
   defp board, do: Map.put(sidebar(), :needs_you, Threads.needs_you_count())
 
-  defp sidebar do
-    projects = Threads.sidebar(@threads_per_project)
-
-    running =
-      for %{threads: threads} <- projects,
-          thread <- threads,
-          thread.running?,
-          into: MapSet.new(),
-          do: thread.id
-
-    %{projects: projects, running: running}
-  end
+  defp sidebar, do: %{projects: Threads.sidebar(@threads_per_project)}
 end

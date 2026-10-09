@@ -12,6 +12,7 @@ defmodule Photon.Assistant.Tools.StartProject do
   @behaviour Photon.Durable.Tool
 
   alias Photon.{Assistant, Projects}
+  alias Photon.Durable.ToolSchema
 
   @impl true
   def name, do: "start_project"
@@ -24,20 +25,14 @@ defmodule Photon.Assistant.Tools.StartProject do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "purpose" => %{
-          "type" => "string",
-          "description" => "What the project is for, in a sentence or two."
-        },
-        "name" => %{
-          "type" => "string",
-          "description" => "A short name. Leave it out to make one from the purpose."
-        }
-      },
-      "required" => ["purpose"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          purpose: {:string, "What the project is for, in a sentence or two."},
+          name: {:string, "A short name. Leave it out to make one from the purpose."}
+        ],
+        [:purpose]
+      )
 
   @impl true
   def replay, do: :safe

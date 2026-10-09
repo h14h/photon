@@ -18,7 +18,9 @@ defmodule Photon.Assistant.Page do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: []
+  use Boundary, type: :strict, deps: [Photon.Text]
+
+  alias Photon.Text
 
   @typedoc """
   A page, as stored with the message it came with: `"kind"` (`"project"`,
@@ -177,7 +179,7 @@ defmodule Photon.Assistant.Page do
 
     cut_note =
       if length > @content_limit,
-        do: ["(cut; the file has #{count(length)} characters)"],
+        do: ["(cut; the file has #{Text.count(length)} characters)"],
         else: []
 
     [
@@ -217,14 +219,5 @@ defmodule Photon.Assistant.Page do
 
   defp cut(text, limit) do
     if String.length(text) > limit, do: String.slice(text, 0, limit) <> "...", else: text
-  end
-
-  # 12345 as "12,345".
-  defp count(number) do
-    number
-    |> Integer.to_string()
-    |> String.reverse()
-    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
-    |> String.reverse()
   end
 end

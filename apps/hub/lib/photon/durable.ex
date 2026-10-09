@@ -85,6 +85,7 @@ defmodule Photon.Durable do
       TaskRecord,
       Tool,
       ToolAPI,
+      ToolSchema,
       Tx
     ]
 
