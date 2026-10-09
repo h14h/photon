@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/blip.svg" width="140" height="140" alt="Blip, Photon's assistant: an amber dot with two eyes, thinking, working and finishing a task">
+</p>
+
 # Photon
 
 A personal assistant that lives on an always-on hub and gets real work done on

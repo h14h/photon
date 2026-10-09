@@ -1,0 +1,197 @@
+<svg viewBox="0 0 100 100" width="160" height="160" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Blip, Photon's assistant: an amber dot with two eyes, thinking, working and finishing a task">
+<!-- Blip, from the Blip brand kit (blip repo, brand/, commit 617c74b): its
+     avatar, colours and state CSS, with the states keyed off a class that
+     the <animate> below cycles, since a README image runs no script. -->
+<style>
+svg {
+  --blip-amber: oklch(70% 0.165 58);
+  --blip-amber-deep: oklch(58% 0.17 45);
+  --blip-eye: oklch(25% 0.03 50);
+  --blip-sclera: oklch(99% 0.006 90);
+  --blip-halo: oklch(70% 0.165 58 / 0.35);
+  --blip-mood-error: oklch(60% 0.19 28);
+  --blip-mood-rest: oklch(70% 0.165 58);
+  --blip-mood-done: oklch(63% 0.14 155);
+  --blip-mood-think: oklch(66% 0.13 300);
+  --blip-mood-blush: oklch(74% 0.14 350);
+  --blip-mood-error-soft: oklch(60% 0.19 28 / 0.3);
+  --blip-mood-done-soft: oklch(63% 0.14 155 / 0.3);
+  --blip-mood-think-soft: oklch(66% 0.13 300 / 0.3);
+  --blip-mood-blush-soft: oklch(74% 0.14 350 / 0.5);
+}
+@media (prefers-color-scheme: dark) {
+  svg {
+    --blip-amber: oklch(77% 0.15 65);
+    --blip-amber-deep: oklch(68% 0.16 52);
+    --blip-eye: oklch(16% 0.03 50);
+    --blip-sclera: oklch(96% 0.01 90);
+    --blip-halo: oklch(77% 0.15 65 / 0.3);
+    --blip-mood-error: oklch(70% 0.17 25);
+    --blip-mood-rest: oklch(77% 0.15 65);
+    --blip-mood-done: oklch(72% 0.14 155);
+    --blip-mood-think: oklch(76% 0.12 300);
+    --blip-mood-blush: oklch(78% 0.13 350);
+  }
+}
+.blip {
+  --blip-ring: transparent;
+  display: inline-block;
+  overflow: visible;
+  color: var(--blip-eye, oklch(25% 0.03 50));
+}
+.blip * { transform-box: fill-box; transform-origin: center; }
+.blip-wave    { opacity: 0; transition: opacity .3s; }
+.blip-ring    { opacity: 0; stroke: var(--blip-ring); }
+.blip-mote    { opacity: 0; fill: var(--blip-mood-think, oklch(66% 0.13 300)); }
+.blip-cheeks  { opacity: 0; fill: var(--blip-mood-blush, oklch(74% 0.14 350)); transition: opacity .25s; }
+.blip-happy   { stroke: currentColor; }
+.blip-happy path { opacity: 0; transition: opacity .15s; }
+.blip-sclera  { fill: var(--blip-sclera, oklch(99% 0.006 90)); }
+.blip-pupil   { fill: currentColor; }
+.blip-eyes    { transition: opacity .15s, transform .3s; }
+.blip-pupil-g { transition: transform .25s cubic-bezier(.2,.7,.2,1); }
+.blip-lid     { transform: translateY(0); transition: transform .25s; }
+.blip-lower   { transform: translateY(0); transition: transform .25s; }
+.blip stop    { transition: stop-color .4s; }
+.blip-halo    { animation: blip-breathe 3.2s ease-in-out infinite; }
+.blip-self    { transition: transform .35s cubic-bezier(.2,.7,.2,1), filter .35s, opacity .3s; }
+.blip-body-g  { animation: blip-idle 3.2s ease-in-out infinite; }
+.blip-eye-l .blip-lid { animation: blip-blink 5.5s infinite; }
+.blip-eye-r .blip-lid { animation: blip-blink 5.5s infinite; animation-delay: .03s; }
+.blip.is-poked .blip-self { animation: blip-jelly .7s cubic-bezier(.2,.7,.2,1) 1; }
+.blip.s-thinking .blip-stop-a, .blip.s-thinking .blip-stop-halo { stop-color: var(--blip-mood-think, oklch(66% 0.13 300)); }
+.blip.s-thinking .blip-stop-b { stop-color: color-mix(in oklch, var(--blip-mood-think, oklch(66% 0.13 300)) 75%, var(--blip-amber-deep)); }
+.blip.s-thinking .blip-self { filter: blur(1.6px); transform: rotate(-6deg) translateY(-3px) scale(.9, 1.1); animation: blip-bob 1.8s ease-in-out infinite; }
+.blip.s-thinking .blip-pupil-g { transform: translate(1.2px, -2.4px); }
+.blip.s-thinking .blip-lid { transform: translateY(2.2px); animation: none; }
+.blip.s-thinking .blip-lower { transform: translateY(-1px); }
+.blip.s-thinking .blip-mote { opacity: 1; animation: blip-orbit 2.2s linear infinite; }
+.blip.s-working .blip-body-g { animation: none; }
+.blip.s-working .blip-self { transform: scale(1.35, .55); }
+.blip.s-working .blip-core, .blip.s-working .blip-cheeks { opacity: 0; transition: opacity .3s; }
+.blip.s-working .blip-halo { opacity: .6; transform: scale(1.3, .7); }
+.blip.s-working .blip-wave { opacity: 1; animation: blip-travel 1.4s linear infinite; }
+.blip.s-working .blip-eyes { transform: scale(.62, 1.5); animation: blip-ride 1.4s ease-in-out infinite; }
+.blip.s-working .blip-pupil-g { transform: translate(1.2px, 0); }
+.blip.s-working .blip-lid { transform: translateY(1.2px); animation: none; }
+.blip.s-working .blip-lower { transform: translateY(-2.2px); }
+.blip.s-working .blip-lid { animation: none; }
+.blip.s-done { --blip-ring: var(--blip-mood-done, oklch(63% 0.14 155)); }
+.blip.s-done .blip-stop-a, .blip.s-done .blip-stop-halo { stop-color: var(--blip-mood-done, oklch(63% 0.14 155)); }
+.blip.s-done .blip-stop-b { stop-color: color-mix(in oklch, var(--blip-mood-done, oklch(63% 0.14 155)) 70%, var(--blip-amber-deep)); }
+.blip.s-done .blip-eyes { opacity: 0; }
+.blip.s-done .blip-happy path { opacity: 1; }
+.blip.s-done .blip-ring { animation: blip-pulse 1.2s ease-out 1 both; }
+.blip.s-done .blip-self { transform: translateY(4px) scale(1.14, .86); animation: blip-hop .7s cubic-bezier(.3,.8,.3,1) 1; }
+.blip.s-error .blip-stop-a, .blip.s-error .blip-stop-halo { stop-color: var(--blip-mood-error, oklch(60% 0.19 28)); }
+.blip.s-error .blip-stop-b { stop-color: color-mix(in oklch, var(--blip-mood-error, oklch(60% 0.19 28)) 70%, var(--blip-amber-deep)); }
+.blip.s-error .blip-self { transform: translateY(3px) scale(1.06, .9); animation: blip-shiver .9s ease-in-out 1; }
+.blip.s-error .blip-pupil-g { transform: translate(0, 1.6px) scale(.9); }
+.blip.s-error .blip-lid-l { transform: translateY(4.6px) skewY(-18deg); animation: none; }
+.blip.s-error .blip-lid-r { transform: translateY(4.6px) skewY(18deg); animation: none; }
+.blip.s-error .blip-lower { transform: translateY(0); }
+.blip.s-observed .blip-cheeks { opacity: .8; }
+.blip.s-observed .blip-pupil-g { transform: translate(1.8px, .8px); }
+.blip.s-observed .blip-lid { transform: translateY(.6px); animation: none; }
+.blip.s-observed .blip-lower { transform: translateY(-2.8px); }
+.blip.s-observed .blip-self { transform: rotate(3deg) translateY(2px) scale(.92); }
+.blip.s-observed .blip-body-g { animation: blip-fidget 1.6s ease-in-out infinite; }
+.blip.s-observed .blip-halo { animation: none; opacity: .9; }
+.blip.s-observed .blip-stop-halo { stop-color: var(--blip-mood-blush, oklch(74% 0.14 350)); }
+@keyframes blip-breathe { 0%,100% { opacity: .55; transform: scale(.9) } 50% { opacity: 1; transform: scale(1) } }
+@keyframes blip-idle { 0%,100% { transform: scale(1, 1) } 35% { transform: scale(1.03, .97) } 70% { transform: scale(.98, 1.03) } }
+@keyframes blip-blink { 0%, 93%, 100% { transform: translateY(0) } 95.5%, 97% { transform: translateY(13px) } }
+@keyframes blip-bob { 0%,100% { transform: rotate(-6deg) translateY(-3px) scale(.9, 1.1) } 50% { transform: rotate(-6deg) translateY(-6px) scale(.9, 1.1) } }
+@keyframes blip-fidget { 0%,100% { transform: rotate(0deg) scale(1,1) } 30% { transform: rotate(-2.5deg) scale(1.02,.98) } 70% { transform: rotate(2deg) scale(.98,1.02) } }
+@keyframes blip-orbit {
+  from { transform: rotate(0deg) translate(32px) rotate(0deg) }
+  to   { transform: rotate(360deg) translate(32px) rotate(-360deg) }
+}
+@keyframes blip-travel { from { transform: translateX(0) } to { transform: translateX(-60px) } }
+@keyframes blip-ride { 0%,100% { transform: scale(.62, 1.5) translateY(0) } 25% { transform: scale(.62, 1.5) translateY(-11px) } 75% { transform: scale(.62, 1.5) translateY(11px) } }
+@keyframes blip-pulse { from { opacity: .9; transform: scale(.75) } to { opacity: 0; transform: scale(1.5) } }
+@keyframes blip-hop {
+  0%   { transform: translateY(0) scale(1, 1) }
+  20%  { transform: translateY(2px) scale(1.12, .86) }
+  50%  { transform: translateY(-12px) scale(.92, 1.1) }
+  75%  { transform: translateY(5px) scale(1.2, .8) }
+  100% { transform: translateY(4px) scale(1.14, .86) }
+}
+@keyframes blip-jelly {
+  0%   { transform: scale(1, 1) }
+  20%  { transform: scale(1.18, .84) }
+  40%  { transform: scale(.88, 1.12) }
+  60%  { transform: scale(1.07, .94) }
+  80%  { transform: scale(.97, 1.03) }
+  100% { transform: scale(1, 1) }
+}
+@keyframes blip-shiver { 0%,100% { transform: translateY(3px) scale(1.06,.9) } 25% { transform: translate(-2px,3px) scale(1.06,.9) } 50% { transform: translate(2px,3px) scale(1.06,.9) } 75% { transform: translate(-1px,3px) scale(1.06,.9) } }
+@media (prefers-reduced-motion: reduce) {
+  .blip *, .blip { animation: none !important; transition: none !important; }
+  .blip.s-working .blip-wave { opacity: 1; }
+  .blip.s-working .blip-eyes { transform: scale(.62, 1.5); }
+  .blip.s-done .blip-ring { opacity: .6; }
+  .blip.s-thinking .blip-mote { opacity: 1; transform: translate(32px, -10px); }
+  .blip.s-thinking .blip-self { filter: blur(1.2px); }
+}
+</style>
+<g class="blip s-idle">
+  <animate attributeName="class" calcMode="discrete" dur="14s" repeatCount="indefinite"
+           values="blip s-idle;blip s-thinking;blip s-working;blip s-done;blip s-idle"
+           keyTimes="0;0.3;0.55;0.77;0.93"/>
+  <defs>
+    <linearGradient id="blip-body" gradientUnits="userSpaceOnUse" x1="26" y1="50" x2="74" y2="50">
+      <stop class="blip-stop-a" offset="0" stop-color="var(--blip-amber, oklch(70% 0.165 58))"/>
+      <stop class="blip-stop-b" offset="1" stop-color="var(--blip-amber-deep, oklch(58% 0.17 45))"/>
+    </linearGradient>
+    <radialGradient id="blip-halo-g">
+      <stop class="blip-stop-halo" offset="0.45" stop-color="var(--blip-amber, oklch(70% 0.165 58))" stop-opacity="0.38"/>
+      <stop class="blip-stop-halo" offset="1" stop-color="var(--blip-amber, oklch(70% 0.165 58))" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="blip-clip-l"><circle cx="42" cy="49.5" r="6.6"/></clipPath>
+    <clipPath id="blip-clip-r"><circle cx="58" cy="49.5" r="6.6"/></clipPath>
+    <linearGradient id="blip-fade-g" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+      <stop offset=".25" stop-color="#fff"/>
+      <stop offset=".75" stop-color="#fff"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <mask id="blip-fade" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+      <rect width="100" height="100" fill="url(#blip-fade-g)"/>
+    </mask>
+  </defs>
+  <g mask="url(#blip-fade)"><path class="blip-wave" d="M-70 50 C -60 30, -50 30, -40 50 S -20 70, -10 50 S 10 30, 20 50 S 40 70, 50 50 S 70 30, 80 50 S 100 70, 110 50 S 130 30, 140 50 S 160 70, 170 50" fill="none" stroke="url(#blip-body)" stroke-width="9" stroke-linecap="round"/></g>
+  <circle class="blip-ring" cx="50" cy="50" r="30" fill="none" stroke-width="2"/>
+  <circle class="blip-halo" cx="50" cy="50" r="46" fill="url(#blip-halo-g)"/>
+  <g class="blip-self">
+    <g class="blip-body-g">
+      <circle class="blip-core" cx="50" cy="50" r="22" fill="url(#blip-body)"/>
+      <g class="blip-cheeks">
+        <ellipse cx="35.5" cy="59" rx="4" ry="2.6"/><ellipse cx="64.5" cy="59" rx="4" ry="2.6"/>
+      </g>
+    </g>
+    <g class="blip-eyes">
+      <g class="blip-eye blip-eye-l">
+        <circle class="blip-sclera" cx="42" cy="49.5" r="6"/>
+        <g class="blip-pupil-g"><circle class="blip-pupil" cx="42.4" cy="50.3" r="3.8"/></g>
+        <g clip-path="url(#blip-clip-l)">
+          <circle class="blip-lid blip-lid-l" cx="42" cy="35.3" r="8" fill="url(#blip-body)"/>
+          <circle class="blip-lower blip-lower-l" cx="42" cy="64.7" r="9" fill="url(#blip-body)"/>
+        </g>
+      </g>
+      <g class="blip-eye blip-eye-r">
+        <circle class="blip-sclera" cx="58" cy="49.5" r="6"/>
+        <g class="blip-pupil-g"><circle class="blip-pupil" cx="58.4" cy="50.3" r="3.8"/></g>
+        <g clip-path="url(#blip-clip-r)">
+          <circle class="blip-lid blip-lid-r" cx="58" cy="35.3" r="8" fill="url(#blip-body)"/>
+          <circle class="blip-lower blip-lower-r" cx="58" cy="64.7" r="9" fill="url(#blip-body)"/>
+        </g>
+      </g>
+    </g>
+    <g class="blip-happy" fill="none" stroke-width="3" stroke-linecap="round">
+      <path class="blip-happy-l" d="M36.5 51 q5.5 -6.5 11 0"/><path class="blip-happy-r" d="M52.5 51 q5.5 -6.5 11 0"/>
+    </g>
+  </g>
+  <circle class="blip-mote" cx="50" cy="50" r="2.6"/>
+</g>
+</svg>
