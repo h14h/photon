@@ -112,7 +112,8 @@ Markdown. (`Photon.Skills.SkillMd`)
 (Settings' time zone is free text for Blip's prompt). The browser converts
 times for display and input, so "every day from 09:00" moves an hour when
 the clocks change. The daily review works the same way at the browser's
-UTC offset, re-armed on each Settings save. (`Photon.Schedules.Rules`,
+UTC offset, re-armed when a Settings save brings a new offset.
+(`Photon.Schedules.Rules`,
 `PhotonWeb.TimeComponents`, `Photon.Ambient.Rules.next_review/2`)
 
 **Every edit replaces the timer task**, even one that only changes the
@@ -278,9 +279,9 @@ setting is on, even signed out, so it can always be turned off.
 
 ## Machines and commands
 
-**Blip and threads run commands themselves, on any machine.** `shell`,
-`view_image` and `list_machines` take a `machine` argument; nodes run no
-model. The hub's own computer is `local`, reached through the node inside
+**Blip and threads run commands themselves, on any machine.** `shell` and
+`view_image` take a `machine` argument, and `list_machines` lists them;
+nodes run no model. The hub's own computer is `local`, reached through the node inside
 the hub's VM. (`Photon.MachineTools`)
 
 **A machine call is synchronous.** unreal-agent's async tool calls
@@ -301,9 +302,10 @@ so batching needs the spec updated first. (`Photon.Durable.Scheduler`)
 ## Prompts and compatibility
 
 **Nothing that changes often goes in a system prompt**, so provider prompt
-caches stay warm. Neither prompt lists machines or who is online (agents
-call `list_machines`), and machines are listed in `known/0` order, which
-ignores who is connected. (`Photon.Machines.Roster.ids/3`)
+caches stay warm. Neither prompt lists every machine or who is online
+(agents call `list_machines`); the Skills section names only machines
+with skills turned on, in `known/0` order, which ignores who is
+connected. (`Photon.Machines.Roster.ids/3`)
 
 **A feature that's off or unused leaves the prompt byte for byte.** With no
 machine skills, the Skills section is the earlier text exactly; with
