@@ -15,8 +15,9 @@ defmodule Photon.Skills do
   machine: Blip and every thread in every project, beside their own set
   (`offered/1`). They are tied to the machine's name, and only machines
   the hub knows count (`Photon.Machines.known/0`: connected or offline,
-  not removed). A removed machine's rows stay, but every read and load
-  leaves them out, and turning a skill on for it is refused. Reinstalled
+  not removed). A removed machine's rows stay, but `list/0`, `scopes/1`,
+  `machine_skills/0` and `load_tx/3` leave them out, and turning a skill
+  on for it is refused. Reinstalled
   under the same name, the machine has its skills back.
 
   Each scope holds at most 30, since an agent's prompt lists every enabled

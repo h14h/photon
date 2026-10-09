@@ -32,10 +32,11 @@ defmodule Photon.Threads.State do
   @type t :: :waiting | :asking | :running | :failed | :unread | :quiet | :idle
 
   @typedoc """
-  What a state is worked out from: `question` is `:with_owner` when any
-  open `ask_blip` question is with the owner, else `:with_blip` when one
-  is asked, else nil; `active_at` is the thread's last message; the rest
-  are as stored on the thread.
+  What a state is worked out from: `busy?` means a run is in progress (from
+  the durable harness); `question` is `:with_owner` when any open
+  `ask_blip` question is with the owner, else `:with_blip` when one is
+  asked, else nil; `active_at` is the thread's last message; the rest are
+  as stored on the thread.
   """
   @type facts :: %{
           required(:busy?) => boolean(),
