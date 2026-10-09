@@ -128,19 +128,20 @@ in `specs/tla/HubOps.md`. The rest were found by property tests:
 ExUnit, in each app, with Elixir 1.20.4 on OTP 28:
 
 ```sh
-cd apps/core && mix test
-cd apps/node && mix test
-cd apps/hub && mix test
+(cd apps/core && mix test)
+(cd apps/node && mix test)
+(cd apps/hub && mix test)
 ```
 
 `mix test test/property` runs only the properties.
 `PHOTON_PROPERTY_RUNS=250` raises the run count of the hub's durable-model
 and machine-ops properties.
 
-TLC (TLA+ tools 2.19), from `specs/tla`:
+TLC (TLA+ tools 2.19, installed at `~/.local/share/tla/tla2tools.jar`), from
+`specs/tla`:
 
 ```sh
-java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC \
+java -XX:+UseParallelGC -cp ~/.local/share/tla/tla2tools.jar tlc2.TLC \
   -workers auto -deadlock -metadir /tmp/tlc/<Cfg> -config <Cfg>.cfg <Spec>.tla
 ```
 

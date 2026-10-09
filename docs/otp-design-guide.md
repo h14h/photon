@@ -46,7 +46,7 @@ The **Enforced by** column says what catches a break:
 | 15 | Model change as new facts and derive current state from them. (pp. 42-44) | review |
 | 16 | Don't wrap data in a process to make it mutable. (p. 43) | credo `SupervisedProcesses` (no `Agent`); review |
 | 17 | A known, fixed set of fields is a struct in its own module, with `@type t`. (pp. 44-49) | credo `StructType` |
-| 18 | Fields that must be given are listed in `@enforce_keys`. (pp. 26, 57) | credo `EnforceKeys` |
+| 18 | Fields that must be given are listed in `@enforce_keys`. (pp. 26, 57) | credo `EnforceKeys` (which today also accepts a `new` that calls `struct!/2`, though that enforces only declared keys) |
 | 19 | Atoms only for a small, known set of names; strings for user and generated data. (pp. 23, 28) | credo `UnsafeToAtom` |
 | 20 | Integers for exact quantities; references or generated IDs for identity. (p. 23) | review |
 | 21 | Read lists from the head and build them by prepending; no index access in loops. (pp. 23-25) | credo `AppendSingleItem`, `IndexAccessInLoop` |

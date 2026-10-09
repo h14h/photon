@@ -40,8 +40,8 @@ defmodule Photon.Assistant.Origin do
   starts nothing, so it can't cause the work that would make the next
   digest.
 
-  These run on the harness's hook paths too (the activity log, C12), so
-  they are total: any term in, a value out.
+  These run on the harness's hook paths too (the activity log), so they
+  are total: any term in, a value out.
   """
 
   # Functional core: no processes, no I/O.

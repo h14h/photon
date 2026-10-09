@@ -11,7 +11,9 @@ result. Contracts live in code: `PhotonCore.Operation.Wire`,
 ## Guarantees
 
 - A command runs at most once, however often `op.start` arrives and
-  whoever restarts.
+  whoever restarts, as long as the node keeps its journal. A node that
+  loses its data directory never reruns an op the hub had confirmed; one
+  whose snapshots never reached the hub may run again (node rules 1 and 3).
 - A lost message costs a delay, never the op. After every join the node
   resends every journaled snapshot, and the hub resends `op.start` or
   `op.cancel` for every open row.
