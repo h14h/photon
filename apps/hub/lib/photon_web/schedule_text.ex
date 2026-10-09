@@ -36,10 +36,11 @@ defmodule PhotonWeb.ScheduleText do
   end
 
   @doc ~S"""
-  What a firing did, from the row's `last_outcome` (section 3.5 of the
-  step 3 plan): "started", "sent", "queued behind a run", a "skipped: ..."
-  reason, or "stopped after an error". An outcome this version doesn't
-  know reads as "ran".
+  What a firing did, from the row's `last_outcome`
+  (`Photon.Schedules.Rules.fire/2`): "started", "sent",
+  "queued behind a run", a "skipped: ..." reason, or
+  "stopped after an error". An outcome this version doesn't know reads as
+  "ran".
   """
   @spec outcome(Schedule.outcome()) :: String.t()
   def outcome("started"), do: "started"

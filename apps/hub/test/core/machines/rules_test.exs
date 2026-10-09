@@ -1,5 +1,5 @@
 defmodule Photon.Machines.RulesTest do
-  @moduledoc "The hub's rules for operation rows (section 2.3 of the step 1 plan)."
+  @moduledoc "The hub's rules for operation rows."
 
   use Photon.Case, async: true
 

@@ -1,8 +1,8 @@
 defmodule Photon.Threads.PromptTest do
   @moduledoc """
-  A thread's system prompt (section 3.2). That nothing about the user gets
-  in is checked on the profile in `test/boundary/threads_test.exs`, since
-  this function never sees Settings.
+  A thread's system prompt. That nothing about the user gets in is checked
+  on the profile in `test/boundary/threads_test.exs`, since this function
+  never sees Settings.
   """
 
   use Photon.Case, async: true

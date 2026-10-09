@@ -1,9 +1,8 @@
 defmodule Photon.Machines.Rules do
   @moduledoc """
-  The hub's rules for operation rows (section 2.3 of
-  `docs/plans/step-1-machine-tools.md`), as pure functions.
-  `Photon.Machines` reads a row inside a Store commit, calls one of these,
-  and applies what it returns in the same commit.
+  The hub's rules for operation rows (`docs/operations.md#hub-rules`), as
+  pure functions. `Photon.Machines` reads a row inside a Store commit, calls
+  one of these, and applies what it returns in the same commit.
 
   A write is what to do to the row:
 

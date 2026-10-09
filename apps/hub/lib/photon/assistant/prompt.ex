@@ -1,9 +1,9 @@
 defmodule Photon.Assistant.Prompt do
   @moduledoc """
-  The assistant's system prompt, as a pure function of the
-  hub settings, the memory text, the time and the skills Blip is offered:
-  those turned on for Blip, and those turned on for each machine (section
-  3 of `docs/plans/machine-skills.md`). `Photon.Assistant` reads those and calls these.
+  The assistant's system prompt, as a pure function of the hub settings, the
+  memory text, the time and the skills Blip is offered: those turned on for
+  Blip, and those turned on for each machine. `Photon.Assistant` reads those
+  and calls these.
 
   The prompt opens with Blip's voice (who it is and how it talks), then how
   the hub works (including the note of the page the user has open that a
@@ -92,9 +92,8 @@ defmodule Photon.Assistant.Prompt do
   end
 
   # The Ambient mode section and the blank line after it, or nothing while
-  # ambient mode is off: how Blip reads a digest and a daily review, what
-  # it may do in their runs, and when to answer [nothing to tell] (section
-  # 5.5 of docs/plans/step-5-ambient-mode.md).
+  # ambient mode is off: how Blip reads a digest and a daily review, what it
+  # may do in their runs, and when to answer [nothing to tell].
   defp ambient_section(false), do: ""
 
   defp ambient_section(true) do

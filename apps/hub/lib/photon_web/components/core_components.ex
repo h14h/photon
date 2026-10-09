@@ -349,12 +349,11 @@ defmodule PhotonWeb.CoreComponents do
   end
 
   @doc """
-  A thread's state as a small mark (section 10.2 of
-  `docs/plans/step-4-blip-as-coordinator.md`): the breathing dot while it
-  runs, a speech bubble while it waits on Blip (so it doesn't look like
-  work), an amber dot with a halo when it waits on the owner, a red dot
-  when it failed, a still accent dot when it finished unread, and nothing
-  when it is quiet or idle. Its tooltip and label are the state's words
+  A thread's state as a small mark: the breathing dot while it runs, a
+  speech bubble while it waits on Blip (so it doesn't look like work), an
+  amber dot with a halo when it waits on the owner, a red dot when it
+  failed, a still accent dot when it finished unread, and nothing when it is
+  quiet or idle. Its tooltip and label are the state's words
   (`PhotonWeb.ThreadText.state/1`).
   """
   attr :state, :atom, required: true, doc: "a `Photon.Threads.State.t()`"

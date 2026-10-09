@@ -1,10 +1,9 @@
 defmodule Photon.AssistantCoordinatorToolsTest do
   @moduledoc """
-  Blip's tools over projects and threads (section 5 of
-  `docs/plans/step-4-blip-as-coordinator.md`), driven through the scripted
-  Blip on the durable harness: what each returns, and what it changed.
-  The texts themselves are covered in `test/core/assistant/readout_test.exs`;
-  here, that the tools read the right rows and name what they read.
+  Blip's tools over projects and threads, driven through the scripted Blip on
+  the durable harness: what each returns, and what it changed. The texts
+  themselves are covered in `test/core/assistant/readout_test.exs`; here,
+  that the tools read the right rows and name what they read.
   """
 
   use Photon.DataCase, async: false

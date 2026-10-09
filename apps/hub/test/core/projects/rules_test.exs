@@ -1,5 +1,5 @@
 defmodule Photon.Projects.RulesTest do
-  @moduledoc "The rules for projects and context files (sections 2.1 to 2.3 of the step 2 plan)."
+  @moduledoc "The rules for projects and context files."
 
   use Photon.Case, async: true
 

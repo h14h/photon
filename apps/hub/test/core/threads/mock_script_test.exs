@@ -1,5 +1,5 @@
 defmodule Photon.Threads.MockScriptTest do
-  @moduledoc "A thread's scripted model: its fixed phrasings (section 3.5)."
+  @moduledoc "A thread's scripted model: its fixed phrasings."
 
   use Photon.Case, async: true
 

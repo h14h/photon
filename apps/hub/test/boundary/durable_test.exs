@@ -176,7 +176,7 @@ defmodule Photon.DurableTest do
     end
   end
 
-  describe "commits (H5)" do
+  describe "commits" do
     setup :conversation
 
     test "a Tx write outside its commit raises, and writes nothing", %{conversation: c} do

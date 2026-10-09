@@ -1,8 +1,7 @@
 defmodule Photon.Repo.Migrations.ThreadState do
   use Ecto.Migration
 
-  # The facts a thread's state is worked out from (section 2.1 of
-  # `docs/plans/step-4-blip-as-coordinator.md`): who started it, how its
+  # The facts a thread's state is worked out from: who started it, how its
   # last run ended, and when the owner last looked at it or resolved it.
   def change do
     alter table(:threads) do

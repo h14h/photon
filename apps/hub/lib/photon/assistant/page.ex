@@ -1,9 +1,8 @@
 defmodule Photon.Assistant.Page do
   @moduledoc """
-  The page the user has open under Blip, as pure functions (section 5.9 of
-  `docs/plans/step-2-projects-and-threads.md`). Blip floats over every
-  page, so a message like "what's left here?" means the project, context
-  file or thread on screen.
+  The page the user has open under Blip, as pure functions. Blip floats over
+  every page, so a message like "what's left here?" means the project,
+  context file or thread on screen.
 
   The web UI reports each path it shows. `at/1` says what the path is
   about; `Photon.Assistant.page_at/1` reads that project (and its file or

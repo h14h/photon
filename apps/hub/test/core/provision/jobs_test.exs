@@ -47,7 +47,7 @@ defmodule Photon.Provision.JobsTest do
                Jobs.apply_event(job, {:done, :error, "Failed: x"})
     end
 
-    test "whose task dies without reporting fails, so the machine isn't stuck busy (H10)", %{
+    test "whose task dies without reporting fails, so the machine isn't stuck busy", %{
       job: job
     } do
       assert %{status: :error, log: [message]} = Jobs.task_down(job, :killed)

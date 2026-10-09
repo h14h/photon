@@ -1,10 +1,9 @@
 ------------------------------ MODULE HubOps ------------------------------
 (***************************************************************************)
-(* The hub-node operation protocol of build step 1                        *)
-(* (docs/plans/step-1-machine-tools.md, section 2): a machine tool call   *)
-(* on the hub (shell), its op row, the websocket, and the node's executor, *)
-(* journal and op processes. HubOps.md maps every action to the plan and  *)
-(* lists what TLC found.                                                   *)
+(* The hub-node operation protocol of build step 1, whose rules are now in *)
+(* docs/operations.md: a machine tool call on the hub (shell), its op row, *)
+(* the websocket, and the node's executor, journal and op processes.       *)
+(* HubOps.md maps every action to the code and lists what TLC found.       *)
 (*                                                                         *)
 (* One machine. Calls are tool calls on it; call c owns op c (op IDs are  *)
 (* derived from the tool task's ID, so a rerun of the call reuses its op  *)
@@ -257,8 +256,8 @@ Repark(c, off) ==
     /\ UNCHANGED <<row, tres, nres>>
 
 \* resume/2 reads whether the machine is online (the registry, outside any
-\* commit), then returns the commit that decides on the row as it is then
-\* (section 3.2). Two steps: the node can join in between.
+\* commit), then returns the commit that decides on the row as it is then.
+\* Two steps: the node can join in between.
 ResumeRead(c) ==
     /\ step[c] = "res"
     /\ step' = [step EXCEPT ![c] = "rc"]

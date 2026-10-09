@@ -157,7 +157,7 @@ defmodule Photon.Assistant do
   @owner_kinds ~w(user answer)
 
   # How many times Blip may start or message threads between two of the
-  # owner's messages, when the config doesn't say (section 5.4).
+  # owner's messages, when the config doesn't say.
   @unattended_limit 10
 
   @doc """
@@ -579,10 +579,10 @@ defmodule Photon.Assistant do
 
   ## The activity log's hooks
 
-  # Both run inside the harness's commits, on a Stop or a failed task
-  # inside the Scheduler's own, so they are total: `origin_tx/2`,
+  # Both run inside the harness's commits, on a Stop or a failed task inside
+  # the Scheduler's own, so they are total: `origin_tx/2`,
   # `Origin.for_call/3` and `Activity.record_tx/2` take what they are given
-  # as it is, and a missing row records less (section 3.1).
+  # as it is, and a missing row records less.
 
   @doc """
   Records the activity row for one of Blip's tool calls, with who asked

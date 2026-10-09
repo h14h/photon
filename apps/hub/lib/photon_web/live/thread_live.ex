@@ -1,7 +1,6 @@
 defmodule PhotonWeb.ThreadLive do
   @moduledoc """
-  A project's thread (sections 5.6 and 5.7 of
-  `docs/plans/step-2-projects-and-threads.md`).
+  A project's thread.
 
   `:new`, at `/projects/:slug/threads/new`, starts one: the project's
   purpose, and a composer for the first message. Sending it starts the
@@ -18,15 +17,14 @@ defmodule PhotonWeb.ThreadLive do
   to the sign-in, and Stop moves to the header, so a running command can
   still be stopped.
 
-  The thread's state (section 10.4 of
-  `docs/plans/step-4-blip-as-coordinator.md`) is its board entry,
-  `Photon.Threads.state/1`: a chip by the title (`#thread-state`, words
-  from `PhotonWeb.ThreadText.state/1`), and `Resolve` while it isn't
-  running and isn't resolved, `Reopen` once it is (`Photon.Threads.resolve/1`
-  and `reopen/1`). Having the page open is the owner looking: on connected
-  mount, and on each announcement for its project (a run ending among
-  them), it calls `Photon.Threads.mark_seen/1` before reading the state,
-  which writes and announces nothing unless the thread was unread.
+  The thread's state is its board entry, `Photon.Threads.state/1`: a chip by
+  the title (`#thread-state`, words from `PhotonWeb.ThreadText.state/1`),
+  and `Resolve` while it isn't running and isn't resolved, `Reopen` once it
+  is (`Photon.Threads.resolve/1` and `reopen/1`). Having the page open is
+  the owner looking: on connected mount, and on each announcement for its
+  project (a run ending among them), it calls `Photon.Threads.mark_seen/1`
+  before reading the state, which writes and announces nothing unless the
+  thread was unread.
 
   The entry's open `ask_blip` questions change the composer. While Blip
   has one, a line above the composer says what the thread asked

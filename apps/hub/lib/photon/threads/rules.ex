@@ -1,8 +1,7 @@
 defmodule Photon.Threads.Rules do
   @moduledoc """
   The rules for threads, as pure functions: a thread's titles, and how the
-  context-file tools describe files to a thread's model (sections 2.4 and
-  3.3 of `docs/plans/step-2-projects-and-threads.md`).
+  context-file tools describe files to a thread's model.
 
   A thread starts with a title made from its first message (`title/1`).
   After its first run, the model is asked once for a short one
@@ -10,10 +9,9 @@ defmodule Photon.Threads.Rules do
   title (`model_title/1`). The owner can rename a thread (`rename/1`).
 
   Files are described by who last wrote them, from the reader's point of
-  view (the viewer: a thread's ID, or `"blip"` for Blip's own file tools,
-  section 5.2 of `docs/plans/step-4-blip-as-coordinator.md`): "you" for
-  the reader itself, "the user" for the owner, "Blip" for Blip, and
-  `thread "Fix the pump"` for another thread, whose titles the caller
+  view (the viewer: a thread's ID, or `"blip"` for Blip's own file tools):
+  "you" for the reader itself, "the user" for the owner, "Blip" for Blip,
+  and `thread "Fix the pump"` for another thread, whose titles the caller
   reads and passes in.
   """
 

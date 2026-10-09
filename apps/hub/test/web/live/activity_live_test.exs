@@ -1,9 +1,8 @@
 defmodule PhotonWeb.ActivityLiveTest do
   @moduledoc """
-  The activity page (section 10.7 of
-  `docs/plans/step-4-blip-as-coordinator.md`): Blip's actions newest
-  first with who asked and where, the filters, Show older, the empty
-  states, and a row recorded while the page is open going on top.
+  The activity page: Blip's actions newest first with who asked and where,
+  the filters, Show older, the empty states, and a row recorded while the
+  page is open going on top.
 
   The rows are written straight into the log (as `Photon.Activity`'s
   hooks would), and the threads they name straight into their table:

@@ -15,7 +15,7 @@ defmodule PhotonWeb.Endpoint do
   # connection came from (peer and forwarded address) decides whose it is.
   # Frames are capped at 8 MB on purpose: enough for a view_image snapshot
   # (at most 5 MB of image data), and a node keeps every snapshot under
-  # 6 MB of JSON (docs/plans/step-1-machine-tools.md, node rule 9).
+  # 6 MB of JSON (docs/operations.md, node rule 9).
   socket "/node", PhotonWeb.NodeSocket,
     websocket: [
       connect_info: [:x_headers, :peer_data],

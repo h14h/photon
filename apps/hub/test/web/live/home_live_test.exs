@@ -1,8 +1,7 @@
 defmodule PhotonWeb.HomeLiveTest do
   @moduledoc """
-  The home page (section 10.3 of `docs/plans/step-4-blip-as-coordinator.md`):
-  what needs the owner across every project, what is running, what has
-  gone quiet, and Blip's schedules, kept current as they change.
+  The home page: what needs the owner across every project, what is running,
+  what has gone quiet, and Blip's schedules, kept current as they change.
 
   Threads run on the scripted model (`Photon.Threads.MockScript`): `ask
   me:` ends asking the owner, `fail:` fails, `files` finishes, `ask blip:`

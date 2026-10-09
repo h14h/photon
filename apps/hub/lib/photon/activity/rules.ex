@@ -1,7 +1,6 @@
 defmodule Photon.Activity.Rules do
   @moduledoc """
-  The activity log's words and facts (sections 6.2 and 6.3 of
-  `docs/plans/step-4-blip-as-coordinator.md`), as pure functions:
+  The activity log's words and facts, as pure functions:
 
     * `summary/3` - the line a tool call shows, in the past tense, naming
       the machine, project or thread it acted on

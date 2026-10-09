@@ -1,21 +1,19 @@
 defmodule Photon.MachineTools.ListMachines do
   @moduledoc """
   The `list_machines` tool: every machine the hub knows, from
-  `Photon.Machines.roster/0` (section 3.1 of
-  `docs/plans/step-1-machine-tools.md`). Connected machines come with
-  their platform, hostname, workspace and photon-node version; a connected
-  machine whose photon-node can't take commands says so; known machines
-  that aren't connected are listed as offline. `local` is the hub's own
-  computer. A machine with skills turned on for it ends its line with
-  them, as "; skills: a, b" (`Photon.Skills.machine_skills/0`, section 5
-  of `docs/plans/machine-skills.md`), so the machine list says which
-  skills go with which machine, as the prompt's Skills section does.
+  `Photon.Machines.roster/0`. Connected machines come with their platform,
+  hostname, workspace and photon-node version; a connected machine whose
+  photon-node can't take commands says so; known machines that aren't
+  connected are listed as offline. `local` is the hub's own computer. A
+  machine with skills turned on for it ends its line with them, as
+  "; skills: a, b" (`Photon.Skills.machine_skills/0`), so the machine list
+  says which skills go with which machine, as the prompt's Skills section
+  does.
 
-  When the conversation has a working directory (`api.workdir`, a
-  project's slug for a thread), the list opens with a line saying the
-  working directory is that folder in each machine's workspace, made on
-  first use, and each machine that can take commands names its full path
-  (section 3.4 of `docs/plans/step-2-projects-and-threads.md`). Offline
+  When the conversation has a working directory (`api.workdir`, a project's
+  slug for a thread), the list opens with a line saying the working
+  directory is that folder in each machine's workspace, made on first use,
+  and each machine that can take commands names its full path. Offline
   machines have no workspace to show.
   """
   @behaviour Photon.Durable.Tool

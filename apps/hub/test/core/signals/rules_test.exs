@@ -1,5 +1,5 @@
 defmodule Photon.Signals.RulesTest do
-  @moduledoc "Which settles reach Blip, and how signals join a queued message (sections 3.2, 3.3)."
+  @moduledoc "Which settles reach Blip, and how signals join a queued message."
 
   use Photon.Case, async: true
 

@@ -1,10 +1,9 @@
 defmodule Photon.Signals.DigestItem do
   @moduledoc """
-  A change waiting for the next digest (section 3.2 of
-  `docs/plans/step-5-ambient-mode.md`), collected only while ambient mode
-  is on. The commit that posts a digest marks the items it carries
-  (`digest_key`); they are deleted when Blip's run on that digest
-  answers or is stopped, and wait again when the run fails.
+  A change waiting for the next digest, collected only while ambient mode is
+  on. The commit that posts a digest marks the items it carries
+  (`digest_key`); they are deleted when Blip's run on that digest answers or
+  is stopped, and wait again when the run fails.
 
     * `key` - its subject (`Photon.Signals.Rules.item_key/1`): one row per
       thread and kind, schedule, project and file, or project and kind,

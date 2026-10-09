@@ -1,9 +1,8 @@
 defmodule Photon.Schedules.Rules do
   @moduledoc """
-  The rules for schedules (sections 3.1 to 3.5 of
-  `docs/plans/step-3-skills-and-schedules.md`), as pure functions.
-  `Photon.Schedules` and its routine read the clock and the committed
-  facts, ask these what to do, and apply the answer in the same commit.
+  The rules for schedules, as pure functions. `Photon.Schedules` and its
+  routine read the clock and the committed facts, ask these what to do, and
+  apply the answer in the same commit.
 
   Times are Unix milliseconds where the routine's task keeps them
   (`arm/4`, `fired_through/3`, `next_after/3`, and the `now` every
@@ -21,8 +20,8 @@ defmodule Photon.Schedules.Rules do
     (`fired_through/3`), so an edit neither skips nor repeats a firing.
     `next_after/3` is the next time after a firing.
   - Firing: `target/1` says where a schedule fires, and `fire/2` what a
-    firing does there, from the consent and overlap facts (section 3.5);
-    `text/1`, `skipped_note/2` and `request_id/3` are what it writes.
+    firing does there, from the consent and overlap facts; `text/1`,
+    `skipped_note/2` and `request_id/3` are what it writes.
   """
 
   # Functional core: no processes, no I/O.
@@ -66,10 +65,10 @@ defmodule Photon.Schedules.Rules do
   @type field_errors :: %{optional(:prompt | :at | :repeat | :every | :target) => String.t()}
 
   @typedoc """
-  What a firing knows, read inside its commit (section 3.5). A fact that
-  doesn't apply to the target may be left out, and counts as false:
-  `last_thread_running?` is for a new-thread target, and `thread?`,
-  `queued?` and `busy?` for a target with a conversation.
+  What a firing knows, read inside its commit. A fact that doesn't apply to
+  the target may be left out, and counts as false: `last_thread_running?` is
+  for a new-thread target, and `thread?`, `queued?` and `busy?` for a target
+  with a conversation.
   """
   @type facts :: %{
           optional(:allowed?) => boolean(),
@@ -93,11 +92,10 @@ defmodule Photon.Schedules.Rules do
   ## Reading input
 
   @doc """
-  Checks the owner's form (section 3.4): `params` with string (or atom)
-  keys `prompt`, `at` (ISO 8601 with an offset), `repeat` (`"once"` or
-  `"every"`), `every` and `unit` (with `"every"`), and `target`
-  (`"new_thread"` or a thread's ID). `now` is Unix milliseconds;
-  `thread_ids` are the project's threads.
+  Checks the owner's form: `params` with string (or atom) keys `prompt`,
+  `at` (ISO 8601 with an offset), `repeat` (`"once"` or `"every"`), `every`
+  and `unit` (with `"every"`), and `target` (`"new_thread"` or a thread's
+  ID). `now` is Unix milliseconds; `thread_ids` are the project's threads.
 
   Returns the row's fields, `conversation_id` nil for a new thread each
   time, or every field's error.
@@ -303,7 +301,7 @@ defmodule Photon.Schedules.Rules do
 
   @doc """
   The first time a new or edited schedule's task waits for (Unix
-  milliseconds), or `:finished` when there is none (section 3.3).
+  milliseconds), or `:finished` when there is none.
 
   `first_at` and `every` (nil for a one-off) are the schedule's times,
   `now` the clock the input was checked against, and `fired_through` the
@@ -398,13 +396,12 @@ defmodule Photon.Schedules.Rules do
   def target(%{}), do: :thread
 
   @doc """
-  What a firing at `target` does, given the `facts` read in its commit
-  (section 3.5): skip it when the thread it would wake is gone, when
-  scheduled work isn't allowed (leaving a notice where there is a
-  conversation to put one in), when its last new thread is still
-  running, or when its last prompt is still queued; otherwise start a
-  thread, or submit the prompt, which starts a run in an idle
-  conversation or queues behind a busy one.
+  What a firing at `target` does, given the `facts` read in its commit: skip
+  it when the thread it would wake is gone, when scheduled work isn't
+  allowed (leaving a notice where there is a conversation to put one in),
+  when its last new thread is still running, or when its last prompt is
+  still queued; otherwise start a thread, or submit the prompt, which starts
+  a run in an idle conversation or queues behind a busy one.
   """
   @spec fire(target(), facts()) :: decision()
   def fire(target, facts) do

@@ -1,8 +1,8 @@
 defmodule Photon.Assistant.MockAmbient do
   @moduledoc """
-  The scripted Blip's replies to ambient mode's messages (section 8.1 of
-  `docs/plans/step-5-ambient-mode.md`): a digest (`[Digest]`) and a daily
-  review (`[Daily review]`), as `Photon.Ambient.Text` writes them.
+  The scripted Blip's replies to ambient mode's messages: a digest
+  (`[Digest]`) and a daily review (`[Daily review]`), as
+  `Photon.Ambient.Text` writes them.
   `Photon.Assistant.MockCoordinator.unasked/2` tries `unasked/2` first.
 
   Memory lines `- ignore: <word>` (in the request's system text, under

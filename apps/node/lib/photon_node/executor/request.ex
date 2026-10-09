@@ -11,7 +11,7 @@ defmodule PhotonNode.Executor.Request do
 
       %{shell: "/bin/bash", ops_dir: "/data/ops", workspace: "/data/workspace"}
 
-  Arguments by kind (`docs/plans/step-1-machine-tools.md`, section 2.2):
+  Arguments by kind:
 
     * `shell`: `command` (a string with no NUL byte, at most 100,000
       bytes), `directory` (a string or null; null is the workspace, and a
@@ -25,11 +25,11 @@ defmodule PhotonNode.Executor.Request do
   An unknown kind or a bad argument is `{:error, reason}`, and `rejected/2`
   makes that the operation's `failed` snapshot. `lost/2`, `never_started/1`,
   `unrecorded/2` and `unreadable/2` are the snapshots for the other
-  operations the node answers without running (section 2.3, node rules 3,
-  7 and 8, and a journal entry that can't be read). `failed/2` is the
-  snapshot of an operation whose process crashed or couldn't start. Each
-  carries its message in `terminal_error`; a `view_image` one also has it
-  in `result.error`, where a failed image job puts its reason.
+  operations the node answers without running (node rules 3, 7 and 8 in
+  `docs/operations.md`, and a journal entry that can't be read). `failed/2`
+  is the snapshot of an operation whose process crashed or couldn't start.
+  Each carries its message in `terminal_error`; a `view_image` one also has
+  it in `result.error`, where a failed image job puts its reason.
 
   `fit/2` keeps a snapshot's JSON under a byte budget (node rule 9).
 

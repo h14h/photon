@@ -6,15 +6,14 @@ defmodule PhotonWeb.NodeChannel do
   process lives.
 
   It is the server layer for a node (Phoenix starts one per connection), so
-  it holds no logic of its own. Operations (section 2 of
-  `docs/plans/step-1-machine-tools.md`) go to `Photon.Machines`, and the
-  channel pushes what it returns: `op.snapshot` answers with `op.ack` or
-  `op.cancel` once the snapshot is recorded, `op.output` is broadcast to the
-  tool call's conversation, and a join pushes `op.start` or `op.cancel` for
-  every open op of the node. Commands arrive from `Photon.Machines.command/3`
-  as `{:command, event, payload}` messages and are pushed as they come.
-  Events it doesn't know are logged and ignored, so either side can deploy
-  first.
+  it holds no logic of its own. Operations (`docs/operations.md`) go to
+  `Photon.Machines`, and the channel pushes what it returns: `op.snapshot`
+  answers with `op.ack` or `op.cancel` once the snapshot is recorded,
+  `op.output` is broadcast to the tool call's conversation, and a join pushes
+  `op.start` or `op.cancel` for every open op of the node. Commands arrive
+  from `Photon.Machines.command/3` as `{:command, event, payload}` messages
+  and are pushed as they come. Events it doesn't know are logged and ignored,
+  so either side can deploy first.
 
   An `op.start` is only ever built here, from the op's row as it is when it
   is pushed: `{:push_op, op_id}` (from `Photon.Machines.push_op/2`) asks for

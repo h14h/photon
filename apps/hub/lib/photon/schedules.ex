@@ -1,13 +1,11 @@
 defmodule Photon.Schedules do
   @moduledoc """
-  Schedules (section 3 of `docs/plans/step-3-skills-and-schedules.md`):
-  prompts that fire at set times. A project's schedules start a new
-  thread in the project each time, or wake one of its threads; Blip's own
-  schedules post into Blip's conversation. The owner manages a project's
+  Schedules: prompts that fire at set times. A project's schedules start a
+  new thread in the project each time, or wake one of its threads; Blip's
+  own schedules post into Blip's conversation. The owner manages a project's
   on its page, and Blip makes its own and projects' with its `schedule`
-  tool. Threads
-  have no schedule tools, since a schedule that starts threads would let
-  a thread start threads.
+  tool. Threads have no schedule tools, since a schedule that starts threads
+  would let a thread start threads.
 
   A schedule is a row (`Photon.Schedules.Schedule`: the definition and a
   summary of its last firing) and a durable routine task that waits for
@@ -438,14 +436,12 @@ defmodule Photon.Schedules do
   before the commit.
 
   `made` says how the call made it (`t:made/0`). The row is
-  `created_by: "blip"`, with `asked_by` (`"owner"` or `"blip"`) from the
-  run that called the tool (section 5.4 of
-  `docs/plans/step-4-blip-as-coordinator.md`); every firing carries both.
-  `request_id` is the tool call's (`"schedule:<task id>"`), kept as the
-  routine task's request ID: a call that runs again with it gets the
-  schedule it already made, not a second one. `now` is the clock the
-  tool read (Unix milliseconds), shared by the rules and the arming, so a
-  time the rules accept always fires.
+  `created_by: "blip"`, with `asked_by` (`"owner"` or `"blip"`) from the run
+  that called the tool; every firing carries both. `request_id` is the tool
+  call's (`"schedule:<task id>"`), kept as the routine task's request ID: a
+  call that runs again with it gets the schedule it already made, not a
+  second one. `now` is the clock the tool read (Unix milliseconds), shared
+  by the rules and the arming, so a time the rules accept always fires.
   """
   @spec tool_schedule_tx(Tx.t(), tool_target(), map(), made()) ::
           {:ok, Schedule.t()} | {:error, String.t()}

@@ -1,5 +1,5 @@
 defmodule Photon.Questions.RulesTest do
-  @moduledoc "The rules of an `ask_blip` question (section 4.2)."
+  @moduledoc "The rules of an `ask_blip` question."
 
   use Photon.Case, async: true
 

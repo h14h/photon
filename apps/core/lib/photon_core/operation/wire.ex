@@ -33,8 +33,7 @@ defmodule PhotonCore.Operation.Wire do
       @snapshot Wire.event(:snapshot)
       def handle_in(@snapshot, payload, socket), do: ...
 
-  `docs/plans/step-1-machine-tools.md` (section 2) has the rules each side
-  follows.
+  `docs/operations.md` has the rules each side follows.
   """
 
   alias PhotonCore.{ID, Operation}

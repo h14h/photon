@@ -138,17 +138,15 @@ defmodule Photon.Transcript do
 
   @image_types ~w(image/png image/jpeg image/gif image/webp)
 
-  # How much of a running call's output the page keeps (section 3.4 of
-  # docs/plans/step-1-machine-tools.md). The node sends at most 64 KB per
-  # stream a second; the page shows the latest of it.
+  # How much of a running call's output the page keeps. The node sends at
+  # most 64 KB per stream a second; the page shows the latest of it.
   @tail 8_000
 
   # What Blip answers to a digest or daily review with nothing worth
-  # saying (section 5.4 of docs/plans/step-5-ambient-mode.md).
+  # saying.
   @nothing_to_tell "[nothing to tell]"
 
-  # The signal refs ambient mode posts (section 3.4 of
-  # docs/plans/step-5-ambient-mode.md).
+  # The signal refs ambient mode posts.
   @ambient_kinds ~w(digest review)
 
   # How much of a schedule's prompt a digest line shows.

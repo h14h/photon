@@ -1,5 +1,5 @@
 defmodule Photon.Skills.PromptTest do
-  @moduledoc "What agents see of skills (section 2.6 of the step 3 plan)."
+  @moduledoc "What agents see of skills."
 
   use Photon.Case, async: true
 
@@ -33,7 +33,8 @@ defmodule Photon.Skills.PromptTest do
   Only the skills listed here are turned on. If you loaded a skill earlier in this conversation and it isn't listed any more, it was turned off or deleted: stop following it. If a skill's id or version here differs from the one you loaded, it has changed: load it again before you use it.
   """
 
-  # Pinned word for word: section 3.1 of docs/plans/machine-skills.md.
+  # Pinned word for word: the paragraph a prompt adds when it lists machine
+  # skills.
   @machine_paragraph "Some skills are turned on for a machine because they are about working on it. " <>
                        "Each is listed under its machine. Before you start work on one of these " <>
                        "machines, load the ones your work there needs with load_skill, and follow " <>

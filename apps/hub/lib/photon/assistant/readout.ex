@@ -1,17 +1,15 @@
 defmodule Photon.Assistant.Readout do
   @moduledoc """
-  The texts Blip's read tools return (section 5.2 of
-  `docs/plans/step-4-blip-as-coordinator.md`): `list_projects`
-  (`projects/3`), `read_project` (`project/2`), `list_threads`
-  (`threads/2`) and `read_thread` (`thread/3`), what its file tools say
-  after a write or an edit (`file_written/4`, `file_edited/2`), what its
-  schedule and skill tools say (`scheduled/3`, `schedules/4` for a
-  project's, `skills/1`, `skill_set/3`), and the words for a project,
-  thread, question or skill that isn't there (`unknown_project/2`,
-  `unknown_thread/1`, `unknown_question/2`, `unknown_skill/2`). Its file
-  tools' listing and read text are the threads'
-  (`Photon.Threads.describe_files/2`, `read_file_text/3`), seen from
-  Blip's side.
+  The texts Blip's read tools return: `list_projects` (`projects/3`),
+  `read_project` (`project/2`), `list_threads` (`threads/2`) and
+  `read_thread` (`thread/3`), what its file tools say after a write or an
+  edit (`file_written/4`, `file_edited/2`), what its schedule and skill
+  tools say (`scheduled/3`, `schedules/4` for a project's, `skills/1`,
+  `skill_set/3`), and the words for a project, thread, question or skill
+  that isn't there (`unknown_project/2`, `unknown_thread/1`,
+  `unknown_question/2`, `unknown_skill/2`). Its file tools' listing and read
+  text are the threads' (`Photon.Threads.describe_files/2`,
+  `read_file_text/3`), seen from Blip's side.
 
   It takes the rows, the board entries (`Photon.Threads.board/1`) and the
   time, all passed in. A thread's state reads as `Photon.Threads.State.label/2`

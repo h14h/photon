@@ -1,8 +1,7 @@
 defmodule Photon.Questions.Question do
   @moduledoc """
-  An `ask_blip` question (section 4.1 of
-  `docs/plans/step-4-blip-as-coordinator.md`): one per tool call
-  (`task_id`), asked by thread `thread_id`.
+  An `ask_blip` question: one per tool call (`task_id`), asked by thread
+  `thread_id`.
 
   `status` moves from `"asked"` (Blip has it) to `"with_owner"` (Blip,
   or the hub when Blip didn't get to it, passed it on: `passed_by`), and

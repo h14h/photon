@@ -1,5 +1,5 @@
 defmodule Photon.Threads.MockTitleTest do
-  @moduledoc "The scripted model's titles for threads (section 2.4)."
+  @moduledoc "The scripted model's titles for threads."
 
   use Photon.Case, async: true
 

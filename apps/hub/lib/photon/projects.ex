@@ -1,7 +1,6 @@
 defmodule Photon.Projects do
   @moduledoc """
-  Projects and their context files (section 2 of
-  `docs/plans/step-2-projects-and-threads.md`).
+  Projects and their context files.
 
   A project is a context for any body of work, not only code: a purpose,
   the only required field, and a name, made from the purpose when left
@@ -41,11 +40,10 @@ defmodule Photon.Projects do
 
   ## Digest items
 
-  While ambient mode is on (`docs/plans/step-5-ambient-mode.md`, section
-  3), the owner's changes and a thread's file writes are collected for
-  Blip's next digest with `Photon.Signals.collect_tx/2`, inside the commit
-  that makes the change, which reads the mode there and collects nothing
-  in quiet mode:
+  While ambient mode is on, the owner's changes and a thread's file writes
+  are collected for Blip's next digest with `Photon.Signals.collect_tx/2`,
+  inside the commit that makes the change, which reads the mode there and
+  collects nothing in quiet mode:
 
     * `"project_created"` from `create/1`, and `"purpose_changed"` from
       an `update/2` that changes the name or the purpose
@@ -73,7 +71,7 @@ defmodule Photon.Projects do
   @topic "projects"
   @owner "owner"
   @blip "blip"
-  # How a digest item names the owner as a file's writer (section 3.2).
+  # How a digest item names the owner as a file's writer.
   @user "user"
 
   @typedoc "Form errors: each field's message, e.g. `%{purpose: \"Say what the project is for.\"}`."
@@ -350,8 +348,8 @@ defmodule Photon.Projects do
           String.t(),
           ContextFile.writer()
         ) :: {:ok, ContextFile.t()} | {:error, String.t()}
-  # The plan's signature (section 3.3): the tool's three arguments, and
-  # the commit, the project and the writer they apply to.
+  # The tool's three arguments, and the commit, the project and the
+  # writer they apply to.
   # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   def edit_file_tx(tx, project_id, name, old_text, new_text, writer) do
     with {:ok, name} <- Rules.file_name(name),

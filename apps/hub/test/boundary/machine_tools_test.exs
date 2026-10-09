@@ -369,9 +369,9 @@ defmodule Photon.MachineToolsTest do
       assert %Op{cancel: true, pushed: true} = row(id)
     end
 
-    # Step 2, section 3.4 point 7: an ops:1 node wouldn't create a
-    # project's working directory, so it gets no op.start, and the call
-    # ends rather than waiting out the offline limit on a connected machine.
+    # An ops:1 node wouldn't create a project's working directory, so it
+    # gets no op.start, and the call ends rather than waiting out the
+    # offline limit on a connected machine.
     test "a call parked while its machine is offline ends with the outdated message when the machine comes back with an older photon-node" do
       key = key("mm1")
       args = %{"machine" => "mm1", "command" => "echo hi"}

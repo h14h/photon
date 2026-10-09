@@ -1,9 +1,8 @@
 defmodule Photon.Assistant.Tools.WriteContextFile do
   @moduledoc """
-  Blip's `write_context_file` tool (section 5.2 of
-  `docs/plans/step-4-blip-as-coordinator.md`): creates one of a project's
-  context files or replaces all of it, as written by Blip
-  (`updated_by: "blip"`). There is no version check: the last write wins.
+  Blip's `write_context_file` tool: creates one of a project's context files
+  or replaces all of it, as written by Blip (`updated_by: "blip"`). There is
+  no version check: the last write wins.
 
   The write happens inside the commit that records the call's result
   (`{:commit, fun}`), through `Photon.Projects.write_file_tx/5`, which

@@ -1,7 +1,6 @@
 defmodule Photon.Projects.Rules do
   @moduledoc """
-  The rules for projects and their context files (sections 2.1 to 2.3 of
-  `docs/plans/step-2-projects-and-threads.md`), as pure functions.
+  The rules for projects and their context files, as pure functions.
   `Photon.Projects` reads what it needs inside a Store commit, asks these
   what to do, and applies the answer in the same commit. IDs and times are
   minted there, never here.

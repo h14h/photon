@@ -1,5 +1,5 @@
 defmodule Photon.Signals.TextTest do
-  @moduledoc "What Blip reads of a signal, and the notices for the owner (sections 3.4, 4.5 to 4.7)."
+  @moduledoc "What Blip reads of a signal, and the notices for the owner."
 
   use Photon.Case, async: true
 

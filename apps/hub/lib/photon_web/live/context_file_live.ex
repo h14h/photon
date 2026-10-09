@@ -1,9 +1,7 @@
 defmodule PhotonWeb.ContextFileLive do
   @moduledoc """
-  A project's context file (section 5.5 of
-  `docs/plans/step-2-projects-and-threads.md`): `:new` at
-  `/projects/:slug/files/new` makes one, `:edit` at
-  `/projects/:slug/files/:name` shows and edits one.
+  A project's context file: `:new` at `/projects/:slug/files/new` makes one,
+  `:edit` at `/projects/:slug/files/:name` shows and edits one.
 
   The editor is a form over a plain map (`name`, `content` and, when
   editing, the hidden `version` it loaded), with `Write` and `Preview`

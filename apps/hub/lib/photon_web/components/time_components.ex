@@ -1,7 +1,6 @@
 defmodule PhotonWeb.TimeComponents do
   @moduledoc """
-  Times in the owner's time zone (section 3.9 of
-  `docs/plans/step-3-skills-and-schedules.md`).
+  Times in the owner's time zone.
 
   The hub keeps times in UTC and has no time zone database (Settings' time
   zone is free text for Blip's prompt), but the browser knows the owner's

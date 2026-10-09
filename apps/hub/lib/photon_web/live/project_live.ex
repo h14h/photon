@@ -1,25 +1,22 @@
 defmodule PhotonWeb.ProjectLive do
   @moduledoc """
-  A project's page, at `/projects/:slug` (section 5.4 of
-  `docs/plans/step-2-projects-and-threads.md`, and section 6.6 of
-  `docs/plans/step-3-skills-and-schedules.md`): its name, folder and
-  purpose (which the user can edit), its threads, and in the second
-  column its context files, the skills turned on for it (threads also get
-  the skills turned on for each machine), and its schedules.
+  A project's page, at `/projects/:slug`: its name, folder and purpose
+  (which the user can edit), its threads, and in the second column its
+  context files, the skills turned on for it (threads also get the skills
+  turned on for each machine), and its schedules.
 
   The lists are streams (`#project-threads`, `#context-files`,
   `#project-skills`, `#project-schedules`). The threads are the project's
-  board (`Photon.Threads.board/1`, section 10.5 of
-  `docs/plans/step-4-blip-as-coordinator.md`): each row shows its state
+  board (`Photon.Threads.board/1`): each row shows its state
   (`#project-thread-<id>-state`) with the mark and words the sidebar and
   Home use (`PhotonWeb.CoreComponents.state_mark/1`,
   `PhotonWeb.ThreadText.state/1`), and how long ago it was active when
   nothing is going on in it. A row changes only by re-streaming; every
-  change resets the list it touches, since its order may have moved. Besides the streams
-  the socket keeps the project, the IDs of its threads (to tell which
-  `{:durable_tasks, tasks}` concern it without a query per message), the
-  edit form, and for the schedules the title of the thread each one wakes
-  (by schedule ID, which is also how a button's ID from the browser is
+  change resets the list it touches, since its order may have moved. Besides
+  the streams the socket keeps the project, the IDs of its threads (to tell
+  which `{:durable_tasks, tasks}` concern it without a query per message),
+  the edit form, and for the schedules the title of the thread each one
+  wakes (by schedule ID, which is also how a button's ID from the browser is
   checked to be one of this project's), how many there are and whether
   scheduled work is allowed (`Photon.Schedules.consent?/0`).
 

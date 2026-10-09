@@ -1,9 +1,8 @@
 defmodule PhotonWeb.ActivityTextTest do
   @moduledoc """
-  The activity page's words and rows (section 10.7 of
-  `docs/plans/step-4-blip-as-coordinator.md`): the filter, the empty
-  state, what a page of rows names, and who asked and where, linked only
-  when the page found what a row names.
+  The activity page's words and rows: the filter, the empty state, what a
+  page of rows names, and who asked and where, linked only when the page
+  found what a row names.
   """
 
   use ExUnit.Case, async: true

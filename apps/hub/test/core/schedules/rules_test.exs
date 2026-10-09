@@ -1,5 +1,5 @@
 defmodule Photon.Schedules.RulesTest do
-  @moduledoc "The rules for schedules (sections 3.1 to 3.5 of the step 3 plan)."
+  @moduledoc "The rules for schedules."
 
   use Photon.Case, async: true
 
