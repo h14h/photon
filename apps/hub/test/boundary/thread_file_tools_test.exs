@@ -9,14 +9,15 @@ defmodule Photon.ThreadFileToolsTest do
 
   use Photon.DataCase, async: false
 
+  import Photon.ProjectHelpers
+
   @moduletag :durable
 
   alias Photon.{Projects, Threads}
   alias Photon.Projects.ContextFile
 
   setup do
-    {:ok, project} =
-      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+    project = garden!()
 
     {:ok, thread} = Threads.start(project.id, "hello")
     :ok = Threads.subscribe(thread.id)

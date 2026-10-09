@@ -28,7 +28,11 @@ defmodule Photon.DataCase do
   @tables ~w(digest_items activity questions schedules threads project_files skill_enablements skills projects conversations entries docs tasks submissions signals node_keys machine_ops)
 
   def setup_sandbox(tags) do
-    for table <- @tables, do: Photon.Repo.query!("DELETE FROM #{table}")
+    # One transaction, so SQLite syncs once rather than once per table.
+    {:ok, _} =
+      Photon.Repo.transaction(fn ->
+        for table <- @tables, do: Photon.Repo.query!("DELETE FROM #{table}")
+      end)
 
     File.rm(Photon.Paths.settings_file())
     Photon.Settings.save(%{"provider" => "mock"})
@@ -41,15 +45,24 @@ defmodule Photon.DataCase do
   end
 
   @doc """
-  Waits for a conversation commit whose changes satisfy `fun`. Call
+  Waits for a conversation commit whose changes satisfy `fun`, for at most
+  `timeout` ms in all, however many other commits arrive first. Call
   `Photon.Durable.subscribe/1` first.
   """
-  def await_change(conversation_id, fun, timeout \\ 5_000) do
+  def await_change(conversation_id, fun, timeout \\ 5_000),
+    do: await_change_by(conversation_id, fun, System.monotonic_time(:millisecond) + timeout)
+
+  # Checks the deadline before each receive, so a mailbox of commits that
+  # don't match can't keep it waiting past the deadline.
+  defp await_change_by(conversation_id, fun, deadline) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+    if remaining <= 0, do: ExUnit.Assertions.flunk("no matching commit for #{conversation_id}")
+
     receive do
       {:durable, ^conversation_id, changes} ->
-        if fun.(changes), do: changes, else: await_change(conversation_id, fun, timeout)
+        if fun.(changes), do: changes, else: await_change_by(conversation_id, fun, deadline)
     after
-      timeout -> ExUnit.Assertions.flunk("no matching commit for #{conversation_id}")
+      remaining -> ExUnit.Assertions.flunk("no matching commit for #{conversation_id}")
     end
   end
 

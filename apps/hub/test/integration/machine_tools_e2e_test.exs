@@ -45,6 +45,7 @@ defmodule Photon.MachineToolsE2ETest do
 
   import Ecto.Query, only: [from: 2]
   import Photon.Eventually
+  import Photon.ProjectHelpers
 
   alias Photon.{
     Activity,
@@ -80,8 +81,12 @@ defmodule Photon.MachineToolsE2ETest do
        )
 
   setup %{tmp_dir: dir} do
-    put_env(:local_node, true)
-    put_env(Photon.MachineTools, check_ms: 200, offline_limit_ms: 60_000)
+    Photon.TestConfig.put_env(:photon, :local_node, true)
+
+    Photon.TestConfig.put_env(:photon, Photon.MachineTools,
+      check_ms: 200,
+      offline_limit_ms: 60_000
+    )
 
     bandit =
       start_supervised!(
@@ -104,12 +109,6 @@ defmodule Photon.MachineToolsE2ETest do
   end
 
   ## Helpers
-
-  defp put_env(key, value) do
-    previous = Application.get_env(:photon, key)
-    Application.put_env(:photon, key, value)
-    on_exit(fn -> Application.put_env(:photon, key, previous) end)
-  end
 
   # Starts the node and waits until the hub has it online.
   defp start_node(opts) do
@@ -394,8 +393,7 @@ defmodule Photon.MachineToolsE2ETest do
        %{node: node} do
     start_node(node)
 
-    {:ok, project} =
-      Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+    project = garden!()
 
     folder = Path.join(workspace(node), project.slug)
     refute File.exists?(folder)
@@ -472,8 +470,7 @@ defmodule Photon.MachineToolsE2ETest do
        %{conversation: c, node: node} do
     start_node(node)
 
-    {:ok, project} =
-      Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+    project = garden!()
 
     :ok = Assistant.put_memory("- deploy branch: staging")
 

@@ -11,14 +11,15 @@ defmodule PhotonWeb.ContextFileLiveTest do
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
 
   alias Photon.{Durable, Projects, Threads}
 
   @moduletag :durable
 
   setup do
-    {:ok, project} =
-      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+    project = garden!()
 
     {:ok, notes} =
       Projects.create_file(project.id, %{"name" => "notes", "content" => "Zone 2."})
@@ -165,7 +166,7 @@ defmodule PhotonWeb.ContextFileLiveTest do
 
     test "the meta line names the thread that wrote it", %{conn: conn, project: project} do
       {:ok, thread} = Threads.start(project.id, "Fix the pump")
-      await_idle(thread.id)
+      idle!(thread.id)
       _file = thread_writes(project, "Pump fixed.", thread.id)
 
       {:ok, view, _html} = open_notes(conn)
@@ -362,12 +363,5 @@ defmodule PhotonWeb.ContextFileLiveTest do
       assert {:error, {:live_redirect, %{to: "/", flash: flash}}} = live(conn, path)
       assert flash["error"] == message
     end
-  end
-
-  # Waits until thread `id` has answered, so no run outlives the test.
-  defp await_idle(id) do
-    :ok = Threads.subscribe(id)
-    if Threads.busy?(id), do: await_change(id, fn _changes -> not Threads.busy?(id) end)
-    :ok
   end
 end

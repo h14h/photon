@@ -158,8 +158,7 @@ defmodule Photon.MachinesTest do
     end
 
     test "local is known, and offline, on a hub that runs its own node" do
-      Application.put_env(:photon, :local_node, true)
-      on_exit(fn -> Application.put_env(:photon, :local_node, false) end)
+      Photon.TestConfig.put_env(:photon, :local_node, true)
 
       assert Machines.status("local") == :offline
       assert [%{id: "local", online: false}] = Machines.roster()
@@ -177,8 +176,7 @@ defmodule Photon.MachinesTest do
     end
 
     test "lists local first on a hub that runs its own node" do
-      Application.put_env(:photon, :local_node, true)
-      on_exit(fn -> Application.put_env(:photon, :local_node, false) end)
+      Photon.TestConfig.put_env(:photon, :local_node, true)
       {:ok, _key} = Photon.NodeKeys.issue("abe")
 
       assert Machines.known() == ["local", "abe"]

@@ -8,6 +8,8 @@ defmodule Photon.ToolTaskWorkdirTest do
 
   use Photon.DataCase, async: false
 
+  import Photon.ConversationHelpers
+
   @moduletag :durable
 
   defp start(profile, attrs \\ %{}) do
@@ -17,16 +19,9 @@ defmodule Photon.ToolTaskWorkdirTest do
     {c, s}
   end
 
-  defp await_waiting(c),
-    do:
-      await_change(
-        c,
-        &Enum.any?(&1.tasks, fn t -> t.kind == "tool" and t.status == "waiting" end)
-      )
-
   test "a profile's workdir reaches execute/2 and resume/2" do
     {c, s} = start("test_workdir")
-    await_waiting(c)
+    await_tool_waiting(c)
     Durable.signal("go")
 
     assert %{status: "done"} = await_settled(c, s.id)
@@ -35,7 +30,7 @@ defmodule Photon.ToolTaskWorkdirTest do
 
   test "and on_interrupt/2, when the call is stopped" do
     {c, s} = start("test_workdir")
-    await_waiting(c)
+    await_tool_waiting(c)
     Durable.abort(c)
 
     assert %{status: "unanswered"} = await_settled(c, s.id)
@@ -46,7 +41,7 @@ defmodule Photon.ToolTaskWorkdirTest do
     refute Durable.implements?(Photon.Assistant, :workdir, 1)
 
     {c, s} = start("test")
-    await_waiting(c)
+    await_tool_waiting(c)
     Durable.signal("go")
 
     assert %{status: "done"} = await_settled(c, s.id)

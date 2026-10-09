@@ -11,6 +11,8 @@ defmodule Photon.SkillToolsTest do
 
   use Photon.DataCase, async: false
 
+  import Photon.ProjectHelpers
+
   @moduletag :durable
 
   alias Photon.{Assistant, NodeKeys, Projects, Skills, Threads}
@@ -19,8 +21,7 @@ defmodule Photon.SkillToolsTest do
   alias PhotonCore.Message
 
   setup do
-    {:ok, project} =
-      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+    project = garden!()
 
     {:ok, skill} =
       Skills.create(%{

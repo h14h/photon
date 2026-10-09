@@ -13,6 +13,9 @@ defmodule PhotonWeb.SidebarTest do
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Photon.ConversationHelpers
+  import PhotonWeb.LiveHelpers
+  import Photon.MachineOps, only: [fake_machine: 1]
 
   alias Photon.{Assistant, Machines, Projects, Questions, Threads}
 
@@ -23,46 +26,9 @@ defmodule PhotonWeb.SidebarTest do
     %{view: view}
   end
 
-  # Stands in for a connected machine that takes commands and never answers.
-  defp fake_machine(name) do
-    :ok =
-      Machines.register(name, %{
-        "platform" => "test",
-        "workspace" => "/w",
-        "version" => "0",
-        "capabilities" => ["ops:2"]
-      })
-  end
-
   defp project!(name) do
     {:ok, project} = Projects.create(%{"purpose" => "Keep the #{name} going.", "name" => name})
     project
-  end
-
-  # Starts a thread and waits until it has answered; returns its ID.
-  defp idle_thread!(project, text) do
-    {:ok, thread} = Threads.start(project.id, text)
-    idle!(thread.id)
-  end
-
-  defp idle!(thread_id) do
-    until(thread_id, fn -> not Threads.busy?(thread_id) end)
-    thread_id
-  end
-
-  # Waits until `fun` holds after one of the thread's commits.
-  defp until(thread_id, fun) do
-    :ok = Threads.subscribe(thread_id)
-    if not fun.(), do: await_change(thread_id, fn _changes -> fun.() end)
-    :ok
-  end
-
-  # The commit that made the state the test waited for has broadcast once
-  # the store has handled it; then the page has its messages queued before
-  # this render.
-  defp settled(view) do
-    _ = :sys.get_state(Photon.Durable.Store)
-    render(view)
   end
 
   defp count(view, selector) do
@@ -95,8 +61,7 @@ defmodule PhotonWeb.SidebarTest do
     refute has_element?(view, "#sign-in-banner")
 
     Photon.ChatGPTStub.reset!()
-    Application.put_env(:photon, :mock_model, false)
-    on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+    Photon.TestConfig.put_env(:photon, :mock_model, false)
 
     {:ok, view, _html} = live(conn, ~p"/")
     assert has_element?(view, "#sign-in-banner[href='/settings']", "Sign in with ChatGPT")
@@ -114,9 +79,9 @@ defmodule PhotonWeb.SidebarTest do
     project = project!("Garden")
     :ok = Questions.subscribe()
 
-    waiting = idle_thread!(project, "ask me: which zone should I water first")
-    failed = idle_thread!(project, "fail: the pump is unplugged")
-    unread = idle_thread!(project, "files")
+    waiting = idle_thread!(project, "ask me: which zone should I water first").id
+    failed = idle_thread!(project, "fail: the pump is unplugged").id
+    unread = idle_thread!(project, "files").id
     {:ok, asking} = Threads.start(project.id, "ask blip: which deploy branch?")
     asking_id = asking.id
     assert_receive {:questions_changed, ^asking_id}, 5_000
@@ -170,7 +135,7 @@ defmodule PhotonWeb.SidebarTest do
     fake_machine("box")
     project = project!("Garden")
     {:ok, thread} = Threads.start(project.id, "on box: $ sleep 1000")
-    until(thread.id, fn -> Threads.busy?(thread.id) end)
+    await_until(thread.id, fn -> Threads.busy?(thread.id) end)
     _ = settled(view)
 
     path = "/projects/garden/threads/#{thread.id}"
@@ -188,7 +153,7 @@ defmodule PhotonWeb.SidebarTest do
   test "lists five threads and how many more; a message brings an old one back", %{view: view} do
     fake_machine("box")
     project = project!("Garden")
-    [oldest | newer] = for n <- 1..6, do: idle_thread!(project, "thread #{n}")
+    [oldest | newer] = for n <- 1..6, do: idle_thread!(project, "thread #{n}").id
     _ = settled(view)
 
     for id <- newer, do: assert(has_element?(view, "#side-thread-#{id}"))
@@ -196,7 +161,7 @@ defmodule PhotonWeb.SidebarTest do
     assert has_element?(view, "#side-more-garden[href='/projects/garden']", "1 more")
 
     {:ok, _submission} = Threads.send(oldest, "on box: $ sleep 1000")
-    until(oldest, fn -> Threads.busy?(oldest) end)
+    await_until(oldest, fn -> Threads.busy?(oldest) end)
     _ = settled(view)
 
     assert has_element?(view, "#side-thread-#{oldest}[data-running=true]")
@@ -211,8 +176,8 @@ defmodule PhotonWeb.SidebarTest do
     fake_machine("box")
     project = project!("Garden")
     {:ok, running} = Threads.start(project.id, "on box: $ sleep 1000")
-    until(running.id, fn -> Threads.busy?(running.id) end)
-    for n <- 1..5, do: idle_thread!(project, "thread #{n}")
+    await_until(running.id, fn -> Threads.busy?(running.id) end)
+    for n <- 1..5, do: idle_thread!(project, "thread #{n}").id
     _ = settled(view)
 
     assert has_element?(view, "#side-thread-#{running.id}[data-running=true]")
@@ -229,7 +194,7 @@ defmodule PhotonWeb.SidebarTest do
   test "a project called Garden more doesn't collide with Garden's more link", %{view: view} do
     garden = project!("Garden")
     _more = project!("Garden more")
-    for n <- 1..6, do: idle_thread!(garden, "thread #{n}")
+    for n <- 1..6, do: idle_thread!(garden, "thread #{n}").id
     _ = settled(view)
 
     assert count(view, "#side-project-garden-more") == 1
@@ -239,7 +204,7 @@ defmodule PhotonWeb.SidebarTest do
 
   test "marks the page on screen", %{conn: conn} do
     project = project!("Garden")
-    thread = idle_thread!(project, "Fix the pump")
+    thread = idle_thread!(project, "Fix the pump").id
 
     {:ok, view, _html} = live(conn, ~p"/")
     assert has_element?(view, "#nav-home[aria-current=page]")

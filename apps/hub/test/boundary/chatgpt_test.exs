@@ -173,8 +173,7 @@ defmodule Photon.ChatGPTTest do
   end
 
   test "without the scripted model, a request gets the token, or none when signed out" do
-    Application.put_env(:photon, :mock_model, false)
-    on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+    Photon.TestConfig.put_env(:photon, :mock_model, false)
 
     assert %{provider: "chatgpt", api_key: nil} = ChatGPT.llm_config(nil)
     refute ChatGPT.ready?(ChatGPT.status())
@@ -185,8 +184,7 @@ defmodule Photon.ChatGPTTest do
   end
 
   test "a sign-in without plan use hands out no token, and requests say why" do
-    Application.put_env(:photon, :mock_model, false)
-    on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+    Photon.TestConfig.put_env(:photon, :mock_model, false)
 
     ChatGPTStub.sign_in!(%{"scope" => "openid profile email offline_access"})
 

@@ -3,7 +3,10 @@ defmodule PhotonWeb.ConversationImageControllerTest do
 
   use PhotonWeb.ConnCase, async: false
 
-  alias Photon.{Assistant, Durable, Projects, Threads}
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
+
+  alias Photon.{Assistant, Durable}
   alias PhotonCore.Message
 
   @moduletag :durable
@@ -61,15 +64,10 @@ defmodule PhotonWeb.ConversationImageControllerTest do
 
   describe "a thread's images" do
     setup do
-      {:ok, project} =
-        Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
-
-      {:ok, thread} = Threads.start(project.id, "Look at the pump")
-      :ok = Threads.subscribe(thread.id)
+      project = garden!()
 
       # Let the first answer finish, so the images land after it.
-      if Threads.busy?(thread.id),
-        do: await_change(thread.id, fn _changes -> not Threads.busy?(thread.id) end)
+      thread = idle_thread!(project, "Look at the pump")
 
       %{thread: thread}
     end

@@ -7,9 +7,13 @@ defmodule Photon.AssistantTest do
 
   use Photon.DataCase, async: false
 
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
+  import Photon.MachineOps, only: [fake_machine: 1]
+
   @moduletag :durable
 
-  alias Photon.{Assistant, Projects, Schedules, Threads}
+  alias Photon.{Assistant, Projects, Schedules}
   alias Photon.Durable.Submission
   alias Photon.Schedules.Schedule
 
@@ -17,18 +21,6 @@ defmodule Photon.AssistantTest do
     conversation = Assistant.conversation_id()
     Durable.subscribe(conversation)
     {:ok, conversation: conversation}
-  end
-
-  # Stands in for a connected node: registers under its name, so commands
-  # for it arrive here.
-  defp fake_node(name) do
-    {:ok, _} =
-      Registry.register(Photon.MachineRegistry, name, %{
-        "platform" => "test",
-        "workspace" => "/w",
-        "version" => "0",
-        "capabilities" => ["ops:2"]
-      })
   end
 
   test "conversation_id/0 is Blip's conversation, which Photon.Signals finds", %{
@@ -64,7 +56,7 @@ defmodule Photon.AssistantTest do
 
   describe "tools" do
     test "lists machines", %{conversation: c} do
-      fake_node("box")
+      fake_machine("box")
       {:ok, s} = Assistant.send("machines")
       await_settled(c, s.id)
       assert [result] = texts(c, "tool_result")
@@ -95,8 +87,7 @@ defmodule Photon.AssistantTest do
     test "without consent to use the plan while away, a schedule leaves a note instead", %{
       conversation: c
     } do
-      Application.put_env(:photon, :mock_model, false)
-      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+      Photon.TestConfig.put_env(:photon, :mock_model, false)
 
       now = System.system_time(:millisecond)
 
@@ -119,7 +110,7 @@ defmodule Photon.AssistantTest do
 
     test "Stop withdraws the user's queued messages and keeps scheduled prompts, signals and answers",
          %{conversation: c} do
-      fake_node("box")
+      fake_machine("box")
       {:ok, first} = Assistant.send("on box: $ sleep 30")
       assert Durable.busy?(c)
 
@@ -154,8 +145,7 @@ defmodule Photon.AssistantTest do
 
   describe "the page under Blip" do
     setup do
-      {:ok, garden} =
-        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+      garden = garden!()
 
       {:ok, shed} = Projects.create(%{"name" => "Shed", "purpose" => "Fix the shed roof."})
 
@@ -245,16 +235,5 @@ defmodule Photon.AssistantTest do
       assert user.data["source"] == %{"kind" => "user"}
       assert texts(c, "assistant") == ["I don't know which page you're on."]
     end
-  end
-
-  # Starts a thread and waits until it has answered, so no run outlives the test.
-  defp idle_thread!(project, text) do
-    {:ok, thread} = Threads.start(project.id, text)
-    :ok = Threads.subscribe(thread.id)
-
-    if Threads.busy?(thread.id),
-      do: await_change(thread.id, fn _changes -> not Threads.busy?(thread.id) end)
-
-    thread
   end
 end

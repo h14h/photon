@@ -21,18 +21,11 @@ defmodule PhotonWeb.ThreadLiveTest do
 
   import Phoenix.LiveViewTest
   import Photon.Fixtures, only: [call: 3]
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
+  import PhotonWeb.LiveHelpers
 
-  alias Photon.{
-    Assistant,
-    Durable,
-    MachineOps,
-    Machines,
-    Projects,
-    Questions,
-    Schedules,
-    Skills,
-    Threads
-  }
+  alias Photon.{Durable, MachineOps, Machines, Projects, Questions, Schedules, Skills, Threads}
 
   alias Photon.Durable.Tx
   alias Photon.Questions.Question
@@ -44,25 +37,7 @@ defmodule PhotonWeb.ThreadLiveTest do
   @wait 3_000
 
   setup do
-    {:ok, project} =
-      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
-
-    %{project: project}
-  end
-
-  # Starts a thread and waits until it has answered, so no run outlives the test.
-  defp idle_thread!(project, text) do
-    {:ok, thread} = Threads.start(project.id, text)
-    :ok = Threads.subscribe(thread.id)
-    await_idle(thread.id)
-    thread
-  end
-
-  defp await_idle(thread_id) do
-    if Threads.busy?(thread_id),
-      do: await_change(thread_id, fn _changes -> not Threads.busy?(thread_id) end, @wait)
-
-    :ok
+    %{project: garden!()}
   end
 
   defp thread_page(conn, project, %{id: id}), do: thread_page(conn, project, id)
@@ -121,8 +96,7 @@ defmodule PhotonWeb.ThreadLiveTest do
 
       assert [thread] = Threads.list(project.id)
       assert has_element?(view, "#thread-title", "files")
-      :ok = Threads.subscribe(thread.id)
-      await_idle(thread.id)
+      idle!(thread.id)
       assert has_element?(view, "#thread-entries", "This project has no context files yet.")
     end
 
@@ -146,8 +120,7 @@ defmodule PhotonWeb.ThreadLiveTest do
       project: project
     } do
       Photon.ChatGPTStub.reset!()
-      Application.put_env(:photon, :mock_model, false)
-      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+      Photon.TestConfig.put_env(:photon, :mock_model, false)
 
       {:ok, view, _html} = live(conn, ~p"/projects/#{project.slug}/threads/new")
       assert has_element?(view, "#thread-sign-in-to-talk", "A thread needs a ChatGPT sign-in")
@@ -184,7 +157,7 @@ defmodule PhotonWeb.ThreadLiveTest do
 
       {_pushes, _routes} = Machines.snapshot("box", completed(op_id, "ls", "notes.txt\n"), %{})
       await_entry(thread.id, &(&1.kind == "tool_result"), @wait)
-      await_idle(thread.id)
+      idle!(thread.id, subscribe: false)
 
       refute has_element?(view, "#{action}-tail")
       assert has_element?(view, "#{action}[data-status=done] summary", "Ran ls on box")
@@ -211,7 +184,7 @@ defmodule PhotonWeb.ThreadLiveTest do
 
       view |> element("#thread-stop") |> render_click()
       await_entry(thread.id, &(&1.kind == "tool_result"), @wait)
-      await_idle(thread.id)
+      idle!(thread.id, subscribe: false)
 
       assert has_element?(view, "#{action}[data-status=stopped] summary", "Stopped")
       assert has_element?(view, "#{action} summary [data-machine=box]")
@@ -322,8 +295,7 @@ defmodule PhotonWeb.ThreadLiveTest do
   } do
     thread = idle_thread!(project, "Fix the pump")
     Photon.ChatGPTStub.reset!()
-    Application.put_env(:photon, :mock_model, false)
-    on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+    Photon.TestConfig.put_env(:photon, :mock_model, false)
 
     view = thread_page(conn, project, thread)
     assert has_element?(view, ".blip-clear-x > #thread-sign-in-to-talk")
@@ -427,7 +399,7 @@ defmodule PhotonWeb.ThreadLiveTest do
         })
 
       assert Schedules.run_now(schedule.id) == {:ok, "sent"}
-      await_idle(thread.id)
+      idle!(thread.id, subscribe: false)
 
       [entry] =
         for %{kind: "user"} = entry <- Durable.entries(thread.id),
@@ -522,7 +494,7 @@ defmodule PhotonWeb.ThreadLiveTest do
       view = thread_page(conn, project, thread)
 
       {:ok, _submission} = Threads.send(thread.id, "files")
-      await_idle(thread.id)
+      idle!(thread.id, subscribe: false)
       _ = :sys.get_state(Photon.Durable.Store)
 
       assert has_element?(view, "#thread-state[data-state=idle]", "Done")
@@ -560,7 +532,7 @@ defmodule PhotonWeb.ThreadLiveTest do
       view = thread_page(conn, project, thread)
 
       {:ok, _submission} = Threads.send(thread.id, "files", source: %{"kind" => "blip"})
-      await_idle(thread.id)
+      idle!(thread.id, subscribe: false)
 
       [mine, blips] = for %{kind: "user"} = entry <- Durable.entries(thread.id), do: entry
       assert has_element?(view, "#thread-message-#{blips.id}", "files")
@@ -571,7 +543,8 @@ defmodule PhotonWeb.ThreadLiveTest do
 
   describe "a question to Blip" do
     setup %{project: project} do
-      park_blip!()
+      _parked = park_blip!()
+      :ok = Questions.subscribe()
       {thread, asked} = asking!(project, "what colour is the gate?")
       %{thread: thread, asked: asked}
     end
@@ -640,7 +613,7 @@ defmodule PhotonWeb.ThreadLiveTest do
 
       result = await_entry(thread, &(&1.kind == "tool_result" and &1.data["name"] == "ask_blip"))
       assert result.data["status"] == "ok"
-      await_idle(thread)
+      idle!(thread, subscribe: false)
       _ = :sys.get_state(Photon.Durable.Store)
 
       assert has_element?(view, "#thread-composer-input")
@@ -719,7 +692,7 @@ defmodule PhotonWeb.ThreadLiveTest do
       second = pass!(second, "How tall should the fence be?")
       view = thread_page(conn, project, thread)
 
-      assert ids(view, "#thread-questions [id^=thread-question-][id$=-form]") == [
+      assert dom_ids(view, "#thread-questions [id^=thread-question-][id$=-form]") == [
                "thread-question-#{first.id}-form",
                "thread-question-#{second.id}-form"
              ]
@@ -733,7 +706,7 @@ defmodule PhotonWeb.ThreadLiveTest do
       assert has_element?(view, "#thread-question-#{second.id}-answer")
 
       # The questions scroll in their own area; Stop stays under it, in view.
-      assert ids(view, "#thread-questions-list [id^=thread-question-][id$=-form]") == [
+      assert dom_ids(view, "#thread-questions-list [id^=thread-question-][id$=-form]") == [
                "thread-question-#{first.id}-form",
                "thread-question-#{second.id}-form"
              ]
@@ -746,25 +719,6 @@ defmodule PhotonWeb.ThreadLiveTest do
     end
   end
 
-  # Stands in for a connected machine that takes commands and never answers.
-  defp fake_machine(name) do
-    :ok =
-      Machines.register(name, %{
-        "platform" => "test",
-        "workspace" => "/w",
-        "version" => "0",
-        "capabilities" => ["ops:2"]
-      })
-  end
-
-  # Parks Blip on a command that never finishes, so a thread's question
-  # stays with Blip.
-  defp park_blip! do
-    fake_machine("box")
-    {:ok, _parked} = Assistant.send("on box: $ sleep 1000")
-    :ok = Questions.subscribe()
-  end
-
   # Starts a thread that asks Blip `question`; returns its ID and the
   # question once it is asked.
   defp asking!(project, question) do
@@ -774,20 +728,6 @@ defmodule PhotonWeb.ThreadLiveTest do
     assert %{^thread_id => [asked]} = Questions.open_by_thread([thread_id])
     :ok = Threads.subscribe(thread_id)
     {thread_id, asked}
-  end
-
-  # As Blip's ask_owner: the question goes to the owner in Blip's words.
-  defp pass!(question, wording) do
-    {:ok, passed} = Durable.commit(&Questions.pass_tx(&1, question.id, wording, :blip))
-    passed
-  end
-
-  defp ids(view, selector) do
-    view
-    |> render()
-    |> LazyHTML.from_fragment()
-    |> LazyHTML.query(selector)
-    |> Enum.map(&(&1 |> LazyHTML.attribute("id") |> hd()))
   end
 
   defp tool_calls?(%{kind: "assistant", data: %{"message" => message}}),

@@ -21,13 +21,16 @@ defmodule PhotonWeb.HomeLiveTest do
 
   import Ecto.Query, only: [from: 2]
   import Phoenix.LiveViewTest
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
+  import PhotonWeb.LiveHelpers
+  import Photon.MachineOps, only: [fake_machine: 1]
 
   alias Photon.{
     Ambient,
     Assistant,
     ChatGPT,
     Durable,
-    Machines,
     Projects,
     Questions,
     Repo,
@@ -56,52 +59,6 @@ defmodule PhotonWeb.HomeLiveTest do
     project
   end
 
-  # Stands in for a connected machine that takes commands and never answers.
-  defp fake_machine(name) do
-    :ok =
-      Machines.register(name, %{
-        "platform" => "test",
-        "workspace" => "/w",
-        "version" => "0",
-        "capabilities" => ["ops:2"]
-      })
-  end
-
-  # Parks Blip on a command that never finishes, so a thread's question
-  # stays with Blip.
-  defp park_blip! do
-    fake_machine("box")
-    {:ok, _parked} = Assistant.send("on box: $ sleep 1000")
-    :ok = Questions.subscribe()
-  end
-
-  # Starts a thread and waits until its run has ended; returns its ID.
-  defp ended!(project, text) do
-    {:ok, thread} = Threads.start(project.id, text)
-    idle!(thread.id)
-  end
-
-  defp idle!(thread_id) do
-    :ok = Threads.subscribe(thread_id)
-
-    if Threads.busy?(thread_id),
-      do: await_change(thread_id, fn _changes -> not Threads.busy?(thread_id) end)
-
-    thread_id
-  end
-
-  # Waits until Blip has nothing running, so what is posted next starts
-  # its run rather than queueing.
-  defp blip_idle! do
-    blip = Assistant.conversation_id()
-    :ok = Durable.subscribe(blip)
-
-    if Durable.busy?(blip),
-      do: await_change(blip, fn _changes -> not Durable.busy?(blip) end)
-
-    :ok
-  end
-
   # Starts a thread whose run waits on a shell call on `box`; returns its ID.
   defp running!(project) do
     {:ok, thread} = Threads.start(project.id, "on box: $ sleep 1000")
@@ -120,12 +77,6 @@ defmodule PhotonWeb.HomeLiveTest do
     {thread.id, asked}
   end
 
-  # As Blip's ask_owner: the question goes to the owner in Blip's words.
-  defp pass!(question, wording) do
-    {:ok, passed} = Durable.commit(&Questions.pass_tx(&1, question.id, wording, :blip))
-    passed
-  end
-
   # Moves a thread's recorded times back by four days.
   defp age!(thread_id, fields) do
     at = DateTime.add(DateTime.utc_now(), -@four_days, :second)
@@ -136,22 +87,6 @@ defmodule PhotonWeb.HomeLiveTest do
       )
 
     :ok
-  end
-
-  # The commit that made the state the test waited for has broadcast once
-  # the store has handled it; then the page has its messages queued before
-  # this render.
-  defp settled(view) do
-    _ = :sys.get_state(Photon.Durable.Store)
-    render(view)
-  end
-
-  defp ids(view, selector) do
-    view
-    |> render()
-    |> LazyHTML.from_fragment()
-    |> LazyHTML.query(selector)
-    |> Enum.map(&(&1 |> LazyHTML.attribute("id") |> hd()))
   end
 
   test "is Home, marked in the sidebar", %{conn: conn} do
@@ -212,22 +147,23 @@ defmodule PhotonWeb.HomeLiveTest do
 
     test "list each thread where it belongs", %{conn: conn} do
       project = project!()
-      park_blip!()
+      _parked = park_blip!()
+      :ok = Questions.subscribe()
 
       running = running!(project)
       {asking, _asked} = asking!(project, "which deploy branch?")
       {with_owner, gate} = asking!(project, "what colour is the gate?")
       gate = pass!(gate, "What colour should the gate be?")
-      waiting = ended!(project, "ask me: which zone should I water first")
-      failed = ended!(project, "fail: the pump is unplugged")
-      unread = ended!(project, "files")
+      waiting = idle_thread!(project, "ask me: which zone should I water first").id
+      failed = idle_thread!(project, "fail: the pump is unplugged").id
+      unread = idle_thread!(project, "files").id
 
       stopped = running!(project)
       :ok = Threads.stop(stopped)
       idle!(stopped)
       :ok = age!(stopped, [:active_at, :last_run_ended_at])
 
-      read = ended!(project, "files")
+      read = idle_thread!(project, "files").id
       :ok = Threads.mark_seen(read)
       :ok = age!(read, [:active_at, :last_run_ended_at, :seen_at])
 
@@ -240,7 +176,7 @@ defmodule PhotonWeb.HomeLiveTest do
 
       # Waiting on you: the question with Blip's wording and its form, and
       # the thread that asked, with Open and Resolve.
-      assert ids(view, "#waiting-list > *") == ["question-#{gate.id}", "waiting-#{waiting}"]
+      assert dom_ids(view, "#waiting-list > *") == ["question-#{gate.id}", "waiting-#{waiting}"]
       assert has_element?(view, "#question-#{gate.id}-text", "What colour should the gate be?")
 
       assert has_element?(
@@ -263,16 +199,16 @@ defmodule PhotonWeb.HomeLiveTest do
 
       assert has_element?(view, "#waiting-#{waiting}-resolve")
 
-      assert ids(view, "#failed-list > *") == ["failed-#{failed}"]
+      assert dom_ids(view, "#failed-list > *") == ["failed-#{failed}"]
       assert has_element?(view, "#failed-#{failed}-detail", "the pump is unplugged")
       assert has_element?(view, "#failed-#{failed}-resolve")
 
-      assert ids(view, "#unread-list > *") == ["unread-#{unread}"]
+      assert dom_ids(view, "#unread-list > *") == ["unread-#{unread}"]
       assert has_element?(view, "#unread-#{unread}-at")
       assert has_element?(view, "#mark-all-read")
 
       # Running: the thread at work, then the one waiting on Blip.
-      assert ids(view, "#running-list > [id^=running-]") == [
+      assert dom_ids(view, "#running-list > [id^=running-]") == [
                "running-#{running}",
                "running-#{asking}"
              ]
@@ -288,7 +224,7 @@ defmodule PhotonWeb.HomeLiveTest do
 
       assert has_element?(view, "#running-#{asking} [data-mark=asking]")
 
-      assert ids(view, "#quiet-list > *") == ["quiet-#{stopped}"]
+      assert dom_ids(view, "#quiet-list > *") == ["quiet-#{stopped}"]
       assert has_element?(view, "#quiet-#{stopped}-detail", "Stopped")
       assert has_element?(view, "#quiet-#{stopped}-resolve")
 
@@ -298,7 +234,8 @@ defmodule PhotonWeb.HomeLiveTest do
 
     test "a question the hub passed on shows the thread's own words", %{conn: conn} do
       project = project!()
-      park_blip!()
+      _parked = park_blip!()
+      :ok = Questions.subscribe()
       {_thread, asked} = asking!(project, "which deploy branch?")
       {:ok, _passed} = Durable.commit(&Questions.pass_tx(&1, asked.id, nil, :hub))
 
@@ -313,7 +250,8 @@ defmodule PhotonWeb.HomeLiveTest do
       conn: conn
     } do
       project = project!()
-      park_blip!()
+      _parked = park_blip!()
+      :ok = Questions.subscribe()
       view = home(conn)
       assert has_element?(view, "#no-running")
 
@@ -333,7 +271,8 @@ defmodule PhotonWeb.HomeLiveTest do
   describe "answering a question" do
     setup do
       project = project!()
-      park_blip!()
+      _parked = park_blip!()
+      :ok = Questions.subscribe()
       {thread, asked} = asking!(project, "what colour is the gate?")
 
       %{
@@ -376,7 +315,7 @@ defmodule PhotonWeb.HomeLiveTest do
       |> render_change(%{"question_id" => question.id})
 
       # Another thread finishing makes the page read the board again.
-      _other = ended!(project, "files")
+      _other = idle_thread!(project, "files")
       _ = settled(view)
 
       assert has_element?(view, "#unread")
@@ -414,7 +353,7 @@ defmodule PhotonWeb.HomeLiveTest do
   describe "clearing the lists" do
     test "Resolve takes a failed thread off", %{conn: conn} do
       project = project!()
-      failed = ended!(project, "fail: the pump is unplugged")
+      failed = idle_thread!(project, "fail: the pump is unplugged").id
       view = home(conn)
       assert has_element?(view, "#home-summary", "1 thing needs you.")
 
@@ -428,7 +367,7 @@ defmodule PhotonWeb.HomeLiveTest do
 
     test "Resolve takes a thread that asked off", %{conn: conn} do
       project = project!()
-      waiting = ended!(project, "ask me: which zone should I water first")
+      waiting = idle_thread!(project, "ask me: which zone should I water first").id
       view = home(conn)
 
       view |> element("#waiting-#{waiting}-resolve") |> render_click()
@@ -451,10 +390,10 @@ defmodule PhotonWeb.HomeLiveTest do
 
     test "Mark all read empties Finished and says how many", %{conn: conn} do
       project = project!()
-      first = ended!(project, "files")
-      second = ended!(project, "files")
+      first = idle_thread!(project, "files").id
+      second = idle_thread!(project, "files").id
       view = home(conn)
-      assert ids(view, "#unread-list > *") == ["unread-#{second}", "unread-#{first}"]
+      assert dom_ids(view, "#unread-list > *") == ["unread-#{second}", "unread-#{first}"]
 
       view |> element("#mark-all-read") |> render_click()
 
@@ -511,8 +450,7 @@ defmodule PhotonWeb.HomeLiveTest do
     end
 
     test "leaves out a project's schedules, which are on its page", %{view: view} do
-      {:ok, project} =
-        Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+      project = garden!()
 
       {:ok, theirs} =
         Schedules.create({:project, project.id}, %{
@@ -660,8 +598,7 @@ defmodule PhotonWeb.HomeLiveTest do
       conn: conn
     } do
       ambient_on!()
-      Application.put_env(:photon, :mock_model, false)
-      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+      Photon.TestConfig.put_env(:photon, :mock_model, false)
       view = home(conn)
 
       assert %{outcome: "skipped_model"} = Ambient.digest_now()
@@ -678,7 +615,7 @@ defmodule PhotonWeb.HomeLiveTest do
 
       # Blip can think again (here, the scripted model): the next ChatGPT
       # change the page hears takes the warning down.
-      Application.put_env(:photon, :mock_model, true)
+      Photon.TestConfig.put_env(:photon, :mock_model, true)
       send(view.pid, {:chatgpt_changed, ChatGPT.status()})
       _ = render(view)
       refute has_element?(view, "#ambient-signed-out")
@@ -692,9 +629,9 @@ defmodule PhotonWeb.HomeLiveTest do
       stopped = running!(project)
       :ok = Threads.stop(stopped)
       idle!(stopped)
-      failed = ended!(project, "fail: the pump is unplugged")
-      waiting = ended!(project, "ask me: which zone should I water first")
-      unread = ended!(project, "files")
+      failed = idle_thread!(project, "fail: the pump is unplugged").id
+      waiting = idle_thread!(project, "ask me: which zone should I water first").id
+      unread = idle_thread!(project, "files").id
 
       for id <- [stopped, failed, waiting, unread],
           do: :ok = age!(id, [:active_at, :last_run_ended_at])
@@ -707,7 +644,7 @@ defmodule PhotonWeb.HomeLiveTest do
 
       # The failure and the question reached Blip as updates; the review
       # is sent once Blip is done with them, not queued behind them.
-      blip_idle!()
+      idle!(Assistant.conversation_id())
       assert %{outcome: "sent", count: 3} = Ambient.review_now()
       %Thread{reviewed_at: reviewed_at} = Threads.get(stopped)
       _ = settled(view)

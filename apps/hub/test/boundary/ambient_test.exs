@@ -22,8 +22,11 @@ defmodule Photon.AmbientTest do
 
   import Ecto.Query, only: [from: 2]
   import Photon.Eventually
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
+  import Photon.MachineOps, only: [fake_machine: 1]
 
-  alias Photon.{Ambient, Assistant, Projects, Schedules, Signals, Threads}
+  alias Photon.{Ambient, Assistant, Schedules, Signals, Threads}
   alias Photon.Ambient.{Rules, Timer}
   alias Photon.Durable.{Runtime, Scheduler, Store, Submission, TaskRecord, Tx}
   alias Photon.Schedules.Routine
@@ -34,8 +37,7 @@ defmodule Photon.AmbientTest do
   @hour 3_600_000
 
   setup do
-    {:ok, project} =
-      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+    project = garden!()
 
     %{project: project, blip: Assistant.conversation_id()}
   end
@@ -48,34 +50,6 @@ defmodule Photon.AmbientTest do
   defp doc, do: Signals.ambient_doc()
 
   defp items, do: Repo.all(from(i in DigestItem, order_by: [asc: i.inserted_at, asc: i.id]))
-
-  # Stands in for a connected machine that takes commands and never answers.
-  defp fake_machine(name) do
-    case Registry.register(Photon.MachineRegistry, name, %{
-           "platform" => "test",
-           "workspace" => "/w",
-           "version" => "0",
-           "capabilities" => ["ops:2"]
-         }) do
-      {:ok, _owner} -> :ok
-      {:error, {:already_registered, _pid}} -> :ok
-    end
-  end
-
-  # The owner starts a thread and its run ends; returns the thread's ID.
-  defp ended!(project, text) do
-    {:ok, thread} = Threads.start(project.id, text)
-    idle!(thread.id)
-  end
-
-  defp idle!(conversation_id) do
-    :ok = Durable.subscribe(conversation_id)
-
-    if Durable.busy?(conversation_id),
-      do: await_change(conversation_id, fn _changes -> not Durable.busy?(conversation_id) end)
-
-    conversation_id
-  end
 
   # The owner starts a thread that waits on `box`, then stops it.
   defp stopped!(project) do
@@ -93,21 +67,6 @@ defmodule Photon.AmbientTest do
     query = from(t in Thread, where: t.id == ^thread_id)
     {1, _rows} = Repo.update_all(query, set: [last_run_ended_at: at, active_at: at])
     at
-  end
-
-  # Parks Blip on a command that never finishes; returns its submission.
-  defp park_blip!(blip) do
-    :ok = fake_machine("box")
-    :ok = Durable.subscribe(blip)
-    {:ok, parked} = Assistant.send("on box: $ sleep 1000")
-    assert Durable.busy?(blip)
-    parked
-  end
-
-  defp unpark_blip!(blip, parked) do
-    :ok = Assistant.stop()
-    assert %{status: "unanswered"} = await_settled(blip, parked.id)
-    idle!(blip)
   end
 
   # Blip's digest or review messages (`kind`), oldest first, whatever
@@ -236,12 +195,12 @@ defmodule Photon.AmbientTest do
          %{project: project, blip: blip} do
       on!()
       %{"digest_task_id" => digest_id, "review_task_id" => review_id} = doc()
-      parked = park_blip!(blip)
-      _thread = ended!(project, "files")
+      parked = park_blip!(subscribe: true)
+      _thread = idle_thread!(project, "files")
       assert %{outcome: "queued"} = Ambient.digest_now()
       [digest] = posted(blip, "digest")
       assert digest.status == "queued"
-      _thread = ended!(project, "files again")
+      _thread = idle_thread!(project, "files again")
       refute items() == []
 
       :ok = Ambient.subscribe()
@@ -256,20 +215,20 @@ defmodule Photon.AmbientTest do
       assert %{on?: false, next_digest_at: nil, next_review_at: nil} = Ambient.status()
 
       # From now on nothing is collected.
-      _thread = ended!(project, "files once more")
+      _thread = idle_thread!(project, "files once more")
       assert items() == []
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked, idle: true)
     end
 
     test "turning it off withdraws a queued review and clears its threads' marks", %{
       project: project,
       blip: blip
     } do
-      failed = ended!(project, "fail: the ladder is missing")
+      failed = idle_thread!(project, "fail: the ladder is missing").id
       _at = backdate!(failed, 4)
       idle!(blip)
       on!()
-      parked = park_blip!(blip)
+      parked = park_blip!(subscribe: true)
 
       assert %{outcome: "queued", count: 1} = Ambient.review_now()
       assert [review] = posted(blip, "review")
@@ -278,7 +237,7 @@ defmodule Photon.AmbientTest do
       off!()
       assert Repo.get!(Submission, review.id).status == "withdrawn"
       assert Threads.get(failed).reviewed_at == nil
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked, idle: true)
     end
   end
 
@@ -299,7 +258,7 @@ defmodule Photon.AmbientTest do
            blip: blip
          } do
       on!()
-      thread = ended!(project, "files")
+      thread = idle_thread!(project, "files").id
       assert [%{kind: "thread_started"}, %{kind: "finished"}] = items()
       assert Ambient.status().pending == %{new: 1, smaller: 1}
 
@@ -346,7 +305,7 @@ defmodule Photon.AmbientTest do
       blip: blip
     } do
       on!()
-      thread = ended!(project, "files")
+      thread = idle_thread!(project, "files").id
       :ok = Durable.subscribe(blip)
       assert %{outcome: "sent"} = Ambient.digest_now()
 
@@ -361,7 +320,7 @@ defmodule Photon.AmbientTest do
       blip: blip
     } do
       on!()
-      thread = ended!(project, "files")
+      thread = idle_thread!(project, "files").id
       assert Ambient.status().pending == %{new: 1, smaller: 1}
       assert Threads.mark_seen(thread) == :ok
       assert Ambient.status().pending == %{new: 0, smaller: 2}
@@ -376,17 +335,17 @@ defmodule Photon.AmbientTest do
       blip: blip
     } do
       on!()
-      parked = park_blip!(blip)
-      _thread = ended!(project, "files")
+      parked = park_blip!(subscribe: true)
+      _thread = idle_thread!(project, "files")
       assert %{outcome: "queued"} = Ambient.digest_now()
-      _thread = ended!(project, "files again")
+      _thread = idle_thread!(project, "files again")
       waiting = Signals.pending()
       assert length(waiting) == 2
 
       assert %{outcome: "skipped_queued", count: 0} = Ambient.digest_now()
       assert Signals.pending() == waiting
       assert [_digest] = posted(blip, "digest")
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked, idle: true)
     end
 
     test "a stopped schedule is news until the owner saves it again", %{
@@ -436,7 +395,7 @@ defmodule Photon.AmbientTest do
 
   test "a firing without consent skips and keeps the items", %{project: project, blip: blip} do
     on!()
-    _thread = ended!(project, "files")
+    _thread = idle_thread!(project, "files")
 
     firing = %{
       thinks?: true,
@@ -454,24 +413,19 @@ defmodule Photon.AmbientTest do
   end
 
   describe "when Blip can't think" do
-    setup do
-      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
-      :ok
-    end
-
     # As if the owner signed out of ChatGPT, or a token refresh failed: the
     # hub leaves the scripted model, and nobody is signed in.
-    defp signed_out!, do: Application.put_env(:photon, :mock_model, false)
+    defp signed_out!, do: Photon.TestConfig.put_env(:photon, :mock_model, false)
 
     test "a firing skips, posts nothing, and keeps the items and the marks", %{
       project: project,
       blip: blip
     } do
-      failed = ended!(project, "fail: the ladder is missing")
+      failed = idle_thread!(project, "fail: the ladder is missing").id
       _at = backdate!(failed, 4)
       idle!(blip)
       on!()
-      _thread = ended!(project, "files")
+      _thread = idle_thread!(project, "files")
       signed_out!()
 
       assert %{outcome: "skipped_model", count: 0} = Ambient.digest_now()
@@ -489,14 +443,14 @@ defmodule Photon.AmbientTest do
       blip: blip
     } do
       on!()
-      parked = park_blip!(blip)
-      thread = ended!(project, "files")
+      parked = park_blip!(subscribe: true)
+      thread = idle_thread!(project, "files").id
       assert %{outcome: "queued"} = Ambient.digest_now()
       assert Signals.pending() == []
 
       # Blip reaches the digest after its sign-in lapsed: the request fails.
       signed_out!()
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked, idle: true)
       [digest] = posted(blip, "digest")
       assert %{status: "unanswered"} = await_settled(blip, digest.id)
       idle!(blip)
@@ -505,7 +459,7 @@ defmodule Photon.AmbientTest do
                Signals.pending()
 
       # Signed in again, the next digest carries them.
-      Application.put_env(:photon, :mock_model, true)
+      Photon.TestConfig.put_env(:photon, :mock_model, true)
       assert %{outcome: "sent", count: 2} = Ambient.digest_now()
       idle!(blip)
       assert items() == []
@@ -515,16 +469,16 @@ defmodule Photon.AmbientTest do
       project: project,
       blip: blip
     } do
-      failed = ended!(project, "fail: the ladder is missing")
+      failed = idle_thread!(project, "fail: the ladder is missing").id
       _at = backdate!(failed, 4)
       idle!(blip)
       on!()
-      parked = park_blip!(blip)
+      parked = park_blip!(subscribe: true)
       assert %{outcome: "queued", count: 1} = Ambient.review_now()
       assert %DateTime{} = Threads.get(failed).reviewed_at
 
       signed_out!()
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked, idle: true)
       [review] = posted(blip, "review")
       assert %{status: "unanswered"} = await_settled(blip, review.id)
       idle!(blip)
@@ -535,11 +489,11 @@ defmodule Photon.AmbientTest do
 
   describe "withdrawing a queued digest or review" do
     test "a withdrawn review clears its threads' marks", %{project: project, blip: blip} do
-      failed = ended!(project, "fail: the ladder is missing")
+      failed = idle_thread!(project, "fail: the ladder is missing").id
       _at = backdate!(failed, 4)
       idle!(blip)
       on!()
-      parked = park_blip!(blip)
+      parked = park_blip!(subscribe: true)
       assert %{outcome: "queued"} = Ambient.review_now()
       [review] = posted(blip, "review")
       assert %DateTime{} = Threads.get(failed).reviewed_at
@@ -549,7 +503,7 @@ defmodule Photon.AmbientTest do
       assert Threads.get(failed).reviewed_at == nil
 
       # The next review lists it again.
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked, idle: true)
       assert %{outcome: "sent", count: 1} = Ambient.review_now()
       idle!(blip)
     end
@@ -559,17 +513,17 @@ defmodule Photon.AmbientTest do
       blip: blip
     } do
       on!()
-      parked = park_blip!(blip)
-      _thread = ended!(project, "files")
+      parked = park_blip!(subscribe: true)
+      _thread = idle_thread!(project, "files")
       assert %{outcome: "queued"} = Ambient.digest_now()
       [digest] = posted(blip, "digest")
-      later = ended!(project, "files again")
+      later = idle_thread!(project, "files again").id
 
       assert Assistant.withdraw(digest.id) == :ok
       assert Repo.get!(Submission, digest.id).status == "withdrawn"
       assert Enum.map(items(), & &1.thread_id) == [later, later]
       assert Enum.all?(items(), &is_nil(&1.digest_key))
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked, idle: true)
     end
   end
 
@@ -581,7 +535,7 @@ defmodule Photon.AmbientTest do
       blip: blip
     } do
       on!()
-      _thread = ended!(project, "files")
+      _thread = idle_thread!(project, "files")
       first_at = System.system_time(:millisecond) - 1_000
       arming = %{first_at: first_at, every_ms: @hour, version: 100}
       :ok = Durable.subscribe(blip)
@@ -626,7 +580,7 @@ defmodule Photon.AmbientTest do
       on!()
       %{"digest_task_id" => digest_id} = doc()
       old = eventually(fn -> waiting(digest_id) end)
-      _thread = ended!(project, "files")
+      _thread = idle_thread!(project, "files")
       stop_scheduler()
 
       started = started!(old)
@@ -727,10 +681,10 @@ defmodule Photon.AmbientTest do
       blip: blip
     } do
       stopped = stopped!(project)
-      failed = ended!(project, "fail: the ladder is missing")
-      waiting = ended!(project, "ask me: which zone first")
+      failed = idle_thread!(project, "fail: the ladder is missing").id
+      waiting = idle_thread!(project, "ask me: which zone first").id
       recent = stopped!(project)
-      unread = ended!(project, "files")
+      unread = idle_thread!(project, "files").id
       idle!(blip)
       for id <- [stopped, waiting, unread], do: backdate!(id, 4)
       _at = backdate!(failed, 10)

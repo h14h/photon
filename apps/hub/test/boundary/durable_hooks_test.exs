@@ -9,6 +9,8 @@ defmodule Photon.DurableHooksTest do
 
   use Photon.DataCase, async: false
 
+  import Photon.ConversationHelpers
+
   alias Photon.Durable.{Scheduler, Submission, Tx}
   alias Photon.TestProfile.Hooks
 
@@ -19,10 +21,6 @@ defmodule Photon.DurableHooksTest do
     c = Durable.create_conversation("test_hooks").id
     Durable.subscribe(c)
     %{conversation: c}
-  end
-
-  defp await_tool_waiting(c) do
-    await_change(c, &Enum.any?(&1.tasks, fn t -> t.kind == "tool" and t.status == "waiting" end))
   end
 
   # Every hook message for `c` received so far, once the scheduler has

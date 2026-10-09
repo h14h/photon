@@ -13,14 +13,14 @@ defmodule PhotonWeb.SkillLiveTest do
   use PhotonWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Photon.ProjectHelpers
 
   alias Photon.{NodeKeys, Projects, Skills}
 
   @moduletag :durable
 
   setup do
-    {:ok, garden} =
-      Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+    garden = garden!()
 
     {:ok, skill} =
       Skills.create(%{

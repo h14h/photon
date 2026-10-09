@@ -98,9 +98,9 @@ if [ "$ACTION" = uninstall ]; then
   stop_existing
   # Removing the files from under a node that's still running would leave
   # it connecting forever with nothing to stop it by. It may take a moment
-  # to exit.
+  # to exit: up to five seconds (the tests shorten it).
   i=0
-  while node_running && [ "$i" -lt 50 ]; do
+  while node_running && [ "$i" -lt "${PHOTON_STOP_TRIES:-50}" ]; do
     i=$((i + 1))
     sleep 0.1
   done

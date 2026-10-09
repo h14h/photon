@@ -81,8 +81,7 @@ defmodule PhotonWeb.NodeChannelTest do
 
   @tag capture_log: true
   test "a hub that vouches through its tailnet refuses keys from anywhere it can't name" do
-    Application.put_env(:photon, :auth_mode, :tailscale)
-    on_exit(fn -> Application.delete_env(:photon, :auth_mode) end)
+    Photon.TestConfig.put_env(:photon, :auth_mode, :tailscale)
     {:ok, key} = Photon.NodeKeys.issue("box")
 
     assert connect(PhotonWeb.NodeSocket, %{}, connect_info: token_info(key)) == :error

@@ -17,6 +17,9 @@ defmodule PhotonWeb.SettingsLiveTest do
   import Phoenix.LiveViewTest
 
   import Ecto.Query, only: [from: 2]
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
+  import PhotonWeb.LiveHelpers
 
   alias Photon.{
     Ambient,
@@ -24,7 +27,6 @@ defmodule PhotonWeb.SettingsLiveTest do
     ChatGPT,
     ChatGPTStub,
     Durable,
-    Projects,
     Repo,
     Schedules,
     Signals,
@@ -40,8 +42,7 @@ defmodule PhotonWeb.SettingsLiveTest do
   setup %{conn: conn} do
     # Against the real sign-in: with the scripted model on, the sidebar's
     # sign-in banner never shows.
-    Application.put_env(:photon, :mock_model, false)
-    on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+    Photon.TestConfig.put_env(:photon, :mock_model, false)
     ChatGPTStub.reset!()
     # Signed in is saved to a file, so a test that signs in would leave the
     # next test, on any page, signed in without a stub to answer it.
@@ -180,39 +181,16 @@ defmodule PhotonWeb.SettingsLiveTest do
   describe "ambient mode" do
     setup %{conn: conn} do
       # Blip thinks on the scripted model, so the section shows.
-      Application.put_env(:photon, :mock_model, true)
+      Photon.TestConfig.put_env(:photon, :mock_model, true)
       {:ok, view, _html} = live(conn, ~p"/settings")
 
-      {:ok, project} =
-        Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+      project = garden!()
 
       %{view: view, project: project, blip: Assistant.conversation_id()}
     end
 
     defp save(view, settings),
       do: view |> form("#settings-form", settings: settings) |> render_submit()
-
-    # The commit the test waited for has announced once the store has
-    # handled it; then the page has its messages queued before this render.
-    defp settled(view) do
-      _ = :sys.get_state(Photon.Durable.Store)
-      render(view)
-    end
-
-    # The owner starts a thread and its run ends; returns its ID.
-    defp ended!(project, text) do
-      {:ok, thread} = Threads.start(project.id, text)
-      idle!(thread.id)
-    end
-
-    defp idle!(conversation_id) do
-      :ok = Durable.subscribe(conversation_id)
-
-      if Durable.busy?(conversation_id),
-        do: await_change(conversation_id, fn _changes -> not Durable.busy?(conversation_id) end)
-
-      conversation_id
-    end
 
     # Blip answers what a button sent it; the test waits for the answer, so
     # nothing runs on after it.
@@ -316,7 +294,7 @@ defmodule PhotonWeb.SettingsLiveTest do
       blip: blip
     } do
       save(view, %{ambient: "true"})
-      _thread = ended!(project, "files")
+      _thread = idle_thread!(project, "files")
       :ok = Durable.subscribe(blip)
       view |> element("#ambient-digest-now") |> render_click()
 
@@ -335,7 +313,7 @@ defmodule PhotonWeb.SettingsLiveTest do
       view |> element("#ambient-review-now") |> render_click()
       assert has_element?(view, "#flash-info", "No threads need a review.")
 
-      thread = ended!(project, "fail: the ladder is missing")
+      thread = idle_thread!(project, "fail: the ladder is missing").id
       at = DateTime.add(DateTime.utc_now(), -4 * 86_400, :second)
       query = from(t in Thread, where: t.id == ^thread)
       {1, _rows} = Repo.update_all(query, set: [last_run_ended_at: at, active_at: at])
@@ -357,7 +335,7 @@ defmodule PhotonWeb.SettingsLiveTest do
       save(view, %{ambient: "true"})
       assert has_element?(view, "#ambient-pending", "Nothing new yet.")
 
-      thread = ended!(project, "files")
+      thread = idle_thread!(project, "files").id
       settled(view)
 
       assert has_element?(
@@ -381,7 +359,7 @@ defmodule PhotonWeb.SettingsLiveTest do
       conn: conn
     } do
       :ok = Ambient.configure(%{"ambient" => "true"})
-      Application.put_env(:photon, :mock_model, false)
+      Photon.TestConfig.put_env(:photon, :mock_model, false)
       {:ok, view, _html} = live(conn, ~p"/settings")
 
       assert has_element?(view, "#ambient #settings_ambient[checked]")
