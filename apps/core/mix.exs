@@ -33,12 +33,26 @@ defmodule PhotonCore.MixProject do
     [extra_applications: [:logger]]
   end
 
-  # Every module under test/support is test code, so coverage leaves it out
-  # without a list to keep in step.
+  # Every module test/support defines is test code, so coverage leaves it
+  # out without a list to keep in step. Read from the parsed code, so a
+  # `defmodule` inside a string doesn't count.
   defp test_support_modules do
     for path <- Path.wildcard("test/support/**/*.ex"),
-        [_, name] <- Regex.scan(~r/^defmodule ([\w.]+) do/m, File.read!(path)),
-        do: Module.concat([name])
+        module <- defined_modules(path |> File.read!() |> Code.string_to_quoted!()),
+        do: module
+  end
+
+  defp defined_modules(ast) do
+    {_ast, modules} =
+      Macro.prewalk(ast, [], fn
+        {:defmodule, _meta, [{:__aliases__, _, parts} | _]} = node, acc ->
+          {node, [Module.concat(parts) | acc]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    modules
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

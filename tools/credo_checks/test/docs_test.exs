@@ -3,18 +3,24 @@ defmodule PhotonCredo.DocsTest do
 
   alias PhotonCredo.Docs
 
+  @nothing %{defined: %{}, bare: MapSet.new()}
+
   @context %{
     resolve: &__MODULE__.resolve/1,
     file?: &__MODULE__.file?/1,
     anchors: &__MODULE__.anchors/1
   }
 
+  @files [".", "docs", "docs/a.md", "docs/b.md", "apps/hub/mix.exs", "README.md"] ++
+           ["apps/node/dist/notes.md"]
+
   def resolve("Photon.Gone"), do: {:error, "no module Photon.Gone"}
   def resolve(_name), do: :ok
 
-  def file?(path), do: path in ["docs/a.md", "docs/b.md", "apps/hub/mix.exs", "README.md"]
+  def file?(path), do: path in @files
 
   def anchors("docs/b.md"), do: ["hub-rules"]
+  def anchors("apps/node/dist/notes.md"), do: :unavailable
   def anchors(_file), do: []
 
   describe "check/3" do
@@ -55,6 +61,31 @@ defmodule PhotonCredo.DocsTest do
              ]
     end
 
+    test "reads links with titles, angle brackets, images and reference definitions" do
+      text = """
+      [t](gone.md "Title") [a](<gone2.md>) ![i](gone.png)
+      [ref]: gone3.md
+      """
+
+      assert Docs.check("docs/a.md", text, @context) == [
+               {"docs/a.md", 1, "broken link to docs/gone.md"},
+               {"docs/a.md", 1, "broken link to docs/gone2.md"},
+               {"docs/a.md", 1, "broken link to docs/gone.png"},
+               {"docs/a.md", 2, "broken link to docs/gone3.md"}
+             ]
+    end
+
+    test "follows links to directories" do
+      assert Docs.check("docs/a.md", "[up](..) [here](.)", @context) == []
+      assert Docs.check("README.md", "[root](.)", @context) == []
+    end
+
+    test "says when a generated file's anchors can't be read" do
+      assert Docs.check("README.md", "[n](apps/node/dist/notes.md#usage)", @context) == [
+               {"README.md", 1, "can't check #usage: apps/node/dist/notes.md isn't in the repo"}
+             ]
+    end
+
     test "leaves links in source files alone" do
       assert Docs.check("lib/x.ex", "[gone](c.md)", @context) == []
     end
@@ -67,10 +98,19 @@ defmodule PhotonCredo.DocsTest do
     ```
     # not a heading
     ```
-    ## Hub rules
+    ~~~elixir
+    # nor this
+    ~~~
+    Setext title
+    ============
+
+    Another one
+    ---
+    ## Hub rules ##
     """
 
-    assert Docs.anchors(text) == ["hub-rules", "the-ops2-capability", "hub-rules-1"]
+    assert Docs.anchors(text) ==
+             ["hub-rules", "the-ops2-capability", "setext-title", "another-one", "hub-rules-1"]
   end
 
   describe "resolve/2" do
@@ -82,27 +122,49 @@ defmodule PhotonCredo.DocsTest do
             "PhotonCore.Operation.t",
             "PhotonCore.LLM.Mock.respond/1"
           ] do
-        assert Docs.resolve(name, MapSet.new()) == :ok, name
+        assert Docs.resolve(name, @nothing) == :ok, name
       end
     end
 
     test "reports a missing module, function or arity" do
-      assert Docs.resolve("PhotonCore.Gone", MapSet.new()) ==
-               {:error, "no module PhotonCore.Gone"}
-
-      assert Docs.resolve("PhotonCore.ID.gone", MapSet.new()) == {:error, "no PhotonCore.ID.gone"}
-
-      assert Docs.resolve("PhotonCore.ID.new/9", MapSet.new()) ==
-               {:error, "no PhotonCore.ID.new/9"}
+      assert Docs.resolve("PhotonCore.Gone", @nothing) == {:error, "no module PhotonCore.Gone"}
+      assert Docs.resolve("PhotonCore.ID.gone", @nothing) == {:error, "no PhotonCore.ID.gone"}
+      assert Docs.resolve("PhotonCore.ID.new/9", @nothing) == {:error, "no PhotonCore.ID.new/9"}
     end
 
-    test "accepts known names that aren't loaded here" do
-      known = Docs.known(["defmodule PhotonNode.TestLink do", "name: Photon.PubSub"])
+    test "reads modules that aren't loaded here from their source" do
+      known =
+        Docs.known([
+          """
+          defmodule PhotonNode.TestLink do
+            @type entry :: map()
+            def snapshot(op), do: op
+          end
+          """,
+          ~S'''
+          defmodule Fake do
+            @doc "defmodule PhotonCore.Phantom do"
+          end
+          ''',
+          "children = [{Phoenix.PubSub, name: Photon.PubSub}]",
+          "defmodule Broken do"
+        ])
 
       assert Docs.resolve("PhotonNode.TestLink", known) == :ok
       assert Docs.resolve("PhotonNode.TestLink.snapshot/1", known) == :ok
-      assert Docs.resolve("Photon.PubSub", known) == :ok
+      assert Docs.resolve("PhotonNode.TestLink.entry", known) == :ok
       assert Docs.resolve("PhotonNode", known) == :ok
+      assert Docs.resolve("Photon.PubSub", known) == :ok
+
+      assert Docs.resolve("PhotonNode.TestLink.gone/1", known) ==
+               {:error, "no PhotonNode.TestLink.gone/1"}
+
+      assert Docs.resolve("Photon.PubSub.broadcast/3", known) ==
+               {:error, "no module Photon.PubSub"}
+
+      assert Docs.resolve("PhotonCore.Phantom", known) ==
+               {:error, "no module PhotonCore.Phantom"}
+
       assert Docs.resolve("Photon.Other", known) == {:error, "no module Photon.Other"}
     end
   end

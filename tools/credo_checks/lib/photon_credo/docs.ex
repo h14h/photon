@@ -8,11 +8,14 @@ defmodule PhotonCredo.Docs do
   in moduledocs, docs and comments.
 
   A name exists when its module is loaded and has that function, macro,
-  type or callback; or, for a bare module name, when the repo's sources
-  define it (another app's test support), register it as a process name
-  (`name: Photon.PubSub`), or use it as a namespace. A path exists when it
-  is in the repo or ignored by git (build output). Test files are checked
-  for names only, since their fixtures hold made-up paths.
+  type or callback. A module that isn't loaded here (another app's test
+  support) is read from its source instead: it exists when a source defines
+  it, and has a member when that source defines one by the name. A bare
+  name may also be a registered process name (`name: Photon.PubSub`) or a
+  namespace. A path exists when it is in the repo or ignored by git (build
+  output), though a generated Markdown file's anchors can't be checked.
+  Test files are checked for names only, since their fixtures hold made-up
+  paths.
 
   `tools/check_docs.exs` runs it from `apps/hub` in the test env, where
   every app's modules are compiled; `mix precommit` there runs that. The
@@ -29,8 +32,15 @@ defmodule PhotonCredo.Docs do
   @type context :: %{
           resolve: (String.t() -> :ok | {:error, String.t()}),
           file?: (String.t() -> boolean()),
-          anchors: (String.t() -> [String.t()])
+          anchors: (String.t() -> [String.t()] | :unavailable)
         }
+
+  @typedoc """
+  What the sources say about modules this VM may not have loaded: the
+  members each defined module's source defines, and the other names that
+  may stand alone (registered process names and namespaces).
+  """
+  @type known :: %{defined: %{String.t() => MapSet.t(String.t())}, bare: MapSet.t(String.t())}
 
   @markdown ["README.md", "ARCHITECTURE.md", "AGENTS.md", "docs/**/*.md", "specs/**/*.md"]
   @sources [
@@ -45,8 +55,10 @@ defmodule PhotonCredo.Docs do
   @skip ~r{(^|/)(deps|_build|cover|node_modules)/}
 
   @code_span ~r/`([^`\n]+)`/
-  @link ~r/\[[^\]\n]*\]\(([^)\s]+)\)/
-  @name ~r/^(?:PhotonCore|PhotonNode|PhotonWeb|PhotonCredo|Photon)(?:\.[A-Z]\w*)*(?:\.[a-z_]\w*[?!]?(?:\/\d+)?)?$/
+  @link ~r/\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/
+  @link_definition ~r/^ {0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/
+  @roots "(?:PhotonCore|PhotonNode|PhotonWeb|PhotonCredo|Photon)"
+  @name ~r/^#{@roots}(?:\.[A-Z]\w*)*(?:\.[a-z_]\w*[?!]?(?:\/\d+)?)?$/
   @repo_path ~r{^(?:apps|docs|specs|tools|scripts)/(?!\d+$)[\w./@-]+?(?::\d+(?:-\d+)?)?$}
 
   @doc "Every problem in the repo at `root`, with the real lookups."
@@ -102,35 +114,98 @@ defmodule PhotonCredo.Docs do
 
   @doc """
   Whether a name in backticks exists: a loaded module, or a loaded module's
-  function, macro, type or callback (with its arity, if given). `known` are
-  the module names the sources define or register, and their namespaces;
-  for one that isn't loaded, only the module name is checked.
+  function, macro, type or callback (with its arity, if given). For a
+  module that isn't loaded, `known` says (see `t:known/0`); arities aren't
+  checked there.
   """
-  @spec resolve(String.t(), MapSet.t(String.t())) :: :ok | {:error, String.t()}
+  @spec resolve(String.t(), known()) :: :ok | {:error, String.t()}
   def resolve(name, known) do
     case Regex.run(~r/^(.*?)\.([a-z_]\w*[?!]?)(?:\/(\d+))?$/, name) do
       [_all, module, fun] -> resolve_member(module, fun, nil, known)
       [_all, module, fun, arity] -> resolve_member(module, fun, String.to_integer(arity), known)
-      nil -> if module(name) || name in known, do: :ok, else: {:error, "no module #{name}"}
+      nil -> resolve_module(name, known)
     end
   end
 
-  @doc """
-  The module names `sources` define (`defmodule`) or register as process
-  names (`name: Photon.PubSub`), with every namespace above them.
-  """
-  @spec known([String.t()]) :: MapSet.t(String.t())
-  def known(sources) do
-    sources
-    |> Enum.flat_map(
-      &Regex.scan(
-        ~r/(?:defmodule|name:)\s+((?:PhotonCore|PhotonNode|PhotonWeb|PhotonCredo|Photon)[\w.]*)/,
-        &1
-      )
-    )
-    |> Enum.flat_map(fn [_match, name] -> namespaces(name) end)
-    |> MapSet.new()
+  defp resolve_module(name, known) do
+    if module(name) || Map.has_key?(known.defined, name) || name in known.bare,
+      do: :ok,
+      else: {:error, "no module #{name}"}
   end
+
+  @doc """
+  What `sources` say about modules (`t:known/0`): each module a source
+  defines, with the functions, macros, types and callbacks it defines, and
+  the process names they register (`name: Photon.PubSub`), with every
+  namespace above both. A source that doesn't parse adds nothing.
+  """
+  @spec known([String.t()]) :: known()
+  def known(sources) do
+    defined =
+      sources
+      |> Enum.flat_map(&defined_modules/1)
+      |> Enum.reduce(%{}, fn {name, members}, acc ->
+        Map.update(acc, name, members, &MapSet.union(&1, members))
+      end)
+
+    bare =
+      (Map.keys(defined) ++ Enum.flat_map(sources, &registered_names/1))
+      |> Enum.flat_map(&namespaces/1)
+      |> MapSet.new()
+
+    %{defined: defined, bare: bare}
+  end
+
+  defp registered_names(source) do
+    for [_match, name] <- Regex.scan(~r/name:\s+(#{@roots}[\w.]*)/, source), do: name
+  end
+
+  defp defined_modules(source) do
+    case Code.string_to_quoted(source) do
+      {:ok, ast} -> modules_in(ast)
+      {:error, _reason} -> []
+    end
+  end
+
+  defp modules_in(ast) do
+    {_ast, modules} =
+      Macro.prewalk(ast, [], fn
+        {:defmodule, _meta, [{:__aliases__, _, parts}, body]} = node, acc ->
+          {node, [{Enum.map_join(parts, ".", &to_string/1), members_in(body)} | acc]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    modules
+  end
+
+  @definitions [:def, :defp, :defmacro, :defmacrop, :defdelegate, :defguard]
+  @attributes [:type, :typep, :opaque, :callback, :macrocallback]
+
+  defp members_in(body) do
+    {_ast, names} =
+      Macro.prewalk(body, MapSet.new(), fn
+        {kind, _meta, [head | _]} = node, acc when kind in @definitions ->
+          {node, add_name(acc, head)}
+
+        {:@, _meta, [{attribute, _, [spec]}]} = node, acc when attribute in @attributes ->
+          {node, add_name(acc, spec)}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    names
+  end
+
+  defp add_name(acc, {:when, _meta, [head | _]}), do: add_name(acc, head)
+  defp add_name(acc, {:"::", _meta, [head | _]}), do: add_name(acc, head)
+
+  defp add_name(acc, {name, _meta, _args}) when is_atom(name),
+    do: MapSet.put(acc, Atom.to_string(name))
+
+  defp add_name(acc, _head), do: acc
 
   defp namespaces(name) do
     parts = String.split(name, ".")
@@ -142,7 +217,11 @@ defmodule PhotonCredo.Docs do
 
     links =
       if kind == :markdown,
-        do: for([_link, target] <- Regex.scan(@link, line), do: target),
+        do:
+          for(
+            [_link, target] <- Regex.scan(@link, line) ++ Regex.scan(@link_definition, line),
+            do: target
+          ),
         else: []
 
     Enum.flat_map(spans, &span_problems(&1, kind, context)) ++
@@ -182,9 +261,15 @@ defmodule PhotonCredo.Docs do
     cond do
       not context.file?.(linked) -> ["broken link to #{linked}"]
       anchor == nil or Path.extname(linked) != ".md" -> []
-      anchor in context.anchors.(linked) -> []
-      true -> ["no heading for ##{anchor} in #{linked}"]
+      true -> anchor_problems(anchor, linked, context.anchors.(linked))
     end
+  end
+
+  defp anchor_problems(anchor, linked, :unavailable),
+    do: ["can't check ##{anchor}: #{linked} isn't in the repo"]
+
+  defp anchor_problems(anchor, linked, anchors) do
+    if anchor in anchors, do: [], else: ["no heading for ##{anchor} in #{linked}"]
   end
 
   defp pad([path]), do: [path, nil]
@@ -200,31 +285,64 @@ defmodule PhotonCredo.Docs do
       part, acc -> [part | acc]
     end)
     |> Enum.reverse()
-    |> Path.join()
+    |> join()
   end
 
+  defp join([]), do: "."
+  defp join(parts), do: Path.join(parts)
+
+  # ATX (`## Title`) and setext (a paragraph underlined with `===` or `---`)
+  # headings, outside ``` and ~~~ fences.
   defp headings(text) do
-    {headings, _fenced?} =
+    {headings, _fence, _paragraph} =
       text
       |> String.split("\n")
-      |> Enum.reduce({[], false}, fn line, {headings, fenced?} ->
-        cond do
-          String.starts_with?(line, "```") -> {headings, not fenced?}
-          fenced? -> {headings, fenced?}
-          heading = heading(line) -> {[heading | headings], fenced?}
-          true -> {headings, fenced?}
-        end
-      end)
+      |> Enum.reduce({[], nil, nil}, &heading_line/2)
 
     Enum.reverse(headings)
   end
 
-  defp heading(line) do
-    case Regex.run(~r/^#+\s+(.+?)\s*#*$/, line) do
+  defp heading_line(line, {headings, nil = _fence, paragraph}) do
+    cond do
+      fence = fence_opener(line) ->
+        {headings, fence, nil}
+
+      heading = atx(line) ->
+        {[heading | headings], nil, nil}
+
+      paragraph && Regex.match?(~r/^ {0,3}(=+|-+)\s*$/, line) ->
+        {[paragraph | headings], nil, nil}
+
+      String.trim(line) == "" ->
+        {headings, nil, nil}
+
+      true ->
+        {headings, nil, join_paragraph(paragraph, line)}
+    end
+  end
+
+  defp heading_line(line, {headings, fence, _paragraph}) do
+    if String.starts_with?(String.trim_leading(line), fence),
+      do: {headings, nil, nil},
+      else: {headings, fence, nil}
+  end
+
+  defp fence_opener(line) do
+    case Regex.run(~r/^ {0,3}(`{3,}|~{3,})/, line) do
+      [_line, fence] -> fence
+      nil -> nil
+    end
+  end
+
+  defp atx(line) do
+    case Regex.run(~r/^ {0,3}\#{1,6}\s+(.+?)(?:\s+#+)?\s*$/, line) do
       [_line, heading] -> heading
       nil -> nil
     end
   end
+
+  defp join_paragraph(nil, line), do: String.trim(line)
+  defp join_paragraph(paragraph, line), do: paragraph <> " " <> String.trim(line)
 
   defp slug(heading) do
     heading
@@ -234,10 +352,17 @@ defmodule PhotonCredo.Docs do
   end
 
   defp resolve_member(module_name, fun, arity, known) do
-    case module(module_name) do
-      nil -> if module_name in known, do: :ok, else: {:error, "no module #{module_name}"}
-      module -> member(module, fun, arity, module_name)
+    case {module(module_name), Map.fetch(known.defined, module_name)} do
+      {nil, {:ok, members}} -> source_member(members, fun, arity, module_name)
+      {nil, :error} -> {:error, "no module #{module_name}"}
+      {module, _source} -> member(module, fun, arity, module_name)
     end
+  end
+
+  defp source_member(members, fun, arity, module_name) do
+    if fun in members,
+      do: :ok,
+      else: {:error, "no #{module_name}.#{fun}#{arity_suffix(arity)}"}
   end
 
   defp member(module, fun, arity, module_name) do
@@ -295,8 +420,15 @@ defmodule PhotonCredo.Docs do
     %{
       resolve: &resolve(&1, known),
       file?: &(File.exists?(Path.join(root, &1)) or ignored?(root, &1)),
-      anchors: &anchors(File.read!(Path.join(root, &1)))
+      anchors: &read_anchors(Path.join(root, &1))
     }
+  end
+
+  defp read_anchors(path) do
+    case File.read(path) do
+      {:ok, text} -> anchors(text)
+      {:error, _reason} -> :unavailable
+    end
   end
 
   # A directory pattern (`/apps/node/dist/`) matches a missing path only
