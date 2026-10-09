@@ -32,8 +32,9 @@ defmodule PhotonNode.Executor do
   operation (`Rules.on_scan/2`). It monitors every operation process (rule
   87) and applies `Rules.down/3` to each exit. A crash of this process
   loses its monitors, restart counts and any result it held unjournaled
-  (node rule 8); the scan rebuilds the rest from the journal and the
-  operations' files.
+  (node rule 8). The scan rebuilds the monitors and each operation's state
+  from the journal and the operations' files; restart counts start again
+  from zero, so an operation may get one more restart.
   Once a day (and at start-up) it sweeps the output of operations
   acknowledged more than 7 days ago.
   """
