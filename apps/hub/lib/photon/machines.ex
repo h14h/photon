@@ -79,7 +79,7 @@ defmodule Photon.Machines do
   alias Photon.Durable.Tx
   alias Photon.Machines.{Op, Roster, Rules}
   alias PhotonCore.Operation
-  alias PhotonCore.Operation.Wire
+  alias PhotonCore.Operation.{Result, Wire}
 
   @topic "nodes"
   @takeover_timeout 2_000
@@ -466,12 +466,25 @@ defmodule Photon.Machines do
   def snapshot(machine, payload, routes) do
     case Wire.parse_snapshot(payload) do
       {:ok, %{"id" => id} = snapshot} ->
+        snapshot = readable(machine, snapshot)
         pushes = Durable.commit(&snapshot_tx(&1, machine, snapshot))
         {pushes, if(Operation.terminal?(snapshot), do: Map.delete(routes, id), else: routes)}
 
       {:error, reason} ->
         Logger.warning("#{machine} sent a snapshot the hub can't read: #{reason}")
         {[], routes}
+    end
+  end
+
+  # A result the tool call couldn't read becomes a failure it reports.
+  defp readable(machine, snapshot) do
+    case Result.accept(snapshot) do
+      {:ok, snapshot} ->
+        snapshot
+
+      {:malformed, failed, reason} ->
+        Logger.warning("#{machine} sent a malformed result for #{snapshot["id"]}: #{reason}")
+        failed
     end
   end
 

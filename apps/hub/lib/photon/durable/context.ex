@@ -44,9 +44,11 @@ defmodule Photon.Durable.Context do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [Photon.Durable.Entry, PhotonCore]
+  use Boundary,
+    type: :strict,
+    deps: [Photon.Durable.Entry, Photon.Durable.RunBoundary, PhotonCore]
 
-  alias Photon.Durable.Entry
+  alias Photon.Durable.{Entry, RunBoundary}
   alias PhotonCore.{Message, Output}
 
   # Code points an older text part keeps: half from its start, half from its end.
@@ -96,11 +98,7 @@ defmodule Photon.Durable.Context do
   defp push(runs, []), do: runs
   defp push(runs, run), do: [Enum.reverse(run) | runs]
 
-  defp run_end?(%Entry{kind: "assistant", data: %{"message" => message}}),
-    do: Message.tool_calls(message) == []
-
-  defp run_end?(%Entry{kind: "error", data: data}), do: data["notice"] != true
-  defp run_end?(_entry), do: false
+  defp run_end?(entry), do: RunBoundary.ends?(entry)
 
   defp last_index(entries, kind) do
     entries

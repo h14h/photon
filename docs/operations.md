@@ -216,6 +216,10 @@ and size again before the model sees it.
 - The hub bounds each field again at the call's limit plus 1,000 code
   points for the node's marker, so a misbehaving node can't flood the
   model and a well-behaved one isn't cut twice.
+- A terminal snapshot whose state doesn't hold what its kind promises
+  (`PhotonCore.Operation.Result`: strings, integers or objects where the
+  hub reads them) is recorded as `failed`, saying the machine sent a result
+  the hub can't read, and acknowledged like any result.
 - A failed or canceled op is an ok tool result starting `Error:`, so its
   details reach the UI. A canceled shell carries what it printed.
 - Live output is sampled once a second, at most 64 KB per stream, and

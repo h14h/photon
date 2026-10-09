@@ -28,12 +28,13 @@ defmodule Photon.MachineTools.Translate do
 
   alias PhotonCore.{Message, Operation, Output}
 
-  # A command is passed to the shell as one argument, and Linux refuses one
-  # over 128 KB, so a longer one couldn't run anyway.
-  @max_command_bytes 100_000
+  @max_command_bytes Operation.max_command_bytes()
 
-  # The largest base64 image a result may carry, about 3.7 MB of image data.
+  # The largest base64 image a result may carry, about 3.7 MB of image data:
+  # under the node's limit (`Operation.max_image_bytes/0`).
   @max_size 4_999_000
+
+  @max_output Output.max_limit()
 
   @mimes ~w(image/png image/jpeg image/gif image/webp)
 
@@ -78,8 +79,8 @@ defmodule Photon.MachineTools.Translate do
 
   defp limit(nil), do: {:ok, Output.default_limit()}
 
-  defp limit(n) when is_integer(n) and n > 1_000_000,
-    do: {:error, "shell argument: max_output_length must not exceed 1000000"}
+  defp limit(n) when is_integer(n) and n > @max_output,
+    do: {:error, "shell argument: max_output_length must not exceed #{@max_output}"}
 
   defp limit(n) when is_integer(n) and n > 0, do: {:ok, n}
 

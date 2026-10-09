@@ -35,4 +35,9 @@ defmodule PhotonCore.OperationTest do
     assert Operation.statuses() == ~w(ready awaiting canceling completed failed canceled)
     assert Operation.terminal_statuses() == ~w(completed failed canceled)
   end
+
+  test "the limits both sides share" do
+    assert Operation.max_command_bytes() == 100_000
+    assert Operation.max_image_bytes() == 5_000_000
+  end
 end

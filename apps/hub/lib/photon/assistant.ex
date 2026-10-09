@@ -94,6 +94,7 @@ defmodule Photon.Assistant do
       Photon.Skills,
       Photon.Threads,
       Photon.Transcript,
+      Photon.Durable.RunBoundary,
       Photon.MachineTools.Guide,
       Photon.MachineTools.MockPhrases,
       Photon.Skills.MockPhrases,
