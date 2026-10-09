@@ -21,13 +21,11 @@ defmodule PhotonNode.MixProject do
         # Test support, plus the packaged entry point and the packaging task:
         # they halt the VM or drive Burrito and Zig, so no test runs them.
         ignore_modules: [
-          PhotonNode.Case,
-          PhotonNode.Fixtures,
-          PhotonNode.NodeCase,
           PhotonNode.CLI,
           Mix.Tasks.Photon.Package,
           Mix.Tasks.Photon.Package.QuietStream,
           Collectable.Mix.Tasks.Photon.Package.QuietStream
+          | test_support_modules()
         ]
       ]
     ]
@@ -72,6 +70,28 @@ defmodule PhotonNode.MixProject do
     end
   end
 
+  # Every module test/support defines is test code, so coverage leaves it
+  # out without a list to keep in step. Read from the parsed code, so a
+  # `defmodule` inside a string doesn't count.
+  defp test_support_modules do
+    for path <- Path.wildcard("test/support/**/*.ex"),
+        module <- defined_modules(path |> File.read!() |> Code.string_to_quoted!()),
+        do: module
+  end
+
+  defp defined_modules(ast) do
+    {_ast, modules} =
+      Macro.prewalk(ast, [], fn
+        {:defmodule, _meta, [{:__aliases__, _, parts} | _]} = node, acc ->
+          {node, [Module.concat(parts) | acc]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    modules
+  end
+
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
@@ -87,12 +107,16 @@ defmodule PhotonNode.MixProject do
     [
       # Every check, in the test env (see cli/0). Boundary violations and
       # type warnings fail the compile; `mix format` fixes what the format
-      # check reports. `mix dialyzer` is separate (see AGENTS.md).
+      # check reports; xref fails on a new compile-time dependency cycle
+      # (the one allowed: `PhotonNode.Config`'s struct names its default hub
+      # link, `Connection`). `mix dialyzer` and the coverage threshold are
+      # separate (see AGENTS.md and scripts/verify).
       precommit: [
         "compile --warnings-as-errors",
         "deps.unlock --check-unused",
         "format --check-formatted",
         "credo --strict",
+        "xref graph --format cycles --label compile-connected --fail-above 1",
         "test --warnings-as-errors"
       ]
     ]

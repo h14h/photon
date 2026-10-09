@@ -17,7 +17,7 @@ defmodule PhotonWeb.TimeComponents do
       `input` event so the form's `phx-change` sees it. Tests set the
       hidden field directly with `render_change/2`.
 
-  Imported in every LiveView through `PhotonWeb.html_helpers`.
+  Imported in every LiveView through `PhotonWeb`'s `html_helpers`.
   """
 
   use Phoenix.Component

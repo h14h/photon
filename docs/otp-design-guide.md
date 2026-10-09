@@ -161,10 +161,17 @@ mix compile --warnings-as-errors   # warnings, Elixir 1.20's type checker, Bound
 mix deps.unlock --check-unused
 mix format --check-formatted
 mix credo --strict
+mix xref graph --format cycles --label compile-connected --fail-above N
+mix run --no-start ../../tools/check_docs.exs   # hub only
 mix test --warnings-as-errors
 ```
 
-`mix dialyzer` and `mix test --cover` run separately (see `AGENTS.md`).
+The xref step fails on a new compile-time dependency cycle (`N` is 0, or 1
+in the node, whose `Config` struct names its default hub link). The docs
+step (`PhotonCredo.Docs`) fails when a Markdown file, moduledoc or comment
+names a module, function, type, repo path or anchor that doesn't exist.
+`mix dialyzer` and `mix test --cover` run separately; `scripts/verify` runs
+everything in every app.
 
 **Credo.** `tools/credo_checks/shared_checks.exs` holds the checks every app
 runs, each commented with its rule number. Each app's `.credo.exs` adds the
