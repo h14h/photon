@@ -40,8 +40,7 @@ defmodule Photon.NodeInstallTest do
     # "ssh": drop the options and host, run the remote command here.
     shim(Path.join(bin, "ssh"), ~s(for last; do :; done\nHOME="#{home}" exec sh -c "$last"))
 
-    Application.put_env(:photon, :node_dist_dir, dist)
-    on_exit(fn -> Application.delete_env(:photon, :node_dist_dir) end)
+    Photon.TestConfig.put_env(:photon, :node_dist_dir, dist)
 
     env = [{"HOME", home}, {"PATH", bin <> ":/usr/bin:/bin"}, {"SHELL", "/bin/sh"}]
     %{dir: dir, home: home, bin: bin, env: env, calls: Path.join(dir, "calls")}
@@ -204,8 +203,7 @@ defmodule Photon.NodeInstallTest do
   end
 
   test "provisions over ssh and waits for the node to connect", ctx do
-    System.put_env("PHOTON_SSH", Path.join(ctx.bin, "ssh"))
-    on_exit(fn -> System.delete_env("PHOTON_SSH") end)
+    Photon.TestConfig.put_system_env("PHOTON_SSH", Path.join(ctx.bin, "ssh"))
     Phoenix.PubSub.subscribe(Photon.PubSub, Provision.topic())
 
     :ok =
@@ -252,8 +250,7 @@ defmodule Photon.NodeInstallTest do
       ~s(echo "ssh: connect to host nope port 22: Connection refused" >&2; exit 255)
     )
 
-    System.put_env("PHOTON_SSH", Path.join(ctx.bin, "ssh"))
-    on_exit(fn -> System.delete_env("PHOTON_SSH") end)
+    Photon.TestConfig.put_system_env("PHOTON_SSH", Path.join(ctx.bin, "ssh"))
     Phoenix.PubSub.subscribe(Photon.PubSub, Provision.topic())
 
     :ok =
@@ -272,8 +269,7 @@ defmodule Photon.NodeInstallTest do
   # "already busy" until the hub restarted.
   test "a job that dies without reporting fails, and its machine is free again", ctx do
     shim(Path.join(ctx.bin, "ssh"), "sleep 2")
-    System.put_env("PHOTON_SSH", Path.join(ctx.bin, "ssh"))
-    on_exit(fn -> System.delete_env("PHOTON_SSH") end)
+    Photon.TestConfig.put_system_env("PHOTON_SSH", Path.join(ctx.bin, "ssh"))
     Provision.subscribe()
 
     job = [machine: "doomed", host: "doomed", node_id: "doomed", base_url: "http://h:1"]

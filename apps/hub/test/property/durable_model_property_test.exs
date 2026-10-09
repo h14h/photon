@@ -30,15 +30,9 @@ defmodule Photon.Property.DurableModelTest do
     Code.ensure_loaded!(Photon.Durable.Generation)
     Code.ensure_loaded!(Photon.Durable.ToolTask)
 
-    profiles = Application.get_env(:photon, Photon.Durable)[:profiles]
-    put_profiles(Map.put(profiles, "slow", Photon.Property.SlowProfile))
-    on_exit(fn -> put_profiles(profiles) end)
-    :ok
-  end
-
-  defp put_profiles(profiles) do
     config = Application.get_env(:photon, Photon.Durable)
-    Application.put_env(:photon, Photon.Durable, Keyword.put(config, :profiles, profiles))
+    profiles = Map.put(config[:profiles], "slow", Photon.Property.SlowProfile)
+    Photon.TestConfig.put_env(:photon, Photon.Durable, Keyword.put(config, :profiles, profiles))
   end
 
   defp runs(default), do: String.to_integer(System.get_env("PHOTON_PROPERTY_RUNS", "#{default}"))

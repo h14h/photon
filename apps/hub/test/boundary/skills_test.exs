@@ -448,8 +448,7 @@ defmodule Photon.SkillsTest do
     end
 
     defp local_node! do
-      Application.put_env(:photon, :local_node, true)
-      on_exit(fn -> Application.put_env(:photon, :local_node, false) end)
+      Photon.TestConfig.put_env(:photon, :local_node, true)
     end
 
     defp load(scope, name), do: Durable.commit(&Skills.load_tx(&1, scope, name))

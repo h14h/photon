@@ -41,15 +41,20 @@ defmodule Photon.DataCase do
   end
 
   @doc """
-  Waits for a conversation commit whose changes satisfy `fun`. Call
+  Waits for a conversation commit whose changes satisfy `fun`, for at most
+  `timeout` ms in all, however many other commits arrive first. Call
   `Photon.Durable.subscribe/1` first.
   """
-  def await_change(conversation_id, fun, timeout \\ 5_000) do
+  def await_change(conversation_id, fun, timeout \\ 5_000),
+    do: await_change_by(conversation_id, fun, System.monotonic_time(:millisecond) + timeout)
+
+  defp await_change_by(conversation_id, fun, deadline) do
     receive do
       {:durable, ^conversation_id, changes} ->
-        if fun.(changes), do: changes, else: await_change(conversation_id, fun, timeout)
+        if fun.(changes), do: changes, else: await_change_by(conversation_id, fun, deadline)
     after
-      timeout -> ExUnit.Assertions.flunk("no matching commit for #{conversation_id}")
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        ExUnit.Assertions.flunk("no matching commit for #{conversation_id}")
     end
   end
 

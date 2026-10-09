@@ -129,11 +129,7 @@ defmodule Photon.MachineToolsTest do
     skill
   end
 
-  defp limits(limits) do
-    previous = Application.get_env(:photon, Photon.MachineTools)
-    Application.put_env(:photon, Photon.MachineTools, limits)
-    on_exit(fn -> Application.put_env(:photon, Photon.MachineTools, previous) end)
-  end
+  defp limits(limits), do: Photon.TestConfig.put_env(:photon, Photon.MachineTools, limits)
 
   ## A call on an online machine
 
@@ -400,8 +396,7 @@ defmodule Photon.MachineToolsTest do
     end
 
     test "local parks while it is offline, on a hub that runs its own node" do
-      Application.put_env(:photon, :local_node, true)
-      on_exit(fn -> Application.put_env(:photon, :local_node, false) end)
+      Photon.TestConfig.put_env(:photon, :local_node, true)
 
       args = %{"machine" => "local", "command" => "uname -a"}
 
@@ -489,8 +484,7 @@ defmodule Photon.MachineToolsTest do
 
   describe "list_machines" do
     test "lists local, the connected machines, an outdated one and the offline ones" do
-      Application.put_env(:photon, :local_node, true)
-      on_exit(fn -> Application.put_env(:photon, :local_node, false) end)
+      Photon.TestConfig.put_env(:photon, :local_node, true)
 
       _key = key("nas")
       _socket = join_node("mm1")

@@ -16,30 +16,21 @@ defmodule Photon.SignalsTest do
 
   import Ecto.Query, only: [from: 2]
 
-  import Photon.MachineOps, only: [snapshot: 2]
+  import Photon.MachineOps, only: [snapshot: 2, fake_machine: 1]
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
 
-  alias Photon.{Assistant, Machines, Projects, Questions, Schedules, Signals, Threads}
+  alias Photon.{Assistant, Machines, Questions, Schedules, Signals, Threads}
   alias Photon.Durable.{Submission, TaskRecord}
   alias Photon.Schedules.Schedule
   alias Photon.Signals.DigestItem
 
   setup do
-    {:ok, project} =
-      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+    project = garden!()
 
     blip = Assistant.conversation_id()
     :ok = Durable.subscribe(blip)
     %{project: project, blip: blip}
-  end
-
-  defp fake_machine(name) do
-    {:ok, _owner} =
-      Registry.register(Photon.MachineRegistry, name, %{
-        "platform" => "test",
-        "workspace" => "/w",
-        "version" => "0",
-        "capabilities" => ["ops:2"]
-      })
   end
 
   @blip_source %{"kind" => "blip"}
@@ -52,17 +43,8 @@ defmodule Photon.SignalsTest do
   # Starts a thread and waits until its run has ended; returns the thread.
   defp ended!(project, text, opts \\ []) do
     thread = start!(project, text, opts)
-    idle!(thread.id)
+    _id = idle!(thread.id)
     thread
-  end
-
-  defp idle!(conversation_id) do
-    :ok = Durable.subscribe(conversation_id)
-
-    if Durable.busy?(conversation_id),
-      do: await_change(conversation_id, fn _changes -> not Durable.busy?(conversation_id) end)
-
-    :ok
   end
 
   # Blip's signal messages, oldest first, whatever their status.
@@ -78,20 +60,6 @@ defmodule Photon.SignalsTest do
 
   defp parts(%Submission{content: %{"parts" => parts}}), do: Enum.map(parts, & &1["text"])
   defp refs(%Submission{content: %{"source" => %{"signals" => refs}}}), do: refs
-
-  # Parks Blip on a command that never finishes; returns its submission.
-  defp park_blip!(blip) do
-    fake_machine("box")
-    {:ok, parked} = Assistant.send("on box: $ sleep 1000")
-    assert Durable.busy?(blip)
-    parked
-  end
-
-  # Stops Blip's parked run; the signals it kept then run.
-  defp unpark_blip!(blip, parked) do
-    :ok = Assistant.stop()
-    assert %{status: "unanswered"} = await_settled(blip, parked.id)
-  end
 
   describe "thread updates" do
     test "a thread Blip started that finishes posts an update into Blip's conversation", %{
@@ -189,7 +157,7 @@ defmodule Photon.SignalsTest do
   describe "while Blip is busy" do
     test "two updates merge into one queued message, which one run answers, and Stop keeps it",
          %{project: project, blip: blip} do
-      parked = park_blip!(blip)
+      parked = park_blip!()
 
       one = ended!(project, "files", source: @blip_source)
       two = ended!(project, "fail: no water", source: @blip_source)
@@ -207,7 +175,7 @@ defmodule Photon.SignalsTest do
 
       # Blip's Stop withdraws what the owner typed and keeps the signals,
       # which then start the next run.
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked)
       assert %{status: "done"} = await_settled(blip, carrier.id)
 
       runs =
@@ -249,7 +217,7 @@ defmodule Photon.SignalsTest do
       project: project,
       blip: blip
     } do
-      parked = park_blip!(blip)
+      parked = park_blip!()
       owners = ended!(project, "files")
 
       first = ask!(owners, project, "Which zone first?")
@@ -273,7 +241,7 @@ defmodule Photon.SignalsTest do
       assert update_id == update.id
 
       # Each is placed on its own and answered before the next.
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked)
       assert %{status: "done", entry_id: question_entry} = await_settled(blip, questions.id)
       assert %{status: "done", entry_id: update_entry} = await_settled(blip, updates.id)
 
@@ -298,7 +266,7 @@ defmodule Photon.SignalsTest do
     defp unpost!(key), do: Durable.commit(&Signals.unpost_tx(&1, key))
 
     test "the same key twice makes one part, queued or placed", %{blip: blip} do
-      parked = park_blip!(blip)
+      parked = park_blip!()
 
       carrier = post!(signal("k1", "one"))
       assert post!(signal("k1", "one again")).id == carrier.id
@@ -309,7 +277,7 @@ defmodule Photon.SignalsTest do
       assert parts(carrier) == ["one", "two"]
       assert Enum.map(refs(carrier), & &1["key"]) == ["k1", "k2"]
 
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked)
       assert %{status: "done"} = await_settled(blip, carrier.id)
 
       # Placed now: a repeat makes nothing new.
@@ -320,7 +288,7 @@ defmodule Photon.SignalsTest do
     test "unpost_tx/2 drops one signal from a merged message, then withdraws it", %{
       blip: blip
     } do
-      parked = park_blip!(blip)
+      parked = park_blip!()
       carrier = post!(signal("k1", "one"))
       assert post!(signal("k2", "two")).id == carrier.id
 
@@ -333,7 +301,7 @@ defmodule Photon.SignalsTest do
       assert [%{status: "withdrawn"}] = signals(blip)
       assert unpost!("k_missing") == :ok
 
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked)
     end
 
     test "an older: stub goes in the source of the message it starts", %{blip: blip} do
@@ -532,7 +500,7 @@ defmodule Photon.SignalsTest do
 
     test "withdraw_ambient_tx/1 withdraws a queued digest, returns its ref and leaves an update",
          %{blip: blip} do
-      parked = park_blip!(blip)
+      parked = park_blip!()
       refute Durable.commit(&Signals.queued_ambient?(&1, "digest"))
 
       ref = %{"kind" => "digest", "key" => "digest:t_1:0", "items" => [], "more" => 0}
@@ -550,7 +518,7 @@ defmodule Photon.SignalsTest do
       refute Durable.commit(&Signals.queued_ambient?(&1, "digest"))
       assert Durable.commit(&Signals.withdraw_ambient_tx/1) == []
 
-      unpark_blip!(blip, parked)
+      unpark_blip!(parked)
       assert %{status: "done"} = await_settled(blip, update.id)
     end
   end

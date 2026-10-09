@@ -11,6 +11,8 @@ defmodule Photon.AssistantCoordinatorToolsTest do
   @moduletag :durable
 
   import Ecto.Query, only: [from: 2]
+  import Photon.ConversationHelpers
+  import Photon.MachineOps, only: [fake_machine: 1]
 
   alias Photon.{Assistant, Projects, Questions, Schedules, Signals, Skills, Threads}
   alias Photon.Assistant.Tools
@@ -33,28 +35,18 @@ defmodule Photon.AssistantCoordinatorToolsTest do
     %{garden: garden, house: house, blip: blip}
   end
 
-  defp idle!(conversation_id) do
-    :ok = Durable.subscribe(conversation_id)
-
-    if Durable.busy?(conversation_id),
-      do: await_change(conversation_id, fn _changes -> not Durable.busy?(conversation_id) end)
-
-    :ok
-  end
-
   # Starts a thread with the owner's message and waits until its run has
   # ended and Blip has heard about it, if it was going to.
   defp ended!(project, text) do
-    {:ok, thread} = Threads.start(project.id, text)
-    :ok = idle!(thread.id)
-    :ok = idle!(Assistant.conversation_id())
+    thread = idle_thread!(project, text)
+    _blip = idle!(Assistant.conversation_id())
     thread
   end
 
   # Sends Blip `text` once it is idle and returns the result of the tool
   # call its answer made: the text and the result's data.
   defp tool!(blip, text, name) do
-    :ok = idle!(blip)
+    idle!(blip)
     {:ok, s} = Assistant.send(text)
     await_settled(blip, s.id)
     last_result!(blip, name)
@@ -102,20 +94,10 @@ defmodule Photon.AssistantCoordinatorToolsTest do
   # Posts such a signal once Blip is idle, and returns the result of the
   # tool call its run made.
   defp signal_tool!(blip, kind, text, name, thread_id \\ "c_asking") do
-    :ok = idle!(blip)
+    idle!(blip)
     signal = post!(kind, text, thread_id)
     await_settled(blip, signal.id)
     last_result!(blip, name)
-  end
-
-  defp fake_machine(name) do
-    {:ok, _owner} =
-      Registry.register(Photon.MachineRegistry, name, %{
-        "platform" => "test",
-        "workspace" => "/w",
-        "version" => "0",
-        "capabilities" => ["ops:2"]
-      })
   end
 
   # A thread the owner started, parked on a command that never finishes on
@@ -428,7 +410,7 @@ defmodule Photon.AssistantCoordinatorToolsTest do
                submissions(busy.id)
 
       :ok = Threads.stop(busy.id)
-      :ok = idle!(busy.id)
+      idle!(busy.id)
     end
 
     test "an unknown thread points to list_threads", %{blip: blip} do
@@ -447,7 +429,7 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       {text, data} = tool!(blip, "stop thread #{busy.id}", "stop_thread")
       assert text == ~s(Stopped "#{busy.title}".)
       assert data["details"]["thread_id"] == busy.id
-      :ok = idle!(busy.id)
+      idle!(busy.id)
       assert Threads.get(busy.id).last_run_status == "stopped"
 
       {text, data} = tool!(blip, "stop thread #{busy.id}", "stop_thread")
@@ -665,12 +647,12 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       end
 
       :ok = Threads.stop(busy.id)
-      :ok = idle!(busy.id)
+      idle!(busy.id)
     end
 
     test "the owner's steer in the same run lifts the limits", %{garden: garden, blip: blip} do
       fake_machine("box")
-      :ok = idle!(blip)
+      idle!(blip)
       _question = post!(:question, "on box: $ sleep 1000", "c_asking")
       await_entry(blip, &(&1.kind == "assistant"))
 
@@ -691,7 +673,7 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       blip: blip
     } do
       fake_machine("box")
-      :ok = idle!(blip)
+      idle!(blip)
       {:ok, parked} = Assistant.send("on box: $ sleep 1000")
       await_entry(blip, &(&1.kind == "assistant"))
 
@@ -782,13 +764,13 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       assert Assistant.memory() =~ "the pump is in the shed"
 
       :ok = Threads.stop(busy.id)
-      :ok = idle!(busy.id)
+      idle!(busy.id)
     end
 
     test "the owner's steer in the same run lifts it", %{garden: garden, blip: blip} do
       idle = ended!(garden, "files")
       fake_machine("box")
-      :ok = idle!(blip)
+      idle!(blip)
       _digest = post!(:digest, "on box: $ sleep 1000", nil)
       await_entry(blip, &(&1.kind == "assistant"))
 
@@ -802,15 +784,13 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       {_text, data} = last_result!(blip, "message_thread")
       assert data["status"] == "ok"
       assert [_first, _blips] = submissions(idle.id)
-      :ok = idle!(idle.id)
+      idle!(idle.id)
     end
   end
 
   describe "the unattended limit" do
     setup do
-      previous = Application.get_env(:photon, Photon.Assistant, [])
-      Application.put_env(:photon, Photon.Assistant, unattended_limit: 2)
-      on_exit(fn -> Application.put_env(:photon, Photon.Assistant, previous) end)
+      Photon.TestConfig.put_env(:photon, Photon.Assistant, unattended_limit: 2)
     end
 
     # Blip messages `thread` from a run a thread update started, and the
@@ -819,8 +799,8 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       result =
         signal_tool!(blip, :update, "tell #{thread.id}: files", "message_thread", thread.id)
 
-      :ok = idle!(thread.id)
-      :ok = idle!(blip)
+      idle!(thread.id)
+      idle!(blip)
       result
     end
 
@@ -834,8 +814,8 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       {_text, data} = tool!(blip, "tell #{thread.id}: files", "message_thread")
       assert data["status"] == "ok"
       refute Map.has_key?(data["details"], "unattended")
-      :ok = idle!(thread.id)
-      :ok = idle!(blip)
+      idle!(thread.id)
+      idle!(blip)
 
       assert {_text, %{"status" => "ok", "details" => %{"unattended" => true}}} =
                follow_up!(blip, thread)
@@ -856,8 +836,8 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       # the count again.
       {_text, data} = tool!(blip, "tell #{thread.id}: files", "message_thread")
       assert data["status"] == "ok"
-      :ok = idle!(thread.id)
-      :ok = idle!(blip)
+      idle!(thread.id)
+      idle!(blip)
 
       assert {_text, %{"status" => "ok"}} = follow_up!(blip, thread)
       assert length(submissions(thread.id)) == 6
@@ -872,8 +852,8 @@ defmodule Photon.AssistantCoordinatorToolsTest do
       for _round <- 1..3 do
         {_text, data} = tool!(blip, "tell #{thread.id}: files", "message_thread")
         assert data["status"] == "ok"
-        :ok = idle!(thread.id)
-        :ok = idle!(blip)
+        idle!(thread.id)
+        idle!(blip)
       end
 
       assert {_text, %{"status" => "ok"}} = follow_up!(blip, thread)

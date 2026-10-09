@@ -8,6 +8,7 @@ defmodule Photon.DurableRegressionTest do
   use Photon.DataCase, async: false
 
   import Ecto.Query
+  import Photon.ConversationHelpers
 
   alias Photon.Durable.{Entry, Scheduler, Submission, TaskRecord}
   alias PhotonCore.Message
@@ -26,10 +27,6 @@ defmodule Photon.DurableRegressionTest do
   end
 
   defp status(submission), do: Repo.get(Submission, submission.id).status
-
-  defp await_tool_waiting(c) do
-    await_change(c, &Enum.any?(&1.tasks, fn t -> t.kind == "tool" and t.status == "waiting" end))
-  end
 
   defp restart_scheduler_and_store do
     stop_supervised!(Photon.Durable.Scheduler)

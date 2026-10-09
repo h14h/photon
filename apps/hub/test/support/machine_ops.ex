@@ -70,4 +70,24 @@ defmodule Photon.MachineOps do
   def connect(machine, capabilities \\ ["ops:2"]),
     do:
       Photon.Machines.register(machine, %{"hostname" => machine, "capabilities" => capabilities})
+
+  @doc """
+  Registers the calling process as `machine`, a connected machine that takes
+  commands and never answers, so a shell call on it waits until it is
+  stopped. Registering again from the same process changes nothing.
+  """
+  def fake_machine(machine) do
+    case Registry.lookup(Photon.MachineRegistry, machine) do
+      [{owner, _info}] when owner == self() ->
+        :ok
+
+      _other ->
+        Photon.Machines.register(machine, %{
+          "platform" => "test",
+          "workspace" => "/w",
+          "version" => "0",
+          "capabilities" => ["ops:2"]
+        })
+    end
+  end
 end

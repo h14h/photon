@@ -18,8 +18,11 @@ defmodule PhotonWeb.BlipLiveTest do
   import Phoenix.LiveViewTest
   import Photon.Eventually, only: [eventually: 1]
   import Photon.Fixtures, only: [call: 3]
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
+  import Photon.MachineOps, only: [fake_machine: 1]
 
-  alias Photon.{Assistant, Durable, Machines, Projects, Questions, Signals, Threads, Transcript}
+  alias Photon.{Assistant, Durable, Projects, Questions, Signals, Threads, Transcript}
   alias PhotonCore.Message
 
   @moduletag :durable
@@ -439,8 +442,7 @@ defmodule PhotonWeb.BlipLiveTest do
   describe "without a model" do
     test "asks for a ChatGPT sign-in instead of offering a composer", %{conn: conn} do
       Photon.ChatGPTStub.reset!()
-      Application.put_env(:photon, :mock_model, false)
-      on_exit(fn -> Application.put_env(:photon, :mock_model, true) end)
+      Photon.TestConfig.put_env(:photon, :mock_model, false)
 
       {:ok, view, _html} = live(conn, ~p"/")
       blip = find_live_child(view, "blip")
@@ -504,17 +506,12 @@ defmodule PhotonWeb.BlipLiveTest do
 
   describe "the page under it" do
     setup do
-      {:ok, project} =
-        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+      project = garden!()
 
       {:ok, _file} =
         Projects.create_file(project.id, %{"name" => "notes.md", "content" => "Zone 2."})
 
-      {:ok, thread} = Threads.start(project.id, "Fix the pump")
-      :ok = Threads.subscribe(thread.id)
-
-      if Threads.busy?(thread.id),
-        do: await_change(thread.id, fn _changes -> not Threads.busy?(thread.id) end)
+      thread = idle_thread!(project, "Fix the pump")
 
       %{project: project, thread: thread}
     end
@@ -600,22 +597,10 @@ defmodule PhotonWeb.BlipLiveTest do
     setup [:page, :opened]
 
     setup do
-      {:ok, project} =
-        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+      project = garden!()
 
       :ok = Questions.subscribe()
       %{project: project}
-    end
-
-    # Stands in for a connected machine that takes commands and never answers.
-    defp fake_machine(name) do
-      :ok =
-        Machines.register(name, %{
-          "platform" => "test",
-          "workspace" => "/w",
-          "version" => "0",
-          "capabilities" => ["ops:2"]
-        })
     end
 
     # Starts a thread that asks Blip `question`; returns it and its
@@ -623,18 +608,11 @@ defmodule PhotonWeb.BlipLiveTest do
     defp passed!(project, c, question) do
       {:ok, thread} = Threads.start(project.id, "ask blip: " <> question)
       _result = await_entry(c, &(&1.kind == "tool_result" and &1.data["name"] == "ask_owner"))
-      idle!(c)
+      idle!(c, subscribe: false)
       assert %{} = open = Questions.open_by_thread([thread.id])
       [passed] = open[thread.id]
       assert passed.status == "with_owner"
       {thread, passed}
-    end
-
-    defp idle!(conversation_id) do
-      if Durable.busy?(conversation_id),
-        do: await_change(conversation_id, fn _changes -> not Durable.busy?(conversation_id) end)
-
-      :ok
     end
 
     # Blip's answer making ask_owner calls, and their results, as the
@@ -746,8 +724,7 @@ defmodule PhotonWeb.BlipLiveTest do
       blip: blip,
       conversation: c
     } do
-      Application.put_env(:photon, Threads, auto_title: true)
-      on_exit(fn -> Application.put_env(:photon, Threads, auto_title: false) end)
+      Photon.TestConfig.put_env(:photon, Threads, auto_title: true)
       render_hook(blip, "send", %{"message" => %{"text" => "start thread in garden: files"}})
 
       result =
@@ -985,12 +962,11 @@ defmodule PhotonWeb.BlipLiveTest do
       blip: blip,
       conversation: c
     } do
-      {:ok, project} =
-        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+      project = garden!()
 
       {:ok, thread} = Threads.start(project.id, "ask blip: which deploy branch?")
       _result = await_entry(c, &(&1.kind == "tool_result" and &1.data["name"] == "ask_owner"))
-      idle!(c)
+      idle!(c, subscribe: false)
       _ = render(blip)
 
       assert has_element?(
@@ -1009,12 +985,11 @@ defmodule PhotonWeb.BlipLiveTest do
       blip: blip,
       conversation: c
     } do
-      {:ok, project} =
-        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+      project = garden!()
 
       {:ok, thread} = Threads.start(project.id, "ask blip: which deploy branch?")
       _result = await_entry(c, &(&1.kind == "tool_result" and &1.data["name"] == "ask_owner"))
-      idle!(c)
+      idle!(c, subscribe: false)
       assert has_element?(blip, "[data-bubble].is-question", ~s("#{thread.title}" asks:))
 
       {:ok, _thread} = Threads.rename(thread.id, "Deploy branch")
@@ -1030,8 +1005,7 @@ defmodule PhotonWeb.BlipLiveTest do
     } do
       :ok = Assistant.put_memory("- deploy branch: staging")
 
-      {:ok, project} =
-        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
+      project = garden!()
 
       {:ok, _thread} = Threads.start(project.id, "ask blip: which deploy branch?")
 
@@ -1041,7 +1015,7 @@ defmodule PhotonWeb.BlipLiveTest do
       _reply =
         await_entry(c, &(&1.kind == "assistant" and Message.tool_calls(&1.data["message"]) == []))
 
-      idle!(c)
+      idle!(c, subscribe: false)
 
       assert bubbles(blip) == []
       refute has_element?(blip, "#blip-unread")
@@ -1052,10 +1026,7 @@ defmodule PhotonWeb.BlipLiveTest do
     setup :page
 
     setup do
-      {:ok, project} =
-        Projects.create(%{"name" => "Garden", "purpose" => "Keep the garden watered."})
-
-      %{project: project}
+      %{project: garden!()}
     end
 
     # Posts a digest into Blip's conversation, as ambient mode does, that
@@ -1104,7 +1075,7 @@ defmodule PhotonWeb.BlipLiveTest do
       digest =
         await_entry(c, &(&1.kind == "user" and &1.data["submission_id"] == submission.id))
 
-      :ok = idle!(c)
+      idle!(c, subscribe: false)
       _ = render(blip)
       line = "#message-#{digest.id}"
       assert has_element?(blip, "#{line}-heading", "Digest: 1 new")

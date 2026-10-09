@@ -29,16 +29,17 @@ defmodule Photon.QuestionsTest do
 
   import Ecto.Query, only: [from: 2]
   import Photon.Fixtures, only: [call: 3]
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
 
-  alias Photon.{Assistant, Projects, Questions, Signals, Threads}
+  alias Photon.{Assistant, Questions, Signals, Threads}
   alias Photon.Durable.{Entry, Scheduler, Signal, Store, Submission, TaskRecord, ToolAPI, Tx}
   alias Photon.Questions.Question
   alias Photon.Threads.Tools.AskBlip
   alias PhotonCore.Message
 
   setup do
-    {:ok, project} =
-      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+    project = garden!()
 
     :ok = Questions.subscribe()
     %{project: project, blip: Assistant.conversation_id()}
@@ -93,35 +94,7 @@ defmodule Photon.QuestionsTest do
   defp parts(%Submission{content: %{"parts" => parts}}), do: Enum.map(parts, & &1["text"])
   defp refs(%Submission{content: %{"source" => %{"signals" => refs}}}), do: refs
 
-  defp idle!(conversation_id) do
-    :ok = Durable.subscribe(conversation_id)
-
-    if Durable.busy?(conversation_id),
-      do: await_change(conversation_id, fn _changes -> not Durable.busy?(conversation_id) end)
-
-    :ok
-  end
-
   ## The ask_blip tool
-
-  defp fake_machine(name) do
-    {:ok, _owner} =
-      Registry.register(Photon.MachineRegistry, name, %{
-        "platform" => "test",
-        "workspace" => "/w",
-        "version" => "0",
-        "capabilities" => ["ops:2"]
-      })
-  end
-
-  # Parks Blip on a command that never finishes, so a question's message
-  # queues behind its run and stays there.
-  defp park_blip!(blip) do
-    fake_machine("box")
-    {:ok, _parked} = Assistant.send("on box: $ sleep 1000")
-    assert Durable.busy?(blip)
-    :ok
-  end
 
   # Starts a thread whose first message asks Blip `question`; returns the
   # thread and its question once it is asked.
@@ -181,7 +154,7 @@ defmodule Photon.QuestionsTest do
       project: project,
       blip: blip
     } do
-      park_blip!(blip)
+      park_blip!()
       {thread, asked} = asking!(project, "which deploy branch?")
 
       assert {asked.question, asked.thread_title, asked.project_slug} ==
@@ -208,10 +181,9 @@ defmodule Photon.QuestionsTest do
     end
 
     test "once the owner has it, the call waits for their answer alone, and gets it", %{
-      project: project,
-      blip: blip
+      project: project
     } do
-      park_blip!(blip)
+      park_blip!()
       {first, first_q} = asking!(project, "which deploy branch?")
       {second, second_q} = asking!(project, "is the gate locked?")
 
@@ -247,7 +219,7 @@ defmodule Photon.QuestionsTest do
       project: project,
       blip: blip
     } do
-      park_blip!(blip)
+      park_blip!()
       {thread, asked} = asking!(project, "which deploy branch?")
       _task = parked!(thread, asked.task_id, &is_integer(&1["until"]))
 
@@ -268,7 +240,7 @@ defmodule Photon.QuestionsTest do
       project: project,
       blip: blip
     } do
-      park_blip!(blip)
+      park_blip!()
       {thread, asked} = asking!(project, "which deploy branch?")
       {:ok, _passed} = pass_tx(asked.id, "Which branch?", :blip)
       key = Questions.signal_key(asked.id)
@@ -289,10 +261,9 @@ defmodule Photon.QuestionsTest do
 
     @tag :capture_log
     test "a raise in the tool withdraws the question in the commit that records the error", %{
-      project: project,
-      blip: blip
+      project: project
     } do
-      park_blip!(blip)
+      park_blip!()
       {thread, asked} = asking!(project, "which deploy branch?")
       _task = parked!(thread, asked.task_id, &is_integer(&1["until"]))
 
@@ -313,10 +284,9 @@ defmodule Photon.QuestionsTest do
     end
 
     test "a hub restart while the call waits on the owner loses nothing", %{
-      project: project,
-      blip: blip
+      project: project
     } do
-      park_blip!(blip)
+      park_blip!()
       {thread, asked} = asking!(project, "which deploy branch?")
       {:ok, _passed} = pass_tx(asked.id, "Which branch?", :blip)
       key = Questions.signal_key(asked.id)
@@ -334,10 +304,9 @@ defmodule Photon.QuestionsTest do
     end
 
     test "an answer recorded while the Scheduler is down wakes the call when it starts", %{
-      project: project,
-      blip: blip
+      project: project
     } do
-      park_blip!(blip)
+      park_blip!()
       {thread, asked} = asking!(project, "which deploy branch?")
       {:ok, _passed} = pass_tx(asked.id, nil, :hub)
       key = Questions.signal_key(asked.id)
@@ -467,7 +436,7 @@ defmodule Photon.QuestionsTest do
     } do
       # Both arrive while Blip is busy, so they share one message, and
       # Blip's run on it asks the owner about each.
-      park_blip!(blip)
+      park_blip!()
       {first, first_q} = asking!(project, "which deploy branch?")
       {second, second_q} = asking!(project, "is the gate locked?")
       assert first_q.submission_id == second_q.submission_id

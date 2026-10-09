@@ -37,8 +37,7 @@ defmodule PhotonWeb.NodesLiveTest do
     tailscale = Path.join(dir, "tailscale")
     File.write!(tailscale, "#!/bin/sh\ncat <<'JSON'\n#{Jason.encode!(@status)}\nJSON\n")
     File.chmod!(tailscale, 0o755)
-    System.put_env("PHOTON_TAILSCALE", tailscale)
-    on_exit(fn -> System.delete_env("PHOTON_TAILSCALE") end)
+    Photon.TestConfig.put_system_env("PHOTON_TAILSCALE", tailscale)
     :ok
   end
 
@@ -148,8 +147,7 @@ defmodule PhotonWeb.NodesLiveTest do
     conn: conn,
     tmp_dir: dir
   } do
-    System.put_env("PHOTON_TAILSCALE", Path.join(dir, "missing"))
-    on_exit(fn -> System.delete_env("PHOTON_TAILSCALE") end)
+    Photon.TestConfig.put_system_env("PHOTON_TAILSCALE", Path.join(dir, "missing"))
 
     {:ok, view, _html} = live(conn, ~p"/nodes")
     render_async(view)

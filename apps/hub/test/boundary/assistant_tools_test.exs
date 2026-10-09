@@ -8,8 +8,10 @@ defmodule Photon.AssistantToolsTest do
   use Photon.DataCase, async: false
 
   import Photon.Fixtures, only: [call: 2, task: 1, tool_task: 2]
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
 
-  alias Photon.{Assistant, Projects, Schedules, Skills, Threads}
+  alias Photon.{Assistant, Projects, Schedules, Skills}
   alias Photon.Assistant.Tools
   alias Photon.Durable.{Submission, ToolAPI, Tx}
   alias Photon.Schedules.{Routine, Schedule}
@@ -123,7 +125,7 @@ defmodule Photon.AssistantToolsTest do
       assert %{last_outcome: "sent"} = Repo.get!(Schedule, id)
 
       # Lets the run the prompt started finish before the test ends.
-      if Durable.busy?(c), do: await_change(c, fn _changes -> not Durable.busy?(c) end)
+      idle!(c, subscribe: false)
     end
 
     test "are listed with their next time, and cancelled by ID", ctx do
@@ -182,8 +184,7 @@ defmodule Photon.AssistantToolsTest do
     setup :conversation
 
     setup %{conversation: c} do
-      {:ok, garden} =
-        Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+      garden = garden!()
 
       {:ok, house} = Projects.create(%{"purpose" => "Fix things.", "name" => "House"})
       :ok = Schedules.subscribe()
@@ -272,7 +273,7 @@ defmodule Photon.AssistantToolsTest do
     end
 
     test "wake a thread in the project", %{garden: garden} = ctx do
-      thread = idle_thread!(garden)
+      thread = idle_thread!(garden, "files")
 
       args = %{
         "prompt" => "Check the pump",
@@ -297,7 +298,7 @@ defmodule Photon.AssistantToolsTest do
 
     test "refuse a thread from another project, a thread without a project, and an unknown project",
          %{house: house} = ctx do
-      theirs = idle_thread!(house)
+      theirs = idle_thread!(house, "files")
 
       assert owner_schedule(
                ctx,
@@ -338,7 +339,7 @@ defmodule Photon.AssistantToolsTest do
       assert {:ok, "No schedules in garden. (Now: " <> _, %{"slug" => "garden"}} =
                list.(%{"project" => "garden"})
 
-      thread = idle_thread!(garden)
+      thread = idle_thread!(garden, "files")
 
       {:ok, _, %{"schedule_id" => new}} =
         owner_schedule(
@@ -413,7 +414,7 @@ defmodule Photon.AssistantToolsTest do
             &1.data["details"]["schedule_id"] != owners.id)
       )
 
-      if Durable.busy?(c), do: await_change(c, fn _changes -> not Durable.busy?(c) end)
+      idle!(c, subscribe: false)
 
       assert %Schedule{asked_by: "blip", created_by: "blip", project_id: nil} =
                Repo.get_by!(Schedule, prompt: "Check the pump")
@@ -424,8 +425,7 @@ defmodule Photon.AssistantToolsTest do
     setup :conversation
 
     setup do
-      {:ok, garden} =
-        Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+      garden = garden!()
 
       :ok = Skills.subscribe()
       %{garden: garden}
@@ -540,17 +540,6 @@ defmodule Photon.AssistantToolsTest do
 
       assert length(Skills.enabled({:project, garden.id})) == 30
     end
-  end
-
-  # A thread in `project` whose first run has ended.
-  defp idle_thread!(project) do
-    {:ok, thread} = Threads.start(project.id, "files")
-    :ok = Durable.subscribe(thread.id)
-
-    if Durable.busy?(thread.id),
-      do: await_change(thread.id, fn _changes -> not Durable.busy?(thread.id) end)
-
-    thread
   end
 
   defp ms(datetime), do: DateTime.to_unix(datetime, :millisecond)

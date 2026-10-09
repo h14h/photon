@@ -14,25 +14,15 @@ defmodule Photon.ThreadsStateTest do
   alias Photon.Threads.Thread
 
   import Ecto.Query, only: [from: 2]
+  import Photon.ConversationHelpers
+  import Photon.ProjectHelpers
+  import Photon.MachineOps, only: [fake_machine: 1]
 
   setup do
-    {:ok, project} =
-      Projects.create(%{"purpose" => "Keep the garden watered.", "name" => "Garden"})
+    project = garden!()
 
     :ok = Projects.subscribe()
     %{project: project}
-  end
-
-  # Stands in for a connected machine that takes commands and never
-  # answers, so a shell call on it keeps its thread running.
-  defp fake_machine(name) do
-    {:ok, _owner} =
-      Registry.register(Photon.MachineRegistry, name, %{
-        "platform" => "test",
-        "workspace" => "/w",
-        "version" => "0",
-        "capabilities" => ["ops:2"]
-      })
   end
 
   defp start!(project, text, opts \\ []) do
@@ -41,17 +31,13 @@ defmodule Photon.ThreadsStateTest do
   end
 
   # Starts a thread and waits until its run has ended; returns its ID.
-  defp ended!(project, text), do: idle!(start!(project, text).id)
+  defp ended!(project, text), do: quiet!(start!(project, text).id)
 
   # Waits until the thread has no run in progress, then lets every
   # announcement of the commit that ended it arrive and drops them all, so
   # a test hears only what it does next.
-  defp idle!(thread_id) do
-    :ok = Threads.subscribe(thread_id)
-
-    if Threads.busy?(thread_id),
-      do: await_change(thread_id, fn _changes -> not Threads.busy?(thread_id) end)
-
+  defp quiet!(thread_id) do
+    _id = idle!(thread_id)
     _state = :sys.get_state(Photon.Durable.Store)
     drain()
     thread_id
@@ -134,7 +120,7 @@ defmodule Photon.ThreadsStateTest do
       fake_machine("box")
       thread = running!(project)
       :ok = Threads.stop(thread.id)
-      idle!(thread.id)
+      quiet!(thread.id)
 
       assert %Thread{last_run_status: "stopped", last_run_note: nil, last_run_ended_at: %{}} =
                Threads.get(thread.id)
@@ -164,9 +150,7 @@ defmodule Photon.ThreadsStateTest do
   # Waits for the run the thread is on to end, without dropping its
   # announcements.
   defp drain_until_ended(thread_id) do
-    if Threads.busy?(thread_id),
-      do: await_change(thread_id, fn _changes -> not Threads.busy?(thread_id) end)
-
+    _id = idle!(thread_id, subscribe: false)
     _state = :sys.get_state(Photon.Durable.Store)
     :ok
   end
@@ -190,7 +174,7 @@ defmodule Photon.ThreadsStateTest do
       assert Threads.state("c_missing") == nil
 
       :ok = Threads.stop(running.id)
-      idle!(running.id)
+      quiet!(running.id)
     end
 
     test "the sidebar gives each listed thread its state", %{project: project} do
@@ -214,7 +198,7 @@ defmodule Photon.ThreadsStateTest do
       fake_machine("box")
       stopped = running!(project)
       :ok = Threads.stop(stopped.id)
-      idle!(stopped.id)
+      quiet!(stopped.id)
 
       assert Threads.needs_you_count() == 3
       assert Threads.mark_all_seen() == 1
@@ -256,7 +240,7 @@ defmodule Photon.ThreadsStateTest do
       id = ended!(project, "files")
       :ok = Threads.mark_seen(id)
       {:ok, _submission} = Threads.send(id, "files")
-      idle!(id)
+      quiet!(id)
       assert state(id) == :unread
     end
 
@@ -307,7 +291,7 @@ defmodule Photon.ThreadsStateTest do
       :ok = Threads.resolve(id)
       {:ok, _submission} = Threads.send(id, "files")
       assert %Thread{resolved_at: nil} = Threads.get(id)
-      idle!(id)
+      quiet!(id)
       assert state(id) == :unread
     end
 
@@ -329,7 +313,7 @@ defmodule Photon.ThreadsStateTest do
 
       _aborted = Durable.abort_task(shell.id)
       await_settled(thread.id, queued.id)
-      idle!(thread.id)
+      quiet!(thread.id)
 
       assert %Thread{resolved_at: nil, last_run_status: "failed"} = Threads.get(thread.id)
       assert state(thread.id) == :failed
@@ -340,7 +324,7 @@ defmodule Photon.ThreadsStateTest do
       thread = running!(project)
       :ok = Threads.resolve(thread.id)
       :ok = Threads.stop(thread.id)
-      idle!(thread.id)
+      quiet!(thread.id)
 
       assert %Thread{resolved_at: %DateTime{}} = Threads.get(thread.id)
       assert state(thread.id) == :idle
@@ -364,7 +348,7 @@ defmodule Photon.ThreadsStateTest do
       assert Threads.get(blip.id).started_by == "blip"
       assert Threads.get(schedule.id).started_by == "schedule"
 
-      for id <- [owner.id, blip.id, schedule.id], do: idle!(id)
+      for id <- [owner.id, blip.id, schedule.id], do: quiet!(id)
     end
   end
 end
