@@ -5,7 +5,7 @@ defmodule Photon.MixProject do
     [
       app: :photon,
       version: "0.1.0",
-      elixir: "~> 1.17",
+      elixir: "~> 1.20",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
@@ -19,22 +19,7 @@ defmodule Photon.MixProject do
       test_coverage: [
         summary: [threshold: 85],
         # Test support, and the Phoenix scaffolding no test drives.
-        ignore_modules: [
-          Photon.Case,
-          Photon.DataCase,
-          Photon.Eventually,
-          Photon.Fixtures,
-          Photon.HarnessProfiles,
-          Photon.HarnessProfiles.Block,
-          Photon.HarnessProfiles.Loop,
-          Photon.Property.SlowProfile,
-          Photon.TestProfile,
-          Photon.TestProfile.Hooks,
-          Photon.TestProfile.Wait,
-          PhotonWeb.ConnCase,
-          PhotonWeb,
-          PhotonWeb.Telemetry
-        ]
+        ignore_modules: [PhotonWeb, PhotonWeb.Telemetry | test_support_modules()]
       ]
     ]
   end
@@ -58,6 +43,14 @@ defmodule Photon.MixProject do
   end
 
   # Specifies which paths to compile per environment.
+  # Every module under test/support is test code, so coverage leaves it out
+  # without a list to keep in step.
+  defp test_support_modules do
+    for path <- Path.wildcard("test/support/**/*.ex"),
+        [_, name] <- Regex.scan(~r/^defmodule ([\w.]+) do/m, File.read!(path)),
+        do: Module.concat([name])
+  end
+
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
@@ -116,12 +109,18 @@ defmodule Photon.MixProject do
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
       # Every check, in the test env (see cli/0). Boundary violations and
       # type warnings fail the compile; `mix format` fixes what the format
-      # check reports. `mix dialyzer` is separate (see AGENTS.md).
+      # check reports; xref fails on any compile-time dependency cycle.
+      # `mix dialyzer` and the coverage threshold are separate (see AGENTS.md
+      # and scripts/verify).
       precommit: [
         "compile --warnings-as-errors",
         "deps.unlock --check-unused",
         "format --check-formatted",
         "credo --strict",
+        "xref graph --format cycles --label compile-connected --fail-above 0",
+        # Every doc names only modules, functions, files and anchors that
+        # exist (PhotonCredo.Docs); the hub sees every app's modules.
+        "run --no-start ../../tools/check_docs.exs",
         "test --warnings-as-errors"
       ]
     ]

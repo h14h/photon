@@ -21,13 +21,11 @@ defmodule PhotonNode.MixProject do
         # Test support, plus the packaged entry point and the packaging task:
         # they halt the VM or drive Burrito and Zig, so no test runs them.
         ignore_modules: [
-          PhotonNode.Case,
-          PhotonNode.Fixtures,
-          PhotonNode.NodeCase,
           PhotonNode.CLI,
           Mix.Tasks.Photon.Package,
           Mix.Tasks.Photon.Package.QuietStream,
           Collectable.Mix.Tasks.Photon.Package.QuietStream
+          | test_support_modules()
         ]
       ]
     ]
@@ -72,6 +70,14 @@ defmodule PhotonNode.MixProject do
     end
   end
 
+  # Every module under test/support is test code, so coverage leaves it out
+  # without a list to keep in step.
+  defp test_support_modules do
+    for path <- Path.wildcard("test/support/**/*.ex"),
+        [_, name] <- Regex.scan(~r/^defmodule ([\w.]+) do/m, File.read!(path)),
+        do: Module.concat([name])
+  end
+
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
@@ -87,12 +93,16 @@ defmodule PhotonNode.MixProject do
     [
       # Every check, in the test env (see cli/0). Boundary violations and
       # type warnings fail the compile; `mix format` fixes what the format
-      # check reports. `mix dialyzer` is separate (see AGENTS.md).
+      # check reports; xref fails on a new compile-time dependency cycle
+      # (the one allowed: `PhotonNode.Config`'s struct names its default hub
+      # link, `Connection`). `mix dialyzer` and the coverage threshold are
+      # separate (see AGENTS.md and scripts/verify).
       precommit: [
         "compile --warnings-as-errors",
         "deps.unlock --check-unused",
         "format --check-formatted",
         "credo --strict",
+        "xref graph --format cycles --label compile-connected --fail-above 1",
         "test --warnings-as-errors"
       ]
     ]

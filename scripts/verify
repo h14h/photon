@@ -1,0 +1,23 @@
+#!/bin/sh
+# Every check in every app, in dependency order: `mix precommit`, Dialyzer
+# and the coverage threshold. Stops at the first failure.
+#
+# Needs Elixir 1.20 on OTP 28 on the PATH, e.g.
+#   mise exec elixir@1.20.4-otp-28 erlang@28.5.0.7 -- scripts/verify
+set -eu
+cd "$(dirname "$0")/.."
+
+case "$(elixir --short-version 2>/dev/null)" in
+  1.20.*) ;;
+  *) echo "scripts/verify needs Elixir 1.20; found: $(elixir --short-version 2>&1)" >&2; exit 1 ;;
+esac
+
+for app in core node hub; do
+  echo "==> apps/$app"
+  (
+    cd "apps/$app"
+    mix precommit
+    mix dialyzer
+    mix test --cover
+  )
+done

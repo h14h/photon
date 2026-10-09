@@ -5,7 +5,7 @@ defmodule PhotonCore.MixProject do
     [
       app: :photon_core,
       version: "0.1.0",
-      elixir: "~> 1.18",
+      elixir: "~> 1.20",
       elixirc_paths: elixirc_paths(Mix.env()),
       # The custom Credo checks in tools/credo_checks are tested here.
       test_paths: ["test", "../../tools/credo_checks/test"],
@@ -19,13 +19,7 @@ defmodule PhotonCore.MixProject do
       deps: deps(),
       test_coverage: [
         summary: [threshold: 95],
-        ignore_modules: [
-          PhotonCore.Case,
-          PhotonCore.EchoScript,
-          PhotonCore.Fixtures,
-          PhotonCore.Generators,
-          PhotonCore.StubProvider
-        ]
+        ignore_modules: test_support_modules()
       ]
     ]
   end
@@ -37,6 +31,14 @@ defmodule PhotonCore.MixProject do
   # A library: no `:mod`, so no application callback and no processes.
   def application do
     [extra_applications: [:logger]]
+  end
+
+  # Every module under test/support is test code, so coverage leaves it out
+  # without a list to keep in step.
+  defp test_support_modules do
+    for path <- Path.wildcard("test/support/**/*.ex"),
+        [_, name] <- Regex.scan(~r/^defmodule ([\w.]+) do/m, File.read!(path)),
+        do: Module.concat([name])
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
@@ -58,12 +60,15 @@ defmodule PhotonCore.MixProject do
     [
       # Every check, in the test env (see cli/0). Boundary violations and
       # type warnings fail the compile; `mix format` fixes what the format
-      # check reports. `mix dialyzer` is separate (see AGENTS.md).
+      # check reports; xref fails on any compile-time dependency cycle.
+      # `mix dialyzer` and the coverage threshold are separate (see AGENTS.md
+      # and scripts/verify).
       precommit: [
         "compile --warnings-as-errors",
         "deps.unlock --check-unused",
         "format --check-formatted",
         "credo --strict",
+        "xref graph --format cycles --label compile-connected --fail-above 0",
         "test --warnings-as-errors"
       ]
     ]
