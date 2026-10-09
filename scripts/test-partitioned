@@ -1,0 +1,38 @@
+#!/bin/sh
+# Runs an app's tests split across PARTITIONS VMs at once (default 4), each
+# with its own data dir and database (see the app's config/test.exs), then
+# merges their coverage and checks the threshold. Same tests as
+# `mix test --cover`, in about half the time for the hub.
+#
+#   scripts/test-partitioned hub
+set -eu
+app=${1:?usage: scripts/test-partitioned <app>}
+partitions=${PARTITIONS:-4}
+cd "$(dirname "$0")/../apps/$app"
+
+MIX_ENV=test mix compile
+rm -f cover/*.coverdata
+logs=$(mktemp -d)
+
+i=1
+while [ "$i" -le "$partitions" ]; do
+  (MIX_TEST_PARTITION=$i mix test --partitions "$partitions" --cover >"$logs/$i.log" 2>&1 &&
+    touch "$logs/$i.ok") &
+  i=$((i + 1))
+done
+wait
+
+failed=0
+i=1
+while [ "$i" -le "$partitions" ]; do
+  grep -h "^Result:\|^Finished" "$logs/$i.log" | sed "s/^/partition $i: /"
+  if [ ! -e "$logs/$i.ok" ]; then
+    failed=1
+    echo "partition $i failed:" >&2
+    tail -n 60 "$logs/$i.log" >&2
+  fi
+  i=$((i + 1))
+done
+[ "$failed" = 0 ] || exit 1
+
+MIX_ENV=test mix test.coverage

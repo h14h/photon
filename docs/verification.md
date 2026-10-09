@@ -133,7 +133,10 @@ ExUnit, in each app, with Elixir 1.20.4 on OTP 28:
 (cd apps/hub && mix test)
 ```
 
-`mix test test/property` runs only the properties.
+`scripts/test-partitioned hub` runs the hub's suite across four VMs at
+once, each with its own data dir and database (`MIX_TEST_PARTITION` in
+`config/test.exs`), and merges their coverage. `mix test test/property`
+runs only the properties.
 `PHOTON_PROPERTY_RUNS=250` raises the run count of the hub's durable-model
 and machine-ops properties.
 

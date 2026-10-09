@@ -153,7 +153,8 @@ defmodule Photon.NodeInstallTest do
 
     {out, status} =
       System.cmd("sh", ["-c", script()],
-        env: ctx.env ++ [{"PHOTON_ACTION", "uninstall"}],
+        # Half a second, not five, to give up on a node that won't stop.
+        env: ctx.env ++ [{"PHOTON_ACTION", "uninstall"}, {"PHOTON_STOP_TRIES", "5"}],
         stderr_to_stdout: true
       )
 
@@ -179,7 +180,8 @@ defmodule Photon.NodeInstallTest do
 
     {out, status} =
       System.cmd("sh", ["-c", script()],
-        env: ctx.env ++ [{"PHOTON_ACTION", "uninstall"}],
+        # Half a second, not five, to give up on a node that won't stop.
+        env: ctx.env ++ [{"PHOTON_ACTION", "uninstall"}, {"PHOTON_STOP_TRIES", "5"}],
         stderr_to_stdout: true
       )
 

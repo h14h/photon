@@ -28,7 +28,11 @@ defmodule Photon.DataCase do
   @tables ~w(digest_items activity questions schedules threads project_files skill_enablements skills projects conversations entries docs tasks submissions signals node_keys machine_ops)
 
   def setup_sandbox(tags) do
-    for table <- @tables, do: Photon.Repo.query!("DELETE FROM #{table}")
+    # One transaction, so SQLite syncs once rather than once per table.
+    {:ok, _} =
+      Photon.Repo.transaction(fn ->
+        for table <- @tables, do: Photon.Repo.query!("DELETE FROM #{table}")
+      end)
 
     File.rm(Photon.Paths.settings_file())
     Photon.Settings.save(%{"provider" => "mock"})

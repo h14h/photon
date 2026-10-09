@@ -1,6 +1,6 @@
 #!/bin/sh
-# Every check in every app, in dependency order: `mix precommit`, Dialyzer
-# and the coverage threshold. Stops at the first failure.
+# Every check in every app, in dependency order: `mix precommit` and
+# Dialyzer, then the coverage thresholds. Stops at the first failure.
 #
 # Needs Elixir 1.20 on OTP 28 on the PATH, e.g.
 #   mise exec elixir@1.20.4-otp-28 erlang@28.5.0.7 -- scripts/verify
@@ -22,6 +22,11 @@ for app in core node hub; do
     # hash makes it recheck, so the PLT holds the code being checked.
     rm -f _build/plts/*.plt.hash
     mix dialyzer
-    mix test --cover
   )
 done
+
+# The coverage thresholds. The hub's suite is mostly serial (one real
+# database per VM), so it runs split across VMs.
+(cd apps/core && mix test --cover)
+(cd apps/node && mix test --cover)
+scripts/test-partitioned hub
