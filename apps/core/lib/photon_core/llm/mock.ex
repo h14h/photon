@@ -13,7 +13,8 @@ defmodule PhotonCore.LLM.Mock do
   helpers below are for writing scripts.
   """
 
-  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM.Error, Jason]
+  # Top-level, so the hub's scripted models depend on it and not on the client.
+  use Boundary, top_level?: true, type: :strict, deps: [PhotonCore, PhotonCore.LLM.Error, Jason]
 
   alias PhotonCore.LLM
   alias PhotonCore.LLM.Error

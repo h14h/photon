@@ -94,6 +94,57 @@ defmodule Photon.Auth do
     end
   end
 
+  @typedoc """
+  What `gui_access/2` decides from: who the device is (as for
+  `check_device/3`), whether its address is on the tailnet, the logins let
+  in, the devices that run nodes, and whether the session signed in with the
+  password.
+  """
+  @type gui_facts :: %{
+          identity: {:ok, Photon.Tailnet.identity()} | :error,
+          tailnet_address?: boolean(),
+          logins: [String.t()],
+          node_devices: MapSet.t(),
+          signed_in?: boolean()
+        }
+
+  @doc """
+  Whether a client may open the GUI in a tailscale mode: its device
+  (`check_device/3`), or in `:tailscale_or_password` a signed-in session,
+  but never a machine that runs a node. A tailnet address tailscale couldn't
+  name may be a node, so it is told to try again rather than asked for the
+  password. `{:error, :not_device}` leaves room for the password.
+  """
+  @spec gui_access(:tailscale | :tailscale_or_password, gui_facts()) ::
+          :ok | {:error, String.t() | :not_device}
+  def gui_access(mode, facts) do
+    case {check_device(facts.identity, facts.logins, facts.node_devices), mode} do
+      {:ok, _mode} ->
+        :ok
+
+      {{:error, reason}, :tailscale} ->
+        {:error, reason}
+
+      {{:error, _reason}, :tailscale_or_password}
+      when facts.identity == :error and facts.tailnet_address? ->
+        {:error, "Photon couldn't tell which of your devices this is. Try again."}
+
+      {{:error, reason}, :tailscale_or_password} ->
+        password_fallback(facts, reason)
+    end
+  end
+
+  defp password_fallback(%{identity: {:ok, %{device: device}}} = facts, reason) do
+    cond do
+      MapSet.member?(facts.node_devices, device) -> {:error, reason}
+      facts.signed_in? -> :ok
+      true -> {:error, :not_device}
+    end
+  end
+
+  defp password_fallback(%{signed_in?: true}, _reason), do: :ok
+  defp password_fallback(_facts, _reason), do: {:error, :not_device}
+
   ## Password
 
   @spec password() :: String.t()

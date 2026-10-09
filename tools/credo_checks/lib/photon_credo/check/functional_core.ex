@@ -5,6 +5,7 @@ defmodule PhotonCredo.Check.FunctionalCore do
     category: :design,
     param_defaults: [
       core_modules: [],
+      namespaces: [],
       impure: [
         "GenServer",
         "Agent",
@@ -108,12 +109,17 @@ defmodule PhotonCredo.Check.FunctionalCore do
         * calls whose result isn't repeatable: the clock, randomness and ID
           generators. Take the value as an argument, or allow-list the call
           for the module when the impurity is chosen on purpose.
+        * calls into the app's own boundary modules: any module under
+          `namespaces` that isn't itself a core module (a context API such
+          as `Photon.Threads.start/2`). Pass in the data it would read.
 
       Code outside functions (module attributes, read at compile time) is
       not checked.
       """,
       params: [
         core_modules: "Module patterns of the functional core (`\"A.B\"` or `\"A.B.*\"`).",
+        namespaces:
+          "The app's own namespaces (`\"Photon\"`): a core module may call only the core modules in them.",
         impure:
           "Calls that do I/O or touch processes: `\"Mod\"`, `\"Mod.fun\"`, `\"*.Suffix\"`, `\":erl_mod\"`.",
         impure_extra: "More impure calls, added to `impure`.",
@@ -148,6 +154,7 @@ defmodule PhotonCredo.Check.FunctionalCore do
         Params.get(params, :nondeterministic_extra, __MODULE__)
 
     allowed = Params.get(params, :allowed, __MODULE__)
+    namespaces = Params.get(params, :namespaces, __MODULE__)
 
     source_file
     |> SourceFile.ast()
@@ -157,7 +164,9 @@ defmodule PhotonCredo.Check.FunctionalCore do
       rules = %{
         impure: impure,
         nondeterministic: nondeterministic,
-        allowed: Ast.lookup(info.name, allowed) || []
+        allowed: Ast.lookup(info.name, allowed) || [],
+        core: core,
+        namespaces: namespaces
       }
 
       module_issues(info, rules, issue_meta)
@@ -193,9 +202,17 @@ defmodule PhotonCredo.Check.FunctionalCore do
       listed?(call, rules.nondeterministic) ->
         [issue(issue_meta, info, %{call | function: name}, :nondeterministic)]
 
+      boundary?(call.module, rules) ->
+        [issue(issue_meta, info, %{call | function: name}, :boundary)]
+
       true ->
         []
     end
+  end
+
+  defp boundary?(module, rules) do
+    Enum.any?(rules.namespaces, &(module == &1 or String.starts_with?(module, &1 <> "."))) and
+      not Ast.matches?(module, rules.core)
   end
 
   defp local_issues(code, info, own_send?, issue_meta) do
@@ -265,6 +282,10 @@ defmodule PhotonCredo.Check.FunctionalCore do
   defp advice(:impure),
     do:
       "which touches processes or does I/O. Move it to a boundary module and pass the result in."
+
+  defp advice(:boundary),
+    do:
+      "a boundary module. Have the boundary read what it needs and pass it in, or depend on a core module."
 
   defp advice(:nondeterministic),
     do:

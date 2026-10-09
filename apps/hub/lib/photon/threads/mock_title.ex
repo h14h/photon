@@ -29,7 +29,7 @@ defmodule Photon.Threads.MockTitle do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM, Photon.Threads.Rules]
+  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM.Mock, Photon.Threads.Rules]
 
   @behaviour PhotonCore.LLM.Mock
 

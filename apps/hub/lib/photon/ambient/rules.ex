@@ -22,7 +22,7 @@ defmodule Photon.Ambient.Rules do
   """
 
   # Functional core: no processes, no I/O. The time comes in as an argument.
-  use Boundary, type: :strict, deps: [Photon.Threads]
+  use Boundary, type: :strict, deps: [Photon.Threads.State]
 
   alias Photon.Threads.State
 

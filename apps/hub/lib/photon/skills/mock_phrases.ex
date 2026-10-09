@@ -14,7 +14,7 @@ defmodule Photon.Skills.MockPhrases do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore, PhotonCore.LLM]
+  use Boundary, top_level?: true, type: :strict, deps: [PhotonCore, PhotonCore.LLM.Mock]
 
   alias PhotonCore.LLM.Mock
   alias PhotonCore.Message

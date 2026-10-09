@@ -37,7 +37,7 @@ defmodule Photon.MachineTools do
 
   use Boundary,
     deps: [Photon.Durable, Photon.Machines, Photon.Skills, PhotonCore, PhotonCore.LLM],
-    exports: [Guide, MockPhrases]
+    exports: []
 
   alias Photon.Machines
   alias Photon.MachineTools.{ListMachines, Shell, ViewImage}

@@ -8,7 +8,7 @@ defmodule Photon.MachineTools.Guide do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: []
+  use Boundary, top_level?: true, type: :strict, deps: []
 
   @doc """
   What a `shell` call is like, for a prompt's Markdown list: a fresh shell

@@ -68,7 +68,7 @@ defmodule Photon.Assistant.MockCoordinator do
   # Functional core: no processes, no I/O.
   use Boundary,
     type: :strict,
-    deps: [PhotonCore, PhotonCore.LLM, Photon.Assistant.MockAmbient]
+    deps: [PhotonCore, PhotonCore.LLM.Mock, Photon.Assistant.MockAmbient]
 
   alias Photon.Assistant.MockAmbient
   alias PhotonCore.LLM.Mock

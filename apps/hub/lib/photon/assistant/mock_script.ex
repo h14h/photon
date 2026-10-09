@@ -51,11 +51,11 @@ defmodule Photon.Assistant.MockScript do
     type: :strict,
     deps: [
       PhotonCore,
-      PhotonCore.LLM,
+      PhotonCore.LLM.Mock,
       Photon.Assistant.MockAmbient,
       Photon.Assistant.MockCoordinator,
-      Photon.MachineTools,
-      Photon.Skills
+      Photon.MachineTools.MockPhrases,
+      Photon.Skills.MockPhrases
     ]
 
   @behaviour PhotonCore.LLM.Mock

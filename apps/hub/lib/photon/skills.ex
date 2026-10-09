@@ -77,7 +77,7 @@ defmodule Photon.Skills do
       Jason,
       Req
     ],
-    exports: [Skill, Prompt, MockPhrases]
+    exports: [Skill]
 
   import Ecto.Query
 

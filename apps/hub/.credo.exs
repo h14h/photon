@@ -116,7 +116,16 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "PhotonWeb.SkillText",
                    "PhotonWeb.ThreadText"
                  ],
-                 nondeterministic_extra: ["PhotonCore.ID.new"]
+                 # A core module calls only core modules of its own app, so a
+                 # context's API (say `Photon.Threads.start/2`) stays out of it.
+                 namespaces: ["Photon", "PhotonWeb"],
+                 impure_extra: ["PhotonCore.LLM.stream", "PhotonCore.LLM.Responses"],
+                 nondeterministic_extra: ["PhotonCore.ID.new"],
+                 allowed: [
+                   # The tool contract's spec/1 only reads the tool module's own
+                   # name, description and parameters.
+                   {"Photon.Durable.Turn", ["Photon.Durable.Tool.spec"]}
+                 ]
                ]},
               # 30: server and framework callbacks hand their message to a context
               # or the core and stay short.

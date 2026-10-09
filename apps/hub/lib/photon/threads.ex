@@ -118,11 +118,17 @@ defmodule Photon.Threads do
       Photon.Signals,
       Photon.Skills,
       Photon.Transcript,
+      Photon.MachineTools.Guide,
+      Photon.MachineTools.MockPhrases,
+      Photon.Skills.MockPhrases,
+      Photon.Skills.Prompt,
+      Photon.Threads.State,
       PhotonCore,
       PhotonCore.LLM,
+      PhotonCore.LLM.Mock,
       Ecto
     ],
-    exports: [Thread, State]
+    exports: [Thread]
 
   @behaviour Photon.Durable.Profile
 
