@@ -38,7 +38,9 @@ defmodule PhotonCredo.Docs do
     "apps/*/test/**/*.{ex,exs}",
     "apps/*/config/*.exs",
     "apps/*/mix.exs",
-    "tools/**/*.{ex,exs}"
+    "tools/*.exs",
+    "tools/credo_checks/*.exs",
+    "tools/credo_checks/lib/**/*.ex"
   ]
   @skip ~r{(^|/)(deps|_build|cover|node_modules)/}
 
@@ -301,9 +303,7 @@ defmodule PhotonCredo.Docs do
   # with its trailing slash.
   defp ignored?(root, path) do
     {_output, status} =
-      System.cmd("git", ["check-ignore", "--quiet", path, String.trim_trailing(path, "/") <> "/"],
-        cd: root
-      )
+      System.cmd("git", ["check-ignore", path, String.trim_trailing(path, "/") <> "/"], cd: root)
 
     status == 0
   end
