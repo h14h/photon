@@ -13,6 +13,7 @@ defmodule Photon.Threads.Tools.WriteContextFile do
   """
   @behaviour Photon.Durable.Tool
 
+  alias Photon.Durable.ToolSchema
   alias Photon.{Projects, Threads}
   alias Photon.Threads.Rules
 
@@ -27,24 +28,15 @@ defmodule Photon.Threads.Tools.WriteContextFile do
         "passage, use edit_context_file instead."
 
   @impl true
-  def parameters do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "name" => %{
-          "type" => "string",
-          "description" =>
-            ~s(The file's name: letters, digits, ".", "_" and "-", like notes.md. ) <>
-              "Files are flat, with no folders."
-        },
-        "content" => %{
-          "type" => "string",
-          "description" => "The whole file, in Markdown; at most 100,000 characters."
-        }
-      },
-      "required" => ["name", "content"]
-    }
-  end
+  def parameters,
+    do:
+      ToolSchema.object(
+        [
+          name: Projects.Rules.file_field(:new_name),
+          content: Projects.Rules.file_field(:content)
+        ],
+        [:name, :content]
+      )
 
   @impl true
   def replay, do: :safe

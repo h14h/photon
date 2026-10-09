@@ -100,6 +100,7 @@ defmodule Photon do
       Photon.MachineTools.MockPhrases,
       Photon.Skills.MockPhrases,
       Photon.Skills.Prompt,
+      Photon.Text,
       Photon.Threads.State,
       Ecto,
       EEx,

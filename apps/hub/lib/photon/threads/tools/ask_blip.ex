@@ -30,7 +30,7 @@ defmodule Photon.Threads.Tools.AskBlip do
   """
   @behaviour Photon.Durable.Tool
 
-  alias Photon.Durable.ToolAPI
+  alias Photon.Durable.{ToolAPI, ToolSchema}
   alias Photon.Projects
   alias Photon.Projects.Project
   alias Photon.Questions
@@ -50,20 +50,17 @@ defmodule Photon.Threads.Tools.AskBlip do
   end
 
   @impl true
-  def parameters do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "question" => %{
-          "type" => "string",
-          "description" =>
-            "One specific question, with the context Blip needs to answer it. " <>
-              "Blip knows the user but doesn't see this thread."
-        }
-      },
-      "required" => ["question"]
-    }
-  end
+  def parameters,
+    do:
+      ToolSchema.object(
+        [
+          question:
+            {:string,
+             "One specific question, with the context Blip needs to answer it. " <>
+               "Blip knows the user but doesn't see this thread."}
+        ],
+        [:question]
+      )
 
   # The question is found by the call's task, so a rerun asks nothing new.
   @impl true

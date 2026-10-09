@@ -52,10 +52,11 @@ defmodule PhotonWeb.SkillLive do
   use PhotonWeb, :live_view
 
   import PhotonWeb.EditorComponents
+  import PhotonWeb.SkillComponents
 
-  alias Photon.{Machines, Markdown, Projects, Skills}
+  alias Photon.{Machines, Projects, Skills}
   alias Photon.Skills.Skill
-  alias PhotonWeb.SkillText
+  alias PhotonWeb.{FormParams, SkillText}
 
   @fields ["name", "description", "instructions"]
 
@@ -165,26 +166,7 @@ defmodule PhotonWeb.SkillLive do
   end
 
   # The form over `params`, with the context's `%{field => message}` errors.
-  defp skill_form(params, errors \\ %{}),
-    do: to_form(params, as: :skill, errors: Enum.map(errors, fn {k, v} -> {k, {v, []}} end))
-
-  # The form's params, with a browser's line breaks made plain.
-  defp clean(params) do
-    Map.new(params, fn
-      {key, value} when is_binary(value) -> {key, String.replace(value, "\r\n", "\n")}
-      pair -> pair
-    end)
-  end
-
-  defp version(params) do
-    case Integer.parse(Map.get(params, "version", "")) do
-      {version, ""} when version > 0 -> version
-      _other -> 0
-    end
-  end
-
-  # The instructions in the editor now.
-  defp instructions(form), do: form[:instructions].value || ""
+  defp skill_form(params, errors \\ %{}), do: FormParams.form(params, :skill, errors)
 
   # Whether the editor holds something a save would keep: for a new skill,
   # anything typed; for a skill, a field other than what was loaded.
@@ -204,7 +186,7 @@ defmodule PhotonWeb.SkillLive do
 
   @impl true
   def handle_event("edit", %{"skill" => params}, socket) do
-    params = clean(params)
+    params = FormParams.clean(params)
 
     {:noreply,
      assign(socket, form: skill_form(params), dirty?: dirty?(socket.assigns.skill, params))}
@@ -214,7 +196,7 @@ defmodule PhotonWeb.SkillLive do
     do: {:noreply, assign(socket, tab: tab)}
 
   def handle_event("save", %{"skill" => params}, %{assigns: %{live_action: :new}} = socket) do
-    params = clean(params)
+    params = FormParams.clean(params)
 
     case Skills.create(params) do
       {:ok, skill} ->
@@ -229,9 +211,9 @@ defmodule PhotonWeb.SkillLive do
   end
 
   def handle_event("save", %{"skill" => params}, socket) do
-    params = clean(params)
+    params = FormParams.clean(params)
 
-    case Skills.update(socket.assigns.skill.id, params, version(params)) do
+    case Skills.update(socket.assigns.skill.id, params, FormParams.version(params)) do
       {:ok, skill} ->
         {:noreply, socket |> saved(skill) |> put_flash(:info, "Saved #{skill.name}.")}
 
@@ -467,7 +449,14 @@ defmodule PhotonWeb.SkillLive do
             </div>
           </section>
 
-          <.install_notes :if={@skill} notes={SkillText.notes(@skill.install_notes)} />
+          <%!-- What install left out, as it said at install. --%>
+          <.install_notes
+            :if={@skill}
+            id="skill-install-notes"
+            notes={SkillText.notes(@skill.install_notes)}
+            heading="h2"
+            class="mt-4"
+          />
 
           <.banner :if={@stale?} id="skill-stale" tone="warn" icon="hero-arrow-path">
             This skill changed since you opened it.
@@ -517,51 +506,18 @@ defmodule PhotonWeb.SkillLive do
               <label for="skill-instructions" class="block text-[13px] font-medium text-ink-soft">
                 Instructions
               </label>
-              <div class="overflow-hidden rounded-2xl border border-line bg-surface shadow-xs transition focus-within:border-accent/60 focus-within:shadow-md focus-within:shadow-accent/10">
-                <div class="flex items-center justify-between gap-3 border-b border-line bg-sunken/50 px-3 py-2">
-                  <div
-                    role="tablist"
-                    class="flex items-center rounded-full border border-line bg-sunken p-0.5"
-                  >
-                    <.editor_tab id="skill-tab-write" tab="write" current={@tab}>Write</.editor_tab>
-                    <.editor_tab id="skill-tab-preview" tab="preview" current={@tab}>
-                      Preview
-                    </.editor_tab>
-                  </div>
-                  <span class="flex items-center gap-1.5 text-[11.5px] text-ink-faint">
-                    <.icon name="hero-document-text-micro" class="size-4" /> Markdown
-                  </span>
-                </div>
-
-                <div
-                  id={"skill-editor-#{@revision}"}
-                  class={["px-4 pt-3 pb-3", @tab == "preview" && "hidden"]}
-                >
-                  <.input
-                    field={@form[:instructions]}
-                    id="skill-instructions"
-                    type="textarea"
-                    rows="20"
-                    phx-debounce="400"
-                    spellcheck="false"
-                    placeholder="What should an agent do when it loads this skill? Steps, checks and examples. Markdown works here."
-                    class="block min-h-[26rem] w-full resize-y bg-transparent font-mono text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
-                  />
-                </div>
-
-                <div
-                  :if={@tab == "preview"}
-                  id="skill-preview"
-                  class="markdown-body min-h-[26rem] px-5 py-4 text-ink-soft"
-                >
-                  <%= if String.trim(instructions(@form)) == "" do %>
-                    <p class="text-[14px] text-ink-faint">Nothing to preview yet.</p>
-                  <% else %>
-                    {raw(Markdown.to_html(instructions(@form)))}
-                  <% end %>
-                </div>
-
-                <div class="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
+              <.markdown_editor
+                id="skill"
+                field={@form[:instructions]}
+                tab={@tab}
+                input_id="skill-instructions"
+                editor_id={"skill-editor-#{@revision}"}
+                preview_id="skill-preview"
+                rows="20"
+                min_height="min-h-[26rem]"
+                placeholder="What should an agent do when it loads this skill? Steps, checks and examples. Markdown works here."
+              >
+                <:footer>
                   <p class="text-[12.5px] leading-relaxed text-ink-faint">
                     <span
                       :if={@dirty?}
@@ -583,8 +539,8 @@ defmodule PhotonWeb.SkillLive do
                   >
                     Save
                   </.button>
-                </div>
-              </div>
+                </:footer>
+              </.markdown_editor>
             </div>
           </.guarded_form>
         </div>
@@ -618,26 +574,6 @@ defmodule PhotonWeb.SkillLive do
           <.local_time id="skill-installed-at" at={@skill.inserted_at} />.
       <% end %>
     </p>
-    """
-  end
-
-  attr :notes, :list, required: true
-
-  # What install left out, as it said at install.
-  defp install_notes(assigns) do
-    ~H"""
-    <section
-      :if={@notes != []}
-      id="skill-install-notes"
-      class="mt-4 rounded-2xl border border-line bg-sunken/60 px-5 py-4"
-    >
-      <h2 class="flex items-center gap-2 text-[13px] font-semibold text-ink">
-        <.icon name="hero-information-circle" class="size-4 text-ink-faint" /> Install notes
-      </h2>
-      <ul class="mt-2 space-y-1.5 pl-6 text-[13px] leading-relaxed text-ink-soft">
-        <li :for={note <- @notes} class="list-disc marker:text-ink-faint">{note}</li>
-      </ul>
-    </section>
     """
   end
 end

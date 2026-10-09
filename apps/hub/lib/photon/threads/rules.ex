@@ -16,7 +16,9 @@ defmodule Photon.Threads.Rules do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [PhotonCore]
+  use Boundary, type: :strict, deps: [Photon.Text, PhotonCore]
+
+  alias Photon.Text
 
   @title_limit 50
   @rename_limit 80
@@ -85,7 +87,7 @@ defmodule Photon.Threads.Rules do
     cond do
       line == "" -> "Untitled thread"
       String.length(line) <= @title_limit -> line
-      true -> cut_at_word(line, @title_limit) <> "..."
+      true -> Text.cut_at_word(line, @title_limit) <> "..."
     end
   end
 
@@ -149,7 +151,7 @@ defmodule Photon.Threads.Rules do
     cond do
       words == 0 or words > @title_words -> :error
       String.length(line) <= @title_limit -> {:ok, line}
-      true -> {:ok, cut_at_word(line, @title_limit)}
+      true -> {:ok, Text.cut_at_word(line, @title_limit)}
     end
   end
 
@@ -182,20 +184,6 @@ defmodule Photon.Threads.Rules do
   end
 
   defp collapse(text), do: text |> String.split() |> Enum.join(" ")
-
-  # At most `limit` characters, ending at a word boundary when there is
-  # one, without trailing punctuation before the `...`.
-  defp cut_at_word(text, limit) do
-    head = String.slice(text, 0, limit + 1)
-
-    cut =
-      case Regex.run(~r/^(.*\S)\s/u, head) do
-        [_, cut] -> String.slice(cut, 0, limit)
-        nil -> String.slice(text, 0, limit)
-      end
-
-    String.replace(cut, ~r/[\s.,;:]+$/u, "")
-  end
 
   ## Context files, as the tools describe them
 
@@ -240,7 +228,7 @@ defmodule Photon.Threads.Rules do
   def characters(content) do
     case content |> String.to_charlist() |> length() do
       1 -> "1 character"
-      n -> "#{count(n)} characters"
+      n -> "#{Text.count(n)} characters"
     end
   end
 
@@ -258,14 +246,5 @@ defmodule Photon.Threads.Rules do
       {:ok, title} -> ~s(thread "#{title}")
       :error -> "another thread"
     end
-  end
-
-  # A count with thousands separators: 123456 to "123,456".
-  defp count(n) do
-    n
-    |> Integer.to_string()
-    |> String.reverse()
-    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
-    |> String.reverse()
   end
 end

@@ -36,7 +36,9 @@ defmodule Photon.Threads.State do
   """
 
   # Functional core: no processes, no I/O. The time comes in as an argument.
-  use Boundary, top_level?: true, type: :strict, deps: []
+  use Boundary, top_level?: true, type: :strict, deps: [Photon.Text]
+
+  alias Photon.Text
 
   @typedoc "A thread's state."
   @type t :: :waiting | :asking | :running | :failed | :unread | :quiet | :idle
@@ -372,21 +374,7 @@ defmodule Photon.Threads.State do
       line ->
         if String.length(line) <= @note_limit,
           do: line,
-          else: cut_at_word(line, @note_limit - 3) <> "..."
+          else: Text.cut_at_word(line, @note_limit - 3) <> "..."
     end
-  end
-
-  # At most `limit` characters, ending at a word boundary when there is
-  # one, without trailing punctuation before the "...".
-  defp cut_at_word(text, limit) do
-    head = String.slice(text, 0, limit + 1)
-
-    cut =
-      case Regex.run(~r/^(.*\S)\s/u, head) do
-        [_, cut] -> String.slice(cut, 0, limit)
-        nil -> String.slice(text, 0, limit)
-      end
-
-    String.replace(cut, ~r/[\s.,;:]+$/u, "")
   end
 end

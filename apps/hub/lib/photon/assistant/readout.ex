@@ -25,7 +25,9 @@ defmodule Photon.Assistant.Readout do
   """
 
   # Functional core: no processes, no I/O. The time comes in as an argument.
-  use Boundary, type: :strict, deps: [Photon.Threads.State, PhotonCore]
+  use Boundary, type: :strict, deps: [Photon.Text, Photon.Threads.State, PhotonCore]
+
+  alias Photon.Text
 
   alias Photon.Threads.State
   alias PhotonCore.Message
@@ -138,6 +140,17 @@ defmodule Photon.Assistant.Readout do
   @items_limit 12_000
 
   ## The state argument
+
+  @doc """
+  A tool parameter Blip's tools share, for `Photon.Durable.ToolSchema`:
+  `:project` (a slug or ID), `:thread` or `:question` (an ID).
+  """
+  @spec field(:project | :thread | :question) :: {:string, String.t()}
+  def field(:project),
+    do: {:string, "The project's slug, like garden (list_projects shows them), or its ID."}
+
+  def field(:thread), do: {:string, "The thread's ID, like c_123 (list_threads shows them)."}
+  def field(:question), do: {:string, "The question's ID, like q_456."}
 
   @doc "The names `list_threads`' `state` argument takes, in order."
   @spec state_names() :: [String.t()]
@@ -751,16 +764,8 @@ defmodule Photon.Assistant.Readout do
   defp characters(content) do
     case String.length(content || "") do
       1 -> "1 character"
-      n -> "#{thousands(n)} characters"
+      n -> "#{Text.count(n)} characters"
     end
-  end
-
-  defp thousands(n) do
-    n
-    |> Integer.to_string()
-    |> String.reverse()
-    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
-    |> String.reverse()
   end
 
   defp one_line(text) when is_binary(text), do: text |> String.split() |> Enum.join(" ")

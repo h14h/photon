@@ -48,7 +48,7 @@ defmodule PhotonWeb.ScheduleLive do
   alias Photon.{Projects, Schedules, Threads}
   alias Photon.Projects.Project
   alias Photon.Schedules.Schedule
-  alias PhotonWeb.ScheduleText
+  alias PhotonWeb.{FormParams, ScheduleText}
 
   @units [{"minutes", "minute"}, {"hours", "hour"}, {"days", "day"}, {"weeks", "week"}]
 
@@ -142,8 +142,7 @@ defmodule PhotonWeb.ScheduleLive do
   end
 
   # The form over `params`, with the context's `%{field => message}` errors.
-  defp schedule_form(params, errors \\ %{}),
-    do: to_form(params, as: :schedule, errors: Enum.map(errors, fn {k, v} -> {k, {v, []}} end))
+  defp schedule_form(params, errors \\ %{}), do: FormParams.form(params, :schedule, errors)
 
   # What a save would keep, to tell a changed form from the one loaded: the
   # trimmed prompt, the time as an instant (the browser writes it in its
@@ -168,13 +167,6 @@ defmodule PhotonWeb.ScheduleLive do
   end
 
   defp instant(at), do: at
-
-  defp version(params) do
-    case Integer.parse(Map.get(params, "version", "")) do
-      {version, ""} when version > 0 -> version
-      _other -> 0
-    end
-  end
 
   ## Events
 
@@ -250,7 +242,7 @@ defmodule PhotonWeb.ScheduleLive do
     do: Schedules.create({:project, project.id}, params)
 
   defp save(%{assigns: %{schedule: schedule}}, params),
-    do: Schedules.update(schedule.id, params, version(params))
+    do: Schedules.update(schedule.id, params, FormParams.version(params))
 
   # A save that found nothing: a new schedule's project is gone, or the
   # schedule was deleted.

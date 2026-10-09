@@ -14,8 +14,8 @@ defmodule Photon.Assistant.Tools.StartThread do
   @behaviour Photon.Durable.Tool
 
   alias Photon.{Assistant, Threads}
-  alias Photon.Assistant.Origin
-  alias Photon.Durable.ToolAPI
+  alias Photon.Assistant.{Origin, Readout}
+  alias Photon.Durable.{ToolAPI, ToolSchema}
 
   @impl true
   def name, do: "start_thread"
@@ -29,21 +29,14 @@ defmodule Photon.Assistant.Tools.StartThread do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "project" => %{
-          "type" => "string",
-          "description" =>
-            "The project's slug, like garden (list_projects shows them), or its ID."
-        },
-        "message" => %{
-          "type" => "string",
-          "description" => "The thread's first message: the task, with what it needs to know."
-        }
-      },
-      "required" => ["project", "message"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          project: Readout.field(:project),
+          message: {:string, "The thread's first message: the task, with what it needs to know."}
+        ],
+        [:project, :message]
+      )
 
   @impl true
   def replay, do: :safe

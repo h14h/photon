@@ -45,10 +45,11 @@ defmodule PhotonWeb.SkillInstallLive do
 
   use PhotonWeb, :live_view
 
-  import PhotonWeb.EditorComponents, only: [editor_tab: 1]
+  import PhotonWeb.EditorComponents, only: [markdown_editor: 1]
+  import PhotonWeb.SkillComponents
 
-  alias Photon.{Markdown, Skills}
-  alias PhotonWeb.SkillText
+  alias Photon.Skills
+  alias PhotonWeb.{FormParams, SkillText}
 
   @field_order [:name, :description, :instructions]
 
@@ -140,15 +141,7 @@ defmodule PhotonWeb.SkillInstallLive do
   defp reason(%{name: name}, nil, nil), do: Skills.name_taken(name)
 
   # The preview form over `params`, with `%{field => message}` errors.
-  defp install_form(params, errors),
-    do: to_form(params, as: :install, errors: Enum.map(errors, fn {k, v} -> {k, {v, []}} end))
-
-  defp clean(params) do
-    Map.new(params, fn
-      {key, value} when is_binary(value) -> {key, String.replace(value, "\r\n", "\n")}
-      pair -> pair
-    end)
-  end
+  defp install_form(params, errors), do: FormParams.form(params, :install, errors)
 
   ## Getting candidates
 
@@ -184,12 +177,12 @@ defmodule PhotonWeb.SkillInstallLive do
     do: {:noreply, assign(socket, tab: tab)}
 
   def handle_event("edit", %{"install" => params}, socket) do
-    params = clean(params)
+    params = FormParams.clean(params)
     {:noreply, assign(socket, form: install_form(params, Skills.preview_errors(params)))}
   end
 
   def handle_event("install", %{"install" => params}, %{assigns: %{candidates: [c]}} = socket) do
-    params = clean(params)
+    params = FormParams.clean(params)
 
     case Skills.install(params, c) do
       {:ok, skill} -> {:noreply, installed(socket, skill, socket.assigns.back)}
@@ -555,7 +548,12 @@ defmodule PhotonWeb.SkillInstallLive do
         <.source_line candidate={@candidate} id="install-source" />
       </div>
 
-      <.notes notes={@candidate.notes} id="install-notes" class="mt-4" />
+      <%!-- What install leaves out, as the skill will keep it. --%>
+      <.install_notes id="install-notes" notes={@candidate.notes} heading="h3" class="mt-4">
+        <:footer>
+          <p class="mt-2.5 pl-6 text-[12px] text-ink-faint">The skill keeps these notes.</p>
+        </:footer>
+      </.install_notes>
 
       <.form
         for={@form}
@@ -588,47 +586,16 @@ defmodule PhotonWeb.SkillInstallLive do
           <label for="install-instructions" class="block text-[13px] font-medium text-ink-soft">
             Instructions
           </label>
-          <div class="overflow-hidden rounded-2xl border border-line bg-surface shadow-xs transition focus-within:border-accent/60 focus-within:shadow-md focus-within:shadow-accent/10">
-            <div class="flex items-center justify-between gap-3 border-b border-line bg-sunken/50 px-3 py-2">
-              <div
-                role="tablist"
-                class="flex items-center rounded-full border border-line bg-sunken p-0.5"
-              >
-                <.editor_tab id="install-tab-write" tab="write" current={@tab}>Write</.editor_tab>
-                <.editor_tab id="install-tab-preview" tab="preview" current={@tab}>
-                  Preview
-                </.editor_tab>
-              </div>
-              <span class="flex items-center gap-1.5 text-[11.5px] text-ink-faint">
-                <.icon name="hero-document-text-micro" class="size-4" /> Markdown
-              </span>
-            </div>
-
-            <div class={["px-4 pt-3 pb-3", @tab == "preview" && "hidden"]}>
-              <.input
-                field={@form[:instructions]}
-                id="install-instructions"
-                type="textarea"
-                rows="18"
-                phx-debounce="400"
-                spellcheck="false"
-                class="block min-h-[22rem] w-full resize-y bg-transparent font-mono text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
-              />
-            </div>
-
-            <div
-              :if={@tab == "preview"}
-              id="install-instructions-preview"
-              class="markdown-body min-h-[22rem] px-5 py-4 text-ink-soft"
-            >
-              <%= if String.trim(@form[:instructions].value || "") == "" do %>
-                <p class="text-[14px] text-ink-faint">Nothing to preview yet.</p>
-              <% else %>
-                {raw(Markdown.to_html(@form[:instructions].value))}
-              <% end %>
-            </div>
-
-            <div class="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
+          <.markdown_editor
+            id="install"
+            field={@form[:instructions]}
+            tab={@tab}
+            input_id="install-instructions"
+            preview_id="install-instructions-preview"
+            rows="18"
+            min_height="min-h-[22rem]"
+          >
+            <:footer>
               <p class="text-[12.5px] leading-relaxed text-ink-faint">
                 It's off everywhere until you turn it on.
               </p>
@@ -641,8 +608,8 @@ defmodule PhotonWeb.SkillInstallLive do
               >
                 <.icon name="hero-arrow-down-tray-micro" class="size-4" /> Install
               </.button>
-            </div>
-          </div>
+            </:footer>
+          </.markdown_editor>
         </div>
       </.form>
     </section>
@@ -827,29 +794,6 @@ defmodule PhotonWeb.SkillInstallLive do
         From a pasted SKILL.md
       <% end %>
     </p>
-    """
-  end
-
-  attr :id, :string, required: true
-  attr :notes, :list, required: true
-  attr :class, :any, default: nil
-
-  # What install leaves out, as the skill will keep it.
-  defp notes(assigns) do
-    ~H"""
-    <section
-      :if={@notes != []}
-      id={@id}
-      class={["rounded-2xl border border-line bg-sunken/60 px-5 py-4", @class]}
-    >
-      <h3 class="flex items-center gap-2 text-[13px] font-semibold text-ink">
-        <.icon name="hero-information-circle" class="size-4 text-ink-faint" /> Install notes
-      </h3>
-      <ul class="mt-2 space-y-1.5 pl-6 text-[13px] leading-relaxed text-ink-soft">
-        <li :for={note <- @notes} class="list-disc marker:text-ink-faint">{note}</li>
-      </ul>
-      <p class="mt-2.5 pl-6 text-[12px] text-ink-faint">The skill keeps these notes.</p>
-    </section>
     """
   end
 end

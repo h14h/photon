@@ -19,6 +19,8 @@ defmodule Photon.Assistant.Tools.WriteContextFile do
 
   alias Photon.{Assistant, Projects}
   alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
+  alias Photon.Projects.Rules
 
   @impl true
   def name, do: "write_context_file"
@@ -32,27 +34,15 @@ defmodule Photon.Assistant.Tools.WriteContextFile do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "project" => %{
-          "type" => "string",
-          "description" =>
-            "The project's slug, like garden (list_projects shows them), or its ID."
-        },
-        "name" => %{
-          "type" => "string",
-          "description" =>
-            ~s(The file's name: letters, digits, ".", "_" and "-", like notes.md. ) <>
-              "Files are flat, with no folders."
-        },
-        "content" => %{
-          "type" => "string",
-          "description" => "The whole file, in Markdown; at most 100,000 characters."
-        }
-      },
-      "required" => ["project", "name", "content"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          project: Readout.field(:project),
+          name: Rules.file_field(:new_name),
+          content: Rules.file_field(:content)
+        ],
+        [:project, :name, :content]
+      )
 
   @impl true
   def replay, do: :safe

@@ -46,6 +46,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                  files: lib_only,
                  core_modules: [
                    "Photon.Durable.Context",
+                   "Photon.Durable.ToolSchema",
                    "Photon.Durable.RunBoundary",
                    "Photon.Durable.Schema",
                    "Photon.Durable.Inbox",
@@ -87,6 +88,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Threads.MockScript",
                    "Photon.Threads.MockTitle",
                    "Photon.Threads.State",
+                   "Photon.Text",
                    "Photon.Signals.Rules",
                    "Photon.Signals.Text",
                    "Photon.Signals.DigestItem",
@@ -112,6 +114,7 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "Photon.Markdown",
                    "PhotonWeb.ActivityText",
                    "PhotonWeb.AmbientText",
+                   "PhotonWeb.FormParams",
                    "PhotonWeb.ProjectText",
                    "PhotonWeb.ScheduleText",
                    "PhotonWeb.SkillText",

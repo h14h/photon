@@ -59,8 +59,16 @@ defmodule Photon.Projects do
   """
 
   use Boundary,
-    deps: [Photon.Durable, Photon.Events, Photon.Repo, Photon.Signals, PhotonCore, Ecto],
-    exports: [Project, ContextFile]
+    deps: [
+      Photon.Text,
+      Photon.Durable,
+      Photon.Events,
+      Photon.Repo,
+      Photon.Signals,
+      PhotonCore,
+      Ecto
+    ],
+    exports: [Project, ContextFile, Rules]
 
   import Ecto.Query
 

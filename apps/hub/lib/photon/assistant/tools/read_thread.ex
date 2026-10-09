@@ -11,6 +11,7 @@ defmodule Photon.Assistant.Tools.ReadThread do
 
   alias Photon.{Assistant, Threads}
   alias Photon.Assistant.Readout
+  alias Photon.Durable.ToolSchema
 
   # How many items it shows when `last` isn't given, and the most it shows.
   @default_last 20
@@ -27,21 +28,16 @@ defmodule Photon.Assistant.Tools.ReadThread do
 
   @impl true
   def parameters,
-    do: %{
-      "type" => "object",
-      "properties" => %{
-        "thread" => %{
-          "type" => "string",
-          "description" => "The thread's ID, like c_123 (list_threads shows them)."
-        },
-        "last" => %{
-          "type" => "integer",
-          "description" =>
-            "How many of its latest items to show, 1 to #{@max_last} (default #{@default_last})."
-        }
-      },
-      "required" => ["thread"]
-    }
+    do:
+      ToolSchema.object(
+        [
+          thread: Readout.field(:thread),
+          last:
+            {:integer,
+             "How many of its latest items to show, 1 to #{@max_last} (default #{@default_last})."}
+        ],
+        [:thread]
+      )
 
   @impl true
   def replay, do: :safe

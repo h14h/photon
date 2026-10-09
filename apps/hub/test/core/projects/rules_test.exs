@@ -208,11 +208,4 @@ defmodule Photon.Projects.RulesTest do
       assert {:error, "old_text is empty" <> _} = Rules.edit("notes.md", "hello", "", "x")
     end
   end
-
-  test "count/1 groups thousands" do
-    assert Rules.count(0) == "0"
-    assert Rules.count(999) == "999"
-    assert Rules.count(1_234) == "1,234"
-    assert Rules.count(123_456_789) == "123,456,789"
-  end
 end

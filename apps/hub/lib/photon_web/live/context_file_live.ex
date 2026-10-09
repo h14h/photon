@@ -39,9 +39,9 @@ defmodule PhotonWeb.ContextFileLive do
 
   import PhotonWeb.EditorComponents
 
-  alias Photon.{Markdown, Projects, Threads}
+  alias Photon.{Projects, Threads}
   alias Photon.Projects.{ContextFile, Project}
-  alias PhotonWeb.ProjectText
+  alias PhotonWeb.{FormParams, ProjectText}
 
   @tick_ms :timer.minutes(1)
 
@@ -139,8 +139,7 @@ defmodule PhotonWeb.ContextFileLive do
   end
 
   # The form over `params`, with the context's `%{field => message}` errors.
-  defp file_form(params, errors \\ %{}),
-    do: to_form(params, as: :file, errors: Enum.map(errors, fn {k, v} -> {k, {v, []}} end))
+  defp file_form(params, errors \\ %{}), do: FormParams.form(params, :file, errors)
 
   # The form's params, with a browser's line breaks in the text made plain.
   defp clean(params),
@@ -386,52 +385,19 @@ defmodule PhotonWeb.ContextFileLive do
             />
             <.input :if={@file} field={@form[:version]} type="hidden" id="file-version" />
 
-            <div class="overflow-hidden rounded-2xl border border-line bg-surface shadow-xs transition focus-within:border-accent/60 focus-within:shadow-md focus-within:shadow-accent/10">
-              <div class="flex items-center justify-between gap-3 border-b border-line bg-sunken/50 px-3 py-2">
-                <div
-                  role="tablist"
-                  class="flex items-center rounded-full border border-line bg-sunken p-0.5"
-                >
-                  <.editor_tab id="file-tab-write" tab="write" current={@tab}>Write</.editor_tab>
-                  <.editor_tab id="file-tab-preview" tab="preview" current={@tab}>
-                    Preview
-                  </.editor_tab>
-                </div>
-                <span class="flex items-center gap-1.5 text-[11.5px] text-ink-faint">
-                  <.icon name="hero-document-text-micro" class="size-4" /> Markdown
-                </span>
-              </div>
-
-              <div
-                id={"file-editor-#{@revision}"}
-                class={["px-4 pt-3 pb-3", @tab == "preview" && "hidden"]}
-              >
-                <.input
-                  field={@form[:content]}
-                  id="file-content"
-                  type="textarea"
-                  rows="20"
-                  phx-debounce="400"
-                  aria-label="Content"
-                  spellcheck="false"
-                  placeholder="What should this project's threads know? Markdown works here."
-                  class="block min-h-[26rem] w-full resize-y bg-transparent font-mono text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
-                />
-              </div>
-
-              <div
-                :if={@tab == "preview"}
-                id="file-preview"
-                class="markdown-body min-h-[26rem] px-5 py-4 text-ink-soft"
-              >
-                <%= if String.trim(text_of(@form)) == "" do %>
-                  <p class="text-[14px] text-ink-faint">Nothing to preview yet.</p>
-                <% else %>
-                  {raw(Markdown.to_html(text_of(@form)))}
-                <% end %>
-              </div>
-
-              <div class="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
+            <.markdown_editor
+              id="file"
+              field={@form[:content]}
+              tab={@tab}
+              input_id="file-content"
+              editor_id={"file-editor-#{@revision}"}
+              preview_id="file-preview"
+              rows="20"
+              min_height="min-h-[26rem]"
+              aria-label="Content"
+              placeholder="What should this project's threads know? Markdown works here."
+            >
+              <:footer>
                 <p class="text-[12.5px] leading-relaxed text-ink-faint">
                   <span
                     :if={@dirty?}
@@ -451,8 +417,8 @@ defmodule PhotonWeb.ContextFileLive do
                 >
                   Save
                 </.button>
-              </div>
-            </div>
+              </:footer>
+            </.markdown_editor>
           </.guarded_form>
         </div>
       </div>

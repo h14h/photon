@@ -108,6 +108,7 @@ defmodule Photon.Threads do
 
   use Boundary,
     deps: [
+      Photon.Text,
       Photon.ChatGPT,
       Photon.Durable,
       Photon.MachineTools,

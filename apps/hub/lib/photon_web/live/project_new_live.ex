@@ -12,6 +12,7 @@ defmodule PhotonWeb.ProjectNewLive do
   use PhotonWeb, :live_view
 
   alias Photon.Projects
+  alias PhotonWeb.FormParams
 
   @impl true
   def mount(_params, _session, socket) do
@@ -30,8 +31,7 @@ defmodule PhotonWeb.ProjectNewLive do
   end
 
   # The form over `params`, with the context's `%{field => message}` errors.
-  defp project_form(params, errors \\ %{}),
-    do: to_form(params, as: :project, errors: Enum.map(errors, fn {k, v} -> {k, {v, []}} end))
+  defp project_form(params, errors \\ %{}), do: FormParams.form(params, :project, errors)
 
   @impl true
   def render(assigns) do

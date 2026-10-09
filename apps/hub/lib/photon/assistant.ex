@@ -81,6 +81,7 @@ defmodule Photon.Assistant do
 
   use Boundary,
     deps: [
+      Photon.Text,
       Photon.Activity,
       Photon.Ambient,
       Photon.ChatGPT,
