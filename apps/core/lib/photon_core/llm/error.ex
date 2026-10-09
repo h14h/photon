@@ -12,7 +12,7 @@ defmodule PhotonCore.LLM.Error do
   use Boundary, top_level?: true, type: :strict, deps: []
 
   @enforce_keys [:kind, :message]
-  defexception [:kind, :status, :message, retryable: false, retry_after: nil]
+  defexception [:kind, :message, status: nil, retryable: false, retry_after: nil]
 
   @type kind :: :http | :transport | :stream | :config
 

@@ -34,7 +34,12 @@ defmodule Photon.Threads.MockScript do
   # Functional core: no processes, no I/O.
   use Boundary,
     type: :strict,
-    deps: [PhotonCore, PhotonCore.LLM, Photon.MachineTools, Photon.Skills]
+    deps: [
+      PhotonCore,
+      PhotonCore.LLM.Mock,
+      Photon.MachineTools.MockPhrases,
+      Photon.Skills.MockPhrases
+    ]
 
   @behaviour PhotonCore.LLM.Mock
 

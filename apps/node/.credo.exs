@@ -43,6 +43,8 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "PhotonNode.Executor.Request",
                    "PhotonNode.Executor.Rules"
                  ],
+                 # A core module calls only the node's own core modules.
+                 namespaces: ["PhotonNode"],
                  nondeterministic_extra: ["PhotonCore.ID.new"],
                  allowed: []
                ]},

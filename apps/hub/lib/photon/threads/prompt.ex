@@ -27,7 +27,7 @@ defmodule Photon.Threads.Prompt do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [Photon.MachineTools, Photon.Skills]
+  use Boundary, type: :strict, deps: [Photon.MachineTools.Guide, Photon.Skills.Prompt]
 
   alias Photon.MachineTools.Guide
   alias Photon.Skills.Prompt, as: SkillsPrompt

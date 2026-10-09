@@ -46,7 +46,7 @@ The **Enforced by** column says what catches a break:
 | 15 | Model change as new facts and derive current state from them. (pp. 42-44) | review |
 | 16 | Don't wrap data in a process to make it mutable. (p. 43) | credo `SupervisedProcesses` (no `Agent`); review |
 | 17 | A known, fixed set of fields is a struct in its own module, with `@type t`. (pp. 44-49) | credo `StructType` |
-| 18 | Fields that must be given are listed in `@enforce_keys`. (pp. 26, 57) | credo `EnforceKeys` (which today also accepts a `new` that calls `struct!/2`, though that enforces only declared keys) |
+| 18 | Fields that must be given are listed in `@enforce_keys`. (pp. 26, 57) | credo `EnforceKeys`: a field without a default is in `@enforce_keys`, or is optional with an explicit default (`name: nil`) |
 | 19 | Atoms only for a small, known set of names; strings for user and generated data. (pp. 23, 28) | credo `UnsafeToAtom` |
 | 20 | Integers for exact quantities; references or generated IDs for identity. (p. 23) | review |
 | 21 | Read lists from the head and build them by prepending; no index access in loops. (pp. 23-25) | credo `AppendSingleItem`, `IndexAccessInLoop` |
@@ -61,7 +61,7 @@ The **Enforced by** column says what catches a break:
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 28 | Business logic lives in pure modules: no processes, external services or side effects. Each is a strict sub-boundary that names only core and data modules and the libraries it needs (JSON, Ecto's query and schema macros). (pp. 6, 53, 73) | boundary; credo `FunctionalCore` (no `GenServer`, `Process`, `Task`, `send`, `receive`, `Port`, `File`, `System.cmd`, app env, `Logger`, `:ets`, `:persistent_term`) |
+| 28 | Business logic lives in pure modules: no processes, external services or side effects. Each is a strict sub-boundary that names only core and data modules and the libraries it needs (JSON, Ecto's query and schema macros), never a context. A pure module other contexts' cores share is a top-level boundary (`Photon.Threads.State`, `PhotonCore.LLM.Mock`), so depending on it doesn't open its context's API. (pp. 6, 53, 73) | boundary; credo `FunctionalCore` (no `GenServer`, `Process`, `Task`, `send`, `receive`, `Port`, `File`, `System.cmd`, app env, `Logger`, `:ets`, `:persistent_term`, and no call into a module of the app's own namespaces that isn't core) |
 | 29 | Same inputs, same outputs. Take the time, randomness and fresh IDs as arguments, or allow-list the module on purpose. (pp. 6, 54, 88-91) | credo `FunctionalCore` |
 | 30 | Server callbacks call the core and shape the reply; logic stays out of them. (pp. 11-12, 113) | credo `ThinCallbacks` (15 lines per clause) |
 | 31 | Try plain functions first; use a process only to control execution, divide work, or hold shared state. (p. 57) | review |
@@ -187,11 +187,11 @@ checks are tested in `apps/core`'s suite
 **Boundary.**
 
 - `apps/core`: `PhotonCore` (messages, IDs, operations) is strict and depends
-  only on Jason. `PhotonCore.LLM.Error` and `PhotonCore.LLM` are boundaries
-  of their own, so another app's core can record a model failure without
-  being able to call the HTTP client. Inside the client, `SSE`, `Retry`,
-  `HTTPError`, `Mock`, `Responses.Request` and `Responses.Response` are
-  strict sub-boundaries.
+  only on Jason. `PhotonCore.LLM.Error`, `PhotonCore.LLM.Mock` and
+  `PhotonCore.LLM` are boundaries of their own, so another app's core can
+  record a model failure, or script a model, without being able to call the
+  HTTP client. Inside the client, `SSE`, `Retry`, `HTTPError`,
+  `Responses.Request` and `Responses.Response` are strict sub-boundaries.
 - `apps/node`: `PhotonNode` holds `Config`, `CLI`, `Connection`, `Executor`
   and `Ops`. The connection depends on the executor, the executor on the
   operation layer and reaches the hub only through `Executor.Link`; the
@@ -201,7 +201,11 @@ checks are tested in `apps/core`'s suite
   exports. `Photon.Application` sits above both and is the only hub module
   that may use the node app. `Photon.Durable` exports its API, schemas,
   `Tx`, `Runtime` and the tool and task-kind contracts, and keeps `Store`,
-  `Scheduler` and its core inside.
+  `Scheduler` and its core inside. The pure modules several contexts' cores
+  share are top-level boundaries that `Photon` and each using context list
+  as deps: `Threads.State`, `MachineTools.Guide`, `MachineTools.MockPhrases`,
+  `Skills.Prompt` and `Skills.MockPhrases`. Boundary accepts a dep only
+  when the direct parent lists it too.
 
 **Types.** Every public function in `lib/` has a `@spec` and every struct a
 `@type t`. Elixir 1.20 infers types from patterns, guards and bodies across

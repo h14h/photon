@@ -37,7 +37,7 @@ defmodule Photon.Skills.Prompt do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [Photon.Skills.Skill]
+  use Boundary, top_level?: true, type: :strict, deps: []
 
   @tool_name "load_skill"
 

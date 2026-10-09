@@ -58,6 +58,8 @@ lib_only = %{excluded: [~r"/_build/", ~r"/deps/", ~r"(^|/)test/"]}
                    "PhotonCore.Operation",
                    "PhotonCore.Operation.Wire"
                  ],
+                 # A core module calls only core modules, never the model client.
+                 namespaces: ["PhotonCore"],
                  nondeterministic_extra: ["PhotonCore.ID.new"],
                  allowed: [
                    {"PhotonCore.ID", ["System.system_time", ":crypto.strong_rand_bytes"]}

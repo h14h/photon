@@ -25,7 +25,7 @@ defmodule Photon.Assistant.Readout do
   """
 
   # Functional core: no processes, no I/O. The time comes in as an argument.
-  use Boundary, type: :strict, deps: [Photon.Threads, PhotonCore]
+  use Boundary, type: :strict, deps: [Photon.Threads.State, PhotonCore]
 
   alias Photon.Threads.State
   alias PhotonCore.Message

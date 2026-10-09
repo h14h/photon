@@ -117,4 +117,56 @@ defmodule PhotonCredo.Check.FunctionalCoreTest do
     |> run_check(FunctionalCore, core_modules: ["App.Core.Cart"])
     |> refute_issues()
   end
+
+  test "calls into the app's own boundary modules are reported, calls to core modules aren't" do
+    ~S"""
+    defmodule App.Core.Cart do
+      alias App.Core.Price
+      alias App.Orders
+
+      def total(cart), do: Enum.sum(Enum.map(cart.items, &Price.of/1))
+      def place(cart), do: Orders.place(cart)
+      def owner(cart), do: App.Accounts.get(cart.owner_id)
+      def text(cart), do: Jason.encode!(cart)
+    end
+    """
+    |> to_source_file()
+    |> run_check(FunctionalCore, core_modules: ["App.Core.*"], namespaces: ["App"])
+    |> assert_issues(fn issues ->
+      assert issues |> Enum.map(& &1.trigger) |> Enum.sort() == ["get", "place"]
+      assert Enum.all?(issues, &(&1.message =~ "a boundary module"))
+    end)
+  end
+
+  test "an import of a boundary module is reported, an import of a core module isn't" do
+    ~S"""
+    defmodule App.Core.Text do
+      import App.Threads, only: [start: 2]
+      import App.Core.Price
+
+      def go(project, text), do: start(project, text)
+    end
+    """
+    |> to_source_file()
+    |> run_check(FunctionalCore, core_modules: ["App.Core.*"], namespaces: ["App"])
+    |> assert_issue(fn issue ->
+      assert issue.trigger == "import"
+      assert issue.message =~ "imports App.Threads, a boundary module"
+    end)
+  end
+
+  test "an allowed call into a boundary module passes" do
+    ~S"""
+    defmodule App.Core.Turn do
+      def spec(tool), do: App.Tool.spec(tool)
+    end
+    """
+    |> to_source_file()
+    |> run_check(FunctionalCore,
+      core_modules: ["App.Core.*"],
+      namespaces: ["App"],
+      allowed: [{"App.Core.Turn", ["App.Tool.spec"]}]
+    )
+    |> refute_issues()
+  end
 end

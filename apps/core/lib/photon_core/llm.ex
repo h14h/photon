@@ -58,8 +58,8 @@ defmodule PhotonCore.LLM do
   use Boundary,
     top_level?: true,
     type: :strict,
-    deps: [PhotonCore, PhotonCore.LLM.Error, Jason, Req],
-    exports: [Mock, Responses]
+    deps: [PhotonCore, PhotonCore.LLM.Error, PhotonCore.LLM.Mock, Jason, Req],
+    exports: [Responses]
 
   alias PhotonCore.LLM.{Error, Mock, Responses, Retry}
   alias PhotonCore.Message

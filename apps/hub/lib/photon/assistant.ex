@@ -94,8 +94,14 @@ defmodule Photon.Assistant do
       Photon.Skills,
       Photon.Threads,
       Photon.Transcript,
+      Photon.MachineTools.Guide,
+      Photon.MachineTools.MockPhrases,
+      Photon.Skills.MockPhrases,
+      Photon.Skills.Prompt,
+      Photon.Threads.State,
       PhotonCore,
-      PhotonCore.LLM
+      PhotonCore.LLM,
+      PhotonCore.LLM.Mock
     ],
     exports: [Notice]
 

@@ -25,7 +25,9 @@ defmodule Photon.Assistant.Prompt do
   """
 
   # Functional core: no processes, no I/O.
-  use Boundary, type: :strict, deps: [Photon.Assistant.Memory, Photon.MachineTools, Photon.Skills]
+  use Boundary,
+    type: :strict,
+    deps: [Photon.Assistant.Memory, Photon.MachineTools.Guide, Photon.Skills.Prompt]
 
   alias Photon.Assistant.Memory
   alias Photon.MachineTools.Guide

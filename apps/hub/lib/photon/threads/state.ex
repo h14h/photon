@@ -36,7 +36,7 @@ defmodule Photon.Threads.State do
   """
 
   # Functional core: no processes, no I/O. The time comes in as an argument.
-  use Boundary, type: :strict, deps: []
+  use Boundary, top_level?: true, type: :strict, deps: []
 
   @typedoc "A thread's state."
   @type t :: :waiting | :asking | :running | :failed | :unread | :quiet | :idle

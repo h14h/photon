@@ -131,9 +131,7 @@ defmodule PhotonWeb.Auth do
     :ok
   end
 
-  # Whether a client may in: its device, or (with a password too) a signed-in
-  # session, but never a machine that runs a node. `{:error, :not_device}`
-  # leaves room for the password.
+  # Gathers what `Photon.Auth.gui_access/2` decides from.
   defp decide(client, mode, signed_in) do
     identity =
       case ClientIP.whois(client) do
@@ -141,39 +139,14 @@ defmodule PhotonWeb.Auth do
         other -> other
       end
 
-    node_devices = NodeKeys.node_devices()
-
-    case {Auth.check_device(identity, Auth.tailscale_logins(), node_devices), mode} do
-      {:ok, _mode} ->
-        :ok
-
-      {{:error, reason}, :tailscale} ->
-        {:error, reason}
-
-      {{:error, reason}, :tailscale_or_password} ->
-        if unnamed_tailnet_address?(client, identity),
-          do: {:error, "Photon couldn't tell which of your devices this is. Try again."},
-          else: password_fallback(identity, node_devices, signed_in, reason)
-    end
+    Auth.gui_access(mode, %{
+      identity: identity,
+      tailnet_address?: ClientIP.tailnet?(client),
+      logins: Auth.tailscale_logins(),
+      node_devices: NodeKeys.node_devices(),
+      signed_in?: signed_in
+    })
   end
-
-  # A tailnet address tailscale couldn't name (it failed, say) isn't a
-  # stranger to ask for the password: it may be a node, so it waits.
-  defp unnamed_tailnet_address?(client, :error), do: ClientIP.tailnet?(client)
-  defp unnamed_tailnet_address?(_client, _identity), do: false
-
-  defp password_fallback({:ok, %{device: device}}, node_devices, signed_in, reason) do
-    cond do
-      MapSet.member?(node_devices, device) -> {:error, reason}
-      signed_in -> :ok
-      true -> {:error, :not_device}
-    end
-  end
-
-  defp password_fallback(_identity, _node_devices, true = _signed_in, _reason), do: :ok
-
-  defp password_fallback(_identity, _node_devices, false = _signed_in, _reason),
-    do: {:error, :not_device}
 
   defp message(:not_device), do: "Photon only opens on your devices on its tailnet."
   defp message(reason), do: reason

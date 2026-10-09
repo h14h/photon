@@ -99,6 +99,7 @@ defmodule Photon.Ambient do
       Photon.Settings,
       Photon.Signals,
       Photon.Threads,
+      Photon.Threads.State,
       PhotonCore
     ],
     exports: []

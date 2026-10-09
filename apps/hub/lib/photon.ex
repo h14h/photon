@@ -88,7 +88,24 @@ defmodule Photon do
   # their APIs (and the data they return) to the web layer. They never call
   # the node app; only `Photon.Application` starts an embedded node.
   use Boundary,
-    deps: [PhotonCore, PhotonCore.LLM, PhotonCore.LLM.Error, Ecto, EEx, Jason, MDEx, Req],
+    deps: [
+      PhotonCore,
+      PhotonCore.LLM,
+      PhotonCore.LLM.Error,
+      PhotonCore.LLM.Mock,
+      # Pure modules other contexts' cores share, top-level so a core can
+      # depend on them without being allowed to call their context.
+      Photon.MachineTools.Guide,
+      Photon.MachineTools.MockPhrases,
+      Photon.Skills.MockPhrases,
+      Photon.Skills.Prompt,
+      Photon.Threads.State,
+      Ecto,
+      EEx,
+      Jason,
+      MDEx,
+      Req
+    ],
     check: [apps: [:photon_node]],
     exports: [
       Activity,
@@ -121,7 +138,6 @@ defmodule Photon do
       Skills.Skill,
       Tailnet,
       Threads,
-      Threads.State,
       Threads.Thread,
       Transcript
     ]
